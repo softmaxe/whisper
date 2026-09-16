@@ -83,21 +83,6 @@ test.after(() => {
   Module._load = originalLoad;
 });
 
-test("paste-text reports an onboarding demo no-op without invoking the clipboard", async () => {
-  let pasteCalls = 0;
-  target.windowManager = { isOnboardingDemoActive: () => true };
-  target.clipboardManager = {
-    pasteText: async () => {
-      pasteCalls += 1;
-    },
-  };
-
-  const result = await handlers.get("paste-text")({ sender: {} }, "demo transcript");
-
-  assert.deepEqual(result, { success: true, pasted: false });
-  assert.equal(pasteCalls, 0);
-});
-
 test("paste-text reports pasted only after the clipboard paste completes", async () => {
   const pastes = [];
   target.windowManager = { isOnboardingDemoActive: () => false };

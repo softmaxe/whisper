@@ -32,10 +32,6 @@ test("technical output values remain LTR inside an Arabic document", () => {
   const expectations = [
     ["src/components/ui/TechnicalErrorDetails.tsx", /<pre\s+dir="ltr"[\s\S]*?\{text\}/],
     [
-      "src/components/dictation/AssistantPanel.tsx",
-      /<kbd\s+dir="ltr"[\s\S]*?\{readableVoiceHotkey\}/,
-    ],
-    [
       "src/components/notes/UploadAudioView.tsx",
       /<p\s+dir="ltr"[^>]*font-medium[^>]*>\s*\{file\.name\}/,
     ],

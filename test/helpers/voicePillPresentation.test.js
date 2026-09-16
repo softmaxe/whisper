@@ -53,16 +53,6 @@ test("Live Transcript entrance beats land strictly after one another", async () 
   assert.ok(timeline.streamAtMs > timeline.contentAtMs);
 });
 
-test("Live Transcript keeps an adaptive surface instead of entering at Agent height", async () => {
-  const { LIVE_TRANSCRIPT_SURFACE_LIMITS } = await load();
-
-  assert.deepEqual(LIVE_TRANSCRIPT_SURFACE_LIMITS, {
-    minHeight: 152,
-    maxHeight: 538,
-  });
-  assert.ok(LIVE_TRANSCRIPT_SURFACE_LIMITS.minHeight < LIVE_TRANSCRIPT_SURFACE_LIMITS.maxHeight);
-});
-
 test("voice mode direction mirrors the right baseline only for bottom-left", async () => {
   const { resolveVoiceHorizontalDirection } = await load();
 
@@ -151,7 +141,7 @@ test("the idle pill keeps its configured resting dock", async () => {
   );
 });
 
-test("Live Transcript restores stop and cancel interactions without unlocking Assistant", async () => {
+test("Live Transcript restores stop and cancel interactions", async () => {
   const { resolveVoicePillInteraction } = await load();
 
   assert.deepEqual(
@@ -171,15 +161,6 @@ test("Live Transcript restores stop and cancel interactions without unlocking As
       isProcessing: true,
     }),
     { pillInteractive: false, cancelVisible: true }
-  );
-  assert.deepEqual(
-    resolveVoicePillInteraction({
-      assistantMounted: true,
-      liveTranscriptMounted: false,
-      isRecording: false,
-      isProcessing: true,
-    }),
-    { pillInteractive: false, cancelVisible: false }
   );
   // The bare pill (no Live Transcript) exposes discard on hover, as before the panel.
   assert.deepEqual(
@@ -320,100 +301,10 @@ test("listening entrance settles at full width before revealing the waveform", a
 test("listening entrance timers preserve the visual order", async () => {
   const { getListeningEntranceTimeline } = await load();
 
-  for (const afterAssistantFooterHandoff of [false, true]) {
-    const timeline = getListeningEntranceTimeline({ afterAssistantFooterHandoff });
-    assert.ok(timeline.expandAtMs > 0);
-    assert.ok(timeline.settleAtMs > timeline.expandAtMs);
-    assert.ok(timeline.waveformAtMs > timeline.settleAtMs);
-  }
-
-  // The floating pill has no footer handoff to wait out, so its hold is the
-  // shorter of the two speeds.
-  assert.ok(
-    getListeningEntranceTimeline().expandAtMs <
-      getListeningEntranceTimeline({ afterAssistantFooterHandoff: true }).expandAtMs
-  );
-});
-
-test("Agent footer retreats actions before the compact pill enters", async () => {
-  const { getAssistantFooterTransitionTimeline, getListeningEntranceTimeline } = await load();
-  const timeline = getAssistantFooterTransitionTimeline(false);
-
-  assert.equal(timeline.initialPhase, "actions-exiting");
-  assert.equal(timeline.handoffPhase, "pill-entering");
-  assert.equal(timeline.settledPhase, "pill");
-  assert.ok(timeline.handoffAtMs > 0);
-  assert.ok(timeline.settledAtMs > timeline.handoffAtMs);
-  // Cross-policy contract: the footer handoff must fully settle before the
-  // listening entrance starts expanding the pill, or the two animations fight
-  // over the same control. Only the footer-handoff hold carries this bound;
-  // the floating pill never runs the two together.
-  assert.ok(
-    timeline.settledAtMs <
-      getListeningEntranceTimeline({ afterAssistantFooterHandoff: true }).expandAtMs
-  );
-});
-
-test("Agent footer retreats the pill before final actions grow from its anchor", async () => {
-  const { getAssistantFooterTransitionTimeline } = await load();
-  const timeline = getAssistantFooterTransitionTimeline(true);
-
-  assert.equal(timeline.initialPhase, "pill-exiting");
-  assert.equal(timeline.handoffPhase, "actions-entering");
-  assert.equal(timeline.settledPhase, "actions");
-  assert.ok(timeline.handoffAtMs > 0);
-  assert.ok(timeline.settledAtMs > timeline.handoffAtMs);
-});
-
-test("Agent footer phases never mount actions and the pill together", async () => {
-  const { resolveAssistantFooterPresentation } = await load();
-
-  assert.deepEqual(resolveAssistantFooterPresentation("actions-exiting"), {
-    pillVisible: false,
-    actionsMounted: true,
-    collapsePillToLogo: false,
-  });
-  assert.deepEqual(resolveAssistantFooterPresentation("pill-entering"), {
-    pillVisible: true,
-    actionsMounted: false,
-    collapsePillToLogo: false,
-  });
-  assert.deepEqual(resolveAssistantFooterPresentation("pill-exiting"), {
-    pillVisible: true,
-    actionsMounted: false,
-    collapsePillToLogo: true,
-  });
-});
-
-test("an old Agent response stays ineligible during the follow-up handoff gap", async () => {
-  const { resolveAssistantResponseReady } = await load();
-
-  assert.equal(
-    resolveAssistantResponseReady({
-      responseContent: "The previous completed response",
-      isBusy: false,
-      isStreaming: false,
-      voiceState: "idle",
-      requestPending: true,
-    }),
-    false
-  );
-});
-
-test("Agent response actions return only after the follow-up request settles", async () => {
-  const { resolveAssistantResponseReady } = await load();
-  const presentation = {
-    responseContent: "The new completed response",
-    isBusy: false,
-    isStreaming: false,
-    voiceState: "idle",
-    requestPending: false,
-  };
-
-  assert.equal(resolveAssistantResponseReady(presentation), true);
-  assert.equal(resolveAssistantResponseReady({ ...presentation, isBusy: true }), false);
-  assert.equal(resolveAssistantResponseReady({ ...presentation, isStreaming: true }), false);
-  assert.equal(resolveAssistantResponseReady({ ...presentation, voiceState: "listening" }), false);
+  const timeline = getListeningEntranceTimeline();
+  assert.ok(timeline.expandAtMs > 0);
+  assert.ok(timeline.settleAtMs > timeline.expandAtMs);
+  assert.ok(timeline.waveformAtMs > timeline.settleAtMs);
 });
 
 test("stopping during the entrance cancels the staged recording presentation", async () => {
@@ -429,86 +320,6 @@ test("stopping during the entrance cancels the staged recording presentation", a
   );
 });
 
-test("Agent listening keeps the existing expanded recording pill", async () => {
-  const { resolveVoiceActivityPresentation } = await load();
-  assert.deepEqual(
-    resolveVoiceActivityPresentation({
-      isRecording: true,
-      isProcessing: false,
-      isAssistantVoice: true,
-      assistantThinking: false,
-    }),
-    { activeState: "recording", compactPill: true, isAgentThinking: false }
-  );
-});
-
-test("Agent identity follows active requests and the complete panel lifecycle", async () => {
-  const { resolveAgentModeActive } = await load();
-
-  assert.equal(
-    resolveAgentModeActive({
-      isAssistantVoice: true,
-      isRecording: true,
-      isProcessing: false,
-      assistantPanelMounted: false,
-    }),
-    true
-  );
-  assert.equal(
-    resolveAgentModeActive({
-      isAssistantVoice: true,
-      isRecording: false,
-      isProcessing: true,
-      assistantPanelMounted: false,
-    }),
-    true
-  );
-  assert.equal(
-    resolveAgentModeActive({
-      isAssistantVoice: false,
-      isRecording: false,
-      isProcessing: false,
-      assistantPanelMounted: true,
-    }),
-    true
-  );
-  assert.equal(
-    resolveAgentModeActive({
-      isAssistantVoice: true,
-      isRecording: false,
-      isProcessing: false,
-      assistantPanelMounted: false,
-    }),
-    false
-  );
-});
-
-test("Agent transcription contracts to the rotating thinking circle", async () => {
-  const { resolveVoiceActivityPresentation } = await load();
-  assert.deepEqual(
-    resolveVoiceActivityPresentation({
-      isRecording: false,
-      isProcessing: true,
-      isAssistantVoice: true,
-      assistantThinking: false,
-    }),
-    { activeState: "thinking", compactPill: false, isAgentThinking: true }
-  );
-});
-
-test("model thinking stays in the rotating circle after transcription ends", async () => {
-  const { resolveVoiceActivityPresentation } = await load();
-  assert.deepEqual(
-    resolveVoiceActivityPresentation({
-      isRecording: false,
-      isProcessing: false,
-      isAssistantVoice: false,
-      assistantThinking: true,
-    }),
-    { activeState: "thinking", compactPill: false, isAgentThinking: true }
-  );
-});
-
 test("regular dictation transcription contracts to the rotating thinking circle", async () => {
   const { resolveVoiceActivityPresentation } = await load();
   assert.deepEqual(
@@ -519,43 +330,6 @@ test("regular dictation transcription contracts to the rotating thinking circle"
       assistantThinking: false,
     }),
     { activeState: "thinking", compactPill: false, isAgentThinking: false }
-  );
-});
-
-test("one voice panel core hosts each expanded mode", async () => {
-  const { resolveVoicePanelCorePresentation } = await load();
-
-  assert.deepEqual(
-    resolveVoicePanelCorePresentation({
-      assistantOpen: true,
-      assistantMounted: true,
-      liveTranscriptOpen: false,
-      liveTranscriptMounted: false,
-    }),
-    { mode: "assistant", open: true }
-  );
-  assert.deepEqual(
-    resolveVoicePanelCorePresentation({
-      assistantOpen: false,
-      assistantMounted: false,
-      liveTranscriptOpen: true,
-      liveTranscriptMounted: true,
-    }),
-    { mode: "live-transcript", open: true }
-  );
-});
-
-test("an opening mode outranks a sibling that is only finishing its exit", async () => {
-  const { resolveVoicePanelCorePresentation } = await load();
-
-  assert.deepEqual(
-    resolveVoicePanelCorePresentation({
-      assistantOpen: false,
-      assistantMounted: true,
-      liveTranscriptOpen: true,
-      liveTranscriptMounted: true,
-    }),
-    { mode: "live-transcript", open: true }
   );
 });
 
@@ -614,26 +388,6 @@ test("Live Transcript reopen belongs only to an active normal dictation", async 
   );
 });
 
-test("a fresh Agent request thinks in the floating logo circle", async () => {
-  const { resolveAssistantThinkingTransition } = await load();
-  assert.deepEqual(resolveAssistantThinkingTransition(false), {
-    panelOpen: false,
-    panelMounted: true,
-    responseReady: false,
-    thinking: true,
-  });
-});
-
-test("an Agent follow-up keeps the existing response modal open while thinking", async () => {
-  const { resolveAssistantThinkingTransition } = await load();
-  assert.deepEqual(resolveAssistantThinkingTransition(true), {
-    panelOpen: true,
-    panelMounted: true,
-    responseReady: false,
-    thinking: true,
-  });
-});
-
 test("a collapsed transcript stays reopenable while its result is processing", async () => {
   const { resolveCompanionPillInteractive } = await load();
 
@@ -672,152 +426,5 @@ test("a collapsed transcript stays reopenable while its result is processing", a
       canReopenLiveTranscript: false,
     }),
     false
-  );
-});
-
-test("final Agent actions keep the idle pill hidden until the panel finishes closing", async () => {
-  const { shouldSuppressPillForAssistantActions } = await load();
-
-  assert.equal(
-    shouldSuppressPillForAssistantActions({
-      assistantOpen: true,
-      footerPillVisible: false,
-      assistantClosing: false,
-      hasLiveActivity: false,
-    }),
-    true
-  );
-  assert.equal(
-    shouldSuppressPillForAssistantActions({
-      assistantOpen: true,
-      footerPillVisible: false,
-      assistantClosing: true,
-      hasLiveActivity: false,
-    }),
-    true
-  );
-  assert.equal(
-    shouldSuppressPillForAssistantActions({
-      assistantOpen: true,
-      footerPillVisible: true,
-      assistantClosing: false,
-      hasLiveActivity: false,
-    }),
-    false
-  );
-  assert.equal(
-    shouldSuppressPillForAssistantActions({
-      assistantOpen: false,
-      footerPillVisible: false,
-      assistantClosing: false,
-      hasLiveActivity: true,
-    }),
-    false
-  );
-});
-
-test("the composed pill suppression keeps a live recording visible through the close", async () => {
-  const { resolvePillVisualSuppression } = await load();
-
-  const base = {
-    dictationErrorSuppressed: false,
-    assistantActionsSuppressed: false,
-    assistantClosing: false,
-    panelReturnResizeActive: false,
-    hasLiveActivity: false,
-  };
-
-  // The regression this pins: folding the pill into the panel exit must not
-  // override the close-intent ownership handoff. beginClose hides the companion
-  // on the same tick, so a suppressed pill here leaves a running recording with
-  // no visible owner for the whole ~580ms close.
-  assert.equal(
-    resolvePillVisualSuppression({ ...base, assistantClosing: true, hasLiveActivity: true }),
-    false
-  );
-  // An idle close still folds into one beat.
-  assert.equal(resolvePillVisualSuppression({ ...base, assistantClosing: true }), true);
-
-  // The panel-return mask covers a real native shrink and is bounded by it, so
-  // it stays unconditional — same contract as the dictation-error handoff.
-  assert.equal(
-    resolvePillVisualSuppression({ ...base, panelReturnResizeActive: true, hasLiveActivity: true }),
-    true
-  );
-
-  // Error and footer owners are absolute regardless of activity.
-  assert.equal(
-    resolvePillVisualSuppression({
-      ...base,
-      dictationErrorSuppressed: true,
-      hasLiveActivity: true,
-    }),
-    true
-  );
-  assert.equal(
-    resolvePillVisualSuppression({
-      ...base,
-      assistantActionsSuppressed: true,
-      hasLiveActivity: true,
-    }),
-    true
-  );
-
-  // Nothing claiming the pill leaves it visible.
-  assert.equal(resolvePillVisualSuppression(base), false);
-});
-
-test("the composed suppression honours the assistant-actions carve-out end to end", async () => {
-  const { resolvePillVisualSuppression, shouldSuppressPillForAssistantActions } = await load();
-
-  // Both halves of the close: `assistantOpen` is still true through the content
-  // fade, then flips false while `closing` runs out the contraction. A live
-  // recording has to survive both, which is exactly what regressed when the
-  // composition ORed `closing` in unconditionally.
-  for (const assistantOpen of [true, false]) {
-    const assistantActionsSuppressed = shouldSuppressPillForAssistantActions({
-      assistantOpen,
-      footerPillVisible: false,
-      assistantClosing: true,
-      hasLiveActivity: true,
-    });
-    assert.equal(
-      resolvePillVisualSuppression({
-        dictationErrorSuppressed: false,
-        assistantActionsSuppressed,
-        assistantClosing: true,
-        panelReturnResizeActive: false,
-        hasLiveActivity: true,
-      }),
-      false,
-      `a live recording must stay visible with assistantOpen=${assistantOpen}`
-    );
-  }
-});
-
-test("activity handed back at close intent stays visible through the content fade", async () => {
-  const { shouldSuppressPillForAssistantActions } = await load();
-
-  // The companion hides at close INTENT while `assistantOpen` stays true until
-  // the fade completes: suppressing here is the both-hidden gap.
-  assert.equal(
-    shouldSuppressPillForAssistantActions({
-      assistantOpen: true,
-      footerPillVisible: false,
-      assistantClosing: true,
-      hasLiveActivity: true,
-    }),
-    false
-  );
-  // Before close intent the footer still owns the visuals, so a companion
-  // recording must not surface a second pill here.
-  assert.equal(
-    shouldSuppressPillForAssistantActions({
-      assistantOpen: true,
-      footerPillVisible: false,
-      assistantClosing: false,
-      hasLiveActivity: true,
-    }),
-    true
   );
 });

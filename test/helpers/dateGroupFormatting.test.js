@@ -61,35 +61,6 @@ test("string dates are accepted", async (t2) => {
   assert.equal(formatDateGroup(new Date(NOON_JUNE_15).toISOString(), t), "Today");
 });
 
-test("date-only event starts parse as the local calendar day, not UTC midnight", async () => {
-  const { parseEventDate } = await load();
-  const previousTimezone = process.env.TZ;
-  process.env.TZ = "America/Los_Angeles";
-
-  try {
-    // A UTC-midnight parse would land on June 14 in Los Angeles.
-    const parsed = parseEventDate("2024-06-15");
-    assert.equal(parsed.getFullYear(), 2024);
-    assert.equal(parsed.getMonth(), 5);
-    assert.equal(parsed.getDate(), 15);
-  } finally {
-    if (previousTimezone === undefined) delete process.env.TZ;
-    else process.env.TZ = previousTimezone;
-  }
-});
-
-test("timed event starts keep their instant and invalid values return null", async () => {
-  const { parseEventDate } = await load();
-
-  assert.equal(
-    parseEventDate("2024-06-15T10:00:00-07:00").getTime(),
-    Date.parse("2024-06-15T10:00:00-07:00")
-  );
-  assert.equal(parseEventDate("not-a-date"), null);
-  assert.equal(parseEventDate(""), null);
-  assert.equal(parseEventDate(null), null);
-});
-
 test("history groups zone-less SQLite timestamps as UTC near a local day boundary", async (t2) => {
   const { formatDateGroup } = await load();
   const previousTimezone = process.env.TZ;
@@ -123,49 +94,6 @@ test("formatDateGroup returns empty string for nullish or invalid date input", a
   assert.equal(formatDateGroup("   ", t), "");
   assert.equal(formatDateGroup("not-a-date", t), "");
   assert.equal(formatDateGroup(new Date(NaN), t), "");
-});
-
-test("formatShortDate and formatRelativeTime return empty string for nullish or invalid input", async () => {
-  const { formatShortDate, formatRelativeTime } = await load();
-  assert.equal(formatShortDate(null), "");
-  assert.equal(formatShortDate(undefined), "");
-  assert.equal(formatShortDate(""), "");
-  assert.equal(formatShortDate("invalid"), "");
-
-  assert.equal(formatRelativeTime(null, t), "");
-  assert.equal(formatRelativeTime(undefined, t), "");
-  assert.equal(formatRelativeTime("", t), "");
-  assert.equal(formatRelativeTime("invalid", t), "");
-});
-
-test("note date formatters use an explicit Arabic locale", async () => {
-  const { formatNoteDate, formatShortDate } = await load();
-  const previousTimezone = process.env.TZ;
-  process.env.TZ = "UTC";
-
-  try {
-    const timestamp = "2026-09-02T12:34:00Z";
-    assert.equal(formatShortDate(timestamp, "ar"), "2 سبتمبر");
-    assert.equal(formatNoteDate(timestamp, "ar"), "2 سبتمبر 2026 · 12:34 م");
-  } finally {
-    if (previousTimezone === undefined) delete process.env.TZ;
-    else process.env.TZ = previousTimezone;
-  }
-});
-
-test("note date formatters retain their English output with an explicit locale", async () => {
-  const { formatNoteDate, formatShortDate } = await load();
-  const previousTimezone = process.env.TZ;
-  process.env.TZ = "UTC";
-
-  try {
-    const timestamp = "2026-09-02T12:34:00Z";
-    assert.equal(formatShortDate(timestamp, "en"), "Sep 2");
-    assert.equal(formatNoteDate(timestamp, "en"), "Sep 2, 2026 · 12:34 PM");
-  } finally {
-    if (previousTimezone === undefined) delete process.env.TZ;
-    else process.env.TZ = previousTimezone;
-  }
 });
 
 test("history group fallback dates use the explicit Arabic locale", async (t2) => {

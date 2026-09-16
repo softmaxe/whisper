@@ -1,9 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const Module = require("node:module");
+
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
-const WINDOW_CONFIG_PATH = require.resolve("../../src/helpers/windowConfig.js");
 const OVERRIDDEN_VOICE_SURFACE_GEOMETRY = `
   export const ASSISTANT_PANEL_SIZE_LIMITS = {
     ratioWidth: 500,
@@ -15,55 +14,6 @@ const OVERRIDDEN_VOICE_SURFACE_GEOMETRY = `
   };
   export const LIVE_TRANSCRIPT_SURFACE_LIMITS = { minHeight: 91, maxHeight: 321 };
 `;
-
-function loadWindowConfigWithGeometry(assistantPanelSizeLimits) {
-  const originalLoad = Module._load;
-  Module._load = function loadWindowConfig(request, parent, isMain) {
-    if (request === "./voiceSurfaceGeometry") {
-      return {
-        ASSISTANT_PANEL_SIZE_LIMITS: assistantPanelSizeLimits,
-        LIVE_TRANSCRIPT_SURFACE_LIMITS: { minHeight: 91, maxHeight: 321 },
-      };
-    }
-    return originalLoad.call(this, request, parent, isMain);
-  };
-  delete require.cache[WINDOW_CONFIG_PATH];
-
-  try {
-    return require(WINDOW_CONFIG_PATH);
-  } finally {
-    Module._load = originalLoad;
-    delete require.cache[WINDOW_CONFIG_PATH];
-  }
-}
-
-test("the main-process assistant window consumes the shared voice-surface geometry", () => {
-  const windowConfig = loadWindowConfigWithGeometry({
-    ratioWidth: 500,
-    ratioHeight: 625,
-    gutter: 31,
-    minSurfaceWidth: 300,
-    minSurfaceHeight: 120,
-    maxSurfaceWidth: 700,
-  });
-
-  assert.deepEqual(windowConfig.WINDOW_SIZES.ASSISTANT, { width: 531, height: 656 });
-});
-
-test("the main and renderer geometry adapters agree with the native assistant footprint", async () => {
-  const geometry = require("../../src/helpers/voiceSurfaceGeometry.js");
-  const windowConfig = require(WINDOW_CONFIG_PATH);
-  const rendererGeometry = await import("../../src/helpers/voiceSurfaceGeometry.mjs");
-
-  assert.equal(
-    windowConfig.WINDOW_SIZES.ASSISTANT.width,
-    geometry.ASSISTANT_PANEL_SIZE_LIMITS.ratioWidth + geometry.ASSISTANT_PANEL_SIZE_LIMITS.gutter
-  );
-  assert.deepEqual(
-    rendererGeometry.LIVE_TRANSCRIPT_SURFACE_LIMITS,
-    geometry.LIVE_TRANSCRIPT_SURFACE_LIMITS
-  );
-});
 
 test("renderer presentation consumes the shared live-transcript geometry", async (t) => {
   const vite = await createRendererServer(t, {

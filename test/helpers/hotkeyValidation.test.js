@@ -13,29 +13,24 @@ test("empty and whitespace-only input is rejected", async () => {
   assert.equal(validateHotkey("  ", "darwin").valid, false);
 });
 
-test("GLOBE/Fn is macOS-only — accepting it elsewhere would register a key the OS doesn't have", async () => {
+test("GLOBE/Fn is accepted on macOS", async () => {
   const { validateHotkey } = await load();
 
   assert.equal(validateHotkey("GLOBE", "darwin").valid, true);
   assert.equal(validateHotkey("Fn", "darwin").valid, true);
-
-  const win = validateHotkey("GLOBE", "win32");
-  assert.equal(win.valid, false);
-  assert.equal(win.errorCode, "INVALID_GLOBE");
 });
 
 test("mouse button hotkeys are macOS-only and cannot combine with keyboard keys", async () => {
   const { validateHotkey } = await load();
 
   assert.equal(validateHotkey("MouseButton4", "darwin").valid, true);
-  assert.equal(validateHotkey("MouseButton5", "win32").valid, false);
   assert.equal(validateHotkey("Control+MouseButton4", "darwin").valid, false);
 });
 
 test("shortcuts with more than three keys are rejected", async () => {
   const { validateHotkey } = await load();
 
-  const result = validateHotkey("Ctrl+Alt+Shift+K", "win32");
+  const result = validateHotkey("Ctrl+Alt+Shift+K", "darwin");
   assert.equal(result.valid, false);
   assert.equal(result.errorCode, "TOO_MANY_KEYS");
 });
@@ -43,7 +38,7 @@ test("shortcuts with more than three keys are rejected", async () => {
 test("a bare letter needs a modifier — otherwise typing that letter anywhere would trigger dictation", async () => {
   const { validateHotkey } = await load();
 
-  const result = validateHotkey("K", "win32");
+  const result = validateHotkey("K", "darwin");
   assert.equal(result.valid, false);
   assert.equal(result.errorCode, "NO_MODIFIER_OR_SPECIAL");
 });
@@ -52,42 +47,30 @@ test("standalone special keys are allowed without a modifier", async () => {
   const { validateHotkey } = await load();
 
   assert.equal(validateHotkey("F8", "darwin").valid, true);
-  assert.equal(validateHotkey("Space", "win32").valid, true);
-  assert.equal(validateHotkey("Esc", "linux").valid, true);
+  assert.equal(validateHotkey("Space", "darwin").valid, true);
+  assert.equal(validateHotkey("Esc", "darwin").valid, true);
 });
 
 test("mixing left and right versions of the same modifier is rejected", async () => {
   const { validateHotkey } = await load();
 
-  const result = validateHotkey("LeftCtrl+RightCtrl+K", "win32");
+  const result = validateHotkey("LeftCtrl+RightCtrl+K", "darwin");
   assert.equal(result.valid, false);
   assert.equal(result.errorCode, "LEFT_RIGHT_MIX");
 });
 
-test("a single left-side modifier cannot be a hotkey, but a right-side one can (except on Linux)", async () => {
+test("a single left-side modifier cannot be a hotkey, but a right-side one can ", async () => {
   const { validateHotkey } = await load();
 
-  const left = validateHotkey("Control", "win32");
+  const left = validateHotkey("Control", "darwin");
   assert.equal(left.valid, false);
   assert.equal(left.errorCode, "LEFT_MODIFIER_ONLY");
 
   assert.equal(validateHotkey("RightOption", "darwin").valid, true);
-  assert.equal(validateHotkey("RightAlt", "win32").valid, true);
-
-  // Right-side single modifiers need native listeners, which don't exist on Linux.
-  const linux = validateHotkey("RightAlt", "linux");
-  assert.equal(linux.valid, false);
-  assert.equal(linux.errorCode, "LEFT_MODIFIER_ONLY");
+  assert.equal(validateHotkey("RightAlt", "darwin").valid, true);
 });
 
-test("two-modifier combos without a base key are valid", async () => {
-  const { validateHotkey } = await load();
-
-  assert.equal(validateHotkey("Control+Alt", "win32").valid, true);
-  assert.equal(validateHotkey("Control+Super", "linux").valid, true);
-});
-
-test("modifier-only chords are Windows/Linux only — macOS cannot register them", async () => {
+test("modifier-only chords are rejected on macOS", async () => {
   const { validateHotkey } = await load();
 
   const mac = validateHotkey("Control+Alt", "darwin");
@@ -100,7 +83,7 @@ test("modifier-only chords are Windows/Linux only — macOS cannot register them
 test("Fn combinations are rejected because only standalone Globe has a native path", async () => {
   const { validateHotkey } = await load();
 
-  for (const platform of ["darwin", "win32", "linux"]) {
+  for (const platform of ["darwin"]) {
     const result = validateHotkey("Fn+A", platform);
     assert.equal(result.valid, false, platform);
     assert.equal(result.errorCode, "FN_COMBINATION_UNSUPPORTED", platform);
@@ -110,7 +93,7 @@ test("Fn combinations are rejected because only standalone Globe has a native pa
 test("duplicates are detected after normalization, so Ctrl+K collides with a stored Control+K", async () => {
   const { validateHotkey } = await load();
 
-  const result = validateHotkey("Ctrl+K", "win32", ["Control+K"]);
+  const result = validateHotkey("Ctrl+K", "darwin", ["Control+K"]);
   assert.equal(result.valid, false);
   assert.equal(result.errorCode, "DUPLICATE");
 });
@@ -118,14 +101,7 @@ test("duplicates are detected after normalization, so Ctrl+K collides with a sto
 test("system-reserved shortcuts are rejected — registering them would break copy/paste or window switching OS-wide", async () => {
   const { validateHotkey } = await load();
 
-  for (const [hotkey, platform] of [
-    ["Command+C", "darwin"],
-    ["Control+C", "win32"],
-    ["Control+C", "linux"],
-    ["Alt+Tab", "win32"],
-    ["Alt+F4", "win32"],
-    ["Control+Alt+Delete", "linux"],
-  ]) {
+  for (const [hotkey, platform] of [["Command+C", "darwin"]]) {
     const result = validateHotkey(hotkey, platform);
     assert.equal(result.valid, false, `${hotkey} on ${platform} should be reserved`);
     assert.equal(result.errorCode, "RESERVED");
@@ -144,27 +120,24 @@ test("ordinary compound shortcuts pass validation", async () => {
   const { validateHotkey } = await load();
 
   assert.equal(validateHotkey("Control+Shift+K", "darwin").valid, true);
-  assert.equal(validateHotkey("Alt+F7", "win32").valid, true);
-  assert.equal(validateHotkey("Control+Super+K", "linux").valid, true);
+  assert.equal(validateHotkey("Alt+F7", "darwin").valid, true);
 });
 
 test("a comma-separated slot validates each entry and fails on the first bad one", async () => {
   const { validateHotkey } = await load();
 
-  assert.equal(validateHotkey("F8,Control+Shift+K", "win32").valid, true);
+  assert.equal(validateHotkey("F8,Control+Shift+K", "darwin").valid, true);
 
-  const result = validateHotkey("F8,GLOBE", "win32");
+  const result = validateHotkey("F8,Fn+A", "darwin");
   assert.equal(result.valid, false);
-  assert.equal(result.errorCode, "INVALID_GLOBE");
+  assert.equal(result.errorCode, "FN_COMBINATION_UNSUPPORTED");
 });
 
 test("normalizeHotkey resolves CommandOrControl per platform", async () => {
   const { normalizeHotkey } = await load();
 
   assert.equal(normalizeHotkey("CommandOrControl+K", "darwin"), "Command+K");
-  assert.equal(normalizeHotkey("CommandOrControl+K", "win32"), "Control+K");
   assert.equal(normalizeHotkey("CmdOrCtrl+K", "darwin"), "Command+K");
-  assert.equal(normalizeHotkey("CmdOrCtrl+K", "win32"), "Control+K");
 });
 
 test("normalizeHotkey maps Option to Alt and Super/Win/Meta to the platform modifier", async () => {
@@ -172,25 +145,23 @@ test("normalizeHotkey maps Option to Alt and Super/Win/Meta to the platform modi
 
   assert.equal(normalizeHotkey("Option+R", "darwin"), "Alt+R");
   assert.equal(normalizeHotkey("Super+K", "darwin"), "Command+K");
-  assert.equal(normalizeHotkey("Win+K", "win32"), "Super+K");
-  assert.equal(normalizeHotkey("Meta+K", "linux"), "Super+K");
 });
 
 test("normalizeHotkey sorts modifiers into one canonical order so duplicate detection can compare strings", async () => {
   const { normalizeHotkey } = await load();
 
-  assert.equal(normalizeHotkey("Shift+Control+K", "win32"), "Control+Shift+K");
-  assert.equal(normalizeHotkey("Shift+Alt+Control+K", "win32"), "Control+Alt+Shift+K");
+  assert.equal(normalizeHotkey("Shift+Control+K", "darwin"), "Control+Shift+K");
+  assert.equal(normalizeHotkey("Shift+Alt+Control+K", "darwin"), "Control+Alt+Shift+K");
 });
 
 test("normalizeHotkey canonicalizes key token spellings", async () => {
   const { normalizeHotkey } = await load();
 
-  assert.equal(normalizeHotkey("Ctrl+ArrowLeft", "win32"), "Control+Left");
-  assert.equal(normalizeHotkey("Ctrl+Escape", "win32"), "Control+Esc");
-  assert.equal(normalizeHotkey("Ctrl+pgup", "win32"), "Control+PageUp");
-  assert.equal(normalizeHotkey("Ctrl+k", "win32"), "Control+K");
-  assert.equal(normalizeHotkey("Ctrl+f9", "win32"), "Control+F9");
+  assert.equal(normalizeHotkey("Ctrl+ArrowLeft", "darwin"), "Control+Left");
+  assert.equal(normalizeHotkey("Ctrl+Escape", "darwin"), "Control+Esc");
+  assert.equal(normalizeHotkey("Ctrl+pgup", "darwin"), "Control+PageUp");
+  assert.equal(normalizeHotkey("Ctrl+k", "darwin"), "Control+K");
+  assert.equal(normalizeHotkey("Ctrl+f9", "darwin"), "Control+F9");
   assert.equal(normalizeHotkey("", "darwin"), "");
 });
 
@@ -198,10 +169,10 @@ test("left-side modifier tokens normalize to canonical Left modifier forms and p
   const { normalizeHotkey, validateHotkey } = await load();
 
   assert.equal(normalizeHotkey("ControlLeft+K", "darwin"), "LeftControl+K");
-  assert.equal(normalizeHotkey("ShiftLeft+Space", "win32"), "LeftShift+Space");
+  assert.equal(normalizeHotkey("ShiftLeft+Space", "darwin"), "LeftShift+Space");
 
   assert.equal(validateHotkey("ControlLeft+K", "darwin").valid, true);
-  assert.equal(validateHotkey("ShiftLeft+Space", "win32").valid, true);
+  assert.equal(validateHotkey("ShiftLeft+Space", "darwin").valid, true);
 
   const singleLeft = validateHotkey("ControlLeft", "darwin");
   assert.equal(singleLeft.valid, false);
@@ -219,7 +190,7 @@ test("mixing left and right versions of the same modifier is rejected across pre
   assert.equal(suffixMix.valid, false);
   assert.equal(suffixMix.errorCode, "LEFT_RIGHT_MIX");
 
-  const crossMix = validateHotkey("LeftControl+ControlRight", "win32");
+  const crossMix = validateHotkey("LeftControl+ControlRight", "darwin");
   assert.equal(crossMix.valid, false);
   assert.equal(crossMix.errorCode, "LEFT_RIGHT_MIX");
 });

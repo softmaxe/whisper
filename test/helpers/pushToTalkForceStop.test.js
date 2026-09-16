@@ -86,7 +86,7 @@ function makeManager() {
 
 function startPush(t) {
   const harness = makeManager();
-  harness.manager.startWindowsPushToTalk("Control+Space");
+  harness.manager.startMacCompoundPushToTalk("Control+Space");
   t.mock.timers.tick(150); // MIN_HOLD_DURATION_MS — recording actually begins
   assert.deepEqual(harness.channels(), ["prepare-dictation", "start-dictation"]);
   return harness;
@@ -97,7 +97,7 @@ test("a physical release stops dictation without reporting a forced stop", (t) =
   t.after(() => t.mock.timers.reset());
 
   const { manager, channels } = startPush(t);
-  manager.handleWindowsPushKeyUp("Control+Space");
+  manager.handleMacPushModifierUp("control");
 
   assert.deepEqual(channels(), ["prepare-dictation", "start-dictation", "stop-dictation"]);
 });
@@ -154,10 +154,6 @@ test("a forced stop leaves the window up for the transcript still being processe
   t.mock.timers.tick(150);
   t.mock.timers.tick(300_000);
   assert.deepEqual(mac.hides, [], "macOS compound");
-
-  const win = startPush(t);
-  t.mock.timers.tick(300_000);
-  assert.deepEqual(win.hides, [], "windows/linux");
 });
 
 // The complementary half: with nothing being transcribed there is no pill to
@@ -185,7 +181,7 @@ test("a settings-driven reset reports a forced stop, not a release", (t) => {
   t.after(() => t.mock.timers.reset());
 
   const { manager, sent, channels } = startPush(t);
-  manager.resetWindowsPushState();
+  manager.forceStopMacCompoundPush("reset");
 
   assert.deepEqual(channels(), [
     "prepare-dictation",

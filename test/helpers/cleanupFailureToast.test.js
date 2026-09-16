@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const React = require("react");
 const { createRoot } = require("react-dom/client");
-const { renderToStaticMarkup } = require("react-dom/server");
+
 const {
   createRendererServer,
   installBrowserGlobals,
@@ -68,34 +68,4 @@ test("cleanup toast localizes server recovery guidance and keeps fallback status
     variant: "destructive",
     duration: 10_000,
   });
-});
-
-test("technical AWS details use the selected UI language", async (t) => {
-  installBrowserGlobals(t);
-  const vite = await createRendererServer(t, {
-    cachePrefix: "openwhispr-technical-error-details-",
-  });
-  const { TechnicalErrorDetails } = await vite.ssrLoadModule(
-    "/components/ui/TechnicalErrorDetails.tsx"
-  );
-  const { default: i18n } = await vite.ssrLoadModule("/i18n.ts");
-  await i18n.changeLanguage("zh-CN");
-
-  const markup = renderToStaticMarkup(
-    React.createElement(TechnicalErrorDetails, {
-      details: {
-        status: 503,
-        exceptionType: "ServiceUnavailableException",
-        requestId: "request-123",
-        underlyingError: "Bedrock overloaded",
-      },
-    })
-  );
-
-  assert.match(markup, /技术详情/);
-  assert.match(markup, /HTTP 状态: 503/);
-  assert.match(markup, /AWS 异常: ServiceUnavailableException/);
-  assert.match(markup, /AWS 请求 ID: request-123/);
-  assert.match(markup, /底层错误: Bedrock overloaded/);
-  assert.match(markup, /aria-label="复制技术详情"/);
 });

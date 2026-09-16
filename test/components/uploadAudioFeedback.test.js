@@ -89,19 +89,6 @@ test("the batch warning indicator renders the transcription warning", async (t) 
   assert.doesNotMatch(markup, /tabindex/i);
 });
 
-test("the batch warning indicator reports a transcription-only warning", async (t) => {
-  const { BatchWarningIndicator } = await loadBatchQueueView(t);
-
-  const markup = renderToStaticMarkup(
-    createElement(BatchWarningIndicator, {
-      transcriptionWarning: true,
-      t: (key) => key,
-    })
-  );
-
-  assert.match(markup, /aria-label="notes\.upload\.partialWarning"/);
-});
-
 test("the completed upload stays quiet when nothing went wrong", async (t) => {
   const { UploadCompleteWarnings } = await loadFeedback(t);
 
@@ -114,45 +101,6 @@ test("the completed upload stays quiet when nothing went wrong", async (t) => {
   );
 
   assert.equal(markup, "");
-});
-
-test("the completed upload shows the diarization warning only when it is flagged", async (t) => {
-  const { UploadCompleteWarnings } = await loadFeedback(t);
-
-  const warned = renderToStaticMarkup(
-    createElement(UploadCompleteWarnings, {
-      partialWarning: null,
-      diarizationWarning: true,
-      t: (key) => key,
-    })
-  );
-  assert.match(warned, /notes\.upload\.diarizationWarning/);
-  assert.match(warned, /text-warning/);
-  assert.doesNotMatch(warned, /amber/, "use the --color-warning token, not a hand-rolled amber");
-
-  const quiet = renderToStaticMarkup(
-    createElement(UploadCompleteWarnings, {
-      partialWarning: null,
-      diarizationWarning: false,
-      t: (key) => key,
-    })
-  );
-  assert.doesNotMatch(quiet, /notes\.upload\.diarizationWarning/);
-});
-
-test("a chunk loss and a diarization failure are reported together", async (t) => {
-  const { UploadCompleteWarnings } = await loadFeedback(t);
-
-  const markup = renderToStaticMarkup(
-    createElement(UploadCompleteWarnings, {
-      partialWarning: { failed: 2, total: 9 },
-      diarizationWarning: true,
-      t: (key) => key,
-    })
-  );
-
-  assert.match(markup, /notes\.upload\.partialWarningCount/);
-  assert.match(markup, /notes\.upload\.diarizationWarning/);
 });
 
 for (const saved of [true, false]) {

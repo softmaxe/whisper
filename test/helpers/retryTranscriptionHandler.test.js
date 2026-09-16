@@ -9,6 +9,7 @@ const originalLoad = Module._load;
 // registered handler closures can be invoked directly against a fake `this`.
 const handlers = new Map();
 const fetches = [];
+const databaseWrites = [];
 let fetchResponse = () => ({
   ok: true,
   status: 200,
@@ -108,9 +109,9 @@ function buildFakeThis() {
     sessionId: "test-session",
     audioStorageManager: { getAudioBuffer: (id) => (id === 7 ? Buffer.from([1, 2, 3]) : null) },
     databaseManager: {
-      updateTranscriptionText: () => {},
-      updateTranscriptionStatus: () => {},
-      updateTranscriptionAudio: () => {},
+      updateTranscriptionText: (...args) => databaseWrites.push(["text", ...args]),
+      updateTranscriptionStatus: (...args) => databaseWrites.push(["status", ...args]),
+      updateTranscriptionAudio: (...args) => databaseWrites.push(["audio", ...args]),
       getTranscriptionById: (id) => dbRows.get(id),
     },
     environmentManager: {
@@ -141,113 +142,6 @@ test.before(() => {
 
 test.after(() => {
   Module._load = originalLoad;
-});
-
-const invoke = (settings, id = 7) => retryHandler({ sender: {} }, id, settings);
-
-test("retry: corti routes to the corti client, never OpenAI", async () => {
-  fetches.length = 0;
-  const result = await invoke({
-    cloudTranscriptionProvider: "corti",
-    cloudTranscriptionMode: "byok",
-    transcriptionMode: "providers",
-    cortiEnvironment: "eu",
-    cortiTenant: "acme",
-    preferredLanguage: "auto",
-  });
-  assert.equal(result.success, true);
-  assert.equal(cortiCalls.length, 1);
-  assert.equal(cortiCalls[0].environment, "eu");
-  assert.equal(cortiCalls[0].tenant, "acme");
-  assert.equal(cortiCalls[0].language, "en");
-  assert.equal(fetches.length, 0, "corti retry must not touch HTTP endpoints");
-});
-
-test("retry: custom misconfiguration fails closed with a coded error", async () => {
-  fetches.length = 0;
-  for (const cloudTranscriptionBaseUrl of ["", "https://api.openai.com/v1", "not a url"]) {
-    const result = await invoke({
-      cloudTranscriptionProvider: "custom",
-      cloudTranscriptionMode: "byok",
-      transcriptionMode: "providers",
-      cloudTranscriptionBaseUrl,
-    });
-    assert.equal(result.success, false, cloudTranscriptionBaseUrl);
-    assert.equal(result.code, "CUSTOM_ENDPOINT_INVALID", cloudTranscriptionBaseUrl);
-  }
-  assert.equal(fetches.length, 0);
-});
-
-test("retry: openwhispr cloud masks a leftover BYOK misconfiguration", async () => {
-  fetches.length = 0;
-  const result = await invoke({
-    cloudTranscriptionProvider: "custom",
-    cloudTranscriptionMode: "openwhispr",
-    transcriptionMode: "providers",
-    cloudTranscriptionBaseUrl: "",
-  });
-  // BrowserWindow.fromWebContents is stubbed to null, so the cloud branch
-  // produces no result — but the route error must NOT surface.
-  assert.equal(result.success, false);
-  assert.notEqual(result.code, "CUSTOM_ENDPOINT_INVALID");
-  assert.match(result.error, /No transcription engine available/);
-  assert.equal(fetches.length, 0);
-});
-
-test("retry: Azure custom endpoints get deployment URLs and api-key auth", async () => {
-  fetches.length = 0;
-  const result = await invoke({
-    cloudTranscriptionProvider: "custom",
-    cloudTranscriptionMode: "byok",
-    transcriptionMode: "providers",
-    cloudTranscriptionBaseUrl: "https://myres.openai.azure.com",
-    cloudTranscriptionModel: "my-deployment",
-  });
-  assert.equal(result.success, true);
-  assert.equal(fetches.length, 1);
-  assert.match(fetches[0].url, /myres\.openai\.azure\.com\/openai\/deployments\/my-deployment/);
-  assert.equal(fetches[0].init.headers["api-key"], "ck-custom");
-  assert.equal(fetches[0].init.headers.Authorization, undefined);
-});
-
-test("retry: plain custom endpoints use Bearer auth at the configured URL", async () => {
-  fetches.length = 0;
-  const result = await invoke({
-    cloudTranscriptionProvider: "custom",
-    cloudTranscriptionMode: "byok",
-    transcriptionMode: "providers",
-    cloudTranscriptionBaseUrl: "https://stt.parasail.example.com/v1",
-    cloudTranscriptionModel: "parasail-model",
-  });
-  assert.equal(result.success, true);
-  assert.equal(fetches[0].url, "https://stt.parasail.example.com/v1/audio/transcriptions");
-  assert.equal(fetches[0].init.headers.Authorization, "Bearer ck-custom");
-});
-
-test("retry: a custom URL on Tinfoil's host is refused in the main process", async () => {
-  fetches.length = 0;
-  const result = await invoke({
-    cloudTranscriptionProvider: "custom",
-    cloudTranscriptionMode: "byok",
-    transcriptionMode: "providers",
-    cloudTranscriptionBaseUrl: "https://inference.tinfoil.sh/v1",
-  });
-  assert.equal(result.success, false);
-  assert.match(result.error, /attested main-process proxy/);
-  assert.equal(fetches.length, 0);
-  assert.equal(tinfoilCalls.length, 0);
-});
-
-test("retry: mistral goes to Mistral with x-api-key", async () => {
-  fetches.length = 0;
-  const result = await invoke({
-    cloudTranscriptionProvider: "mistral",
-    cloudTranscriptionMode: "byok",
-    transcriptionMode: "providers",
-  });
-  assert.equal(result.success, true);
-  assert.match(fetches[0].url, /api\.mistral\.ai/);
-  assert.equal(fetches[0].init.headers["x-api-key"], "mk-mistral");
 });
 
 const fsNode = require("node:fs");
@@ -312,6 +206,51 @@ test("upload: server failures surface without a successful transcript", async ()
     });
     assert.equal(result.success, false);
     assert.match(result.error, /ASR unavailable/);
+  } finally {
+    fetchResponse = previous;
+  }
+});
+
+test("retry sends retained audio to the current self-hosted endpoint and updates History", async () => {
+  fetches.length = 0;
+  databaseWrites.length = 0;
+  const result = await retryHandler({ sender: {} }, 7, {
+    transcriptionMode: "self-hosted",
+    remoteTranscriptionUrl: "http://localhost:8000/v1",
+    remoteTranscriptionModel: "test-asr",
+    preferredLanguage: "zh-CN",
+  });
+  assert.equal(result.success, true);
+  assert.equal(fetches[0].url, "http://localhost:8000/v1/audio/transcriptions");
+  assert.equal(fetches[0].init.body.get("model"), "test-asr");
+  assert.equal(fetches[0].init.body.get("language"), "zh");
+  assert.deepEqual(databaseWrites, [
+    ["text", 7, "transcribed", "transcribed"],
+    ["status", 7, "completed"],
+    [
+      "audio",
+      7,
+      { hasAudio: 1, audioDurationMs: 1200, provider: "self-hosted", model: "test-asr" },
+    ],
+  ]);
+});
+
+test("retry preserves History when the self-hosted request fails or retained audio is missing", async () => {
+  databaseWrites.length = 0;
+  const previous = fetchResponse;
+  fetchResponse = () => ({ ok: false, status: 503, text: async () => "ASR unavailable" });
+  try {
+    const settings = {
+      transcriptionMode: "self-hosted",
+      remoteTranscriptionUrl: "http://localhost:8000/v1",
+      remoteTranscriptionModel: "test-asr",
+    };
+    const failed = await retryHandler({ sender: {} }, 7, settings);
+    assert.equal(failed.success, false);
+    assert.match(failed.error, /ASR unavailable/);
+    const missing = await retryHandler({ sender: {} }, 99, settings);
+    assert.deepEqual(missing, { success: false, error: "Audio file not found" });
+    assert.deepEqual(databaseWrites, []);
   } finally {
     fetchResponse = previous;
   }

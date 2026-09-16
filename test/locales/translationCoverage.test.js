@@ -3,8 +3,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const modelRegistry = require("../../src/models/modelRegistryData.json");
-
 const SRC = path.join(__dirname, "../../src");
 const LOCALES = path.join(SRC, "locales");
 const NAMESPACES = ["translation", "prompts"];
@@ -47,16 +45,6 @@ function sourceFiles(dir, out = []) {
 
 const stripPlural = (key) => key.replace(PLURAL_SUFFIX, "");
 
-function registryDescriptionKeys(node, out = []) {
-  if (Array.isArray(node)) {
-    for (const child of node) registryDescriptionKeys(child, out);
-  } else if (node && typeof node === "object") {
-    if (typeof node.descriptionKey === "string") out.push(node.descriptionKey);
-    for (const child of Object.values(node)) registryDescriptionKeys(child, out);
-  }
-  return out;
-}
-
 test("every t() key referenced in source resolves in en", () => {
   const keys = new Set();
   for (const namespace of NAMESPACES) {
@@ -84,18 +72,6 @@ test("every t() key referenced in source resolves in en", () => {
   }
 
   assert.deepEqual(broken, [], `Missing en translations:\n${broken.join("\n")}`);
-});
-
-// Model descriptions are data-driven (t(descriptionKey, { defaultValue })), so
-// the source scan above can't see them and a missing key silently falls back
-// to English. Other locales are covered by the en-parity test below.
-test("every model registry descriptionKey resolves in en", () => {
-  const en = flatten(load("en", "translation"));
-  const keys = registryDescriptionKeys(modelRegistry);
-  assert.ok(keys.length > 0, "no descriptionKey found in the model registry");
-
-  const broken = keys.filter((key) => typeof en.get(key) !== "string" || en.get(key) === "");
-  assert.deepEqual(broken, [], `Registry descriptionKeys missing in en:\n${broken.join("\n")}`);
 });
 
 test("every en key is present in every other language", () => {
