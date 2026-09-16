@@ -1,23 +1,14 @@
 # Custom ASR shim
 
-These retained OpenWhispr examples adapt a vendor's ASR API to Whisper's Self-Hosted transcription path. Use them only when your server does not accept multipart audio at `/audio/transcriptions` and return JSON with a `text` field.
+Use this local adapter when your ASR server does not support Whisper's Self-Hosted request format.
 
-The shim accepts `/audio/transcriptions` and `/v1/audio/transcriptions`, converts audio with FFmpeg, calls the configured vendor, and returns `{"text": "..."}`. The application continues using its existing Self-Hosted request implementation.
+The shim accepts multipart POST requests at `/audio/transcriptions` and `/v1/audio/transcriptions`. It requires `file` and accepts optional `model`, `language`, and `prompt` fields. It converts audio with FFmpeg, calls the vendor API, and returns `{"text": "..."}`.
 
-## Request fields
-
-| Field      | Purpose                                         |
-| ---------- | ----------------------------------------------- |
-| `file`     | Required audio file, such as WebM/Opus or WAV.  |
-| `model`    | Model name configured in Settings, if supplied. |
-| `language` | Selected transcription language, if supplied.   |
-| `prompt`   | Dictionary hints, if supplied.                  |
-
-Keep vendor credentials in the shim's environment. The upstream Self-Hosted upload transport does not send an API-key header. This path returns one JSON response rather than an SSE stream.
+Keep vendor credentials in the shim's environment. Whisper's Self-Hosted transport does not send an API-key header.
 
 ## Run
 
-Requires Python 3.8 or later and FFmpeg on `PATH`. The examples use only the Python standard library.
+Requires Python 3.8 or later and FFmpeg on `PATH`. No Python packages are required. Run commands from `examples/custom-asr-shim/`.
 
 For another vendor, implement `transcribe()` in `shim_template.py`, then run:
 
@@ -31,7 +22,7 @@ For the included StepAudio 2.5 adapter, set `STEP_API_KEY` in your shell environ
 uv run python stepaudio_shim.py
 ```
 
-In Whisper's Settings > Speech-to-Text, set the Self-Hosted server URL to `http://localhost:8765` and supply a model name if your adapter requires it. The StepAudio example uses Chinese by default and ignores the forwarded language and model fields; adjust its vendor request when needed.
+In Settings > Speech-to-Text, set the Self-Hosted server URL to `http://localhost:8765`. Supply a model name if your adapter requires it. The StepAudio example fixes the model to `stepaudio-2.5-asr` and language to `zh`; it ignores the forwarded model, language, and prompt fields.
 
 ## Tests
 

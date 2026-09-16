@@ -1,23 +1,23 @@
 # Network access
 
-Whisper uses the Self-Hosted ASR and Clean Up URLs configured in Settings. Allow the hostname or IP address and port of each selected server. There is no fixed provider-domain list for these requests.
+Allow the hostname or IP address and port of each Self-Hosted server configured in Settings. Whisper has no fixed provider-domain list.
 
 | Request                   | Destination                | Data sent                                    |
 | ------------------------- | -------------------------- | -------------------------------------------- |
-| Dictation and Upload ASR  | Settings > Speech-to-Text  | Recorded or selected audio                   |
+| Dictation and Upload ASR   | Settings > Speech-to-Text   | Recorded or selected audio                   |
 | Clean Up and prompt tests | Settings > Language Models | Transcription text and the configured prompt |
 
-Localhost, LAN, and remote URLs are supported. The URL selects HTTP or HTTPS and the port; requests are not necessarily TLS-encrypted. Use the server's actual configuration when setting firewall, proxy, or certificate rules.
+Localhost, LAN, and remote URLs are supported. The URL determines the protocol and port. HTTP connections are unencrypted.
 
-This build does not start OpenWhispr account sign-in, cloud sync, streaming providers, local model downloads, calendar integration, URL imports, or in-app automatic updates. Installing or updating through Homebrew and GitHub Releases has separate network requirements.
+Homebrew and GitHub Releases downloads require access to those services.
 
 ## Connection checks
 
-Confirm that the configured server is running and reachable from this Mac. Use its documented health or model endpoint to test connectivity. An HTTP response can confirm reachability, but does not establish that the model, request format, or credentials are valid.
+Use the server's health or model endpoint to test connectivity. A response confirms reachability; transcription still requires a valid model, request format, and credentials.
 
-- `ENOTFOUND`: inspect the hostname and DNS configuration.
+- `ENOTFOUND`: check the hostname and DNS.
 - `ECONNREFUSED`: check that the server is listening on the configured address and port.
-- `ETIMEDOUT`: inspect server availability, routing, and firewall rules.
-- TLS certificate errors: check the certificate and trusted certificate authorities for the selected server.
+- `ETIMEDOUT`: check server availability, routing, and firewall rules.
+- TLS certificate errors: check the server certificate and trusted certificate authorities.
 
 Keep private URLs and credentials out of public diagnostics. See [Debug logging](../DEBUG.md).

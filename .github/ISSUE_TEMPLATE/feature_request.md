@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Propose a change to the macOS Self-Hosted build
+about: Propose a change to Whisper
 title: ""
 labels: ""
 assignees: ""
@@ -14,8 +14,4 @@ Describe the workflow or limitation that prompted this request.
 
 ## Proposed change
 
-Describe the behavior you want and how it fits this build's scope.
-
-## Alternatives
-
-Describe any existing option or workaround you have tried.
+Describe the behavior you want, how it fits the supported scope, and any workarounds you have tried.
