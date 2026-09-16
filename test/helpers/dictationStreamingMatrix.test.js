@@ -1,17 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-// Exhaustive settings-state × context matrix for dictation/notes realtime STT:
-// which provider each state resolves to, the FULL session options object it
-// sends over IPC (presence and absence), and the cross-boundary closure that
-// every emittable provider id is accepted on the main-process side. #1624
-// shipped because no test looked at the whole renderer→main contract: the
-// openai-realtime path never sent `provider` and the token allowlist rejected
-// undefined, while every per-module test stayed green.
+// Settings-state and session-option coverage for the retained routing helpers.
 
 const loadRouting = () => import("../../src/helpers/dictationStreamingRouting.js");
-const loadTokens = () => import("../../src/helpers/realtimeTokenProviders.js");
-const loadMeeting = () => import("../../src/helpers/meetingStreamingProviders.js");
 
 // Keys of audioManager's STREAMING_PROVIDERS channel-binding table. audioManager
 // imports window APIs so it can't load under node:test; this list is the
@@ -24,10 +16,6 @@ const RENDERER_STREAMING_PROVIDERS = [
   "corti",
   "tinfoil-realtime",
 ];
-
-// Providers that share the dictation-realtime-* IPC channels and therefore
-// need a fetchRealtimeToken entry under exactly their renderer name.
-const SHARED_CHANNEL_PROVIDERS = ["openai-realtime", "tinfoil-realtime"];
 
 const SETTINGS_DEFAULTS = {
   cloudTranscriptionProvider: "openai",
@@ -258,29 +246,5 @@ test("options: provider is stamped for every renderer channel binding", async ()
       keyterms: [],
     });
     assert.equal(options.provider, providerName);
-  }
-});
-
-test("closure: shared-channel dictation providers have token entries under their own names", async () => {
-  const { REALTIME_TOKEN_PROVIDERS } = await loadTokens();
-  for (const provider of SHARED_CHANNEL_PROVIDERS) {
-    assert.equal(
-      typeof REALTIME_TOKEN_PROVIDERS[provider],
-      "function",
-      `${provider} reaches fetchRealtimeToken but has no token entry`
-    );
-  }
-});
-
-test("closure: every allowed meeting provider has a token entry", async () => {
-  const { REALTIME_TOKEN_PROVIDERS } = await loadTokens();
-  const { ALLOWED_MEETING_PROVIDERS } = await loadMeeting();
-  for (const provider of ALLOWED_MEETING_PROVIDERS) {
-    if (provider === "local") continue;
-    assert.equal(
-      typeof REALTIME_TOKEN_PROVIDERS[provider],
-      "function",
-      `${provider} is meeting-allowed but has no token entry`
-    );
   }
 });

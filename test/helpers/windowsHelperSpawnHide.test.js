@@ -11,17 +11,6 @@ function hiddenSpawnCount(src) {
   return (src.match(/spawn\([^{}]*\{[^{}]*windowsHide: true/g) || []).length;
 }
 
-test("meeting AEC helper spawn sets windowsHide", () => {
-  assert.equal(hiddenSpawnCount(read("src/helpers/meetingAecManager.js")), 1);
-});
-
 test("text edit monitor spawns set windowsHide", () => {
   assert.equal(hiddenSpawnCount(read("src/helpers/textEditMonitor.js")), 2);
-});
-
-test("Windows mic-listener spawn sets windowsHide", () => {
-  assert.match(
-    read("src/helpers/audioActivityDetector.js"),
-    /args: \[\][^{}]*options: \{ stdio: \["pipe", "pipe", "pipe"\], windowsHide: true \}/
-  );
 });

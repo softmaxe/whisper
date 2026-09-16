@@ -20,7 +20,6 @@
     "src/locales/**/*",
     "src/hooks/**/*",
     "src/models/**/*",
-    "src/services/localReasoningBridge.js",
     "src/services/transcriptionBaseUrl.ts",
     "src/stores/policyRules.ts",
     "src/types/**/*",
@@ -78,7 +77,6 @@
   ],
   "asarUnpack": [
     "**/node_modules/ffmpeg-static/**/*",
-    "**/node_modules/ps-list/**/*",
     "**/node_modules/better-sqlite3/**/*",
     "**/node_modules/onnxruntime-node/**/*",
     "**/node_modules/@napi-rs/keyring/**/*",
@@ -88,10 +86,7 @@
     {
       "from": "src/assets",
       "to": "src/assets",
-      "filter": [
-        "**/*",
-        "!fonts/yowza/**"
-      ]
+      "filter": ["**/*", "!fonts/yowza/**"]
     },
     {
       "from": "resources/bin/",
@@ -100,14 +95,9 @@
         "macos-globe-listener",
         "macos-fast-paste",
         "macos-text-monitor",
+        "macos-mic-listener",
         "macos-media-remote",
-        "MediaRemoteAdapter.framework/**",
-        "linux-fast-paste",
-        "linux-text-monitor",
-        "linux-key-listener*",
-        "windows-key-listener*",
-        "windows-text-monitor*",
-        "windows-fast-paste*"
+        "MediaRemoteAdapter.framework/**"
       ]
     },
     {
@@ -122,8 +112,14 @@
   "mac": {
     "category": "public.app-category.productivity",
     "target": [
-      "dmg",
-      "zip"
+      {
+        "target": "dmg",
+        "arch": ["arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64"]
+      }
     ],
     "icon": "src/assets/icon.icns",
     "gatekeeperAssess": false,
@@ -138,100 +134,6 @@
       "NSMicrophoneUsageDescription": "Whisper uses the microphone to capture your voice for transcription.",
       "NSAccessibilityUsageDescription": "Whisper needs accessibility permissions to paste transcribed text into other applications."
     }
-  },
-  "win": {
-    "target": [
-      "nsis",
-      "portable"
-    ],
-    "icon": "src/assets/icon.ico",
-    "extraResources": [
-      {
-        "from": "resources/bin/nircmd.exe",
-        "to": "bin/nircmd.exe"
-      }
-    ]
-  },
-  "linux": {
-    "target": [
-      "AppImage",
-      "deb",
-      "rpm",
-      "tar.gz"
-    ],
-    "icon": "src/assets/icon.png",
-    "category": "Utility",
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
-  },
-  "flatpak": {
-    "runtime": "org.freedesktop.Platform",
-    "runtimeVersion": "24.08",
-    "sdk": "org.freedesktop.Sdk",
-    "useWaylandFlags": true,
-    "finishArgs": [
-      "--socket=wayland",
-      "--socket=fallback-x11",
-      "--share=network",
-      "--share=ipc",
-      "--device=dri",
-      "--socket=pulseaudio",
-      "--filesystem=home",
-      "--filesystem=xdg-documents",
-      "--filesystem=xdg-download",
-      "--talk-name=org.freedesktop.Notifications",
-      "--talk-name=org.freedesktop.portal.Desktop"
-    ]
-  },
-  "deb": {
-    "afterInstall": "resources/linux/after-install.sh",
-    "afterRemove": "resources/linux/after-remove.sh",
-    "depends": [
-      "ydotool",
-      "libpipewire-0.3-0"
-    ],
-    "fpm": [
-      "--deb-recommends",
-      "ydotoold",
-      "--deb-suggests",
-      "xdotool",
-      "--deb-suggests",
-      "wtype",
-      "--deb-recommends",
-      "wl-clipboard",
-      "--deb-recommends",
-      "xclip",
-      "--deb-suggests",
-      "xsel"
-    ]
-  },
-  "rpm": {
-    "fpm": [
-      "--after-install",
-      "resources/linux/after-install.sh",
-      "--rpm-rpmbuild-define",
-      "_build_id_links none",
-      "--rpm-tag",
-      "Recommends: ydotool",
-      "--rpm-tag",
-      "Requires: libpipewire-0.3.so.0()(64bit)",
-      "--rpm-tag",
-      "Suggests: xdotool",
-      "--rpm-tag",
-      "Suggests: wtype",
-      "--rpm-tag",
-      "Recommends: wl-clipboard",
-      "--rpm-tag",
-      "Recommends: xclip",
-      "--rpm-tag",
-      "Suggests: xsel"
-    ]
-  },
-  "nsis": {
-    "oneClick": false,
-    "allowToChangeInstallationDirectory": true,
-    "createDesktopShortcut": true,
-    "createStartMenuShortcut": true,
-    "include": "resources/nsis/installer.nsh"
   },
   "dmg": {
     "title": "Whisper",

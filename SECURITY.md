@@ -1,58 +1,21 @@
-# Security Policy
+# Security
 
-## Supported Versions
+This document describes the macOS Apple Silicon build in this repository. For its supported features and releases, see [README.md](README.md).
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.7.x   | :white_check_mark: |
-| < 1.7   | :x:                |
+## Data and network access
 
-## Reporting a Vulnerability
+ASR sends recorded or uploaded audio to the configured Self-Hosted server. Clean Up sends transcription text and the configured prompt to its selected server. These servers may run locally, on a LAN, or remotely; Self-Hosted does not mean that processing stays on the device.
 
-**Please do not open public issues for security vulnerabilities.**
+Server URLs determine the transport. HTTP URLs are supported and do not provide TLS encryption. See [Network access](docs/network-allowlist.md).
 
-Use [GitHub's private vulnerability reporting](https://github.com/OpenWhispr/openwhispr/security/advisories/new)
-to submit a report. You can also email security@openwhispr.com.
+History, Dictionary, Snippets, and settings are local to `~/Library/Application Support/whisper/`. Dictation audio follows the configured retention settings. Upload does not retain a copy of its source audio.
 
-We will acknowledge your report within **48 hours** and aim to release a fix
-within **7 days** for critical issues.
+Saved secrets use the existing encrypted credential store under `secure-keys/`, with the `whisper` macOS Keychain namespace and Electron `safeStorage` fallback. Logs and exported transcripts can contain personal data; review them before sharing.
 
-## Scope
+## Application boundary
 
-The following are in scope:
+The renderer uses context isolation with Node integration disabled. Native helpers provide shortcuts, correction monitoring, and paste. Releases use ad-hoc signing and are not notarized. Updates are installed through Homebrew or GitHub Releases; the upstream in-app updater is disabled.
 
-- Remote code execution via crafted audio files or transcription output
-- Privilege escalation through native binaries (key listeners, paste helpers)
-- Credential exposure (API keys, OAuth tokens, database credentials)
-- Cross-site scripting (XSS) in the Electron renderer
-- Insecure IPC between main and renderer processes
-- Supply chain attacks via dependencies or native compilation
+## Reporting
 
-Out of scope:
-
-- Issues requiring physical access to an already-unlocked machine
-- Denial of service against the local application
-- Social engineering
-
-## Security Model
-
-- **Local-first audio processing** — Audio is transcribed on-device using
-  whisper.cpp or nvidia parakeet. Recordings are not sent to external servers unless explicitly
-  configured by the user.
-- **Credential storage** — API keys provided by users (BYOK) and enterprise
-  cloud credentials (AWS, Azure, Vertex) are encrypted at rest using
-  Electron's `safeStorage` API, which delegates to the OS keychain (Keychain
-  on macOS, DPAPI on Windows, libsecret on Linux). Encrypted blobs are stored
-  under `userData/secure-keys/`. Non-secret preferences (regions, endpoints,
-  hotkeys, flags) continue to live in `.env`. On Linux systems without a
-  keyring, secrets fall back to plaintext to match Electron's default
-  behavior.
-- **Native binaries** — Platform-specific helpers (key listeners, paste
-  utilities) are compiled from source during the build process.
-- **Context isolation** — The Electron renderer runs with context isolation
-  enabled and a restricted preload bridge.
-
-## Disclosure Policy
-
-We follow coordinated disclosure. Once a fix is released, we will credit
-reporters in the changelog (unless they prefer to remain anonymous).
+Report vulnerabilities in this fork privately to its repository owner. The [repository Security page](https://github.com/softmaxe/whisper/security) lists available reporting options. Do not include credentials, personal recordings, or exploit details in public issues. The original OpenWhispr project's support addresses and response-time commitments do not apply to this fork.

@@ -149,44 +149,6 @@ test("dictation cleanup keeps its 30-second deadline", async (t) => {
   assert.match(outcome?.error?.message ?? "", /Request timed out after 30s/);
 });
 
-// The provider tests above prove each client honours the scope. This one
-// proves the scope arrives: the note store's overrides go through the real
-// ReasoningService dispatch (managed-scope resolution, provider selection,
-// retry) to the OpenAI client, and the request still outlives the dictation
-// deadline and is sent once.
-test("a note request through the real ReasoningService survives the dictation deadline and is sent once", async (t) => {
-  installBrowserGlobals(t, {
-    window: { electronAPI: { getOpenAIKey: async () => "test-key" } },
-  });
-  const vite = await createRendererServer(t, { cachePrefix: "openwhispr-note-deadline-test-" });
-  const reasoningService = (await vite.ssrLoadModule("/services/ReasoningService.ts")).default;
-  const { usePolicyStore } = await vite.ssrLoadModule("/stores/policyStore.ts");
-  usePolicyStore.setState({ status: "unmanaged", appVersion: "1.10.1", policy: null });
-  const { buildNoteFormattingOverrides } = await vite.ssrLoadModule(
-    "/helpers/noteFormattingOverrides.js"
-  );
-  t.after(() => reasoningService.destroy());
-
-  try {
-    await runDeadlineScenario(t, () =>
-      reasoningService.processText(
-        "## Meeting Transcript\n" + "Alice: we agreed to ship on Friday.\n".repeat(200),
-        "gpt-5.6-terra",
-        null,
-        {
-          systemPrompt: "Summarize the meeting.",
-          maxTokens: 4096,
-          temperature: 0.3,
-          ...buildNoteFormattingOverrides({ mode: "providers", provider: "openai" }, false),
-        }
-      )
-    );
-  } finally {
-    // Hand real timers back before the harness tears the Vite server down.
-    t.mock.timers.reset();
-  }
-});
-
 // Enterprise requests run in the main process, whose handler applies its own
 // 60-second default unless the renderer sends the deadline along.
 test("enterprise note formatting sends the long deadline to the main process", async (t) => {

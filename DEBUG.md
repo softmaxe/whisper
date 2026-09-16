@@ -1,91 +1,19 @@
-# Debug Mode
+# Debug logging
 
-Enable verbose logging to diagnose issues like "no audio detected" or transcription failures.
+Quit Whisper, then launch the installed app with debug logging:
 
-## Enable Debug Logging
-
-### Option 1: Command Line
-
-```bash
-# macOS
-/Applications/OpenWhispr.app/Contents/MacOS/OpenWhispr --log-level=debug
-
-# Windows
-OpenWhispr.exe --log-level=debug
+```sh
+/Applications/Whisper.app/Contents/MacOS/Whisper --log-level=debug
 ```
 
-### Option 2: Environment File
+For a local build, use `dist/mac-arm64/Whisper.app/Contents/MacOS/Whisper` instead.
 
-Add to your `.env` file and restart:
+To keep debug logging enabled across launches, add `OPENWHISPR_LOG_LEVEL=debug` to `~/Library/Application Support/whisper/.env` and restart the app. The environment variable keeps its upstream name.
 
-```
-OPENWHISPR_LOG_LEVEL=debug
-```
+Logs are written to `~/Library/Application Support/whisper/logs/debug-*.log`. If `OPENWHISPR_USER_DATA_DIR` is set for a test profile, logs are under that directory instead.
 
-**Env file locations:**
+Use the logs to inspect microphone capture, audio conversion, Self-Hosted requests, History storage, and paste failures. See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for checks that apply to this build.
 
-- macOS: `~/Library/Application Support/OpenWhispr/.env`
-- Windows: `%APPDATA%\OpenWhispr\.env`
-- Linux: `~/.config/OpenWhispr/.env`
+Before sharing log excerpts, remove credentials, private server addresses, prompt text, transcripts, recordings, and personal file paths. Include the application version, macOS version, reproduction steps, and the relevant error.
 
-## Log File Locations
-
-- **macOS**: `~/Library/Application Support/OpenWhispr/logs/debug-*.log`
-- **Windows**: `%APPDATA%\OpenWhispr\logs\debug-*.log`
-- **Linux**: `~/.config/OpenWhispr/logs/debug-*.log`
-
-## What Gets Logged
-
-| Stage                 | Details                                                          |
-| --------------------- | ---------------------------------------------------------------- |
-| FFmpeg                | Path resolution, permissions, ASAR unpacking                     |
-| Audio Recording       | Permission requests, chunk sizes, audio levels                   |
-| Audio Processing      | File creation, Whisper command, process output                   |
-| IPC                   | Messages between renderer and main process                       |
-| Agent Mode            | Streaming responses, conversation management, model selection    |
-| Meeting Detection     | Process monitoring, audio activity, calendar event matching      |
-| Meeting Transcription | WebSocket connection, Realtime API session, audio buffering      |
-| Google Calendar       | OAuth flow, token refresh, event sync                            |
-| Media Control         | Pause/resume events, player detection (MediaRemote/GSMTC/MPRIS2) |
-| Audio Storage         | File retention, cleanup cycles, storage usage                    |
-
-## Common Issues
-
-### "No Audio Detected"
-
-Look for:
-
-- `maxLevel < 0.01` → Audio too quiet
-- `Audio appears to be silent` → Microphone issue
-- `FFmpeg not available` → Path resolution failed
-
-### Transcription Fails
-
-Look for:
-
-- `Whisper stderr:` → whisper.cpp/FFmpeg errors
-- `Process closed with code: [non-zero]` → Process failure
-- `Failed to parse Whisper output` → Invalid JSON
-
-### Permission Issues
-
-Look for:
-
-- `Microphone Access Denied`
-- `isExecutable: false` → FFmpeg permission issue
-
-## Sharing Logs
-
-When reporting issues:
-
-1. Enable debug mode and reproduce the issue
-2. Locate the log file
-3. Redact any sensitive information
-4. Include relevant log sections in your issue report
-
-## Disable Debug Mode
-
-Debug mode is off by default. To ensure it's disabled:
-
-- Remove `--log-level=debug` from command
-- Remove `OPENWHISPR_LOG_LEVEL` from `.env`
+To disable debug logging, remove the launch flag and the environment setting, then restart Whisper.

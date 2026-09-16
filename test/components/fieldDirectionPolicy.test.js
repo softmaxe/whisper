@@ -56,55 +56,18 @@ function inventoryByFile(inventory) {
 // multiple fields in the same component and makes any new or reclassified
 // consumer require an explicit policy decision in this test.
 const EXPECTED_SHARED_FIELD_DIRECTIONS = {
-  "src/components/ApiKeysSection.tsx": ["auto"],
-  "src/components/AuthenticationStep.tsx": ["ltr", "auto", "ltr", "ltr", "ltr"],
-  "src/components/CreateTeamDialog.tsx": ["auto"],
-  "src/components/CreateWorkspaceDialog.tsx": ["auto"],
   "src/components/DictionaryView.tsx": ["auto", "auto", "auto"],
-  "src/components/EnterpriseProviderConfig.tsx": ["ltr", "ltr", "ltr", "ltr", "ltr", "ltr"],
-  "src/components/ForgotPasswordView.tsx": ["ltr"],
-  "src/components/InviteTeammateDialog.tsx": ["ltr"],
-  "src/components/LeaderboardSection.tsx": ["ltr"],
   "src/components/OpenAICompatiblePanel.tsx": ["ltr"],
   "src/components/SelfHostedPanel.tsx": ["ltr", "ltr"],
   "src/components/SnippetsView.tsx": ["auto", "auto", "auto", "auto"],
-  "src/components/TranscriptionModelPicker.tsx": ["ltr", "ltr", "ltr"],
-  "src/components/notes/ActionManagerDialog.tsx": ["auto", "auto"],
-  "src/components/notes/DeleteSpaceDialog.tsx": ["auto"],
-  "src/components/onboarding/ProviderSetupStep.tsx": ["ltr", "ltr", "ltr", "ltr", "ltr", "ltr"],
-  "src/components/settings/DictationAgentSettings.tsx": ["auto"],
-  "src/components/settings/EnterpriseCheckoutDialog.tsx": ["inherit"],
-  "src/components/settings/ProfileSection.tsx": ["auto", "ltr", "ltr", "ltr"],
-  "src/components/settings/WorkspaceDeveloperTab.tsx": ["auto"],
-  "src/components/settings/WorkspaceSection.tsx": ["auto"],
   "src/components/ui/ApiKeyInput.tsx": ["ltr"],
-  "src/components/ui/CustomModelInput.tsx": ["ltr"],
   "src/components/ui/PromptStudio.tsx": ["auto", "auto"],
   "src/components/ui/SearchableModelList.tsx": ["ltr"],
 };
 
 const EXPECTED_NATIVE_FIELD_DIRECTIONS = {
-  "src/components/ApiKeysSection.tsx": ["inherit"],
   "src/components/CommandSearch.tsx": ["auto"],
-  "src/components/MemberPickList.tsx": ["auto"],
-  "src/components/ReferralDashboard.tsx": ["ltr"],
   "src/components/chat/ChatInput.tsx": ["auto"],
-  "src/components/notes/ActionManagerDialog.tsx": ["auto"],
-  "src/components/notes/AddNotesToFolderDialog.tsx": ["auto"],
-  "src/components/notes/MeetingTranscriptChat.tsx": ["ltr", "auto"],
-  "src/components/notes/NoteBottomBar.tsx": ["auto"],
-  "src/components/notes/NoteEditor.tsx": ["auto", "auto"],
-  "src/components/notes/NoteParticipants.tsx": ["auto"],
-  "src/components/notes/NotesOnboarding.tsx": ["auto", "auto", "auto"],
-  "src/components/notes/ShareNoteDialog.tsx": ["auto"],
-  "src/components/notes/SpaceNameField.tsx": ["auto"],
-  "src/components/notes/SpacesTree.tsx": ["auto", "auto", "auto", "auto"],
-  "src/components/onboarding/DemoStep.tsx": ["auto"],
-  "src/components/onboarding/LanguageSelectionStep.tsx": ["auto"],
-  "src/components/onboarding/UseCaseStep.tsx": ["auto"],
-  "src/components/settings/ChatAgentSettings.tsx": ["auto"],
-  "src/components/settings/ProfileSection.tsx": ["inherit"],
-  "src/components/ui/EmojiPicker.tsx": ["auto"],
   "src/components/ui/LanguageSelector.tsx": ["auto"],
 };
 
@@ -155,20 +118,8 @@ test("native text fields use the same reviewed direction policy", () => {
 
 test("representative prose, identity, secret, and rich-editor surfaces keep their policy", () => {
   assert.match(
-    source("src/components/AuthenticationStep.tsx"),
-    /<Input\s+dir="ltr"\s+type="password"/
-  );
-  assert.match(
-    source("src/components/onboarding/ProviderSetupStep.tsx"),
-    /<Input\s+dir="ltr"\s+type="password"/
-  );
-  assert.match(
     source("src/components/DictionaryView.tsx"),
     /<Input\s+dir="auto"\s+ref=\{addInputRef\}/
-  );
-  assert.match(
-    source("src/components/notes/ShareNoteDialog.tsx"),
-    /<input\s+dir="auto"[\s\S]*?placeholder=\{t\("noteEditor\.share\.dialog\.searchPlaceholder"\)\}/
   );
   assert.match(
     source("src/components/ui/ApiKeyInput.tsx"),
@@ -180,16 +131,7 @@ test("representative prose, identity, secret, and rich-editor surfaces keep thei
   );
   assert.match(source("src/components/ui/CopyableCommand.tsx"), /<div\s+dir="ltr"/);
   assert.match(source("src/components/ui/HotkeyInput.tsx"), /<div\s+dir="ltr"/);
-  assert.match(
-    source("src/components/onboarding/ShortcutSetupStep.tsx"),
-    /function HotkeyChord[\s\S]*?<div\s+dir="ltr"/
-  );
   assert.match(source("src/components/ErrorBoundary.tsx"), /<pre\s+dir="ltr"/);
-  assert.match(
-    source("src/components/notes/NoteEditor.tsx"),
-    /<div\s+dir="auto"\s+ref=\{titleRef\}/
-  );
-  assert.match(source("src/components/ui/RichTextEditor.tsx"), /dir: "auto"/);
   assert.match(
     source("src/index.css"),
     /\.rich-text-editor-content \{[\s\S]*?unicode-bidi: plaintext;/

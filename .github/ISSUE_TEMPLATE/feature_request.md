@@ -1,19 +1,21 @@
 ---
 name: Feature request
-about: Suggest an idea for this project
+about: Propose a change to the macOS Self-Hosted build
 title: ""
 labels: ""
 assignees: ""
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+Read the supported scope in [README.md](https://github.com/softmaxe/whisper#scope) first.
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+## Problem
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+Describe the workflow or limitation that prompted this request.
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+## Proposed change
+
+Describe the behavior you want and how it fits this build's scope.
+
+## Alternatives
+
+Describe any existing option or workaround you have tried.
