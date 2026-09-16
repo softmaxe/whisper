@@ -664,10 +664,7 @@
     },
     "speechToText": {
       "title": "语音转文字",
-      "tabs": {
-        "dictation": "听写",
-        "upload": "上传音频"
-      }
+      "sharedDescription": "听写与文件转录共用此配置。"
     },
     "llms": {
       "title": "文本整理"
@@ -885,7 +882,13 @@
       "urlFileTooLarge": "文件过大，无法下载。最大大小为 500 MB。",
       "urlYoutubeBlocked": "YouTube 暂时阻止了来自您网络的下载。请稍后重试。",
       "customEndpointInvalid": "自定义转写端点未配置或无效。请在设置中更新。",
-      "streamingOnlyProvider": "该服务商仅支持实时转录。请为文件上传和重试选择其他服务商。"
+      "streamingOnlyProvider": "该服务商仅支持实时转录。请为文件上传和重试选择其他服务商。",
+      "transcribing": "正在转录",
+      "completionHint": "完成后可查看并复制全文",
+      "savedToHistory": "已保存到历史记录",
+      "transcriptLabel": "转录全文",
+      "copyFullText": "复制全文",
+      "viewInHistory": "在历史记录中查看"
     },
     "actions": {
       "builtin": {

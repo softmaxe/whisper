@@ -664,10 +664,7 @@
     },
     "speechToText": {
       "title": "Speech-to-Text",
-      "tabs": {
-        "dictation": "Dictation",
-        "upload": "Audio Upload"
-      }
+      "sharedDescription": "Dictation and file transcription share these settings."
     },
     "llms": {
       "title": "Text cleanup"
@@ -919,7 +916,13 @@
       "urlFileTooLarge": "File is too large to download. The maximum size is 500 MB.",
       "urlYoutubeBlocked": "YouTube is temporarily blocking downloads from your network. Try again in a little while.",
       "customEndpointInvalid": "Custom transcription endpoint is not configured or invalid. Update it in Settings.",
-      "streamingOnlyProvider": "This provider only supports live transcription. Choose another provider for file uploads and retries."
+      "streamingOnlyProvider": "This provider only supports live transcription. Choose another provider for file uploads and retries.",
+      "transcribing": "Transcribing",
+      "completionHint": "When it finishes, you can read and copy the full transcript.",
+      "savedToHistory": "Saved to history",
+      "transcriptLabel": "Transcript",
+      "copyFullText": "Copy full text",
+      "viewInHistory": "View in history"
     },
     "empty": {
       "title": "No notes here yet",
