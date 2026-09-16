@@ -25,7 +25,7 @@ Requires an Apple Silicon Mac running macOS 12 Monterey or later.
 brew install --cask softmaxe/tap/whisper
 ```
 
-Or download the ARM64 ZIP from [GitHub Releases](https://github.com/softmaxe/whisper/releases/latest) and move `Whisper.app` to Applications. Releases include SHA-256 checksums. The app uses ad-hoc signing and is not notarized.
+Or download the ARM64 ZIP from [GitHub Releases](https://github.com/softmaxe/whisper/releases/latest) and move `Whisper.app` to Applications. Releases include SHA-256 checksums. Release builds use a persistent self-signed certificate and are not notarized.
 
 To update:
 
@@ -33,6 +33,8 @@ To update:
 brew update
 brew upgrade --cask softmaxe/tap/whisper
 ```
+
+The first upgrade from an older ad-hoc signed build may require microphone, Accessibility, and Keychain access again. Later releases keep the same signing identity so macOS can recognize the app across updates. This does not remove Gatekeeper's warning about an unidentified developer. See [macOS signing](docs/macos-signing.md).
 
 ## Configuration
 
@@ -51,7 +53,7 @@ npm ci
 npm run dev
 ```
 
-Run `npm run pack` to build `dist/mac-arm64/Whisper.app`.
+Run `npm run pack` to build an ad-hoc signed development app at `dist/mac-arm64/Whisper.app`. Use `npm run pack:release` for a release build with the persistent signing identity. Release signing requires the saved signing credentials and refuses to fall back to ad-hoc signing. See [macOS signing](docs/macos-signing.md) for setup and backup instructions.
 
 Run the checks after installing dependencies:
 
@@ -61,7 +63,7 @@ npm run quality-check
 
 This runs lint, TypeScript, translation checks, and the [Whisper regression suite](test/README.md). Run `npm test` for the tests alone. Tests use Electron's Node runtime to match the SQLite binding installed by `npm ci`; a missing binding fails the suite instead of skipping database tests.
 
-The `Build` workflow runs these checks and verifies the macOS ARM64 package. The `Release` workflow publishes that package to this repository and updates `softmaxe/homebrew-tap`.
+The `Build` workflow runs these checks and verifies the macOS ARM64 package. Pull requests use ad-hoc signing without release credentials. The `Release` workflow requires the persistent signing identity, verifies it against the pinned public certificate, publishes the package to this repository, and updates `softmaxe/homebrew-tap`.
 
 ## License
 

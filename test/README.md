@@ -12,6 +12,8 @@ npm run quality-check
 
 Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite inside Electron's Node runtime, matching the SQLite binding built by `npm ci`. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the Build workflow.
 
+On macOS, run `npm run test:signing` with the original [release signing credentials](../docs/macos-signing.md#build-locally) to check identity continuity. The test signs two app versions and native helpers with different code, compares their designated requirements, and verifies that each version satisfies the other's requirement. It also rejects a helper matching the main app's identity. Release runs this test automatically before packaging. It does not install the app or request permissions and cannot replace the upgrade smoke check below.
+
 ## Coverage
 
 | Product behavior            | Regression coverage                                                                                                                                     |
@@ -25,7 +27,7 @@ Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite in
 
 OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistant, bundled model servers, Linux, and Windows are outside this suite. Shared test doubles may still name upstream interfaces imported by the retained implementation; those names do not add product requirements.
 
-The Build workflow also packages the macOS ARM64 app and checks its bundle name, version, architecture, signature, archive, and checksum. Release reuses that build before publishing to GitHub and updating the Homebrew tap.
+The Build workflow also packages the macOS ARM64 app and checks its bundle name, version, architecture, signature, archive, and checksum. Release builds additionally require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Pull request builds use ad-hoc signing without release credentials. Release reuses the verified build before publishing to GitHub and updating the Homebrew tap.
 
 ## Release smoke check
 
@@ -36,3 +38,13 @@ Automated checks do not establish microphone, Accessibility, or server compatibi
 - Retry a History item, then check copy, delete, and retention settings.
 - Upload a file and a batch with History both enabled and disabled. Check raw results remain copyable and do not increase dictation Insights.
 - Verify dictionary and snippet behavior, the menu bar toggle, and installation through the Homebrew cask.
+
+For changes to macOS signing, also test an upgrade between two release builds signed with the same saved certificate:
+
+1. Build version A with `npm run pack:release`. Record its designated requirement with `codesign -d -r- /path/to/version-a/Whisper.app` and verify its signature with `codesign --verify --deep --strict /path/to/version-a/Whisper.app`.
+2. Install version A at `/Applications/Whisper.app`. Grant microphone and Accessibility access, save a test server credential, and permit Keychain access when prompted. Dictate and verify automatic paste.
+3. Build version B with a higher app version using the same certificate and private key. Repeat the signature checks and compare its designated requirement with version A. The requirement must remain the same even though the version and code hash differ. Check the helper app requirements as well.
+4. Quit version A and upgrade to version B through the Homebrew cask, preserving the installation path. Launch it, dictate, verify automatic paste, and access the saved credential. Record whether microphone, Accessibility, or Keychain authorization appears again and the macOS version used.
+5. Separately check the transition from an old ad-hoc release to the first release with the persistent certificate. One more authorization may be needed during that transition. It does not establish permission retention between two releases with the persistent identity.
+
+Do not reset TCC permissions, change system trust, or delete Keychain items during the upgrade test. Those actions would invalidate the test. Automated signature checks alone do not prove permission retention, and a source change does not update an already installed app. See [macOS signing](../docs/macos-signing.md) for identity setup.

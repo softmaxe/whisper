@@ -26,6 +26,9 @@ pids/
 .macos-*.hash
 
 # Local configuration and temporary files
+*.p12
+*.pfx
+*.key
 .env
 .env.*
 !.env.example

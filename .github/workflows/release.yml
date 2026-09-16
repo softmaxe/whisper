@@ -17,12 +17,18 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Require Homebrew tap token
+      - name: Require publishing and signing credentials
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
+          WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
         run: |
           if [[ -z "${TAP_GITHUB_TOKEN:-}" ]]; then
             echo "::error::TAP_GITHUB_TOKEN is required to update softmaxe/homebrew-tap."
+            exit 1
+          fi
+          if [[ -z "$WHISPER_SIGNING_CERTIFICATE" || -z "$WHISPER_SIGNING_PASSWORD" ]]; then
+            echo "::error::WHISPER_SIGNING_CERTIFICATE and WHISPER_SIGNING_PASSWORD are required."
             exit 1
           fi
 
@@ -32,6 +38,9 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       release-tag: ${{ github.ref_name }}
+    secrets:
+      WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
+      WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
 
   release:
     name: Publish GitHub Release
