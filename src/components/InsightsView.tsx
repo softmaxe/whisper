@@ -8,7 +8,6 @@ import { effectiveLocalHistoryEnabled } from "../stores/policyRules";
 import { usePolicyStore } from "../stores/policyStore";
 import type { AnalyticsDailyBucket, AnalyticsSummary } from "../types/electron";
 import { cn } from "./lib/utils";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Tooltip } from "./ui/tooltip";
 
 type ActivityDay = { date: string; words: number };
@@ -31,7 +30,7 @@ function Heatmap({ daily }: { daily: AnalyticsDailyBucket[] }) {
   const calendar = useMemo(() => {
     const days: ActivityDay[] = buildAnalyticsActivityDays(daily);
     const cells: Array<ActivityDay | null> = [
-      ...Array(dateFromLocalKey(days[0].date).getDay()).fill(null),
+      ...Array((dateFromLocalKey(days[0].date).getDay() + 6) % 7).fill(null),
       ...days,
     ];
     while (cells.length % 7 !== 0) cells.push(null);
@@ -64,7 +63,7 @@ function Heatmap({ daily }: { daily: AnalyticsDailyBucket[] }) {
     () =>
       Array.from({ length: 7 }, (_, index) =>
         new Intl.DateTimeFormat(i18n.language, { weekday: "short" }).format(
-          new Date(2024, 0, 7 + index, 12)
+          new Date(2024, 0, 8 + index, 12)
         )
       ),
     [i18n.language]
@@ -335,29 +334,29 @@ export default function InsightsView() {
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-6 py-6">
-      <Tabs value="usage" className="flex flex-1 flex-col">
-        <div className="flex min-h-8 items-center justify-between gap-4">
-          <TabsList className="h-7 p-0.5 rounded-[7px]">
-            <TabsTrigger value="usage" className="h-6 px-2.5 text-xs rounded-[5px]">
+      <div className="flex flex-1 flex-col">
+        <div className="flex min-h-8 cursor-default items-center justify-between gap-4">
+          <div className="inline-flex h-7 items-center justify-center rounded-[7px] bg-muted p-0.5 text-muted-foreground dark:bg-surface-raised">
+            <span className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-[5px] bg-card px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm">
               {t("insights.yourUsage")}
-            </TabsTrigger>
-          </TabsList>
+            </span>
+          </div>
 
           <div className="flex shrink-0 items-center gap-3">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-              <Cloud size={13} />
+              <Cloud size={13} className="pointer-events-none" />
               {t("insights.onDevice")}
             </div>
           </div>
         </div>
 
-        <TabsContent value="usage" className="mt-6 flex flex-1 flex-col">
+        <div className="mt-6 flex flex-1 flex-col">
           <YourUsage dataRetentionEnabled={dataRetentionEnabled} />
           <p className="mt-auto pt-8 text-center text-[11px] text-muted-foreground/70">
             {t("insights.onDevicePrivacy")}
           </p>
-        </TabsContent>
-      </Tabs>
+        </div>
+      </div>
     </div>
   );
 }
