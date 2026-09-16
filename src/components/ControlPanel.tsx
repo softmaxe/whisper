@@ -38,9 +38,6 @@ const platform = getCachedPlatform();
 
 const SIDEBAR_WIDTH_PX = 192;
 
-// Bump to force a one-time full semantic reindex on next launch (see the
-// reindex effect for the per-version history).
-
 const SettingsModal = React.lazy(() => import("./SettingsModal"));
 const InsightsView = React.lazy(() => import("./InsightsView"));
 const UploadAudioView = React.lazy(() => import("./notes/UploadAudioView"));

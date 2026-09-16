@@ -38,7 +38,7 @@ function arraysEqual(a, b) {
 }
 
 const PLURAL_SUFFIX = /^(.*)_(zero|one|two|few|many|other)$/;
-// Counts a leaderboard, a member list or a streak can realistically carry.
+// Counts used by retention settings, dictionary imports, and activity streaks.
 // Spanish, French, Italian and Portuguese reserve "many" for millions, and no
 // key here ever renders one, so requiring that form would fail every locale
 // file over a case no user reaches.

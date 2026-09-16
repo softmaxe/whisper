@@ -169,7 +169,6 @@ const dockManager = require("./src/helpers/dockManager");
 const autoStart = require("./src/helpers/autoStart");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
 
-const UpdateManager = require("./src/updater");
 const GlobeKeyManager = require("./src/helpers/globeKeyManager");
 
 const WindowsKeyManager = require("./src/helpers/windowsKeyManager");
@@ -196,7 +195,6 @@ let whisperManager = null;
 let parakeetManager = null;
 let diarizationManager = null;
 let trayManager = null;
-let updateManager = null;
 let globeKeyManager = null;
 let windowsKeyManager = null;
 let linuxKeyManager = null;
@@ -328,8 +326,6 @@ function initializeCoreManagers() {
     whisperManager.setGpuBinaryManagers({ cuda: whisperCudaManager, vulkan: whisperVulkanManager });
   }
   parakeetManager = new ParakeetManager();
-  updateManager = new UpdateManager();
-  updateManager.setWindowManager(windowManager);
   windowsKeyManager = new WindowsKeyManager();
   linuxKeyManager = new LinuxKeyManager();
   textEditMonitor = new TextEditMonitor();
@@ -349,7 +345,6 @@ function initializeCoreManagers() {
     parakeetManager,
     diarizationManager,
     windowManager,
-    updateManager,
     windowsKeyManager,
     linuxKeyManager,
     textEditMonitor,
@@ -1149,13 +1144,6 @@ if (gotSingleInstanceLock) {
   app.on("before-quit", (event) => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    if (updateManager && updateManager.isQuittingForUpdate) {
-      // Quit must proceed for the installer to run, so no preventDefault;
-      // sidecar shutdown is best-effort (the reaper cleans up orphans on relaunch).
-      performSyncTeardown();
-      sidecarRegistry.shutdownAll().catch(() => {});
-      return;
-    }
     event.preventDefault();
     performSyncTeardown();
     sidecarRegistry.shutdownAll().finally(() => app.exit(0));
@@ -1194,5 +1182,4 @@ function performSyncTeardown() {
   if (meetingAecManager) meetingAecManager.stop().catch(() => {});
   if (ipcHandlers) ipcHandlers._cleanupTextEditMonitor();
   if (textEditMonitor) textEditMonitor.stopMonitoring();
-  if (updateManager) updateManager.cleanup();
 }

@@ -202,12 +202,9 @@ class TrayManager {
         );
       }
     } else {
-      const fileName = platform === "win32" ? "icon.ico" : "icon.png";
+      const fileName = "icon.png";
       if (isDevelopment) {
-        candidatePaths.push(
-          path.join(__dirname, "..", "assets", fileName),
-          path.join(__dirname, "..", "assets", "icon.png")
-        );
+        candidatePaths.push(path.join(__dirname, "..", "assets", fileName));
       } else {
         candidatePaths.push(
           path.join(process.resourcesPath, "src", "assets", fileName),

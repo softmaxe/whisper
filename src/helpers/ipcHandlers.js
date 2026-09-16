@@ -514,7 +514,6 @@ class IPCHandlers {
     this.parakeetManager = managers.parakeetManager;
     this.diarizationManager = managers.diarizationManager;
     this.windowManager = managers.windowManager;
-    this.updateManager = managers.updateManager;
     this.windowsKeyManager = managers.windowsKeyManager;
     this.linuxKeyManager = managers.linuxKeyManager;
     this.textEditMonitor = managers.textEditMonitor;
@@ -2043,15 +2042,6 @@ class IPCHandlers {
     // instance would have no renderer: just quit there.
     ipcMain.handle("relaunch-app", async () => {
       if (process.env.NODE_ENV === "development") return app.quit();
-      // Once Squirrel.Mac holds a downloaded update it installs it on this quit regardless
-      // of any flag, so the updater owns that restart instead of racing app.relaunch().
-      if (this.updateManager.hasStagedUpdate()) {
-        const { success } = await this.updateManager
-          .installUpdate()
-          .catch(() => ({ success: false }));
-        if (success) return;
-      }
-      this.updateManager.deferInstallOnQuit();
       const { launcherPath, args } = getRelaunchOptions({
         argv: process.argv,
         protocol: this.oauthProtocol,
@@ -3088,7 +3078,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle("get-app-version", async () => {
-      return this.updateManager.getAppVersion();
+      return { version: app.getVersion() };
     });
 
     ipcMain.handle("get-post-migration-state", () => ({

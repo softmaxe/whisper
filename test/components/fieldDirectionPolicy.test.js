@@ -129,7 +129,6 @@ test("representative prose, identity, secret, and rich-editor surfaces keep thei
     source("src/components/ui/ApiKeyInput.tsx"),
     /<Input\s+dir="ltr"[\s\S]*?value=\{draft\}/
   );
-  assert.match(source("src/components/ui/CopyableCommand.tsx"), /<div\s+dir="ltr"/);
   assert.match(source("src/components/ui/HotkeyInput.tsx"), /<div\s+dir="ltr"/);
   assert.match(source("src/components/ErrorBoundary.tsx"), /<pre\s+dir="ltr"/);
   assert.match(

@@ -2,6 +2,7 @@ import { resolvePrompt } from "./prompts/index";
 
 export {
   resolvePrompt,
+  resolvePromptTemplate,
   getDefaultPromptText,
   appendDictionarySuffix,
   appendScreenContextSuffix,

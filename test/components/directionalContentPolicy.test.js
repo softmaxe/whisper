@@ -31,7 +31,6 @@ test("dynamic prose and identity values keep their own direction", () => {
 test("technical output values remain LTR inside an Arabic document", () => {
   const expectations = [
     ["src/components/ui/TechnicalErrorDetails.tsx", /<pre\s+dir="ltr"[\s\S]*?\{text\}/],
-    ["src/components/ui/NixOsPasteInfo.tsx", /<div\s+dir="ltr"[\s\S]*?<pre/],
     [
       "src/components/dictation/AssistantPanel.tsx",
       /<kbd\s+dir="ltr"[\s\S]*?\{readableVoiceHotkey\}/,
@@ -55,10 +54,6 @@ test("technical output values remain LTR inside an Arabic document", () => {
 
 test("localized sentences isolate technical interpolations without changing word order", () => {
   const expectations = [
-    [
-      "src/components/SettingsPage.tsx",
-      /<BidiInterpolatedText[\s\S]*?hyprlandConfigWriteWarningDescription[\s\S]*?value=\{hyprlandConfigStatus\.path\}/,
-    ],
     [
       "src/components/SettingsPage.tsx",
       /<BidiInterpolatedText[\s\S]*?resetToDefault[\s\S]*?value=\{formatHotkeyLabel\(effectiveDefaultHotkey\)\}/,

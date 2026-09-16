@@ -25,7 +25,6 @@
     "src/types/**/*",
     "src/utils.js",
     "src/utils/**/*",
-    "src/updater.js",
     "src/components.json",
     "!node_modules/.cache/**/*",
     "!src/node_modules/**/*",
@@ -86,7 +85,7 @@
     {
       "from": "src/assets",
       "to": "src/assets",
-      "filter": ["**/*", "!fonts/yowza/**"]
+      "filter": ["**/*", "!**/*.md", "!openwhispr.icon/**"]
     },
     {
       "from": "resources/bin/",

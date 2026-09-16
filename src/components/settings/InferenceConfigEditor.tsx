@@ -14,15 +14,11 @@ import {
   useSettingsStore,
   type ResolvedLLMConfig,
 } from "../../stores/settingsStore";
-import type { InferenceMode } from "../../types/electron";
 import OpenAICompatiblePanel from "../OpenAICompatiblePanel";
 import { Toggle } from "../ui/toggle";
 
 interface InferenceConfigEditorProps {
   scope: InferenceScope;
-  onModeChange?: (mode: InferenceMode) => void;
-  /** Restrict the selectable modes (e.g. vision override offers cloud/BYOK only). */
-  allowedModes?: InferenceMode[];
 }
 
 export default function InferenceConfigEditor({ scope }: InferenceConfigEditorProps) {

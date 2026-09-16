@@ -1,7 +1,7 @@
 {
   "name": "whisper",
   "version": "1.0.0",
-  "description": "Self-hosted desktop dictation based on OpenWhispr",
+  "description": "macOS dictation with self-hosted speech recognition and text cleanup",
   "main": "main.js",
   "private": true,
   "engines": {
@@ -48,13 +48,12 @@
     "dictation",
     "speech-to-text",
     "whisper",
-    "whisper.cpp",
     "electron",
     "desktop-app"
   ],
   "author": {
-    "name": "OpenWhispr Team",
-    "email": "support@openwhispr.com"
+    "name": "softmaxe",
+    "url": "https://github.com/softmaxe"
   },
   "license": "MIT",
   "devDependencies": {
@@ -105,7 +104,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.1",
-    "electron-updater": "^6.6.2",
     "ffmpeg-static": "^5.2.0",
     "i18next": "^26.3.6",
     "onnxruntime-node": "^1.21.0",

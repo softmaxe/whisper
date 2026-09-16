@@ -17,7 +17,7 @@ export interface ResolvePromptOptions {
 export function resolvePrompt(kind: PromptKind, opts: ResolvePromptOptions): string {
   const custom = useSettingsStore.getState().customPrompts[kind];
   const template = custom || getDefaultPromptText(kind, opts.uiLanguage);
-  return applySubstitutions(template, opts);
+  return resolvePromptTemplate(template, opts);
 }
 
 export function getDefaultPromptText(kind: PromptKind, uiLanguage?: string): string {
@@ -58,7 +58,7 @@ export function appendDictionarySuffix(
   return prompt + suffix + customDictionary.join(", ");
 }
 
-function applySubstitutions(template: string, opts: ResolvePromptOptions): string {
+export function resolvePromptTemplate(template: string, opts: ResolvePromptOptions): string {
   const name = opts.agentName?.trim() || "Assistant";
   let prompt = template.replace(/\{\{agentName\}\}/g, name);
 

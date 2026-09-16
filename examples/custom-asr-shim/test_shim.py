@@ -5,10 +5,8 @@ Stdlib only (unittest), no network, no ffmpeg: the HTTP tests monkeypatch
 `convert_audio` and `transcribe` so they exercise the request handling,
 multipart parsing, and response shape in isolation.
 
-Run from anywhere:
-    python3 examples/custom-asr-shim/test_shim.py
-or:
-    cd examples/custom-asr-shim && python3 -m unittest
+Run from the repository root:
+    uv run python examples/custom-asr-shim/test_shim.py
 """
 
 from __future__ import annotations

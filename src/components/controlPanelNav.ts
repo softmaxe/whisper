@@ -2,8 +2,7 @@ import type React from "react";
 import { useTranslation } from "react-i18next";
 import { BarChart3, BookOpen, Home, Upload } from "./icons";
 
-export type ControlPanelView =
-  "home" | "insights" | "chat" | "personal-notes" | "dictionary" | "upload" | "integrations";
+export type ControlPanelView = "home" | "insights" | "dictionary" | "upload";
 
 export interface ControlPanelNavItem {
   id: ControlPanelView;

@@ -225,35 +225,6 @@ test("detects and strips the Arabic vocative only for Arabic dictation", async (
   assert.equal(detectAgentName(addressed, "Max", "en"), false);
 });
 
-test("every locale's advertised wake phrase triggers detection in its language", async () => {
-  const { detectAgentName } = await load();
-  const fs = require("node:fs");
-  const path = require("node:path");
-
-  const localesDir = path.join(__dirname, "..", "..", "src", "locales");
-  const locales = fs
-    .readdirSync(localesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name);
-  assert.ok(locales.includes("ar"), "Arabic locale should be covered by the behavior loop");
-
-  for (const locale of locales) {
-    const translation = JSON.parse(
-      fs.readFileSync(path.join(localesDir, locale, "translation.json"), "utf8")
-    );
-    const advertised = translation.settingsPage.agentConfig.howItWorksDescription;
-    // The advertised wake word is the last letter run before {{agentName}}.
-    const match = advertised.match(/(\p{L}+)[^\p{L}]*\{\{agentName\}\}/u);
-    assert.ok(match, `${locale}: no wake phrase before {{agentName}}`);
-    const cue = match[1];
-    assert.equal(
-      detectAgentName(`one two ${cue} Jarvis three four`, "Jarvis", locale),
-      true,
-      `${locale}: advertised cue "${cue}" does not trigger`
-    );
-  }
-});
-
 // A snippet trigger is a phrase the snippet feature owns. When it happens to
 // start with the agent name ("openwhispr review"), the wake-word scan used to
 // read it as an address and hijack an ordinary dictation into the agent.

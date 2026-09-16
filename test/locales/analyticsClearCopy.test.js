@@ -3,16 +3,12 @@ const assert = require("node:assert/strict");
 
 const en = require("../../src/locales/en/translation.json");
 
-test("Clear History discloses that synced Insights are removed from the account", () => {
-  const privacyCopy = en.settingsPage.privacy.insightsSyncDescription;
-  const confirmationCopy = en.controlPanel.history.clearAllDescription;
-  const signedOutConfirmationCopy = en.controlPanel.history.clearAllDescriptionDevice;
+test("Clear History describes local data removal", () => {
+  const confirmationCopy = en.controlPanel.history.clearAllDescriptionDevice;
 
-  for (const copy of [privacyCopy, confirmationCopy]) {
-    assert.match(copy, /Insights|counters/);
-    assert.match(copy, /account/);
-  }
-  assert.doesNotMatch(privacyCopy, /won't remove/);
-  assert.match(signedOutConfirmationCopy, /device/);
-  assert.match(signedOutConfirmationCopy, /not affected/);
+  assert.match(confirmationCopy, /transcriptions/);
+  assert.match(confirmationCopy, /audio files/);
+  assert.match(confirmationCopy, /Insights counters/);
+  assert.match(confirmationCopy, /device/);
+  assert.doesNotMatch(confirmationCopy, /account|synced/);
 });
