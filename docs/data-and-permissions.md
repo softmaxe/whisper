@@ -1,10 +1,10 @@
-# Security
+# Data and permissions
 
 ## Data and network access
 
 ASR sends audio to the configured Self-Hosted server. Clean Up sends transcription text and the configured prompt. Processing stays on the device only when those servers run locally.
 
-HTTP URLs are supported and do not provide TLS encryption. See [Network access](docs/network-allowlist.md).
+HTTP URLs are supported and do not provide TLS encryption. See [Network access](network-allowlist.md).
 
 History, Dictionary, Snippets, and settings are stored in `~/Library/Application Support/whisper/`. Dictation audio follows the retention setting; Upload does not retain source audio.
 
@@ -13,7 +13,3 @@ Saved secrets are encrypted under `secure-keys/`, using the `whisper` Keychain n
 ## Application boundary
 
 The renderer uses context isolation with Node integration disabled. Native helpers handle shortcuts, correction monitoring, and paste. Releases use ad-hoc signing and are not notarized. Install updates through Homebrew or GitHub Releases.
-
-## Reporting
-
-Report vulnerabilities privately to the repository owner through the options on the [Security page](https://github.com/softmaxe/whisper/security). Keep credentials, recordings, and exploit details out of public issues.

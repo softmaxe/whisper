@@ -38,7 +38,7 @@ brew upgrade --cask softmaxe/tap/whisper
 
 Set the ASR URL and model in Settings > Speech-to-Text. Configure text cleanup in Settings > Language Models. Both support localhost, LAN, and remote servers. For ASR servers that need an adapter, see the [custom ASR shim](examples/custom-asr-shim/).
 
-Grant microphone access for recording and Accessibility access for automatic paste. App data is stored in `~/Library/Application Support/whisper/`, separately from OpenWhispr.
+Grant microphone access for recording and Accessibility access for automatic paste. App data is stored in `~/Library/Application Support/whisper/`, separately from OpenWhispr. See [Data and permissions](docs/data-and-permissions.md) for details.
 
 ## Development
 
