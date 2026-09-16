@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Brain, Keyboard, Mic, Shield, Sliders } from "./icons";
-import SettingsPage, { type SettingsSectionType, type SpeechTab } from "./SettingsPage";
+import SettingsPage, { type SettingsSectionType } from "./SettingsPage";
 import SidebarModal, { type SidebarItem } from "./ui/SidebarModal";
 
 export type { SettingsSectionType };
@@ -10,11 +10,6 @@ export type { SettingsSectionType };
 const SECTION_ALIASES: Record<string, SettingsSectionType> = {
   transcription: "speechToText",
   uploadTranscription: "speechToText",
-};
-
-const SECTION_SUB_TAB: Record<string, SpeechTab> = {
-  transcription: "dictation",
-  uploadTranscription: "upload",
 };
 
 interface SettingsModalProps {
@@ -75,23 +70,17 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
   const [activeSection, setActiveSection] = React.useState<SettingsSectionType>(() =>
     resolveSection(initialSection)
   );
-  const [initialSubTab, setInitialSubTab] = useState<SpeechTab | undefined>(() =>
-    initialSection ? SECTION_SUB_TAB[initialSection] : undefined
-  );
   const [prevOpen, setPrevOpen] = useState(open);
 
   if (open && !prevOpen && initialSection) {
     setPrevOpen(open);
     setActiveSection(resolveSection(initialSection));
-    setInitialSubTab(SECTION_SUB_TAB[initialSection]);
   } else if (open !== prevOpen) {
     setPrevOpen(open);
-    if (!open) setInitialSubTab(undefined);
   }
 
   const handleSectionChange = (section: SettingsSectionType) => {
     setActiveSection(section);
-    setInitialSubTab(undefined);
   };
 
   return (
@@ -103,7 +92,7 @@ export default function SettingsModal({ open, onOpenChange, initialSection }: Se
       activeSection={activeSection}
       onSectionChange={handleSectionChange}
     >
-      <SettingsPage activeSection={activeSection} initialSubTab={initialSubTab} />
+      <SettingsPage activeSection={activeSection} />
     </SidebarModal>
   );
 }

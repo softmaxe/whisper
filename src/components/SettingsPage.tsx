@@ -5,7 +5,7 @@ import { useDialogs } from "../hooks/useDialogs";
 import { usePermissions } from "../hooks/usePermissions";
 import { useSettings } from "../hooks/useSettings";
 import SelfHostedPanel from "./SelfHostedPanel";
-import { AlertTriangle, Mic, Monitor, Moon, Shield, Sun, Upload } from "./icons";
+import { AlertTriangle, Mic, Monitor, Moon, Shield, Sun } from "./icons";
 import { BIDI_VALUE_TOKEN, BidiInterpolatedText } from "./ui/BidiInterpolatedText";
 import MicPermissionWarning from "./ui/MicPermissionWarning";
 import MicrophoneSettings from "./ui/MicrophoneSettings";
@@ -16,7 +16,6 @@ import { AlertDialog, ConfirmDialog } from "./ui/dialog";
 
 import { useHotkeyModeInfo } from "../hooks/useHotkeyModeInfo";
 import { useHotkeyRegistration } from "../hooks/useHotkeyRegistration";
-import { useLocalStorage } from "../hooks/useLocalStorage";
 import { usePolicySnapshot } from "../hooks/usePolicy";
 import { useTheme } from "../hooks/useTheme";
 import {
@@ -32,12 +31,10 @@ import { formatHotkeyLabel } from "../utils/hotkeys";
 import logger from "../utils/logger";
 import { getCachedPlatform } from "../utils/platform";
 import InferenceConfigEditor from "./settings/InferenceConfigEditor";
-import { UploadTranscriptionPanel } from "./settings/UploadSettings";
 import { ActivationModeSelector } from "./ui/ActivationModeSelector";
 import { HotkeyListInput } from "./ui/HotkeyListInput";
 import LanguageSelector from "./ui/LanguageSelector";
 import PromptStudio from "./ui/PromptStudio";
-import { ProviderTabs } from "./ui/ProviderTabs";
 import { SettingsRow } from "./ui/SettingsSection";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Toggle } from "./ui/toggle";
@@ -48,7 +45,6 @@ export type SettingsSectionType = "general" | "hotkeys" | "speechToText" | "llms
 
 interface SettingsPageProps {
   activeSection?: SettingsSectionType;
-  initialSubTab?: SpeechTab;
 }
 
 const UI_LANGUAGE_OPTIONS: import("./ui/LanguageSelector").LanguageOption[] = [
@@ -128,64 +124,11 @@ function AiModelsSection({ useCleanupModel, setUseCleanupModel }: AiModelsSectio
   );
 }
 
-export type SpeechTab = "dictation" | "upload";
-
-const SPEECH_TABS: SpeechTab[] = ["dictation", "upload"];
-
-function useSubTab<T extends string>(storageKey: string, options: readonly T[], initial?: T) {
-  const [tab, setTab] = useLocalStorage<T>(storageKey, initial ?? options[0]);
-  useEffect(() => {
-    if (initial && initial !== tab) setTab(initial);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initial]);
-  const safeTab = options.includes(tab) ? tab : options[0];
-  return [safeTab, setTab] as const;
-}
-
 function TabPanel({ active, children }: { active: boolean; children: React.ReactNode }) {
   return <div className={active ? undefined : "hidden"}>{children}</div>;
 }
 
-function SpeechToTextTabs({
-  initialTab,
-  renderDictation,
-}: {
-  initialTab?: SpeechTab;
-  renderDictation: () => React.ReactNode;
-}) {
-  const { t } = useTranslation();
-  const [tab, setTab] = useSubTab<SpeechTab>("settings.speechToTextTab", SPEECH_TABS, initialTab);
-
-  const subTabs = [
-    { id: "dictation", name: t("settingsPage.speechToText.tabs.dictation") },
-    { id: "upload", name: t("settingsPage.speechToText.tabs.upload") },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <SectionHeader title={t("settingsPage.speechToText.title")} />
-      <ProviderTabs
-        providers={subTabs}
-        selectedId={tab}
-        onSelect={(id) => setTab(id as SpeechTab)}
-        renderIcon={(id) =>
-          id === "dictation" ? <Mic className="w-3.5 h-3.5" /> : <Upload className="w-3.5 h-3.5" />
-        }
-      />
-      <TabPanel active={tab === "dictation"}>{renderDictation()}</TabPanel>
-      <TabPanel active={tab === "upload"}>
-        <div className="space-y-6">
-          <UploadTranscriptionPanel />
-        </div>
-      </TabPanel>
-    </div>
-  );
-}
-
-export default function SettingsPage({
-  activeSection = "general",
-  initialSubTab,
-}: SettingsPageProps) {
+export default function SettingsPage({ activeSection = "general" }: SettingsPageProps) {
   const {
     confirmDialog,
     alertDialog,
@@ -1002,17 +945,16 @@ export default function SettingsPage({
       {/* Keep connection checks and form state when switching sections. */}
       {hasMountedSpeechToText && (
         <TabPanel active={activeSection === "speechToText"}>
-          <SpeechToTextTabs
-            initialTab={activeSection === "speechToText" ? initialSubTab : undefined}
-            renderDictation={() => (
-              <SelfHostedPanel
-                service="transcription"
-                url={remoteTranscriptionUrl}
-                onUrlChange={setRemoteTranscriptionUrl}
-                model={remoteTranscriptionModel}
-                onModelChange={setRemoteTranscriptionModel}
-              />
-            )}
+          <SectionHeader
+            title={t("settingsPage.speechToText.title")}
+            description={t("settingsPage.speechToText.sharedDescription")}
+          />
+          <SelfHostedPanel
+            service="transcription"
+            url={remoteTranscriptionUrl}
+            onUrlChange={setRemoteTranscriptionUrl}
+            model={remoteTranscriptionModel}
+            onModelChange={setRemoteTranscriptionModel}
           />
         </TabPanel>
       )}

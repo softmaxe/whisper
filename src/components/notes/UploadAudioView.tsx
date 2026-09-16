@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Upload, FileAudio, X, AlertCircle, Settings } from "../icons";
+import { Upload, FileAudio, X, AlertCircle, Settings, Loader2 } from "../icons";
 import { Button } from "../ui/button";
 import { cn } from "../lib/utils";
 import { transcriptionErrorKey } from "./shared";
@@ -49,8 +49,6 @@ export default function UploadAudioView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const runIdRef = useRef(0);
   const activeRequestIdRef = useRef<string | null>(null);
   const [skippedNotice, setSkippedNotice] = useState<string | null>(null);
@@ -60,13 +58,6 @@ export default function UploadAudioView({
   const customTranscriptionApiKey = useSettingsStore((s) => s.customTranscriptionApiKey);
   const preferredLanguage = useSettingsStore((s) => s.preferredLanguage);
   const providerReady = !!remoteTranscriptionUrl.trim();
-
-  useEffect(
-    () => () => {
-      if (progressRef.current) clearInterval(progressRef.current);
-    },
-    []
-  );
 
   const getActiveModelLabel = (): string => {
     const name = t("settingsPage.transcription.modes.selfHosted");
@@ -160,7 +151,6 @@ export default function UploadAudioView({
   };
 
   const reset = () => {
-    if (progressRef.current) clearInterval(progressRef.current);
     setState("idle");
     setFile(null);
     setResult(null);
@@ -168,7 +158,6 @@ export default function UploadAudioView({
     setTranscriptionId(null);
     setSaveError(null);
     setError(null);
-    setProgress(0);
     setSkippedNotice(null);
   };
 
@@ -189,16 +178,6 @@ export default function UploadAudioView({
     setState("transcribing");
     setError(null);
     setSaveError(null);
-    setProgress(0);
-    progressRef.current = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 90) {
-          if (progressRef.current) clearInterval(progressRef.current);
-          return prev;
-        }
-        return prev + Math.random() * 6;
-      });
-    }, 500);
 
     try {
       const res = await transcribeFile(file.path, buildTranscriptionConfig(), false, {
@@ -207,10 +186,7 @@ export default function UploadAudioView({
         if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
       });
       if (runId !== runIdRef.current) return;
-      if (progressRef.current) clearInterval(progressRef.current);
-
       if (res.success && res.text) {
-        setProgress(100);
         setResult(res.text);
         setPartialWarning(
           res.failedChunks && res.totalChunks
@@ -228,7 +204,6 @@ export default function UploadAudioView({
         }
         setState("complete");
       } else {
-        setProgress(0);
         const errorKey = transcriptionErrorKey(res);
         setError(
           errorKey
@@ -241,8 +216,6 @@ export default function UploadAudioView({
       }
     } catch (err) {
       if (runId !== runIdRef.current) return;
-      if (progressRef.current) clearInterval(progressRef.current);
-      setProgress(0);
       const errorKey = transcriptionErrorKey(err);
       setError(
         errorKey
@@ -266,18 +239,16 @@ export default function UploadAudioView({
     batch.processQueue({ transcription: buildTranscriptionConfig() });
   };
 
-  const getTranscribingLabel = (): string =>
-    t("notes.upload.transcribingProvider", {
-      provider: t("settingsPage.transcription.modes.selfHosted"),
-    });
-
   return (
     <div className="flex flex-col items-center h-full overflow-y-auto px-6">
       <div
-        className="w-full max-w-md shrink-0 my-auto"
+        className={cn(
+          "w-full shrink-0 my-auto",
+          state === "complete" ? "max-w-2xl py-6" : "max-w-md"
+        )}
         style={{ animation: "float-up 0.4s ease-out" }}
       >
-        <div className="max-w-[320px] mx-auto">
+        <div className={cn("mx-auto", state !== "complete" && "max-w-[320px]")}>
           {state === "idle" && !providerReady && (
             <NoProviderView t={t} onOpenSettings={() => onOpenSettings?.("uploadTranscription")} />
           )}
@@ -341,18 +312,13 @@ export default function UploadAudioView({
             />
           )}
           {state === "transcribing" && (
-            <TranscribingView
-              t={t}
-              progress={progress}
-              getTranscribingLabel={getTranscribingLabel}
-              file={file}
-              onCancel={cancelTranscription}
-            />
+            <TranscribingView t={t} file={file} onCancel={cancelTranscription} />
           )}
           {state === "complete" && result && (
             <CompleteView
               t={t}
               result={result}
+              fileName={file?.name}
               partialWarning={partialWarning}
               transcriptionId={transcriptionId}
               saveError={saveError}
@@ -575,54 +541,30 @@ function SelectedView({
 
 interface TranscribingViewProps {
   t: (key: string, options?: Record<string, unknown>) => string;
-  progress: number;
-  getTranscribingLabel: () => string;
   file: { name: string; path: string; size: string; sizeBytes: number } | null;
   onCancel: () => void;
 }
 
-function TranscribingView({
-  t,
-  progress,
-  getTranscribingLabel,
-  file,
-  onCancel,
-}: TranscribingViewProps) {
+function TranscribingView({ t, file, onCancel }: TranscribingViewProps) {
   return (
     <div className="flex flex-col items-center" style={{ animation: "float-up 0.3s ease-out" }}>
-      <div className="flex items-end justify-center gap-[3px] h-10 mb-5">
-        {[0, 1, 2, 3, 4, 5, 6].map((i) => (
-          <div
-            key={i}
-            className="w-[3px] rounded-full bg-primary/40 dark:bg-primary/50 origin-bottom"
-            style={{
-              height: "100%",
-              animation: `waveform-bar ${0.8 + i * 0.12}s ease-in-out infinite`,
-              animationDelay: `${i * 0.08}s`,
-            }}
-          />
-        ))}
-      </div>
-
-      <div className="w-full max-w-[200px] h-[3px] rounded-full bg-foreground/5 dark:bg-white/5 overflow-hidden mb-3">
-        <div
-          className="h-full rounded-full bg-primary/50 transition-[width] duration-500 ease-out"
-          style={{ width: `${Math.min(progress, 100)}%` }}
-        />
-      </div>
-
-      <p className="text-xs text-foreground/50 font-medium">{getTranscribingLabel()}</p>
+      <Loader2
+        size={32}
+        aria-hidden="true"
+        className="text-primary mb-5 motion-safe:animate-spin"
+      />
+      <p className="text-xs text-foreground font-medium" role="status">
+        {t("notes.upload.transcribing")}
+      </p>
       {file && (
-        <p dir="ltr" className="text-xs text-foreground/45 mt-1 truncate max-w-50">
+        <p dir="ltr" className="text-xs text-muted-foreground mt-1 truncate max-w-50">
           {file.name}
         </p>
       )}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onCancel}
-        className="h-7 text-xs text-foreground/45 mt-4"
-      >
+      <p className="text-xs text-muted-foreground mt-4 text-center leading-relaxed">
+        {t("notes.upload.completionHint")}
+      </p>
+      <Button variant="ghost" size="sm" onClick={onCancel} className="mt-4">
         {t("notes.upload.cancelTranscription")}
       </Button>
     </div>
@@ -632,6 +574,7 @@ function TranscribingView({
 interface CompleteViewProps {
   t: (key: string, options?: Record<string, unknown>) => string;
   result: string;
+  fileName?: string;
   partialWarning: { failed: number; total: number } | null;
   transcriptionId: number | null;
   saveError: string | null;
@@ -643,6 +586,7 @@ interface CompleteViewProps {
 function CompleteView({
   t,
   result,
+  fileName,
   partialWarning,
   transcriptionId,
   saveError,
@@ -690,51 +634,60 @@ function CompleteView({
         </div>
       </div>
 
-      <p className="text-xs text-foreground/60 font-medium mb-1">
+      <p className="text-xs text-foreground font-medium mb-1" role="status">
         {t("notes.upload.transcriptionComplete")}
       </p>
-      <p className="text-xs text-foreground/45 max-w-[240px] text-center line-clamp-2 mb-4">
-        {result.slice(0, 150)}
-      </p>
+      {transcriptionId != null && (
+        <p className="text-xs text-muted-foreground mb-4">{t("notes.upload.savedToHistory")}</p>
+      )}
+
+      <div className="w-full rounded-lg border border-border bg-surface-1 mb-4 overflow-hidden">
+        {fileName && (
+          <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
+            <FileAudio size={14} aria-hidden="true" className="shrink-0 text-muted-foreground" />
+            <p dir="ltr" className="text-xs text-muted-foreground truncate">
+              {fileName}
+            </p>
+          </div>
+        )}
+        <div
+          role="region"
+          aria-label={t("notes.upload.transcriptLabel")}
+          tabIndex={0}
+          className="max-h-[min(40vh,320px)] overflow-y-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30"
+        >
+          <p
+            dir="auto"
+            className="text-sm text-foreground leading-relaxed whitespace-pre-wrap break-words select-text"
+          >
+            {result}
+          </p>
+        </div>
+      </div>
 
       <UploadCompleteWarnings partialWarning={partialWarning} diarizationWarning={false} t={t} />
 
       {saveError && (
-        <p
-          className="text-xs text-destructive/50 max-w-[240px] text-center mb-4 -mt-2"
-          role="status"
-        >
+        <p className="text-xs text-destructive text-center mb-4" role="status">
           {saveError}
         </p>
       )}
       {transcriptionId == null && !saveError && (
-        <p className="text-xs text-foreground/45 max-w-[240px] text-center mb-4 -mt-2">
+        <p className="text-xs text-muted-foreground text-center mb-4">
           {t("controlPanel.history.dataRetentionDisabled")}
         </p>
       )}
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center justify-center gap-2 flex-wrap">
+        <Button variant="default" size="sm" onClick={() => onCopyText(result)}>
+          {t("notes.upload.copyFullText")}
+        </Button>
         {transcriptionId != null && onOpenHistory && (
-          <Button variant="default" size="sm" onClick={onOpenHistory} className="h-8 text-xs">
-            {t("controlPanel.history.sectionTitle")}
+          <Button variant="ghost" size="sm" onClick={onOpenHistory}>
+            {t("notes.upload.viewInHistory")}
           </Button>
         )}
-        {transcriptionId == null && (
-          <Button
-            variant="default"
-            size="sm"
-            onClick={() => onCopyText(result)}
-            className="h-8 text-xs"
-          >
-            {t("controlPanel.history.copyText")}
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={reset}
-          className="h-8 text-xs text-foreground/45"
-        >
+        <Button variant="ghost" size="sm" onClick={reset}>
           {t("notes.upload.uploadAnother")}
         </Button>
       </div>
