@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "No se pudo acceder al micrófono. Revisa los permisos."
     },
-    "helpText": "Selecciona un micrófono específico o usa la configuración predeterminada del sistema.",
+    "helpText": "El dispositivo elegido manualmente no cambia al abrir o cerrar la tapa.",
     "inputDevice": "Dispositivo de entrada",
     "noBuiltInDetected": "No se detectó micrófono integrado. Usando el predeterminado del sistema.",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1 minuto",
         "900": "15 minutos"
       }
-    }
+    },
+    "auto": {
+      "label": "Automático",
+      "description": "El modo automático usa el micrófono integrado con la tapa abierta. Con la tapa cerrada, prioriza el iPhone y luego otro micrófono externo. Si ninguno está disponible, usa el predeterminado del sistema.",
+      "preferredDevice": "Preferido: {{device}}"
+    },
+    "builtInDevice": "Micrófono integrado",
+    "unavailableDevice": "{{device}} (No disponible)",
+    "refreshDevices": "Actualizar micrófonos"
   },
   "pasteToolsInfo": {
     "installCommands": {

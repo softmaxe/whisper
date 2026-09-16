@@ -6,5 +6,5 @@ buildMacosSwiftBinary({
   label: "mic-listener",
   sourceName: "macos-mic-listener.swift",
   binaryName: "macos-mic-listener",
-  frameworks: ["CoreAudio", "Foundation"],
+  frameworks: ["CoreAudio", "Foundation", "IOKit"],
 });

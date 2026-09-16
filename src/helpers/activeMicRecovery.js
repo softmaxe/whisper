@@ -31,6 +31,7 @@ export class ActiveMicRecoveryController {
     acquire,
     onRecovered,
     onStatusChange,
+    resolvePreferredDevice,
     debounceMs = DEFAULT_DEBOUNCE_MS,
     muteGraceMs = DEFAULT_MUTE_GRACE_MS,
     retryMs = DEFAULT_RETRY_MS,
@@ -39,6 +40,7 @@ export class ActiveMicRecoveryController {
     this.acquire = acquire;
     this.onRecovered = onRecovered;
     this.onStatusChange = onStatusChange;
+    this.resolvePreferredDevice = resolvePreferredDevice;
     this.debounceMs = debounceMs;
     this.muteGraceMs = muteGraceMs;
     this.retryMs = retryMs;
@@ -48,6 +50,9 @@ export class ActiveMicRecoveryController {
     this.followDefault = true;
     this.inputs = describeAudioInputs();
     this.generation = 0;
+    this.evaluationRevision = 0;
+    this.evaluationPending = false;
+    this.lastPreferredAttemptKey = null;
     this.recoveryPromise = null;
     this.debounceTimer = null;
     this.muteTimer = null;
@@ -74,11 +79,12 @@ export class ActiveMicRecoveryController {
     this.stop();
     this.started = true;
     this.generation += 1;
+    const generation = this.generation;
     this.followDefault = followDefault;
     this.mediaDevices?.addEventListener?.("devicechange", this.onDeviceChange);
     this.attachStream(stream);
-    await this.refreshInputs();
-    if (!this.started) return;
+    await this.refreshInputs(generation);
+    if (!this.started || generation !== this.generation) return;
     // The track may have died (or come up muted) before our listeners attached;
     // those events won't replay, so evaluate the track's state directly.
     const alive = this.track && this.track.readyState !== "ended";
@@ -88,6 +94,8 @@ export class ActiveMicRecoveryController {
     } else if (this.track.muted) {
       this.onTrackMute();
     }
+    // The lid can change while the initial microphone is still opening.
+    if (this.resolvePreferredDevice) await this.evaluateDeviceChange();
   }
 
   attachStream(stream) {
@@ -108,10 +116,18 @@ export class ActiveMicRecoveryController {
     this.muteTimer = null;
   }
 
-  async refreshInputs() {
+  async refreshInputs(generation = this.generation, evaluationRevision = null) {
     try {
-      this.inputs = describeAudioInputs(await this.mediaDevices.enumerateDevices());
-      return this.inputs;
+      const inputs = describeAudioInputs(await this.mediaDevices.enumerateDevices());
+      if (
+        !this.started ||
+        generation !== this.generation ||
+        (evaluationRevision !== null && evaluationRevision !== this.evaluationRevision)
+      ) {
+        return null;
+      }
+      if (evaluationRevision === null) this.inputs = inputs;
+      return inputs;
     } catch {
       return null;
     }
@@ -119,23 +135,75 @@ export class ActiveMicRecoveryController {
 
   scheduleEvaluation() {
     if (!this.started) return;
+    this.evaluationRevision += 1;
+    this.evaluationPending = true;
     clearTimeout(this.debounceTimer);
-    this.debounceTimer = setTimeout(() => this.evaluateDeviceChange(), this.debounceMs);
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = null;
+      void this.evaluateDeviceChange();
+    }, this.debounceMs);
   }
 
   async evaluateDeviceChange() {
     if (!this.started) return;
+    const generation = this.generation;
+    const revision = ++this.evaluationRevision;
+    if (this.recoveryPromise) {
+      this.evaluationPending = true;
+      return;
+    }
+    this.evaluationPending = false;
+    const isCurrent = () =>
+      this.started && generation === this.generation && revision === this.evaluationRevision;
     const previous = this.inputs;
-    const current = await this.refreshInputs();
-    if (!this.started || !current) {
+    const current = await this.refreshInputs(generation, revision);
+    if (!isCurrent()) return;
+    if (!current) {
       if (this.track?.readyState === "ended") this.recover("devicechange-ended");
       return;
     }
 
+    let preferredDevice = null;
+    try {
+      preferredDevice = (await this.resolvePreferredDevice?.()) || null;
+    } catch {
+      // Device health recovery remains available when the policy lookup fails.
+    }
+    if (!isCurrent()) return;
+    if (this.recoveryPromise) {
+      this.evaluationPending = true;
+      return;
+    }
+    this.inputs = current;
+
+    const activeSettings = this.track?.getSettings?.() || {};
+    const hasPhysicalId =
+      activeSettings.deviceId &&
+      activeSettings.deviceId !== "default" &&
+      activeSettings.deviceId !== "communications";
+    const preferredDiffers = preferredDevice?.deviceId
+      ? hasPhysicalId
+        ? preferredDevice.deviceId !== activeSettings.deviceId
+        : Boolean(
+            preferredDevice.groupId &&
+            activeSettings.groupId &&
+            preferredDevice.groupId !== activeSettings.groupId
+          )
+      : false;
+    const preferredAttemptKey = preferredDiffers
+      ? JSON.stringify([deviceKey(preferredDevice), [...current.keys].sort()])
+      : null;
+    const preferredChanged =
+      preferredDiffers && preferredAttemptKey !== this.lastPreferredAttemptKey;
+    // A successful acquisition may use a fallback. Retry its preferred target
+    // when the target or available inputs change, not after every output event.
+    this.lastPreferredAttemptKey = preferredAttemptKey;
     const defaultChanged = previous.defaultKey !== current.defaultKey;
     const activeMissing = !activeTrackIsAvailable(this.track, current);
     if ((this.followDefault && defaultChanged) || activeMissing || this.status === "unavailable") {
       this.recover("devicechange");
+    } else if (preferredChanged) {
+      this.recover("preferred-change");
     }
   }
 
@@ -164,7 +232,8 @@ export class ActiveMicRecoveryController {
           return false;
         }
         this.attachStream(replacement);
-        await this.refreshInputs();
+        await this.refreshInputs(generation);
+        if (!this.started || generation !== this.generation) return false;
         this.setStatus("active");
         return true;
       } catch {
@@ -181,7 +250,11 @@ export class ActiveMicRecoveryController {
     // Only clear our own handle: a stale attempt settling after stop()+start()
     // must not clobber a newer in-flight recovery's dedup handle.
     const promise = attempt().finally(() => {
-      if (this.recoveryPromise === promise) this.recoveryPromise = null;
+      if (this.recoveryPromise !== promise) return;
+      this.recoveryPromise = null;
+      if (this.started && generation === this.generation && this.evaluationPending) {
+        this.scheduleEvaluation();
+      }
     });
     this.recoveryPromise = promise;
     return promise;
@@ -198,6 +271,9 @@ export class ActiveMicRecoveryController {
   stop() {
     this.started = false;
     this.generation += 1;
+    this.evaluationRevision += 1;
+    this.evaluationPending = false;
+    this.lastPreferredAttemptKey = null;
     this.mediaDevices?.removeEventListener?.("devicechange", this.onDeviceChange);
     this.detachTrack();
     clearTimeout(this.debounceTimer);

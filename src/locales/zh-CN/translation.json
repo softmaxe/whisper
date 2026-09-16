@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "无法访问麦克风，请检查权限设置。"
     },
-    "helpText": "选择特定的麦克风或使用系统默认设置。",
+    "helpText": "手动选择设备后，开合盖不会改变所选麦克风。",
     "inputDevice": "输入设备",
     "noBuiltInDetected": "未检测到内置麦克风，正在使用系统默认设备。",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1 分钟",
         "900": "15 分钟"
       }
-    }
+    },
+    "auto": {
+      "label": "自动",
+      "description": "自动模式下，开盖使用内置麦克风；合盖优先使用 iPhone，其次使用其他外接麦克风。没有可用设备时，使用系统默认麦克风。",
+      "preferredDevice": "优先设备：{{device}}"
+    },
+    "builtInDevice": "内置麦克风",
+    "unavailableDevice": "{{device}}（不可用）",
+    "refreshDevices": "刷新麦克风列表"
   },
   "pasteToolsInfo": {
     "installCommands": {

@@ -35,7 +35,11 @@ import { followsSystemDefaultMic } from "./micSelectionRecovery";
 import { MicStreamHold } from "./micStreamHold";
 import { reacquireIfDead } from "./micTrackHealth";
 import { isMicWarm, WARMUP_ACQUIRE_TIMEOUT_MS } from "./micWarmState";
-import { isCacheableMicrophoneResolution, resolvePreferredMicrophone } from "./microphoneSelection";
+import {
+  getMicrophoneSelectionMode,
+  isCacheableMicrophoneResolution,
+  resolvePreferredMicrophone,
+} from "./microphoneSelection";
 import { PcmTap } from "./pcmTap";
 import {
   discardPreRoll,
@@ -552,6 +556,10 @@ class AudioManager {
         this._micWarmedAt = 0;
         this.cancelPreparedMicCapture();
         this.micStreamHold.drop();
+        if (this.micRecovery) this.micRecovery.followDefault = followsSystemDefaultMic(state);
+        if (getMicrophoneSelectionMode(state) === "auto") {
+          this.micRecovery?.scheduleEvaluation();
+        }
       }
     });
 
@@ -574,6 +582,15 @@ class AudioManager {
       window.electronAPI?.getSystemDefaultMicrophone?.({ refresh: true })?.catch(() => {});
     };
     navigator.mediaDevices?.addEventListener?.("devicechange", this._onDeviceChange);
+    this._unsubscribeLidState = window.electronAPI?.onLaptopLidStateChanged?.(() => {
+      if (getMicrophoneSelectionMode(getSettings()) !== "auto") return;
+      this.cachedMicDeviceId = null;
+      this.rejectedMicDeviceId = null;
+      this._micWarmedAt = 0;
+      this.cancelPreparedMicCapture();
+      this.micStreamHold.drop();
+      this.micRecovery?.scheduleEvaluation();
+    });
     this.recordingStartTime = null;
     this.reasoningAvailabilityCache = { value: false, expiresAt: 0 };
     this.cachedReasoningPreference = null;
@@ -632,11 +649,20 @@ class AudioManager {
     this._streamingMicSwapPromise = null;
     this.micRecovery = new ActiveMicRecoveryController({
       mediaDevices: navigator.mediaDevices,
+      resolvePreferredDevice: async () => {
+        const settings = getSettings();
+        if (getMicrophoneSelectionMode(settings) !== "auto") return null;
+        const resolution = await resolvePreferredMicrophone({ settings });
+        if (getMicrophoneSelectionMode(getSettings()) !== "auto") return null;
+        return isCacheableMicrophoneResolution(resolution) ? resolution.device : null;
+      },
       acquire: async (reason) => {
         try {
           const constraints = await this.getAudioConstraints(
             false,
-            reason === "devicechange" || reason === "devicechange-ended"
+            reason === "devicechange" ||
+              reason === "devicechange-ended" ||
+              reason === "preferred-change"
           );
           return await navigator.mediaDevices.getUserMedia(constraints);
         } catch (error) {
@@ -1003,6 +1029,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     if (
       !forceDefaultMic &&
       !refreshSystemDefault &&
+      getMicrophoneSelectionMode(settings) !== "auto" &&
       this.cachedMicDeviceId &&
       this.cachedMicDeviceId !== this.rejectedMicDeviceId
     ) {
@@ -5522,6 +5549,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     if (this._onDeviceChange) {
       navigator.mediaDevices?.removeEventListener?.("devicechange", this._onDeviceChange);
     }
+    this._unsubscribeLidState?.();
+    this._unsubscribeLidState = null;
   }
 }
 

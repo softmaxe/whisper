@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "Zugriff auf das Mikrofon nicht möglich. Bitte prüfen Sie die Berechtigungen."
     },
-    "helpText": "Wählen Sie ein bestimmtes Mikrofon oder verwenden Sie die Systemstandardeinstellung.",
+    "helpText": "Ein manuell ausgewähltes Gerät bleibt beim Öffnen und Schließen des Deckels ausgewählt.",
     "inputDevice": "Eingabegerät",
     "noBuiltInDetected": "Kein integriertes Mikrofon erkannt. Systemstandard wird verwendet.",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1 Minute",
         "900": "15 Minuten"
       }
-    }
+    },
+    "auto": {
+      "label": "Automatisch",
+      "description": "Bei geöffnetem Deckel nutzt der automatische Modus das integrierte Mikrofon. Bei geschlossenem Deckel bevorzugt er das iPhone, dann ein anderes externes Mikrofon. Ist keines verfügbar, wird der Systemstandard verwendet.",
+      "preferredDevice": "Bevorzugt: {{device}}"
+    },
+    "builtInDevice": "Integriertes Mikrofon",
+    "unavailableDevice": "{{device}} (Nicht verfügbar)",
+    "refreshDevices": "Mikrofone aktualisieren"
   },
   "pasteToolsInfo": {
     "installCommands": {

@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "Impossible d'accéder au microphone. Veuillez vérifier les permissions."
     },
-    "helpText": "Sélectionnez un microphone spécifique ou utilisez le réglage par défaut du système.",
+    "helpText": "Le périphérique choisi manuellement reste sélectionné à l’ouverture et à la fermeture du capot.",
     "inputDevice": "Périphérique d'entrée",
     "noBuiltInDetected": "Aucun microphone intégré détecté. Utilisation du réglage par défaut du système.",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1 minute",
         "900": "15 minutes"
       }
-    }
+    },
+    "auto": {
+      "label": "Automatique",
+      "description": "Le mode automatique utilise le microphone intégré lorsque le capot est ouvert. Lorsqu’il est fermé, il privilégie l’iPhone, puis un autre microphone externe. Si aucun n’est disponible, il utilise celui par défaut du système.",
+      "preferredDevice": "Préféré : {{device}}"
+    },
+    "builtInDevice": "Microphone intégré",
+    "unavailableDevice": "{{device}} (Indisponible)",
+    "refreshDevices": "Actualiser les microphones"
   },
   "pasteToolsInfo": {
     "installCommands": {

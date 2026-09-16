@@ -183,6 +183,7 @@ const { i18nMain, changeLanguage } = require("./src/helpers/i18nMain");
 const { ensureYdotool } = require("./src/helpers/ensureYdotool");
 const sidecarRegistry = require("./src/helpers/sidecarRegistry");
 const { reapStaleSidecars } = require("./src/helpers/sidecarReaper");
+const { laptopLidMonitor } = require("./src/helpers/laptopLidMonitor");
 
 // Manager instances - initialized after app.whenReady()
 let debugLogger = null;
@@ -429,6 +430,7 @@ async function startApp() {
   // Await so a stale sidecar is confirmed dead before new ones can spawn and
   // contend for its port or storage lock.
   await reapStaleSidecars();
+  laptopLidMonitor.start();
 
   // Phase 1: Core managers + IPC handlers before windows
   initializeCoreManagers();
@@ -1151,6 +1153,7 @@ if (gotSingleInstanceLock) {
 }
 
 function performSyncTeardown() {
+  laptopLidMonitor.stop();
   if (wakeRewarmTimer) {
     clearTimeout(wakeRewarmTimer);
     wakeRewarmTimer = null;

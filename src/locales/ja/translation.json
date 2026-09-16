@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "マイクにアクセスできません。権限を確認してください。"
     },
-    "helpText": "特定のマイクを選択するか、システムのデフォルト設定を使用してください。",
+    "helpText": "手動で選択したマイクは、蓋を開閉しても変わりません。",
     "inputDevice": "入力デバイス",
     "noBuiltInDetected": "内蔵マイクが検出されません。システムのデフォルトを使用しています。",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1分",
         "900": "15分"
       }
-    }
+    },
+    "auto": {
+      "label": "自動",
+      "description": "自動モードでは、蓋が開いているときは内蔵マイクを使用します。閉じているときは iPhone、次にほかの外部マイクを優先します。使用できる機器がない場合は、システムの既定のマイクを使用します。",
+      "preferredDevice": "優先デバイス：{{device}}"
+    },
+    "builtInDevice": "内蔵マイク",
+    "unavailableDevice": "{{device}}（使用不可）",
+    "refreshDevices": "マイク一覧を更新"
   },
   "pasteToolsInfo": {
     "installCommands": {

@@ -454,6 +454,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   checkMicrophoneAccess: () => ipcRenderer.invoke("check-microphone-access"),
   getSystemDefaultMicrophone: (options) =>
     ipcRenderer.invoke("get-system-default-microphone", options),
+  getLaptopLidState: () => ipcRenderer.invoke("get-laptop-lid-state"),
+  onLaptopLidStateChanged: registerListener(
+    "laptop-lid-state-changed",
+    (callback) => (_event, lidClosed) => callback(lidClosed)
+  ),
   openMicrophoneSettings: () => ipcRenderer.invoke("open-microphone-settings"),
   openSoundInputSettings: () => ipcRenderer.invoke("open-sound-input-settings"),
   openAccessibilitySettings: () => ipcRenderer.invoke("open-accessibility-settings"),

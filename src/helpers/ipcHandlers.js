@@ -22,6 +22,7 @@ const { withPolicyRequestHeaders } = require("./policyRequestHeaders");
 const { createPolicyResponseError } = require("./policyResponseError");
 
 const { resolveSystemDefaultMicrophone } = require("./systemDefaultMicrophone");
+const { laptopLidMonitor } = require("./laptopLidMonitor");
 // The renderer's ModelRegistry is not main-loadable; the raw registry data is
 // packaged, and the route resolver only needs {id, baseUrl} per provider.
 const transcriptionProviderBaseUrls = () =>
@@ -2572,6 +2573,7 @@ class IPCHandlers {
     ipcMain.handle("get-system-default-microphone", (_event, options = {}) =>
       resolveSystemDefaultMicrophone({ refresh: options?.refresh === true })
     );
+    ipcMain.handle("get-laptop-lid-state", () => laptopLidMonitor.getState());
     ipcMain.handle("open-accessibility-settings", () => openSystemSettings("accessibility"));
     ipcMain.handle("open-login-items-settings", () => openSystemSettings("loginItems"));
 

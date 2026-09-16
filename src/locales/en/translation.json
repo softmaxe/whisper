@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "Unable to access microphone. Please check permissions."
     },
-    "helpText": "Select a specific microphone or use the system default setting.",
+    "helpText": "A selected device stays selected when the lid changes.",
     "inputDevice": "Input Device",
     "noBuiltInDetected": "No built-in microphone detected. Using system default.",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1 minute",
         "900": "15 minutes"
       }
-    }
+    },
+    "auto": {
+      "label": "Auto",
+      "description": "Auto uses the built-in microphone with the lid open. When closed, it prefers iPhone, then another external microphone. If none is available, it uses the system default.",
+      "preferredDevice": "Preferred: {{device}}"
+    },
+    "builtInDevice": "Built-in Microphone",
+    "unavailableDevice": "{{device}} (Unavailable)",
+    "refreshDevices": "Refresh microphones"
   },
   "pasteToolsInfo": {
     "installCommands": {

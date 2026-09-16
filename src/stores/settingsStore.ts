@@ -228,21 +228,27 @@ function readStringArray(key: string, fallback: string[]): string[] {
   }
 }
 
-type MicrophoneSelectionMode = "system" | "built-in" | "specific";
+type MicrophoneSelectionMode = "auto" | "system" | "built-in" | "specific";
 
 function migrateMicrophoneSelectionMode() {
   if (!isBrowser) return;
   const current = localStorage.getItem("microphoneSelectionMode");
-  if (current === "system" || current === "built-in" || current === "specific") return;
+  if (current === "auto" || current === "built-in" || current === "specific") return;
+
+  if (current === "system") {
+    localStorage.setItem("microphoneSelectionMode", "auto");
+    localStorage.setItem("preferBuiltInMic", "false");
+    return;
+  }
 
   const selectedDeviceId = localStorage.getItem("selectedMicDeviceId") || "";
   const legacyBuiltIn = localStorage.getItem("preferBuiltInMic");
   const mode: MicrophoneSelectionMode =
     legacyBuiltIn === "true"
       ? "built-in"
-      : selectedDeviceId && selectedDeviceId !== "default"
+      : selectedDeviceId && !["default", "communications"].includes(selectedDeviceId)
         ? "specific"
-        : "system";
+        : "auto";
   localStorage.setItem("microphoneSelectionMode", mode);
 }
 
@@ -1535,12 +1541,10 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     "tap" | "push",
 
   microphoneSelectionMode: (() => {
-    const mode = readString("microphoneSelectionMode", "system");
-    return (
-      mode === "built-in" || mode === "specific" ? mode : "system"
-    ) as MicrophoneSelectionMode;
+    const mode = readString("microphoneSelectionMode", "auto");
+    return (mode === "built-in" || mode === "specific" ? mode : "auto") as MicrophoneSelectionMode;
   })(),
-  preferBuiltInMic: readBoolean("preferBuiltInMic", false),
+  preferBuiltInMic: readString("microphoneSelectionMode", "auto") === "built-in",
   selectedMicDeviceId: readString("selectedMicDeviceId", ""),
   selectedMicDeviceLabel: readString("selectedMicDeviceLabel", ""),
   micWarmHoldSeconds: snapMicWarmHold(readNumber("micWarmHoldSeconds", 0)),
@@ -2246,7 +2250,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
 
   setPreferBuiltInMic: (value: boolean) => {
-    const mode: MicrophoneSelectionMode = value ? "built-in" : "system";
+    const mode: MicrophoneSelectionMode = value ? "built-in" : "auto";
     if (isBrowser) {
       localStorage.setItem("preferBuiltInMic", String(value));
       localStorage.setItem("microphoneSelectionMode", mode);
@@ -2255,7 +2259,7 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   },
   setMicrophoneSelectionMode: (mode: MicrophoneSelectionMode) => {
     const normalized: MicrophoneSelectionMode =
-      mode === "built-in" || mode === "specific" ? mode : "system";
+      mode === "built-in" || mode === "specific" ? mode : "auto";
     const preferBuiltInMic = normalized === "built-in";
     if (isBrowser) {
       localStorage.setItem("microphoneSelectionMode", normalized);

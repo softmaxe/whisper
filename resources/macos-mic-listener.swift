@@ -6,11 +6,31 @@
  * microphone attribution; PID monitoring is retried from the heartbeat because
  * a transient snapshot failure lands in the same mode.
  *
- * Compile: swiftc -O macos-mic-listener.swift -o macos-mic-listener -framework CoreAudio -framework Foundation
+ * Compile: swiftc -O macos-mic-listener.swift -o macos-mic-listener -framework CoreAudio -framework Foundation -framework IOKit
  */
 
 import CoreAudio
 import Foundation
+import IOKit
+
+func readLaptopLidState() -> Bool? {
+    let service = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("IOPMrootDomain"))
+    guard service != IO_OBJECT_NULL else { return nil }
+    defer { IOObjectRelease(service) }
+
+    guard let property = IORegistryEntryCreateCFProperty(
+        service,
+        "AppleClamshellState" as CFString,
+        kCFAllocatorDefault,
+        0
+    )?.takeRetainedValue(), CFGetTypeID(property) == CFBooleanGetTypeID() else { return nil }
+    return (property as? NSNumber)?.boolValue
+}
+
+func emitLaptopLidState() {
+    let state = readLaptopLidState().map { $0 ? "true" : "false" } ?? "null"
+    emit("{\"lidClosed\":\(state)}")
+}
 
 enum ListenerMode {
     case none
@@ -614,6 +634,23 @@ do {
     exit(1)
 }
 #else
+if CommandLine.arguments.contains("--print-lid-state") {
+    emitLaptopLidState()
+    exit(0)
+}
+
+if CommandLine.arguments.contains("--watch-lid-state") {
+    setupSignalHandlers()
+    emitLaptopLidState()
+    let lidTimer = DispatchSource.makeTimerSource(queue: .main)
+    lidTimer.schedule(deadline: .now() + 1, repeating: 1)
+    // Emit a heartbeat even without a change so the parent can expire stale state.
+    lidTimer.setEventHandler { emitLaptopLidState() }
+    lidTimer.resume()
+    withExtendedLifetime(lidTimer) { CFRunLoopRun() }
+    exit(0)
+}
+
 if CommandLine.arguments.contains("--print-default-input") {
     exit(printDefaultInputDevice())
 }

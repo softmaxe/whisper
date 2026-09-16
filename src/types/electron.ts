@@ -2255,6 +2255,8 @@ declare global {
         platform: string;
         source: "system" | "unavailable";
       }>;
+      getLaptopLidState?: () => Promise<boolean | null>;
+      onLaptopLidStateChanged?: (callback: (lidClosed: boolean | null) => void) => () => void;
       checkSystemAudioAccess?: () => Promise<SystemAudioAccessResult>;
       requestSystemAudioAccess?: () => Promise<SystemAudioAccessResult>;
       openMicrophoneSettings?: () => Promise<{ success: boolean; error?: string }>;

@@ -1,7 +1,7 @@
 import { isBuiltInMicrophone } from "../utils/audioDeviceUtils";
 import { resolveMicDeviceSelection } from "./micDeviceSelection";
 
-export const MICROPHONE_SELECTION_MODES = ["system", "built-in", "specific"];
+export const MICROPHONE_SELECTION_MODES = ["auto", "system", "built-in", "specific"];
 
 // Chromium lists the Windows default input twice ("default" and the
 // "communications" role alias) under the device's own label. They are aliases,
@@ -75,9 +75,44 @@ export function resolveSystemDefaultMicDevice(devices, systemDefault) {
   };
 }
 
-export function resolveMicrophoneSelection(devices, settings, systemDefault = null) {
+export function resolveMicrophoneSelection(
+  devices,
+  settings,
+  systemDefault = null,
+  lidClosed = null
+) {
   const mode = getMicrophoneSelectionMode(settings);
   const inputs = devices.filter((device) => device.kind === "audioinput");
+
+  if (mode === "auto") {
+    const physicalInputs = inputs.filter(
+      (device) => device.deviceId && !CHROMIUM_ALIAS_DEVICE_IDS.has(device.deviceId)
+    );
+    // macOS names its internal input explicitly. The generic "Microphone"
+    // heuristic also matches custom-named Continuity and USB devices.
+    const builtInInputs = physicalInputs.filter((device) =>
+      /built[ -]?in|internal|macbook|integrated/i.test(device.label)
+    );
+    const builtIn = builtInInputs[0];
+    const externalInputs = physicalInputs.filter(
+      (device) => device.label && !builtInInputs.includes(device)
+    );
+    const phone = externalInputs.find((device) => /iphone|continuity/i.test(device.label));
+    const device = lidClosed === true ? phone || externalInputs[0] : builtIn;
+    if (device) {
+      return {
+        mode,
+        device,
+        status: lidClosed === true ? "auto-external" : "auto-built-in",
+        lidClosed,
+      };
+    }
+    return {
+      mode,
+      ...resolveSystemDefaultMicDevice(inputs, systemDefault),
+      lidClosed,
+    };
+  }
 
   if (mode === "system") {
     return { mode, ...resolveSystemDefaultMicDevice(inputs, systemDefault) };
@@ -110,6 +145,7 @@ export async function resolvePreferredMicrophone({
   forceSystemDefault = false,
   refreshSystemDefault = false,
   getSystemDefault = (options) => window.electronAPI?.getSystemDefaultMicrophone?.(options),
+  getLidState = () => window.electronAPI?.getLaptopLidState?.(),
 }) {
   const effectiveSettings = forceSystemDefault
     ? { ...settings, microphoneSelectionMode: "system", preferBuiltInMic: false }
@@ -117,8 +153,18 @@ export async function resolvePreferredMicrophone({
   const mode = getMicrophoneSelectionMode(effectiveSettings);
   const devices = await mediaDevices.enumerateDevices();
   let systemDefault = null;
+  let lidClosed = null;
 
-  if (mode === "system") {
+  if (mode === "auto") {
+    try {
+      const state = await getLidState?.();
+      lidClosed = typeof state === "boolean" ? state : null;
+    } catch {
+      // If lid detection is unavailable, prefer the built-in input.
+    }
+  }
+
+  if (mode === "system" || mode === "auto") {
     try {
       systemDefault = (await getSystemDefault?.({ refresh: refreshSystemDefault })) || null;
     } catch {
@@ -126,7 +172,7 @@ export async function resolvePreferredMicrophone({
     }
   }
 
-  const result = resolveMicrophoneSelection(devices, effectiveSettings, systemDefault);
+  const result = resolveMicrophoneSelection(devices, effectiveSettings, systemDefault, lidClosed);
   if (
     result.mode === "specific" &&
     result.device &&

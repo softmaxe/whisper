@@ -73,7 +73,7 @@ export interface OnboardingSettings {
 }
 
 export interface MicrophoneSettings {
-  microphoneSelectionMode: "system" | "built-in" | "specific";
+  microphoneSelectionMode: "auto" | "system" | "built-in" | "specific";
   preferBuiltInMic: boolean;
   selectedMicDeviceId: string;
   selectedMicDeviceLabel: string;

@@ -435,7 +435,7 @@
     "errors": {
       "unableToAccess": "無法存取麥克風。請檢查權限設定。"
     },
-    "helpText": "選擇特定的麥克風，或使用系統預設裝置。",
+    "helpText": "手動選擇裝置後，開闔上蓋不會改變所選麥克風。",
     "inputDevice": "輸入裝置",
     "noBuiltInDetected": "未偵測到內建麥克風。使用系統預設裝置。",
     "preferBuiltIn": {
@@ -455,7 +455,15 @@
         "60": "1 分鐘",
         "900": "15 分鐘"
       }
-    }
+    },
+    "auto": {
+      "label": "自動",
+      "description": "自動模式下，開蓋使用內建麥克風；闔蓋優先使用 iPhone，其次使用其他外接麥克風。沒有可用裝置時，使用系統預設麥克風。",
+      "preferredDevice": "優先裝置：{{device}}"
+    },
+    "builtInDevice": "內建麥克風",
+    "unavailableDevice": "{{device}}（無法使用）",
+    "refreshDevices": "重新整理麥克風清單"
   },
   "pasteToolsInfo": {
     "installCommands": {
