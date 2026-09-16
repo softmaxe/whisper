@@ -14,7 +14,6 @@
     "node_modules/**/*",
     "src/dist/**/*",
     "src/helpers/**/*",
-    "src/workers/**/*",
     "src/config/**/*",
     "src/constants/**/*",
     "src/locales/**/*",
@@ -27,6 +26,10 @@
     "src/utils/**/*",
     "src/components.json",
     "!node_modules/.cache/**/*",
+    "!**/node_modules/**/.eslintcache",
+    "!**/node_modules/better-sqlite3/deps/**/*",
+    "!**/node_modules/better-sqlite3/src/**/*",
+    "!**/node_modules/better-sqlite3/binding.gyp",
     "!src/node_modules/**/*",
     "!**/node_modules/electron/**",
     "!**/node_modules/electron-builder/**",
@@ -77,9 +80,7 @@
   "asarUnpack": [
     "**/node_modules/ffmpeg-static/**/*",
     "**/node_modules/better-sqlite3/**/*",
-    "**/node_modules/onnxruntime-node/**/*",
-    "**/node_modules/@napi-rs/keyring/**/*",
-    "src/workers/**/*"
+    "**/node_modules/@napi-rs/keyring/**/*"
   ],
   "extraResources": [
     {

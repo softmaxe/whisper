@@ -1,13 +1,11 @@
 // electron-builder afterPack hook
 //
-// Prunes non-target ONNX binaries, verifies unpacked FFmpeg and the ONNX
-// worker, and registers native macOS resources for signing. Only packaged
-// output is modified; source node_modules stays unchanged.
+// Verifies unpacked FFmpeg and SQLite, and registers native macOS resources
+// for signing. Only packaged output is modified; source node_modules stays unchanged.
 
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
-const { Arch } = require("app-builder-lib");
 
 // ---------------------------------------------------------------------------
 // macOS resource binary signing
@@ -124,64 +122,6 @@ function registerMacResourceBinariesForSigning(context) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// onnxruntime-node binary stripping
-// ---------------------------------------------------------------------------
-
-function stripOnnxruntimeBinaries(context) {
-  const platform = context.electronPlatformName; // darwin | linux | win32
-  const archName = Arch[context.arch]; // x64 | arm64 | ia32 | universal
-
-  // Resolve the resources directory inside the packed output
-  const resourcesDir = resolveResourcesDir(context);
-
-  const onnxBinDir = path.join(
-    resourcesDir,
-    "app.asar.unpacked",
-    "node_modules",
-    "onnxruntime-node",
-    "bin",
-    "napi-v6"
-  );
-
-  if (!fs.existsSync(onnxBinDir)) return;
-
-  // For universal macOS builds keep both arm64 and x64 under darwin/
-  const keepArchs = archName === "universal" ? ["arm64", "x64"] : [archName];
-
-  const platformDirs = fs.readdirSync(onnxBinDir);
-  let totalRemoved = 0;
-
-  for (const dir of platformDirs) {
-    const fullPath = path.join(onnxBinDir, dir);
-    if (!fs.statSync(fullPath).isDirectory()) continue;
-
-    if (dir !== platform) {
-      // Wrong platform — remove entirely
-      fs.rmSync(fullPath, { recursive: true, force: true });
-      totalRemoved++;
-      continue;
-    }
-
-    // Right platform — strip non-target architectures
-    const archDirs = fs.readdirSync(fullPath);
-    for (const arch of archDirs) {
-      const archPath = path.join(fullPath, arch);
-      if (!fs.statSync(archPath).isDirectory()) continue;
-      if (!keepArchs.includes(arch)) {
-        fs.rmSync(archPath, { recursive: true, force: true });
-        totalRemoved++;
-      }
-    }
-  }
-
-  if (totalRemoved > 0) {
-    console.log(
-      `  afterPack: stripped ${totalRemoved} non-target onnxruntime-node directories (keeping ${platform}/${keepArchs.join(",")})`
-    );
-  }
-}
-
 function verifyUnpackedBinaries(context) {
   const unpackedDir = path.join(resolveResourcesDir(context), "app.asar.unpacked");
   const unpackedModulesDir = path.join(unpackedDir, "node_modules");
@@ -193,10 +133,16 @@ function verifyUnpackedBinaries(context) {
     );
   }
 
-  const onnxWorkerPath = path.join(unpackedDir, "src", "workers", "onnxWorker.js");
-  if (!fs.existsSync(onnxWorkerPath)) {
+  const sqlitePath = path.join(
+    unpackedModulesDir,
+    "better-sqlite3",
+    "build",
+    "Release",
+    "better_sqlite3.node"
+  );
+  if (!fs.existsSync(sqlitePath)) {
     throw new Error(
-      `afterPack: missing ${onnxWorkerPath} — src/workers was not unpacked from app.asar (asarUnpack/packaging failure); the ONNX utility process would crash-loop in the packed app`
+      `afterPack: missing ${sqlitePath} — the SQLite binding was not unpacked from app.asar (asarUnpack/packaging failure); the packed app cannot open History`
     );
   }
 
@@ -208,7 +154,6 @@ function verifyUnpackedBinaries(context) {
 // ---------------------------------------------------------------------------
 
 exports.default = async function (context) {
-  stripOnnxruntimeBinaries(context);
   verifyUnpackedBinaries(context);
   registerMacResourceBinariesForSigning(context);
 };

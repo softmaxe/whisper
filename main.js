@@ -194,7 +194,6 @@ let databaseManager = null;
 let clipboardManager = null;
 let whisperManager = null;
 let parakeetManager = null;
-let diarizationManager = null;
 let trayManager = null;
 let globeKeyManager = null;
 let windowsKeyManager = null;
@@ -212,7 +211,6 @@ let audioTapManager = null;
 let linuxPortalAudioManager = null;
 let windowsLoopbackAudioManager = null;
 let meetingAecManager = null;
-let qdrantManager = null;
 let ipcHandlers = null;
 let cliBridge = null;
 let globeKeyAlertShown = false;
@@ -344,7 +342,6 @@ function initializeCoreManagers() {
     clipboardManager,
     whisperManager,
     parakeetManager,
-    diarizationManager,
     windowManager,
     windowsKeyManager,
     linuxKeyManager,
@@ -360,7 +357,6 @@ function initializeCoreManagers() {
     linuxPortalAudioManager,
     windowsLoopbackAudioManager,
     meetingAecManager,
-    getQdrantManager: () => qdrantManager,
     getTrayManager: () => trayManager,
     oauthProtocolRegistered: protocolRegistered,
     oauthProtocol: OAUTH_PROTOCOL,

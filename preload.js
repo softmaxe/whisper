@@ -327,14 +327,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     (callback) => () => callback()
   ),
   onParakeetDownloadProgress: registerListener("parakeet-download-progress"),
-  onDiarizationDownloadProgress: registerListener(
-    "diarization-download-progress",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingDiarizationComplete: registerListener(
-    "meeting-diarization-complete",
-    (callback) => (_event, data) => callback(data)
-  ),
 
   // Window control functions
   windowMinimize: () => ipcRenderer.invoke("window-minimize"),
