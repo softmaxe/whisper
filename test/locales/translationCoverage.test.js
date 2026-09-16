@@ -14,22 +14,6 @@ const T_CALL = /\bt\(\s*(['"`])([A-Za-z0-9_.-]+)\1/g;
 // cannot see them and a typo would render as the raw key string.
 const MESSAGE_KEY = /\bmessageKey\s*[:=]\s*(['"`])([A-Za-z0-9_.-]+)\1/g;
 const INTERPOLATION = /\{\{\s*([\w.]+)/g;
-const ARABIC_PLURAL_CATEGORIES = ["zero", "one", "two", "few", "many", "other"];
-const ARABIC_PLURAL_BASES = [
-  "settingsPage.privacy.retentionDays",
-  "settingsPage.privacy.audioStorageFiles",
-  "dictionary.wordsReady",
-  "insights.days",
-  "insights.longestStreak",
-  "insights.dayTooltip",
-];
-const ARABIC_NUMBER_NEUTRAL_TEMPLATES = {
-  "notes.upload.partialWarningCount":
-    "عدد الأجزاء الصوتية التي تعذر تفريغها: {{failed}} من أصل {{total}}.",
-  "insights.wpmCoverage": "استنادًا إلى نسبة {{count}}% من الكلمات المقاسة",
-  "dictionary.promptLimitNotice":
-    "عدد أحرف قاموسك: {{chars}}. لا تقرأ نماذج Groq وWhisper سوى بضع مئات من الأحرف الأخيرة منه، لذا تعمل القوائم الأقصر بشكل أفضل معها. أما النماذج الأخرى فتحصل على القائمة كاملة.",
-};
 
 const languages = fs
   .readdirSync(LOCALES)
@@ -120,8 +104,7 @@ test("every en key is present in every other language", () => {
     for (const lang of languages) {
       if (lang === "en") continue;
       const translated = flatten(load(lang, namespace));
-      // Plural categories are language specific (ru adds _few/_many, zh only has
-      // _other), so a matching plural base counts as covered.
+      // Chinese only uses _other, so a matching plural base counts as covered.
       const bases = new Set([...translated.keys()].map(stripPlural));
       const gaps = [...en.keys()].filter(
         (key) => !translated.has(key) && !bases.has(stripPlural(key))
@@ -170,53 +153,4 @@ test("every messageKey literal resolves in en", () => {
   }
 
   assert.deepEqual(missing, [], `unresolved messageKey values:\n${missing.join("\n")}`);
-});
-
-test("Arabic defines every CLDR plural category for each counted message", () => {
-  const ar = flatten(load("ar", "translation"));
-  for (const base of ARABIC_PLURAL_BASES) {
-    for (const category of ARABIC_PLURAL_CATEGORIES) {
-      assert.equal(
-        typeof ar.get(`${base}_${category}`),
-        "string",
-        `ar/translation is missing ${base}_${category}`
-      );
-    }
-  }
-});
-
-test("Arabic non-count numeric templates remain number-neutral", () => {
-  const ar = flatten(load("ar", "translation"));
-  for (const [key, template] of Object.entries(ARABIC_NUMBER_NEUTRAL_TEMPLATES)) {
-    assert.equal(ar.get(key), template, `${key} reintroduced a fixed Arabic number form`);
-  }
-});
-
-test("Arabic plural counts resolve the exact CLDR form without English fallback", async () => {
-  const i18next = require("i18next");
-  const instance = i18next.createInstance();
-  await instance.init({
-    lng: "ar",
-    fallbackLng: "en",
-    resources: {
-      ar: { translation: load("ar", "translation") },
-      en: { translation: load("en", "translation") },
-    },
-    interpolation: { escapeValue: false },
-  });
-
-  const counts = [0, 1, 2, 3, 7, 11, 100, 101];
-  const pluralRules = new Intl.PluralRules("ar");
-  for (const base of ARABIC_PLURAL_BASES) {
-    for (const count of counts) {
-      const details = instance.t(base, { count, returnDetails: true });
-      const category = pluralRules.select(count);
-      assert.equal(details.usedLng, "ar", `${base} count=${count} used ${details.usedLng}`);
-      assert.equal(
-        details.exactUsedKey,
-        `${base}_${category}`,
-        `${base} count=${count} did not use the Arabic ${category} form`
-      );
-    }
-  }
 });
