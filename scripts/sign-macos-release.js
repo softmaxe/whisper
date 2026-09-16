@@ -20,13 +20,26 @@ async function signMacosRelease(options) {
   const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "whisper-signing-")));
   const keychain = path.join(directory, "signing.keychain-db");
   let keychainCreated = false;
-  function removeFromSearchList() {
+  function readSearchList() {
     const searchList = run(
       "/usr/bin/security",
       ["list-keychains", "-d", "user"],
       "Reading keychain search list"
     );
-    const current = [...searchList.matchAll(/"([^"\n]+)"/g)].map((match) => match[1]);
+    return [...searchList.matchAll(/"([^"\n]+)"/g)].map((match) => match[1]);
+  }
+  function addToSearchList() {
+    const current = readSearchList();
+    if (!current.includes(keychain)) {
+      run(
+        "/usr/bin/security",
+        ["list-keychains", "-d", "user", "-s", ...current, keychain],
+        "Adding temporary signing keychain to search list"
+      );
+    }
+  }
+  function removeFromSearchList() {
+    const current = readSearchList();
     if (current.includes(keychain)) {
       run(
         "/usr/bin/security",
@@ -44,8 +57,9 @@ async function signMacosRelease(options) {
       "Creating temporary signing keychain"
     );
     keychainCreated = true;
-    // Some macOS versions add new keychains to the search list automatically.
-    removeFromSearchList();
+    // codesign --keychain narrows identity lookup but still uses the search list.
+    // Keep existing entries and support systems that do not add new keychains.
+    addToSearchList();
     run(
       "/usr/bin/security",
       ["unlock-keychain", "-p", password, keychain],
@@ -75,6 +89,22 @@ async function signMacosRelease(options) {
       ["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychain],
       "Configuring signing key access"
     );
+    // Do not use -v: self-signed identities need not have global trust. This
+    // checks the certificate/private-key pair without printing keychain metadata.
+    const identities = run(
+      "/usr/bin/security",
+      ["find-identity", "-p", "codesigning", keychain],
+      "Checking imported signing identity"
+    );
+    if (
+      ![...identities.matchAll(/^\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"/gm)].some(
+        (match) => match[1].toUpperCase() === fingerprint.toUpperCase()
+      )
+    ) {
+      throw new Error(
+        "The imported signing identity does not match the pinned certificate or has no private key."
+      );
+    }
     const signedPaths = new Set();
     const { signAsync } = require("@electron/osx-sign");
     await signAsync({
