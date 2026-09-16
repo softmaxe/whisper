@@ -48,7 +48,7 @@ Update both sides of an IPC change and their types. The legacy filename `uploadN
 
 ## Verification and cleanup
 
-- Use the Node.js version in `.nvmrc` and the existing npm scripts. Keep lockfile changes deliberate. For documentation-only work, inspect the documentation and diff without reinstalling dependencies or generating app bundles.
+- Use the Node.js version in `.nvmrc` and the existing npm scripts. Keep lockfile changes deliberate. For documentation-only work or removal of dependency-update automation, inspect the documentation and diff; skip tests, quality checks, dependency installation, and app bundles.
 - Run checks appropriate to the behavior changed, then the applicable lint, type, and translation checks. Use the native Electron test command in the README when SQLite bindings target Electron. A Node ABI mismatch is not evidence that database behavior is correct or broken.
 - For dictation changes, verify ASR, the saved Clean Up prompt, snippets, History, and paste together. For Upload, verify single and batch results, History-disabled behavior, and exclusion from Insights. For the menu bar, verify immediate visibility and restart persistence. Inspect UI changes in the actual Electron app, using the current bundle path.
 - When real endpoint testing is authorized, use the user's existing selected Self-Hosted configuration and prompt. Use disposable fixtures and the existing `OPENWHISPR_USER_DATA_DIR` override for test profiles. Keep private URLs, credentials, prompt text, recordings, and copied profiles out of source, public logs, and releases.
@@ -57,6 +57,7 @@ Update both sides of an IPC change and their types. The legacy filename `uploadN
 
 ## Git and releases
 
+- Keep dependency updates manual. Dependabot version-update PR automation is outside this independent project's scope.
 - Check branch, status, remotes, and contribution rules before editing. Preserve changes made by the user or another task. Commit, push, tag, publish, merge, or rewrite history only when requested; a prior completed release is not standing authorization for the next one. Stage explicit paths and keep commit and PR text free of AI attribution.
 - Preserve the upstream MIT license, source attribution, and bundled font license. This fork has its own release history; read current versions from the manifests rather than treating an upstream version as the fork's version.
 - When release work is requested, reuse `.github/workflows/build.yml` and `.github/workflows/release.yml`. The supported distribution is macOS Apple Silicon. Tags must match both package manifests; verify the packaged version, arm64 architecture, signature, ZIP, and checksum before publication. Existing builds use ad-hoc signing and are not notarized.
