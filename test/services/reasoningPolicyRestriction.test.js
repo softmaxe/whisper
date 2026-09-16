@@ -2,7 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
-const esTranslations = require("../../src/locales/es/translation.json");
+const zhCNTranslations = require("../../src/locales/zh-CN/translation.json");
 const enTranslations = require("../../src/locales/en/translation.json");
 
 test("reasoning policy asserts throw messages localized to the active UI language", async (t) => {
@@ -35,18 +35,18 @@ test("reasoning policy asserts throw messages localized to the active UI languag
     },
   });
 
-  await i18n.changeLanguage("es");
+  await i18n.changeLanguage("zh-CN");
   assert.notEqual(
-    esTranslations.common.policyAgentRestricted,
+    zhCNTranslations.common.policyAgentRestricted,
     enTranslations.common.policyAgentRestricted,
     "the localized strings must differ so this test can prove translation happened"
   );
 
   assert.throws(() => assertAgentAllowedByPolicy(), {
-    message: esTranslations.common.policyAgentRestricted,
+    message: zhCNTranslations.common.policyAgentRestricted,
   });
   assert.throws(() => assertReasoningAllowedByPolicy("openai", "providers"), {
-    message: esTranslations.common.policyAiProcessingRestricted,
+    message: zhCNTranslations.common.policyAiProcessingRestricted,
   });
 
   await i18n.changeLanguage("en");

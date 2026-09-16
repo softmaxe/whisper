@@ -35,7 +35,7 @@ test("cleanup toast localizes server recovery guidance and keeps fallback status
     "/components/CleanupFailureToastListener.tsx"
   );
   const { default: i18n } = await vite.ssrLoadModule("/i18n.ts");
-  await i18n.changeLanguage("es");
+  await i18n.changeLanguage("zh-CN");
   const { recordCleanupFailure, useCleanupFailureStore } = await vite.ssrLoadModule(
     "/stores/cleanupFailureStore.ts"
   );
@@ -60,10 +60,9 @@ test("cleanup toast localizes server recovery guidance and keeps fallback status
 
   assert.equal(globalThis.__cleanupFailureToasts.length, 1);
   assert.deepEqual(globalThis.__cleanupFailureToasts[0], {
-    title:
-      "El endpoint rechazó la solicitud (401/403). Agrega una clave API o ajusta la autenticación del servidor.",
-    description: "Opcional. Se envía como token Bearer al servidor de corrección de texto.",
-    secondaryDescription: "Tu dictado se pegó sin limpieza con IA.",
+    title: "端点拒绝了请求（401/403）。请添加 API Key 或调整服务器认证设置。",
+    description: "可选，将作为 Bearer token 发送给文本整理服务器。",
+    secondaryDescription: "你的听写已直接粘贴，未经 AI 清理。",
     copyCommand: "curl -I https://server.example/v1/models",
     technicalDetails: failure.technicalDetails,
     variant: "destructive",
@@ -80,7 +79,7 @@ test("technical AWS details use the selected UI language", async (t) => {
     "/components/ui/TechnicalErrorDetails.tsx"
   );
   const { default: i18n } = await vite.ssrLoadModule("/i18n.ts");
-  await i18n.changeLanguage("es");
+  await i18n.changeLanguage("zh-CN");
 
   const markup = renderToStaticMarkup(
     React.createElement(TechnicalErrorDetails, {
@@ -93,10 +92,10 @@ test("technical AWS details use the selected UI language", async (t) => {
     })
   );
 
-  assert.match(markup, /Detalles técnicos/);
-  assert.match(markup, /Estado HTTP: 503/);
-  assert.match(markup, /Excepción de AWS: ServiceUnavailableException/);
-  assert.match(markup, /ID de solicitud de AWS: request-123/);
-  assert.match(markup, /Error subyacente: Bedrock overloaded/);
-  assert.match(markup, /aria-label="Copiar detalles técnicos"/);
+  assert.match(markup, /技术详情/);
+  assert.match(markup, /HTTP 状态: 503/);
+  assert.match(markup, /AWS 异常: ServiceUnavailableException/);
+  assert.match(markup, /AWS 请求 ID: request-123/);
+  assert.match(markup, /底层错误: Bedrock overloaded/);
+  assert.match(markup, /aria-label="复制技术详情"/);
 });

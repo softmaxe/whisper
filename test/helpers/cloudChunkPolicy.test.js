@@ -272,13 +272,10 @@ test("the final missing-audio marker ends at the real input duration", () => {
 // The marker is persisted into notes and pasted by dictation, so it belongs to
 // the UI language like the [Speaker N] labels do.
 test("the missing-audio marker follows the UI language", (t) => {
-  changeLanguage("de");
+  changeLanguage("zh-CN");
   t.after(() => changeLanguage("en"));
 
-  assert.equal(
-    assembleChunkTranscript([{ text: "eins" }, null], 240),
-    "eins [fehlendes Audio 4:00-8:00]"
-  );
+  assert.equal(assembleChunkTranscript([{ text: "one" }, null], 240), "one [音频缺失 4:00-8:00]");
 });
 
 test("upload slots cap concurrent holders across independent acquirers", async () => {

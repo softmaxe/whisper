@@ -590,20 +590,20 @@ test("the Assistant response cancel control has an accessible name", async (t) =
 test("the Assistant localizes the active registered tool name", async (t) => {
   const markup = await renderAssistantPanel(t, [], {
     activeToolName: "search_notes",
-    locale: "es",
+    locale: "zh-CN",
   });
 
-  assert.match(markup, />Buscar notas</);
+  assert.match(markup, />搜索笔记</);
   assert.doesNotMatch(markup, />Search notes</);
 });
 
 test("the Assistant uses its localized fallback for an unknown active tool", async (t) => {
   const markup = await renderAssistantPanel(t, [], {
     activeToolName: "unregistered_tool",
-    locale: "es",
+    locale: "zh-CN",
   });
 
-  assert.match(markup, />Herramienta</);
+  assert.match(markup, />工具</);
   assert.doesNotMatch(markup, />Unregistered tool</);
 });
 
