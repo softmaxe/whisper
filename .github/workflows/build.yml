@@ -93,6 +93,9 @@ jobs:
           node_modules/.bin/electron --import tsx --test 'test/**/*.test.js'
 
       - name: Package application
+        env:
+          # Packaging uses ad-hoc signing without certificates or signing credentials.
+          CSC_FOR_PULL_REQUEST: "true"
         run: npm run pack
 
       - name: Verify application
