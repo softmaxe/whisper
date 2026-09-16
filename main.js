@@ -137,8 +137,8 @@ if (!gotSingleInstanceLock) {
 const isLiveWindow = (window) => window && !window.isDestroyed();
 
 // Ensure macOS menus use the proper casing for the app name
-if (process.platform === "darwin" && app.getName() !== "whisper") {
-  app.setName("whisper");
+if (process.platform === "darwin" && app.getName() !== "Whisper") {
+  app.setName("Whisper");
 }
 
 // Add global error handling for uncaught exceptions

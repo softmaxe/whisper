@@ -100,9 +100,11 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
         run: |
           set -euo pipefail
-          app="dist/mac-arm64/whisper.app"
+          app="dist/mac-arm64/Whisper.app"
           plist="$app/Contents/Info.plist"
           test -d "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$plist")" = "Whisper"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")" = "Whisper"
           codesign --verify --deep --strict "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "$VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = "$VERSION"
@@ -115,7 +117,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
-          ditto -c -k --keepParent dist/mac-arm64/whisper.app "release/$ARCHIVE"
+          ditto -c -k --keepParent dist/mac-arm64/Whisper.app "release/$ARCHIVE"
           unzip -t "release/$ARCHIVE"
           (
             cd release

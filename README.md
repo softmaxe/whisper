@@ -1,4 +1,4 @@
-# whisper
+# Whisper
 
 A reduced desktop build of [OpenWhispr](https://github.com/OpenWhispr/openwhispr), based on version 1.10.2 at commit `834a0771`.
 
@@ -10,7 +10,7 @@ Requires an Apple Silicon Mac running macOS 12 Monterey or later.
 brew install --cask softmaxe/tap/whisper
 ```
 
-Alternatively, download the ARM64 ZIP from [GitHub Releases](https://github.com/softmaxe/whisper/releases/latest), extract it, and move `whisper.app` to Applications. Each release includes a SHA-256 checksum file. Release applications use ad-hoc signing and are not notarized.
+Alternatively, download the ARM64 ZIP from [GitHub Releases](https://github.com/softmaxe/whisper/releases/latest), extract it, and move `Whisper.app` to Applications. Each release includes a SHA-256 checksum file. Release applications use ad-hoc signing and are not notarized.
 
 To update a Homebrew installation:
 
@@ -52,7 +52,7 @@ Build a local application bundle:
 npm run pack
 ```
 
-On Apple Silicon the result is `dist/mac-arm64/whisper.app`. The macOS bundle uses ad-hoc signing for local use. It is not notarized for public distribution.
+On Apple Silicon the result is `dist/mac-arm64/Whisper.app`. The macOS bundle uses ad-hoc signing for local use. It is not notarized for public distribution.
 
 This build has a separate application identifier and stores its data in `~/Library/Application Support/whisper/` on macOS. It does not overwrite the installed original application's data. Quit the original application before using the same dictation shortcut in this build.
 
