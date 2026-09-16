@@ -1,10 +1,6 @@
 name: Build
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -30,8 +26,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: build-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -90,7 +86,7 @@ jobs:
       - name: Package development application
         if: inputs.release-tag == ''
         env:
-          # Pull requests never receive the release signing identity.
+          # Manual builds do not receive the release signing identity.
           CSC_FOR_PULL_REQUEST: "true"
         run: npm run pack
 

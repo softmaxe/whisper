@@ -10,7 +10,7 @@ npm test
 npm run quality-check
 ```
 
-Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite inside Electron's Node runtime, matching the SQLite binding built by `npm ci`. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the Build workflow.
+Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite inside Electron's Node runtime, matching the SQLite binding built by `npm ci`. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the CI and Build workflows.
 
 On macOS, run `npm run test:signing` with the original [release signing credentials](../docs/macos-signing.md#build-locally) to check identity continuity. The test signs two app versions and native helpers with different code, compares their designated requirements, and verifies that each version satisfies the other's requirement. It also rejects a helper matching the main app's identity. Release runs this test automatically before packaging. It does not install the app or request permissions and cannot replace the upgrade smoke check below.
 
@@ -27,7 +27,7 @@ On macOS, run `npm run test:signing` with the original [release signing credenti
 
 OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistant, bundled model servers, Linux, and Windows are outside this suite. Shared test doubles may still name upstream interfaces imported by the retained implementation; those names do not add product requirements.
 
-The Build workflow also packages the macOS ARM64 app and checks its bundle name, version, architecture, signature, archive, and checksum. Release builds additionally require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Pull request builds use ad-hoc signing without release credentials. Release reuses the verified build before publishing to GitHub and updating the Homebrew tap.
+The CI workflow runs checks for pull requests targeting `main` and pushes to `main`, without packaging or uploading the app. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag. It runs the same checks, packages the macOS ARM64 app, and verifies its bundle name, version, architecture, signature, archive, and checksum. Manual builds use ad-hoc signing without release credentials and retain the package as an Actions artifact for seven days. Release builds require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
 
 ## Release smoke check
 

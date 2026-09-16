@@ -63,7 +63,7 @@ npm run quality-check
 
 This runs lint, TypeScript, translation checks, and the [Whisper regression suite](test/README.md). Run `npm test` for the tests alone. Tests use Electron's Node runtime to match the SQLite binding installed by `npm ci`; a missing binding fails the suite instead of skipping database tests.
 
-The `Build` workflow runs these checks and verifies the macOS ARM64 package. Pull requests use ad-hoc signing without release credentials. The `Release` workflow requires the persistent signing identity, verifies it against the pinned public certificate, publishes the package to this repository, and updates `softmaxe/homebrew-tap`.
+The `CI` workflow runs these checks for pull requests targeting `main` and pushes to `main`. It does not package or upload the app. Run the `Build` workflow manually to check and package an ad-hoc signed macOS ARM64 app, available as an Actions artifact for seven days. Pushing a `v*` tag starts the `Release` workflow, which calls `Build` with the persistent signing identity, verifies it against the pinned public certificate, publishes the package to this repository, and updates `softmaxe/homebrew-tap`. Manual builds do not publish a release or update Homebrew.
 
 ## License
 

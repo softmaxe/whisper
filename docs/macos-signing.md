@@ -62,7 +62,7 @@ base64 -i "$HOME/.config/whisper/signing/identity.p12" | gh secret set WHISPER_S
 gh secret set WHISPER_SIGNING_PASSWORD < "$HOME/.config/whisper/signing/password"
 ```
 
-The Release workflow passes these named secrets to the reusable Build workflow for tagged releases and runs `npm run test:signing` before packaging. Pull request builds do not receive them. Release signing imports the identity into a temporary build keychain, verifies signatures against `resources/mac/signing-certificate.pem`, and cleans up its temporary keychain. A release cannot proceed with a different certificate or an ad-hoc signature.
+The Release workflow passes these named secrets to the reusable Build workflow for tagged releases and runs `npm run test:signing` before packaging. Pull requests and pushes to `main` run checks without packaging or signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. Release signing imports the identity into a temporary build keychain, verifies signatures against `resources/mac/signing-certificate.pem`, and cleans up its temporary keychain. A release cannot proceed with a different certificate or an ad-hoc signature.
 
 Restore these same secret values when moving the release workflow to another repository. Do not generate a fresh certificate on each runner or release. The private key is needed only to build releases; users do not need the signing files.
 
