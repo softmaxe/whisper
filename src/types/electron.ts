@@ -2992,29 +2992,6 @@ declare global {
         error?: string;
         code?: string;
       }>;
-      onDiarizationDownloadProgress?: (callback: (data: any) => void) => () => void;
-      onMeetingDiarizationComplete?: (
-        callback: (data: {
-          sessionId?: string;
-          noteId?: number | null;
-          segments: Array<{
-            id: string;
-            text: string;
-            source: "mic" | "system";
-            timestamp?: number;
-            speaker?: string;
-            speakerName?: string;
-            speakerIsPlaceholder?: boolean;
-            suggestedName?: string;
-            suggestedProfileId?: number;
-            speakerStatus?: "provisional" | "confirmed" | "suggested" | "locked";
-            speakerLocked?: boolean;
-            speakerLockSource?: "user" | "diarization" | "suggestion";
-          }>;
-          speakerEmbeddings?: Record<string, number[]> | null;
-        }) => void
-      ) => () => void;
-
       // Speaker name mapping
       getSpeakerMappings?: (noteId: number) => Promise<
         Array<{
