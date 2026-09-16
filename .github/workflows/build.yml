@@ -1,0 +1,134 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release-tag:
+        description: Release tag to match against the package version
+        required: false
+        default: ""
+        type: string
+    outputs:
+      version:
+        value: ${{ jobs.build.outputs.version }}
+      archive:
+        value: ${{ jobs.build.outputs.archive }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Test and package macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      archive: ${{ steps.metadata.outputs.archive }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Validate architecture and package version
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ inputs.release-tag }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "arm64"
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const fs = require("node:fs");
+          const pkg = require("./package.json");
+          const lock = require("./package-lock.json");
+          assert.equal(process.versions.node.split(".")[0], "24");
+          assert.match(pkg.version, /^[0-9]+\.[0-9]+\.[0-9]+$/);
+          assert.equal(lock.version, pkg.version);
+          assert.equal(lock.packages[""].version, pkg.version);
+          if (process.env.RELEASE_TAG) {
+            assert.equal(process.env.RELEASE_TAG, "v" + pkg.version);
+          }
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            "version=" + pkg.version + "\narchive=whisper-" + pkg.version + "-macos-arm64.zip\n"
+          );
+          NODE
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint, types, and translation checks
+        run: |
+          set -euo pipefail
+          npm run lint
+          npm run typecheck
+          npm run i18n:check
+
+      - name: Run native Electron tests
+        env:
+          ELECTRON_RUN_AS_NODE: "1"
+          REQUIRE_DB_TESTS: "1"
+        run: |
+          set -euo pipefail
+          node_modules/.bin/electron --import tsx --test 'test/**/*.test.js'
+
+      - name: Package application
+        run: npm run pack
+
+      - name: Verify application
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          set -euo pipefail
+          app="dist/mac-arm64/whisper.app"
+          plist="$app/Contents/Info.plist"
+          test -d "$app"
+          codesign --verify --deep --strict "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")" = "$VERSION"
+          executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
+          test "$(lipo -archs "$app/Contents/MacOS/$executable")" = "arm64"
+
+      - name: Archive application and calculate checksum
+        env:
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          ditto -c -k --keepParent dist/mac-arm64/whisper.app "release/$ARCHIVE"
+          unzip -t "release/$ARCHIVE"
+          (
+            cd release
+            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+            shasum -a 256 -c "$ARCHIVE.sha256"
+          )
+
+      - name: Upload application package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-arm64
+          path: |
+            release/${{ steps.metadata.outputs.archive }}
+            release/${{ steps.metadata.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 7
