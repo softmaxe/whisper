@@ -1,0 +1,146 @@
+{
+  "appId": "local.whisper.desktop",
+  "afterPack": "scripts/afterPack.js",
+  "productName": "Whisper",
+  "directories": {
+    "output": "dist"
+  },
+  "npmRebuild": true,
+  "buildDependenciesFromSource": false,
+  "files": [
+    "main.js",
+    "preload.js",
+    "package.json",
+    "node_modules/**/*",
+    "src/dist/**/*",
+    "src/helpers/**/*",
+    "src/config/**/*",
+    "src/constants/**/*",
+    "src/locales/**/*",
+    "src/hooks/**/*",
+    "src/models/**/*",
+    "src/services/transcriptionBaseUrl.ts",
+    "src/stores/policyRules.ts",
+    "src/types/**/*",
+    "src/utils.js",
+    "src/utils/**/*",
+    "src/components.json",
+    "!node_modules/.cache/**/*",
+    "!**/node_modules/**/.eslintcache",
+    "!**/node_modules/better-sqlite3/deps/**/*",
+    "!**/node_modules/better-sqlite3/src/**/*",
+    "!**/node_modules/better-sqlite3/binding.gyp",
+    "!src/node_modules/**/*",
+    "!**/node_modules/electron/**",
+    "!**/node_modules/electron-builder/**",
+    "!**/node_modules/app-builder-bin/**",
+    "!**/node_modules/app-builder-lib/**",
+    "!**/node_modules/builder-util/**",
+    "!**/node_modules/dmg-builder/**",
+    "!**/node_modules/7zip-bin/**",
+    "!**/node_modules/typescript/**",
+    "!**/node_modules/prettier/**",
+    "!**/node_modules/eslint/**",
+    "!**/node_modules/eslint-*/**",
+    "!**/node_modules/@eslint/**",
+    "!**/node_modules/@typescript-eslint/**",
+    "!**/node_modules/globals/**",
+    "!**/node_modules/vite/**",
+    "!**/node_modules/@vitejs/**",
+    "!**/node_modules/esbuild/**",
+    "!**/node_modules/@esbuild/**",
+    "!**/node_modules/rollup/**",
+    "!**/node_modules/@rollup/**",
+    "!**/node_modules/postcss/**",
+    "!**/node_modules/autoprefixer/**",
+    "!**/node_modules/tailwindcss/**",
+    "!**/node_modules/@tailwindcss/**",
+    "!**/node_modules/lightningcss*/**",
+    "!**/node_modules/react/**",
+    "!**/node_modules/react-dom/**",
+    "!**/node_modules/lucide-react/**",
+    "!**/node_modules/@radix-ui/**",
+    "!**/node_modules/class-variance-authority/**",
+    "!**/node_modules/clsx/**",
+    "!**/node_modules/tailwind-merge/**",
+    "!**/node_modules/tw-animate-css/**",
+    "!**/node_modules/react-markdown/**",
+    "!**/node_modules/shadcn-ui/**",
+    "!**/node_modules/@types/**",
+    "!**/node_modules/concurrently/**",
+    "!**/node_modules/cross-env/**",
+    "!**/node_modules/@electron/notarize/**",
+    "!**/node_modules/**/test/**",
+    "!**/node_modules/**/tests/**",
+    "!**/node_modules/**/*.ts",
+    "!**/node_modules/**/*.map",
+    "!**/node_modules/**/CHANGELOG*",
+    "!**/node_modules/**/.github/**"
+  ],
+  "asarUnpack": [
+    "**/node_modules/ffmpeg-static/**/*",
+    "**/node_modules/better-sqlite3/**/*",
+    "**/node_modules/@napi-rs/keyring/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "src/assets",
+      "to": "src/assets",
+      "filter": ["**/*", "!**/*.md", "!openwhispr.icon/**"]
+    },
+    {
+      "from": "resources/bin/",
+      "to": "bin/",
+      "filter": [
+        "macos-globe-listener",
+        "macos-fast-paste",
+        "macos-text-monitor",
+        "macos-mic-listener",
+        "macos-media-remote",
+        "MediaRemoteAdapter.framework/**"
+      ]
+    },
+    {
+      "from": "resources/mediaremote-adapter/bin/mediaremote-adapter.pl",
+      "to": "bin/mediaremote-adapter.pl"
+    },
+    {
+      "from": "resources/mediaremote-adapter/LICENSE",
+      "to": "bin/mediaremote-adapter.LICENSE"
+    }
+  ],
+  "mac": {
+    "category": "public.app-category.productivity",
+    "target": [
+      {
+        "target": "dmg",
+        "arch": ["arm64"]
+      },
+      {
+        "target": "zip",
+        "arch": ["arm64"]
+      }
+    ],
+    "icon": "src/assets/icon.icns",
+    "gatekeeperAssess": false,
+    "hardenedRuntime": true,
+    "entitlements": "resources/mac/entitlements.mac.plist",
+    "entitlementsInherit": "resources/mac/entitlements.mac.plist",
+    "identity": "-",
+    "notarize": false,
+    "extendInfo": {
+      "LSUIElement": false,
+      "CFBundleIconName": "openwhispr",
+      "NSMicrophoneUsageDescription": "Whisper uses the microphone to capture your voice for transcription.",
+      "NSAccessibilityUsageDescription": "Whisper needs accessibility permissions to paste transcribed text into other applications."
+    }
+  },
+  "dmg": {
+    "title": "Whisper",
+    "icon": "src/assets/icon.icns",
+    "window": {
+      "width": 540,
+      "height": 380
+    }
+  }
+}

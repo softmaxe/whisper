@@ -1,0 +1,236 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate publishing credentials
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require publishing and signing credentials
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
+          WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
+        run: |
+          if [[ -z "${TAP_GITHUB_TOKEN:-}" ]]; then
+            echo "::error::TAP_GITHUB_TOKEN is required to update softmaxe/homebrew-tap."
+            exit 1
+          fi
+          if [[ -z "$WHISPER_SIGNING_CERTIFICATE" || -z "$WHISPER_SIGNING_PASSWORD" ]]; then
+            echo "::error::WHISPER_SIGNING_CERTIFICATE and WHISPER_SIGNING_PASSWORD are required."
+            exit 1
+          fi
+
+  build:
+    name: Build release package
+    needs: validate
+    uses: ./.github/workflows/build.yml
+    with:
+      release-tag: ${{ github.ref_name }}
+    secrets:
+      WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
+      WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.build.outputs.version }}
+      ARCHIVE: ${{ needs.build.outputs.archive }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download application package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: package-arm64
+          path: release
+
+      - name: Verify release files
+        run: |
+          set -euo pipefail
+          test "$TAG" = "v$VERSION"
+          test "$ARCHIVE" = "whisper-$VERSION-macos-arm64.zip"
+          expected="$(printf '%s\n' "$ARCHIVE" "$ARCHIVE.sha256" | LC_ALL=C sort)"
+          actual="$(find release -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)"
+          test "$actual" = "$expected"
+          test "$(wc -l < "release/$ARCHIVE.sha256" | tr -d ' ')" = "1"
+          read -r digest reference < "release/$ARCHIVE.sha256"
+          [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]]
+          test "$reference" = "$ARCHIVE"
+          (cd release && sha256sum -c "$ARCHIVE.sha256")
+
+      - name: Create draft and publish release
+        run: |
+          set -euo pipefail
+          if is_draft="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$is_draft" != "true" ]]; then
+              echo "::error::Release $TAG is already published and will not be overwritten."
+              exit 1
+            fi
+          else
+            gh release create "$TAG" \
+              --draft \
+              --verify-tag \
+              --generate-notes \
+              --title "whisper $VERSION"
+          fi
+
+          gh release upload "$TAG" "release/$ARCHIVE" "release/$ARCHIVE.sha256" --clobber
+          actual="$(gh release view "$TAG" --json assets --jq '.assets[].name' | LC_ALL=C sort)"
+          expected="$(printf '%s\n' "$ARCHIVE" "$ARCHIVE.sha256" | LC_ALL=C sort)"
+          test "$actual" = "$expected"
+          gh release edit "$TAG" --draft=false --latest
+
+  tap-sync:
+    name: Update Homebrew tap
+    needs: [build, release]
+    runs-on: macos-15
+    timeout-minutes: 20
+    concurrency:
+      group: homebrew-tap-whisper
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.build.outputs.version }}
+      ARCHIVE: ${{ needs.build.outputs.archive }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_DEVELOPER: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out Homebrew tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: softmaxe/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+
+      - name: Update Homebrew
+        run: brew update
+
+      - name: Generate cask from the published checksum
+        run: |
+          set -euo pipefail
+          checksum_dir="$(mktemp -d)"
+          trap 'rm -rf "$checksum_dir"' EXIT
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ARCHIVE.sha256" --dir "$checksum_dir"
+          test "$(wc -l < "$checksum_dir/$ARCHIVE.sha256" | tr -d ' ')" = "1"
+          read -r digest reference < "$checksum_dir/$ARCHIVE.sha256"
+          [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]]
+          test "$reference" = "$ARCHIVE"
+          mkdir -p homebrew-tap/Casks
+
+          CASK_PATH="homebrew-tap/Casks/whisper.rb" SHA256="$digest" ruby <<'RUBY'
+          require "rubygems"
+
+          path = ENV.fetch("CASK_PATH")
+          version = ENV.fetch("VERSION")
+          digest = ENV.fetch("SHA256")
+          abort "Invalid version" unless version.match?(/\A[0-9]+\.[0-9]+\.[0-9]+\z/)
+          abort "Invalid checksum" unless digest.match?(/\A[0-9a-f]{64}\z/i)
+
+          if File.exist?(path)
+            current = File.read(path)[/^\s*version "([^"]+)"/, 1]
+            abort "Existing cask has no version" unless current
+            if Gem::Version.new(current) > Gem::Version.new(version)
+              abort "Refusing to replace newer cask #{current} with #{version}"
+            end
+          end
+
+          template = <<~'CASK'
+            cask "whisper" do
+              version "@VERSION@"
+              sha256 "@SHA256@"
+
+              url "https://github.com/softmaxe/whisper/releases/download/v#{version}/whisper-#{version}-macos-arm64.zip"
+              name "Whisper"
+              desc "Self-hosted desktop dictation"
+              homepage "https://github.com/softmaxe/whisper"
+
+              livecheck do
+                url :url
+                strategy :github_latest
+              end
+
+              depends_on arch: :arm64
+              depends_on macos: :monterey
+
+              app "Whisper.app"
+
+              zap trash: [
+                "~/Library/Application Support/whisper",
+                "~/Library/Caches/whisper",
+                "~/Library/Preferences/local.whisper.desktop.plist",
+              ]
+            end
+          CASK
+          File.write(path, template.gsub("@VERSION@", version).gsub("@SHA256@", digest))
+          RUBY
+
+      - name: Validate cask and release download
+        run: |
+          set -euo pipefail
+          cask="$GITHUB_WORKSPACE/homebrew-tap/Casks/whisper.rb"
+          ruby -c "$cask"
+          brew info --cask "$cask"
+          brew fetch --cask "$cask"
+
+      - name: Commit and push cask
+        working-directory: homebrew-tap
+        run: |
+          set -euo pipefail
+          status_paths="$(git status --porcelain=v1 --untracked-files=all | awk '{ print $2 }' | LC_ALL=C sort -u)"
+          if [[ -n "$status_paths" && "$status_paths" != "Casks/whisper.rb" ]]; then
+            echo "::error::Unexpected Homebrew tap changes."
+            git status --short
+            exit 1
+          fi
+
+          git add Casks/whisper.rb
+          if git diff --cached --quiet; then
+            echo "Casks/whisper.rb is already current."
+            exit 0
+          fi
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = "Casks/whisper.rb"
+          git diff --cached -- Casks/whisper.rb
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: update whisper to $VERSION"
+
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "::error::Failed to push the tap after 3 attempts."
+              exit 1
+            fi
+            sleep "$((attempt * 2))"
+            git fetch origin main
+            git rebase origin/main
+          done
