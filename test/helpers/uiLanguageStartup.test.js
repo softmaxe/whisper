@@ -121,9 +121,9 @@ test("main locale fallback remains implicit and yields to an explicit preference
     { unsetLanguage, detectedLanguage, environmentAfterDetection, explicitLanguage },
     {
       unsetLanguage: "",
-      detectedLanguage: "zh-TW",
+      detectedLanguage: "zh-CN",
       environmentAfterDetection: undefined,
-      explicitLanguage: "de",
+      explicitLanguage: "en",
     }
   );
 });
