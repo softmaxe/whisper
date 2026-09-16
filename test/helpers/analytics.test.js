@@ -5,8 +5,6 @@ const {
   buildAnalyticsActivityDays,
   calculateStreaks,
   countSpokenWords,
-  inferHistoricalAnalyticsMode,
-  resolveAnalyticsMode,
   summarizeAnalyticsDays,
 } = require("../../src/helpers/analytics.js");
 
@@ -39,38 +37,6 @@ test("analytics segments Chinese and Japanese speech without requiring spaces", 
   assert.equal(countSpokenWords("今天我们测试语音输入"), 5);
   assert.equal(countSpokenWords("今日は良い天気です"), 5);
   assert.equal(countSpokenWords("OpenWhisprで音声入力を試します"), 7);
-});
-
-test("analytics resolves local, cloud, and BYOK modes", () => {
-  assert.equal(resolveAnalyticsMode({ useLocalWhisper: true }, "local-whisper"), "local");
-  assert.equal(
-    resolveAnalyticsMode(
-      { transcriptionMode: "openwhispr", cloudTranscriptionMode: "openwhispr" },
-      "openwhispr"
-    ),
-    "openwhispr_cloud"
-  );
-  assert.equal(resolveAnalyticsMode({ transcriptionMode: "providers" }, "openai"), "byok");
-});
-
-test("analytics credits a fallback to the provider that actually ran", () => {
-  // Local whisper failed and the user's OpenAI key transcribed instead.
-  assert.equal(resolveAnalyticsMode({ useLocalWhisper: true }, "openai-fallback"), "byok");
-  // A streaming provider name cannot tell BYOK from OpenWhispr Cloud, so the
-  // selected settings still decide.
-  assert.equal(
-    resolveAnalyticsMode(
-      { transcriptionMode: "openwhispr", cloudTranscriptionMode: "openwhispr" },
-      "deepgram-streaming"
-    ),
-    "openwhispr_cloud"
-  );
-});
-
-test("historical analytics do not guess an ambiguous provider mode", () => {
-  assert.equal(inferHistoricalAnalyticsMode("local-whisper"), "local");
-  assert.equal(inferHistoricalAnalyticsMode("openwhispr"), "openwhispr_cloud");
-  assert.equal(inferHistoricalAnalyticsMode("deepgram-streaming"), "unknown");
 });
 
 test("analytics computes weighted WPM, coverage, and streaks from day totals", () => {

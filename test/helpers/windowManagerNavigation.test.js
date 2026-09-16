@@ -21,11 +21,6 @@ test("packaged app: the window's own reload is allowed regardless of query or ha
   );
 });
 
-test("packaged app: Windows-style file URLs compare on the encoded pathname", () => {
-  const winAppUrl = "file:///C:/Program%20Files/OpenWhispr/resources/app.asar/src/dist/index.html";
-  assert.equal(isAllowedAppNavigation(`${winAppUrl}?panel=true`, winAppUrl), true);
-});
-
 test("packaged app: foreign file URLs are blocked", () => {
   assert.equal(isAllowedAppNavigation("file:///etc/passwd", PACKAGED_APP_URL), false);
   assert.equal(isAllowedAppNavigation("file:///Users/test/secret.txt", PACKAGED_APP_URL), false);

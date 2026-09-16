@@ -56,13 +56,12 @@ Run `npm run pack` to build `dist/mac-arm64/Whisper.app`.
 Run the checks after installing dependencies:
 
 ```sh
-npm run lint
-npm run typecheck
-npm run i18n:check
-ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron --import tsx --test 'test/**/*.test.js'
+npm run quality-check
 ```
 
-`npm ci` and packaging build the SQLite binding for Electron, so the test command above uses the same runtime. `npm test` uses Node and requires a SQLite binding built for that Node version.
+This runs lint, TypeScript, translation checks, and the [Whisper regression suite](test/README.md). Run `npm test` for the tests alone. Tests use Electron's Node runtime to match the SQLite binding installed by `npm ci`; a missing binding fails the suite instead of skipping database tests.
+
+The `Build` workflow runs these checks and verifies the macOS ARM64 package. The `Release` workflow publishes that package to this repository and updates `softmaxe/homebrew-tap`.
 
 ## License
 

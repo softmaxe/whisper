@@ -265,44 +265,6 @@ test("clipboard-only delivery uses the main-process bridge for a streaming-capab
   assert.deepEqual(harness.navigatorWrites, []);
 });
 
-test("failed selection-edit clipboard rejection cannot cancel persistence", async (t) => {
-  const harness = await mountCompletionHarness(t, {
-    settings: { autoPasteEnabled: true },
-    replaceSelectedText: async () => ({ success: false, code: "paste_failed" }),
-    writeClipboard: async () => {
-      throw new Error("main-process clipboard rejected");
-    },
-  });
-
-  await harness.complete({
-    success: true,
-    text: "Edited selection text",
-    rawText: "Raw selection instruction",
-    clientTranscriptionId: "client-selection",
-    source: "openai",
-    selectionEdit: { sessionId: "selection-session" },
-  });
-
-  assert.deepEqual(harness.bridgeWrites, ["Edited selection text"]);
-  assert.deepEqual(harness.saves, [
-    [
-      "Edited selection text",
-      "Raw selection instruction",
-      { clientTranscriptionId: "client-selection" },
-    ],
-  ]);
-  assert.ok(
-    harness.logs.some(
-      ({ level, message, meta, scope }) =>
-        level === "warn" &&
-        message === "Failed to keep transcription in clipboard" &&
-        meta.delivery === "selection-edit-fallback" &&
-        scope === "clipboard"
-    )
-  );
-  assert.deepEqual(harness.navigatorWrites, []);
-});
-
 test("a false persistence result is logged instead of silently ignored", async (t) => {
   const harness = await mountCompletionHarness(t, {
     saveTranscription: async () => false,

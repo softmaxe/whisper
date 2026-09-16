@@ -7,9 +7,10 @@ async function loadManagerClass(t) {
     cachePrefix: "openwhispr-no-audio-lifecycle-test-",
     settingsKey: "__noAudioLifecycleSettings",
     settings: {
-      useLocalWhisper: true,
-      localTranscriptionProvider: "whisper",
-      whisperModel: "base",
+      useLocalWhisper: false,
+      transcriptionMode: "self-hosted",
+      remoteTranscriptionUrl: "http://localhost:8000/v1",
+      remoteTranscriptionModel: "whisper-1",
       cloudTranscriptionMode: "byok",
       isSignedIn: false,
     },
@@ -26,7 +27,7 @@ function createManager(AudioManager, failure) {
     pendingAssistantConversation: null,
     pendingSelectionEdit: null,
     lastAudioBlob: {},
-    processWithLocalWhisper: async () => {
+    processWithOpenAIAPI: async () => {
       throw failure;
     },
     onStateChange: (state) => order.push(state.isProcessing ? "processing" : "idle"),
@@ -37,7 +38,7 @@ function createManager(AudioManager, failure) {
   return { manager, order, saved };
 }
 
-test("local silence becomes one no-audio outcome after processing is idle", async (t) => {
+test("self-hosted silence becomes one no-audio outcome after processing is idle", async (t) => {
   const AudioManager = await loadManagerClass(t);
   const { manager, order, saved } = createManager(AudioManager, new Error("No audio detected"));
 

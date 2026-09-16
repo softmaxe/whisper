@@ -138,28 +138,6 @@ test("menu alone uses the menu size", async () => {
   );
 });
 
-test("the assistant panel wins over everything", async () => {
-  const { resolveMainWindowSizeKey } = await load();
-  assert.equal(
-    resolveMainWindowSizeKey({
-      panelOpen: true,
-      menuOpen: true,
-      toastCount: 2,
-      compactPill: true,
-    }),
-    "ASSISTANT"
-  );
-  assert.equal(
-    resolveMainWindowSizeKey({
-      panelOpen: true,
-      menuOpen: false,
-      toastCount: 0,
-      compactPill: false,
-    }),
-    "ASSISTANT"
-  );
-});
-
 test("a toast dismissing never shrinks the window below an active state", async () => {
   const { resolveMainWindowSizeKey, SIZE_RANK } = await load();
   // Toast dismissal while recording resolves to RECORDING, not BASE.

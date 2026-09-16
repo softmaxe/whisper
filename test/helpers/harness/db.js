@@ -1,10 +1,7 @@
 const REQUIRED_DB_FAILURE =
-  "DB-backed tests were required (REQUIRE_DB_TESTS is set) but the better-sqlite3 native " +
-  "binding could not be loaded, so this test would have been skipped instead of run. In CI " +
-  "this almost always means the step that rebuilds better-sqlite3 for the runner's Node " +
-  '("npm rebuild better-sqlite3", right after "npm ci --ignore-scripts") is missing or ' +
-  "failed. Restore that step instead of deleting this check: without it every DB test " +
-  "skips and the suite stays green with no database coverage. Underlying error: ";
+  "DB-backed tests require the better-sqlite3 binding built for Electron. " +
+  "Run npm ci, then npm test so tests use the same runtime as the app. " +
+  "Database coverage cannot be skipped. Underlying error: ";
 
 function isNativeBindingUnavailable(error) {
   const message = String(error?.message || error);
@@ -16,8 +13,8 @@ function isNativeBindingUnavailable(error) {
   );
 }
 
-// Locally the binding is built for Electron's ABI, so a plain `node` run must skip. In CI the
-// rebuild step makes it loadable, so a skip there means that step vanished and must fail.
+// npm test runs under Electron and requires database coverage. Direct runs may
+// opt out only when diagnosing a native binding mismatch.
 function skipOrFail(t, error) {
   if (!isNativeBindingUnavailable(error)) {
     throw error;
@@ -25,7 +22,7 @@ function skipOrFail(t, error) {
   if (process.env.REQUIRE_DB_TESTS) {
     throw new Error(REQUIRED_DB_FAILURE + String(error?.message || error), { cause: error });
   }
-  t.skip("better-sqlite3 native binding is not available for this Node runtime");
+  t.skip("better-sqlite3 native binding is not available for this runtime");
 }
 
 const fs = require("node:fs");
@@ -39,7 +36,7 @@ const DatabaseManager = require("../../../src/helpers/database.js");
 // A real DatabaseManager over a private tmpdir. Returns null when the caller
 // must bail because skipOrFail marked the test skipped.
 function createDb(t) {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-sync-harness-"));
+  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-db-test-"));
   setUserDataDir(userDataDir);
 
   // Probe first: a binding failure here is the loader's, not schema setup's.

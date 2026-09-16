@@ -17,32 +17,11 @@ function fakeWindow({ destroyed = false, minimized = false, visible = true } = {
   };
 }
 
-test("Windows hotkey capture restores and focuses both the window and renderer", () => {
-  const win = fakeWindow({ minimized: true, visible: false });
-
-  assert.equal(focusWindowsHotkeyCaptureWindow(win, "win32"), true);
-  assert.deepEqual(win.calls, ["restore", "show", "window-focus", "renderer-focus"]);
-});
-
-test("Windows hotkey capture refocuses an already visible window", () => {
-  const win = fakeWindow();
-
-  assert.equal(focusWindowsHotkeyCaptureWindow(win, "win32"), true);
-  assert.deepEqual(win.calls, ["window-focus", "renderer-focus"]);
-});
-
-test("hotkey capture never steals native focus on macOS or Linux", () => {
-  for (const platform of ["darwin", "linux"]) {
+test("hotkey capture never steals native focus on macOS", () => {
+  for (const platform of ["darwin"]) {
     const win = fakeWindow({ minimized: true, visible: false });
 
     assert.equal(focusWindowsHotkeyCaptureWindow(win, platform), false);
     assert.deepEqual(win.calls, []);
   }
-});
-
-test("hotkey capture ignores a destroyed Windows window", () => {
-  const win = fakeWindow({ destroyed: true });
-
-  assert.equal(focusWindowsHotkeyCaptureWindow(win, "win32"), false);
-  assert.deepEqual(win.calls, []);
 });

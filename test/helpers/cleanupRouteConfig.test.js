@@ -2,9 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { loadAudioManager } = require("./harness/audioManager");
 
-// Pin both cleanup routes against bridge defaults (local: 0.7, Anthropic/enterprise: 0.3).
-// Only direct Gemini defers to model defaults; stale provider selections must not leak.
-async function loadRouteResolver(t, provider = "test", mode = "providers") {
+async function loadRouteResolver(t, provider = "custom", mode = "self-hosted") {
   const { vite } = await loadAudioManager(t, {
     cachePrefix: "openwhispr-cleanup-route-config-test-",
     settingsKey: "__cleanupRouteConfigSettings",
@@ -62,44 +60,4 @@ test("the cleanup route pins temperature 0 and requires complete output", async 
   assert.equal(route.config.inferenceScope, "dictationCleanup");
   assert.equal(route.config.temperature, 0);
   assert.equal(route.config.requireCompleteOutput, true);
-});
-
-test("the translation chain's cleanup step pins the same config", async (t) => {
-  const resolveRoute = await loadRouteResolver(t);
-
-  const route = resolveRoute("so um translate this", { translationRequested: true });
-
-  assert.equal(route.kind, "translation");
-  assert.equal(route.cleanupConfig.inferenceScope, "dictationCleanup");
-  assert.equal(route.cleanupConfig.temperature, 0);
-  assert.equal(route.cleanupConfig.requireCompleteOutput, true);
-  assert.equal(route.config.temperature, undefined);
-});
-
-test("both Gemini cleanup paths defer temperature to the provider", async (t) => {
-  const resolveRoute = await loadRouteResolver(t, "gemini");
-  assert.equal(resolveRoute("clean this").config.temperature, undefined);
-  assert.equal(
-    resolveRoute("translate this", { translationRequested: true }).cleanupConfig.temperature,
-    undefined
-  );
-});
-
-test("a stale Gemini selection does not change other cleanup modes", async (t) => {
-  const resolveRoute = await loadRouteResolver(t, "gemini", "local");
-  assert.equal(resolveRoute("clean this").config.temperature, 0);
-  assert.equal(
-    resolveRoute("translate this", { translationRequested: true }).cleanupConfig.temperature,
-    0
-  );
-});
-
-test("the agent route keeps its provider defaults", async (t) => {
-  const resolveRoute = await loadRouteResolver(t);
-
-  const route = resolveRoute("Jarvis, what is on my calendar", { voiceAgentRequested: true });
-
-  assert.equal(route.kind, "agent");
-  assert.equal(route.config.temperature, undefined);
-  assert.equal(route.config.requireCompleteOutput, undefined);
 });

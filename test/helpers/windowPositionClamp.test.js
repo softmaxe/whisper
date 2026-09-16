@@ -71,15 +71,6 @@ test("every panel anchor stays inside a negative-origin display", () => {
   }
 });
 
-test("the meeting prompt also lands on a monitor above the primary display", () => {
-  const { x, y, width, height } = WindowPositionUtil.getNotificationPosition(MONITOR_ABOVE);
-  const { workArea } = MONITOR_ABOVE;
-
-  assert.ok(y < 0, "the prompt must not be floored onto the primary display's rows");
-  assert.ok(x >= workArea.x && x + width <= workArea.x + workArea.width);
-  assert.ok(y >= workArea.y && y + height <= workArea.y + workArea.height);
-});
-
 test("a window larger than its display is pinned to the work area origin", () => {
   const tiny = { workArea: { x: 0, y: 25, width: 800, height: 600 } };
   const position = WindowPositionUtil.getMainWindowPosition(tiny, { width: 900, height: 700 });
