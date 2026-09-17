@@ -254,6 +254,53 @@ configure(nil)
 application.unavailable = true
 expect("failed AX queries", .unknown)
 
+for bundle in ["com.mitchellh.ghostty", "com.mitchellh.ghostty.debug"] {
+    // Ghostty's terminal exposes a read-only AX buffer. Its Paste shortcut
+    // can be absent from the menu even while the terminal accepts Command-V.
+    let terminal = element("AXTextArea")
+    terminal.attributes.removeValue(forKey: kAXEnabledAttribute)
+    configure(terminal, bundleIdentifier: bundle)
+    expect("Ghostty terminal without a Paste menu verdict", .pasteable)
+    guard !isEditableTextElement(terminal) else { fatalError("Terminal buffer became AX-editable") }
+    configure(terminal, menu: pasteMenu(enabled: true, modifiers: 1), bundleIdentifier: bundle)
+    expect("Ghostty exposes only Paste Selection with Command-Shift-V", .pasteable)
+    configure(terminal, menu: pasteMenu(enabled: false), bundleIdentifier: bundle)
+    expect("Ghostty with explicitly disabled Command-V", .notPasteable)
+    configure(terminal, bundleIdentifier: bundle)
+    trusted = false
+    expect("Ghostty without Accessibility trust", .unknown)
+    guard reads == 0 else { fatalError("Untrusted Ghostty probe queried AX") }
+    configure(terminal, bundleIdentifier: bundle)
+    NSWorkspace.shared.frontmostApplication = MockApplication(processIdentifier: 99)
+    expect("Ghostty is not the active app", .notPasteable)
+    configure(terminal, bundleIdentifier: bundle)
+    switchOnRead = true
+    expect("Ghostty loses focus during the probe", .notPasteable)
+    terminal.attributes[kAXEnabledAttribute] = false as NSNumber
+    configure(terminal, bundleIdentifier: bundle)
+    expect("disabled Ghostty terminal", .notPasteable)
+    terminal.attributes[kAXEnabledAttribute] = true as NSNumber
+    terminal.attributes[kAXSubroleAttribute] = "AXSecureTextField" as NSString
+    expect("secure Ghostty field", .notPasteable)
+    configure(readOnly, bundleIdentifier: bundle)
+    expect("explicitly non-editable Ghostty field", .notPasteable)
+    terminal.unavailable = true
+    configure(terminal, bundleIdentifier: bundle)
+    expect("Ghostty with unavailable focused attributes", .unknown)
+    configure(nil, bundleIdentifier: bundle)
+    expect("Ghostty without a focused terminal", .unknown)
+    for role in ["AXWindow", "AXGroup", "AXTextField"] {
+        configure(element(role), bundleIdentifier: bundle)
+        expect("Ghostty non-terminal focus", .unknown)
+    }
+    configure(element("AXButton"), bundleIdentifier: bundle)
+    expect("Ghostty button focus", .notPasteable)
+}
+for bundle in ["com.example.editor", "com.mitchellh.ghostty.other"] {
+    configure(element("AXTextArea"), bundleIdentifier: bundle)
+    expect("other apps still need a writable field or Paste menu", .unknown)
+}
+
 for modifiers in [1, 2, 4, 8] {
     configure(element("AXWindow"), menu: pasteMenu(enabled: true, modifiers: modifiers))
     expect("nonstandard Paste modifiers", .unknown)
