@@ -144,7 +144,7 @@ func pasteMenuStatus(_ appElement: AXUIElement, deadline: TimeInterval) -> Paste
 }
 
 func focusedPasteTargetStatus(
-    _ appElement: AXUIElement, requiresWritableTextField: Bool
+    _ appElement: AXUIElement, requiresWritableTextField: Bool, bundleIdentifier: String
 ) -> PasteTargetStatus {
     let deadline = ProcessInfo.processInfo.systemUptime + 0.35
     let element = pasteTargetElement(pasteTargetAttribute(appElement, kAXFocusedUIElementAttribute))
@@ -171,6 +171,14 @@ func focusedPasteTargetStatus(
     let menuStatus = pasteMenuStatus(appElement, deadline: deadline)
     if menuStatus != .unknown { return menuStatus }
     if explicitlyReadOnly { return .notPasteable }
+
+    // Ghostty's focused terminal accepts keyboard input, but its AX text
+    // buffer is not settable and its menu may omit the Command-V shortcut.
+    if ["com.mitchellh.ghostty", "com.mitchellh.ghostty.debug"].contains(bundleIdentifier),
+       let element = element,
+       pasteTargetAttribute(element, kAXRoleAttribute) as? String == "AXTextArea" {
+        return .pasteable
+    }
     return .unknown
 }
 
@@ -192,7 +200,8 @@ func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
     }
 
     let status = focusedPasteTargetStatus(
-        AXUIElementCreateApplication(targetPid), requiresWritableTextField: requiresWritableTextField
+        AXUIElementCreateApplication(targetPid), requiresWritableTextField: requiresWritableTextField,
+        bundleIdentifier: bundleIdentifier
     )
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid else {
         return .notPasteable
