@@ -310,13 +310,39 @@ class TextEditMonitor extends EventEmitter {
       args = [...resolved.args, "--probe-editable"];
     }
 
+    return this._probeTarget(
+      resolved.command,
+      args,
+      (line) => line === "EDITABLE",
+      false,
+      timeoutMs
+    );
+  }
+
+  async canPasteAtTarget(pid, timeoutMs = 700) {
+    // Missing capture metadata is not evidence that the current app cannot
+    // paste. Preserve the existing delivery path when capture was unavailable.
+    if (process.platform !== "darwin" || !pid) return null;
+    const resolved = this.resolveBinary();
+    if (!resolved) return null;
+
+    return this._probeTarget(
+      resolved.command,
+      [...resolved.args, "--paste-target", String(pid)],
+      (line) => (line === "PASTEABLE" ? true : line === "NOT_PASTEABLE" ? false : null),
+      null,
+      timeoutMs
+    );
+  }
+
+  _probeTarget(command, args, parseVerdict, unavailable, timeoutMs) {
     // The verdict is the first output line. A stale binary that predates the
     // probe flag falls into monitor mode instead: it blocks reading stdin,
     // then emits its monitor output and keeps running — closing stdin and
-    // resolving on that first line keeps the stale case a fast "not editable"
+    // resolving on that first line keeps the stale case a fast fallback
     // rather than a hang until the timeout.
     return new Promise((resolve) => {
-      const child = spawn(resolved.command, args, { stdio: ["pipe", "pipe", "ignore"] });
+      const child = spawn(command, args, { stdio: ["pipe", "pipe", "ignore"] });
       let buffered = "";
       let settled = false;
       const settle = (verdict) => {
@@ -328,16 +354,16 @@ class TextEditMonitor extends EventEmitter {
         } catch {}
         resolve(verdict);
       };
-      const timer = setTimeout(() => settle(false), timeoutMs);
+      const timer = setTimeout(() => settle(unavailable), timeoutMs);
       child.stdin.on("error", () => {});
       child.stdin.end();
       child.stdout.on("data", (data) => {
         buffered += data.toString();
         const newline = buffered.indexOf("\n");
-        if (newline !== -1) settle(buffered.slice(0, newline).trim() === "EDITABLE");
+        if (newline !== -1) settle(parseVerdict(buffered.slice(0, newline).trim()));
       });
-      child.on("error", () => settle(false));
-      child.on("close", () => settle(buffered.trim() === "EDITABLE"));
+      child.on("error", () => settle(unavailable));
+      child.on("close", () => settle(parseVerdict(buffered.trim())));
     });
   }
 

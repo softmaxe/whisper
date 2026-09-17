@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AssistantPanel } from "./components/dictation/AssistantPanel";
+import { CopyRecoveryPanel } from "./components/dictation/CopyRecoveryPanel";
 import { LiquidCancelButton } from "./components/dictation/LiquidCancelButton";
 import { LiveTranscriptPanel } from "./components/dictation/LiveTranscriptPanel";
 import { PillCommandMenu } from "./components/dictation/PillCommandMenu";
@@ -223,14 +224,14 @@ export default function App() {
     dismissDictationError,
     onDictationError: handleDictationError,
     getAssistantSelectionContext: assistant.getSelectionContext,
-    onShowTranscript: (text) => {
+    onShowTranscript: (text, options) => {
       // While the Agent panel is open the main window's transcript is suppressed
       // (openPanel refuses under assistantOpenRef); the companion hosts it instead.
       if (assistantOpenRef.current) {
         window.electronAPI?.showAgentDictationFinalTranscript?.(text);
         return;
       }
-      liveTranscriptApiRef.current?.showFinalText(text);
+      liveTranscriptApiRef.current?.showFinalText(text, options);
     },
     assistantOpenRef,
   });
@@ -332,6 +333,7 @@ export default function App() {
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptMounted: liveTranscript.mounted,
     liveTranscriptOpenRef: liveTranscript.openRef,
+    liveTranscriptCopyFallback: liveTranscript.copyFallback,
   });
 
   useEffect(() => {
@@ -420,7 +422,8 @@ export default function App() {
       toastCount === 0 &&
       !dictationErrorPillHandoffActive &&
       !assistant.mounted &&
-      !liveTranscript.mounted
+      !liveTranscript.mounted &&
+      !liveTranscript.copyFallback
     ) {
       // Delay briefly so processing can start after recording stops without a flash
       hideTimeout = setTimeout(() => {
@@ -440,6 +443,7 @@ export default function App() {
     dictationErrorPillHandoffActive,
     assistant.mounted,
     liveTranscript.mounted,
+    liveTranscript.copyFallback,
   ]);
 
   const handleClose = () => {
@@ -459,6 +463,8 @@ export default function App() {
           cancelRecording();
         } else if (isProcessing) {
           cancelProcessing();
+        } else if (liveTranscript.copyFallback) {
+          liveTranscript.close({ suppress: true, clear: true });
         } else {
           handleClose();
         }
@@ -475,6 +481,8 @@ export default function App() {
     isProcessing,
     cancelRecording,
     cancelProcessing,
+    liveTranscript.copyFallback,
+    liveTranscript.close,
   ]);
 
   // Determine current mic state
@@ -617,13 +625,15 @@ export default function App() {
   // unmount), and materializes once at its settled dock — one beat, not a
   // condense-then-blink. Live activity opts out of that fold: the pill is the
   // only owner left once beginClose hides the companion.
-  const pillVisuallySuppressed = resolvePillVisualSuppression({
-    dictationErrorSuppressed: dictationErrorSuppressesPill,
-    assistantActionsSuppressed: assistantActionsSuppressPill,
-    assistantClosing: assistant.closing,
-    panelReturnResizeActive,
-    hasLiveActivity: pillHasLiveActivity,
-  });
+  const pillVisuallySuppressed =
+    Boolean(liveTranscript.copyFallback) ||
+    resolvePillVisualSuppression({
+      dictationErrorSuppressed: dictationErrorSuppressesPill,
+      assistantActionsSuppressed: assistantActionsSuppressPill,
+      assistantClosing: assistant.closing,
+      panelReturnResizeActive,
+      hasLiveActivity: pillHasLiveActivity,
+    });
 
   useLinuxPillInteractivity({
     pillRef: pillPresenceRef,
@@ -793,8 +803,8 @@ export default function App() {
       </div>
 
       <VoiceModePanelCore
-        mode={activeVoicePanelMode}
-        open={activeVoicePanel.open}
+        mode={liveTranscript.copyFallback ? null : activeVoicePanelMode}
+        open={!liveTranscript.copyFallback && activeVoicePanel.open}
         closing={activeVoicePanelMode === "assistant" && assistant.closing}
         stage={
           activeVoicePanelMode === "live-transcript" ? liveTranscriptEntrance.coreStage : "content"
@@ -829,7 +839,7 @@ export default function App() {
           />
         )}
 
-        {activeVoicePanelMode !== "assistant" && (
+        {activeVoicePanelMode !== "assistant" && !liveTranscript.copyFallback && (
           <LiveTranscriptPanel
             text={liveTranscript.mounted ? liveTranscript.text : ""}
             measurementText={liveTranscript.mounted ? liveTranscript.measurementText : ""}
@@ -842,6 +852,15 @@ export default function App() {
           />
         )}
       </VoiceModePanelCore>
+      {liveTranscript.copyFallback && liveTranscript.mounted && (
+        <CopyRecoveryPanel
+          open={liveTranscript.open}
+          text={liveTranscript.text}
+          copyFallback={liveTranscript.copyFallback}
+          onClose={() => liveTranscript.close({ suppress: true, clear: true })}
+          onPreferredHeightChange={liveTranscript.requestHeight}
+        />
+      )}
     </div>
   );
 }

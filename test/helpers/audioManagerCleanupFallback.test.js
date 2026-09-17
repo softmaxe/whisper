@@ -119,3 +119,26 @@ test("safePaste returns true only when the preload reports a completed paste", a
 
   assert.equal(await manager.safePaste("completed transcript"), true);
 });
+
+test("safePaste lets copy recovery handle a rejected paste without a competing error", async (t) => {
+  const { createManager, window } = await loadAudioManager(t, {
+    cachePrefix: "openwhispr-audio-paste-copy-recovery-",
+    settingsKey: "__audioPasteCopyRecoverySettings",
+  });
+  const manager = createManager({
+    onError: () => assert.fail("manual-copy recovery owns the error presentation"),
+  });
+  window.electronAPI.pasteText = async (text, options) => {
+    assert.equal(text, "recoverable transcript");
+    assert.deepEqual(options, { restoreClipboard: true });
+    throw new Error("paste bridge unavailable");
+  };
+
+  assert.equal(
+    await manager.safePaste("recoverable transcript", {
+      restoreClipboard: true,
+      suppressError: true,
+    }),
+    false
+  );
+});

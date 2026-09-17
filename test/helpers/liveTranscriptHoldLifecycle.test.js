@@ -33,30 +33,62 @@ function capturePanelTimers(t) {
   return () => timers.findLast((timer) => timer.delay === FINAL_HIDE_MS && !timer.cancelled);
 }
 
-async function mountLiveTranscript(t, initialProps = {}) {
+async function mountLiveTranscript(t, initialProps = {}, { trackWindowSizes = false } = {}) {
   let root = null;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
   });
   const previewListeners = new Map();
+  const shortcutRegistrations = [];
+  const shortcutReleases = [];
+  let shownWindows = 0;
   installBrowserGlobals(t, {
     window: {
-      electronAPI: Object.fromEntries(
-        ["onPreviewText", "onPreviewAppend", "onPreviewResult", "onPreviewHide"].map((method) => [
-          method,
-          (listener) => {
-            previewListeners.set(method, listener);
-            return () => previewListeners.delete(method);
-          },
-        ])
-      ),
+      electronAPI: {
+        ...Object.fromEntries(
+          [
+            "onPreviewText",
+            "onPreviewAppend",
+            "onPreviewHold",
+            "onPreviewResult",
+            "onPreviewHide",
+            "onCancelHotkeyPressed",
+          ].map((method) => [
+            method,
+            (listener) => {
+              previewListeners.set(method, listener);
+              return () => previewListeners.delete(method);
+            },
+          ])
+        ),
+        showDictationPanel: () => shownWindows++,
+        registerCancelHotkey: async (key, owner) => {
+          shortcutRegistrations.push([key, owner]);
+          return true;
+        },
+        unregisterCancelHotkey: async (owner) => {
+          shortcutReleases.push(owner);
+          return true;
+        },
+      },
     },
   });
   const container = installHookDom(t);
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-live-transcript-hold-test-",
+    mockModules: {
+      "/stores/settingsStore":
+        "export const useSettingsStore = { getState: () => ({ floatingIconAutoHide: false }) };",
+    },
   });
   const { useLiveTranscriptPanel } = await vite.ssrLoadModule("/hooks/useLiveTranscriptPanel.js");
+  const useSizeOwner = trackWindowSizes
+    ? (await vite.ssrLoadModule("/hooks/useMainWindowSizeOwner.js")).useMainWindowSizeOwner
+    : () => {};
+  const windowSizes = [];
+  const requestMainWindowSize = async (sizeKey) => {
+    windowSizes.push(sizeKey);
+  };
   let props = {
     resizeToContent: async () => ({ success: true }),
     assistantOpenRef: { current: false },
@@ -69,6 +101,21 @@ async function mountLiveTranscript(t, initialProps = {}) {
   let panel;
   function Harness() {
     panel = useLiveTranscriptPanel(props);
+    useSizeOwner({
+      requestMainWindowSize,
+      dictationErrorActionCount: 0,
+      toastCount: 0,
+      isCommandMenuOpen: false,
+      isCompactPill: false,
+      isDictationActive: props.isRecording || props.isProcessing,
+      assistantOpen: false,
+      assistantMounted: false,
+      assistantOpenRef: props.assistantOpenRef,
+      liveTranscriptOpen: panel.open,
+      liveTranscriptMounted: panel.mounted,
+      liveTranscriptOpenRef: panel.openRef,
+      liveTranscriptCopyFallback: panel.copyFallback,
+    });
     return null;
   }
 
@@ -78,6 +125,11 @@ async function mountLiveTranscript(t, initialProps = {}) {
   });
   return {
     getPanel: () => panel,
+    windowSizes,
+    shortcutRegistrations,
+    shortcutReleases,
+    hasCancelListener: () => previewListeners.has("onCancelHotkeyPressed"),
+    getShownWindows: () => shownWindows,
     emitPreview: async (method, payload) => {
       assert.ok(previewListeners.has(method), `Missing preview listener: ${method}`);
       await React.act(async () => previewListeners.get(method)(payload));
@@ -85,6 +137,10 @@ async function mountLiveTranscript(t, initialProps = {}) {
     rerender: async (nextProps) => {
       props = { ...props, ...nextProps };
       await React.act(async () => root.render(React.createElement(Harness)));
+    },
+    unmount: async () => {
+      await React.act(async () => root.unmount());
+      root = null;
     },
   };
 }
@@ -244,4 +300,214 @@ test("hovering a final transcript pauses its active hide countdown and leaving r
 
   await React.act(async () => resumedHideTimer.callback());
   assert.equal(getPanel().openRef.current, false);
+});
+
+test("manual-copy recovery survives preview events and timeouts until dismissed", async (t) => {
+  const { getPanel, emitPreview, getShownWindows } = await mountLiveTranscript(t);
+  const advance = capturePresentationClock(t);
+
+  await React.act(async () => {
+    getPanel().showFinalText("Final expanded text", { copyFallback: "copy" });
+  });
+  await advance(2200);
+  assert.equal(getPanel().text, "Final expanded text");
+  assert.equal(getPanel().copyFallback, "copy");
+  assert.equal(getShownWindows(), 1, "recovery restores a window hidden during paste");
+
+  await emitPreview("onPreviewText", "late raw text");
+  await emitPreview("onPreviewAppend", "late raw chunk");
+  await emitPreview("onPreviewHold", { showCleanup: true });
+  await emitPreview("onPreviewResult", { text: "late preview result" });
+  await emitPreview("onPreviewHide");
+  await React.act(async () => {
+    getPanel().holdFinal(true);
+    getPanel().holdFinal(false);
+  });
+  await advance(12000);
+
+  assert.equal(getPanel().open, true);
+  assert.equal(getPanel().text, "Final expanded text");
+  assert.equal(getPanel().phase, "final");
+  assert.equal(getPanel().copyFallback, "copy");
+
+  await React.act(async () => getPanel().close({ suppress: true }));
+  assert.equal(getPanel().copyFallback, "copy", "the exit must not flash a streaming panel");
+  await advance(400);
+  assert.equal(getPanel().mounted, false);
+  assert.equal(getPanel().copyFallback, null);
+  await emitPreview("onPreviewResult", { text: "late dismissed result" });
+  await advance(2200);
+  assert.equal(getPanel().open, false);
+});
+
+test("copy recovery waits for native sizing and shows the complete result without a streaming entrance", async (t) => {
+  let finishResize;
+  const heights = [];
+  const { getPanel } = await mountLiveTranscript(t, {
+    resizeToContent: (height) => {
+      heights.push(height);
+      return new Promise((resolve) => {
+        finishResize = resolve;
+      });
+    },
+  });
+
+  await React.act(async () =>
+    getPanel().showFinalText("Complete final result", { copyFallback: "copied" })
+  );
+  assert.deepEqual(heights, [280]);
+  assert.equal(getPanel().mounted, false, "do not render inside the old recording pill bounds");
+  assert.equal(getPanel().openRef.current, true, "reserve the native size during the resize");
+  await React.act(async () => finishResize({ success: true }));
+  assert.equal(getPanel().mounted, true);
+  assert.equal(getPanel().open, true);
+  assert.equal(getPanel().text, "Complete final result");
+  assert.equal(getPanel().entrancePhase, "content");
+});
+
+test("copy recovery cancels an in-flight streaming entrance", async (t) => {
+  const { getPanel, emitPreview } = await mountLiveTranscript(t);
+  const advance = capturePresentationClock(t);
+  await emitPreview("onPreviewText", "unfinished streaming text");
+  await advance(100);
+  await React.act(async () =>
+    getPanel().showFinalText("Final copyable text", { copyFallback: "copy" })
+  );
+  await advance(3000);
+  assert.equal(getPanel().text, "Final copyable text");
+  assert.equal(getPanel().entrancePhase, "content");
+  assert.equal(getPanel().copyFallback, "copy");
+});
+
+test("copy recovery keeps native ownership when replacing an already open preview", async (t) => {
+  let finishResize;
+  const { getPanel, emitPreview } = await mountLiveTranscript(t, {
+    resizeToContent: (height) =>
+      height === 280
+        ? new Promise((resolve) => {
+            finishResize = resolve;
+          })
+        : Promise.resolve({ success: true }),
+  });
+  const advance = capturePresentationClock(t);
+  await emitPreview("onPreviewText", "Live preview");
+  await advance(2200);
+  assert.equal(getPanel().open, true);
+
+  await React.act(async () => getPanel().showFinalText("Final text", { copyFallback: "copy" }));
+  assert.equal(getPanel().open, false);
+  assert.equal(getPanel().mounted, false);
+  assert.equal(getPanel().openRef.current, true, "the size owner must not queue a base resize");
+  await React.act(async () => finishResize({ success: true }));
+  assert.equal(getPanel().open, true);
+  assert.equal(getPanel().text, "Final text");
+});
+
+test("closing recovery before its initial resize completes restores the base window", async (t) => {
+  let finishResize;
+  const { getPanel, windowSizes } = await mountLiveTranscript(
+    t,
+    {
+      resizeToContent: () =>
+        new Promise((resolve) => {
+          finishResize = resolve;
+        }),
+    },
+    { trackWindowSizes: true }
+  );
+  const advance = capturePresentationClock(t);
+  await React.act(async () => getPanel().showFinalText("Pending result", { copyFallback: "copy" }));
+  assert.deepEqual(windowSizes, ["BASE"]);
+  await React.act(async () => getPanel().close({ suppress: true, clear: true }));
+  await React.act(async () => finishResize({ success: true }));
+  await advance(1200);
+  assert.equal(getPanel().mounted, false);
+  assert.equal(getPanel().open, false);
+  assert.equal(getPanel().copyFallback, null);
+  assert.deepEqual(
+    windowSizes,
+    ["BASE", "BASE"],
+    "cancelled recovery must restore native pill bounds"
+  );
+});
+
+test("the next recording clears persistent recovery even when previews stay disabled", async (t) => {
+  const { getPanel, rerender, emitPreview, shortcutRegistrations, shortcutReleases } =
+    await mountLiveTranscript(t);
+  const advance = capturePresentationClock(t);
+
+  await React.act(async () => {
+    getPanel().showFinalText("Previous final text", { copyFallback: "copied" });
+  });
+  await advance(2200);
+  assert.equal(getPanel().open, true);
+  assert.deepEqual(shortcutRegistrations, [["Escape", "copy-recovery"]]);
+
+  await rerender({ isRecording: true });
+  assert.deepEqual(shortcutReleases, ["copy-recovery"]);
+  await advance(400);
+  assert.equal(getPanel().mounted, false);
+  assert.equal(getPanel().text, "");
+  assert.equal(getPanel().copyFallback, null);
+
+  await emitPreview("onPreviewText", "Next recording text");
+  await advance(2200);
+  assert.equal(getPanel().text, "Next recording text");
+  await rerender({ isRecording: false });
+  await emitPreview("onPreviewResult", { text: "Next final text" });
+  await advance(4500);
+  assert.equal(getPanel().mounted, false, "ordinary previews retain their automatic close");
+});
+
+test("global Escape closes recovery without DOM focus and releases its shortcut lease", async (t) => {
+  const { getPanel, emitPreview, shortcutRegistrations, shortcutReleases, hasCancelListener } =
+    await mountLiveTranscript(t);
+  const advance = capturePresentationClock(t);
+  assert.equal(globalThis.document.activeElement, null);
+
+  await React.act(async () =>
+    getPanel().showFinalText("Copyable result", { copyFallback: "copied" })
+  );
+  assert.deepEqual(shortcutRegistrations, [["Escape", "copy-recovery"]]);
+  assert.equal(hasCancelListener(), true);
+  assert.equal(
+    globalThis.document.activeElement,
+    null,
+    "recovery must not need to focus the floating window"
+  );
+
+  await emitPreview("onCancelHotkeyPressed");
+  assert.equal(getPanel().open, false);
+  assert.deepEqual(shortcutReleases, ["copy-recovery"]);
+  assert.equal(hasCancelListener(), false);
+  await advance(400);
+  assert.equal(getPanel().mounted, false);
+  assert.equal(getPanel().text, "");
+});
+
+test("unmounting recovery releases its global Escape shortcut and listener", async (t) => {
+  const { getPanel, shortcutRegistrations, shortcutReleases, hasCancelListener, unmount } =
+    await mountLiveTranscript(t);
+  await React.act(async () =>
+    getPanel().showFinalText("Copyable result", { copyFallback: "copy" })
+  );
+  assert.deepEqual(shortcutRegistrations, [["Escape", "copy-recovery"]]);
+  await unmount();
+  assert.deepEqual(shortcutReleases, ["copy-recovery"]);
+  assert.equal(hasCancelListener(), false);
+});
+
+test("ordinary live and final previews never claim the recovery Escape shortcut", async (t) => {
+  const { getPanel, emitPreview, shortcutRegistrations, shortcutReleases, hasCancelListener } =
+    await mountLiveTranscript(t);
+  const advance = capturePresentationClock(t);
+  await emitPreview("onPreviewText", "Streaming transcript");
+  await advance(2200);
+  assert.equal(getPanel().open, true);
+  await emitPreview("onPreviewResult", { text: "Completed transcript" });
+  await advance(4500);
+  assert.equal(getPanel().mounted, false);
+  assert.deepEqual(shortcutRegistrations, []);
+  assert.deepEqual(shortcutReleases, []);
+  assert.equal(hasCancelListener(), false);
 });

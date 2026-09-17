@@ -1167,6 +1167,14 @@ declare global {
       ) => () => void;
       onCancelDictationPreparation?: (callback: () => void) => () => void;
       onCancelDictation?: (callback: () => void) => () => void;
+      onCancelHotkeyPressed?: (callback: () => void) => () => void;
+      registerCancelHotkey?: (
+        key: string,
+        owner?: "recording" | "copy-recovery"
+      ) => Promise<{ success: boolean; error?: string }>;
+      unregisterCancelHotkey?: (
+        owner?: "recording" | "copy-recovery"
+      ) => Promise<{ success: boolean; error?: string }>;
       onDictationForceStopped?: (
         callback: (payload?: { reason?: "timeout" | "reset" | "manual" }) => void
       ) => () => void;

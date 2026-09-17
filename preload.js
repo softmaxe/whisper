@@ -363,6 +363,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     (callback) => (_event, visible) => callback(visible)
   ),
   resizeMainWindow: (sizeKey) => ipcRenderer.invoke("resize-main-window", sizeKey),
+  resizeAssistantWindowToContent: (surfaceHeight) =>
+    ipcRenderer.invoke("resize-assistant-window-to-content", surfaceHeight),
   resizeDictationErrorWindowToContent: (surfaceHeight) =>
     ipcRenderer.invoke("resize-dictation-error-window-to-content", surfaceHeight),
   setAssistantPanelOpen: (open) => ipcRenderer.invoke("set-assistant-panel-open", open),
@@ -381,8 +383,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // Audio event listeners
   onCancelHotkeyPressed: registerListener("cancel-hotkey-pressed", (cb) => () => cb()),
-  registerCancelHotkey: (key) => ipcRenderer.invoke("register-cancel-hotkey", key),
-  unregisterCancelHotkey: () => ipcRenderer.invoke("unregister-cancel-hotkey"),
+  registerCancelHotkey: (key, owner = "recording") =>
+    ipcRenderer.invoke("register-cancel-hotkey", key, owner),
+  unregisterCancelHotkey: (owner = "recording") =>
+    ipcRenderer.invoke("unregister-cancel-hotkey", owner),
 
   // External link opener
   openExternal: (url) => ipcRenderer.invoke("open-external", url),

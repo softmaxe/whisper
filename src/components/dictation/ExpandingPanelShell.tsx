@@ -3,6 +3,7 @@ import { cn } from "../lib/utils";
 
 interface ExpandingPanelShellProps extends Omit<HTMLAttributes<HTMLElement>, "children"> {
   open: boolean;
+  measureWhenClosed?: boolean;
   anchor?: "bottom-left" | "bottom-right";
   stabilizeHeight?: boolean;
   fillAvailableHeight?: boolean;
@@ -19,6 +20,7 @@ interface ExpandingPanelShellProps extends Omit<HTMLAttributes<HTMLElement>, "ch
 /** Shared surface for pill-to-panel transitions; callers own only their inner layout. */
 export function ExpandingPanelShell({
   open,
+  measureWhenClosed = false,
   anchor = "bottom-right",
   stabilizeHeight = false,
   fillAvailableHeight = false,
@@ -64,7 +66,7 @@ export function ExpandingPanelShell({
 
   useLayoutEffect(() => {
     const shell = shellRef.current;
-    if (!shell || !open || !onPreferredHeightChange) return;
+    if (!shell || (!open && !measureWhenClosed) || !onPreferredHeightChange) return;
 
     let frame = 0;
     const measure = () => {
@@ -146,7 +148,14 @@ export function ExpandingPanelShell({
       resizeObserver.disconnect();
       mutationObserver.disconnect();
     };
-  }, [onPreferredHeightChange, open, stabilizeHeight, measurementKey, measurementRevision]);
+  }, [
+    onPreferredHeightChange,
+    open,
+    measureWhenClosed,
+    stabilizeHeight,
+    measurementKey,
+    measurementRevision,
+  ]);
 
   return (
     <section

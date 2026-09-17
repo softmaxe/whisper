@@ -1259,6 +1259,10 @@ class IPCHandlers {
       return this.windowManager.resizeMainWindow(sizeKey);
     });
 
+    ipcMain.handle("resize-assistant-window-to-content", (event, surfaceHeight) => {
+      return this.windowManager.resizeAssistantWindowToContent(surfaceHeight);
+    });
+
     ipcMain.handle("resize-dictation-error-window-to-content", (event, surfaceHeight) => {
       return this.windowManager.resizeDictationErrorWindowToContent(surfaceHeight);
     });
@@ -1823,6 +1827,10 @@ class IPCHandlers {
         ...options,
         webContents: event.sender,
         targetWindow,
+        checkPasteTarget:
+          process.platform === "darwin" && this.textEditMonitor
+            ? () => this.textEditMonitor.canPasteAtTarget(targetPid)
+            : undefined,
       });
       const pasted = pasteResult?.pasted !== false;
       debugLogger.debug("[AutoLearn] Paste completed", {
@@ -1848,7 +1856,7 @@ class IPCHandlers {
       // Promise cannot cross Electron's IPC boundary, though, and renderer
       // callers need to know whether text was pasted, but not the delayed
       // clipboard restoration promise. Successful platform paths predate the
-      // explicit `pasted` outcome; only the clipboard-only fallback sets false.
+      // explicit `pasted` outcome; clipboard-only delivery sets false.
       return { success: true, pasted };
     });
 
@@ -2136,17 +2144,54 @@ class IPCHandlers {
       return this.windowManager.getHyprlandConfigStatus();
     });
 
-    ipcMain.handle("register-cancel-hotkey", async (event, key) => {
-      const hotkeyManager = this.windowManager.hotkeyManager;
-      const mainWindow = this.windowManager.mainWindow;
-      return hotkeyManager.registerSlot("cancel", key, () => {
-        mainWindow?.webContents?.send("cancel-hotkey-pressed");
+    // Recording completion and copy recovery can overlap. Keep the shared
+    // Escape binding until both have released it, including delayed IPC calls.
+    const cancelHotkeyOwners = new Set();
+    let cancelHotkeyKey = null;
+    let cancelHotkeyQueue = Promise.resolve();
+    const updateCancelHotkey = (update) => {
+      const pending = cancelHotkeyQueue.then(update, update);
+      cancelHotkeyQueue = pending.catch(() => {});
+      return pending;
+    };
+    const isCancelHotkeyOwner = (owner) => owner === "recording" || owner === "copy-recovery";
+
+    ipcMain.handle("register-cancel-hotkey", (_event, key, owner = "recording") => {
+      if (!isCancelHotkeyOwner(owner)) {
+        return { success: false, error: "Invalid cancel hotkey owner" };
+      }
+      return updateCancelHotkey(async () => {
+        if (cancelHotkeyOwners.size > 0 && cancelHotkeyKey === key) {
+          cancelHotkeyOwners.add(owner);
+          return { success: true, hotkey: key };
+        }
+        if ([...cancelHotkeyOwners].some((activeOwner) => activeOwner !== owner)) {
+          return { success: false, error: "Cancel hotkey is in use with a different key" };
+        }
+        const result = await this.windowManager.hotkeyManager.registerSlot("cancel", key, () => {
+          this.windowManager.mainWindow?.webContents?.send("cancel-hotkey-pressed");
+        });
+        if (result?.success) {
+          cancelHotkeyOwners.add(owner);
+          cancelHotkeyKey = key;
+        }
+        return result;
       });
     });
 
-    ipcMain.handle("unregister-cancel-hotkey", async () => {
-      this.windowManager.hotkeyManager.unregisterSlot("cancel");
-      return { success: true };
+    ipcMain.handle("unregister-cancel-hotkey", (_event, owner = "recording") => {
+      if (!isCancelHotkeyOwner(owner)) {
+        return { success: false, error: "Invalid cancel hotkey owner" };
+      }
+      return updateCancelHotkey(async () => {
+        if (!cancelHotkeyOwners.has(owner)) return { success: true };
+        if (cancelHotkeyOwners.size === 1) {
+          await this.windowManager.hotkeyManager.unregisterSlot("cancel");
+          cancelHotkeyKey = null;
+        }
+        cancelHotkeyOwners.delete(owner);
+        return { success: true };
+      });
     });
 
     ipcMain.handle("start-window-drag", async (event) => {

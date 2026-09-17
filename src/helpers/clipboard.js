@@ -920,6 +920,20 @@ class ClipboardManager {
           throw new Error(errorMsg);
         }
 
+        // Probe after writing the transcript so target apps validate their
+        // Paste menu against this clipboard. Unknown AX support must not
+        // disable automatic paste in Chromium or custom editors.
+        let canPaste = null;
+        try {
+          canPaste = (await options.checkPasteTarget?.()) ?? null;
+        } catch (error) {
+          this.safeLog("Paste target check unavailable", { error: error.message });
+        }
+        if (canPaste === false) {
+          this.safeLog("No writable paste target; keeping transcription in clipboard");
+          return { restoreComplete: Promise.resolve(), pasted: false };
+        }
+
         this.safeLog("✅ Permissions granted, attempting to paste...");
         try {
           pasteResult = await this.pasteMacOS(originalClipboard, {

@@ -141,3 +141,53 @@ test("paste-text does not schedule AutoLearn monitoring after a clipboard-only f
   assert.deepEqual(result, { success: true, pasted: false });
   assert.deepEqual(monitored, []);
 });
+
+test(
+  "paste-text checks the captured target and skips AutoLearn when it cannot accept paste",
+  { skip: process.platform !== "darwin" },
+  async (t) => {
+    t.after(() => {
+      target.textEditMonitor = null;
+      target._autoLearnEnabled = false;
+    });
+    const events = [];
+    target._autoLearnEnabled = true;
+    target.windowManager = { isOnboardingDemoActive: () => false };
+    target.textEditMonitor = {
+      lastTargetPid: 42,
+      activateTargetPid: async () => {
+        events.push("activate");
+        target.textEditMonitor.lastTargetPid = 99;
+        return true;
+      },
+      canPasteAtTarget: async (pid) => {
+        events.push(["probe", pid]);
+        return false;
+      },
+      startMonitoring: () => assert.fail("clipboard fallback must not start AutoLearn"),
+    };
+    target.clipboardManager = {
+      pasteText: async (_text, options) => {
+        events.push("clipboard");
+        return { pasted: await options.checkPasteTarget() };
+      },
+    };
+
+    const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "final transcript");
+
+    assert.deepEqual(result, { success: true, pasted: false });
+    assert.deepEqual(events, ["activate", "clipboard", ["probe", 42]]);
+  }
+);
+
+test("onboarding paste does not probe or touch the clipboard", async () => {
+  target.windowManager = { isOnboardingDemoActive: () => true };
+  target.clipboardManager = {
+    pasteText: () => assert.fail("demo already displays its transcript"),
+  };
+
+  assert.deepEqual(await handlers.get("paste-text")({ sender: { id: 1 } }, "demo text"), {
+    success: true,
+    pasted: false,
+  });
+});

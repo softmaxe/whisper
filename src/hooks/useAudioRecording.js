@@ -483,6 +483,7 @@ export const useAudioRecording = (toast, options = {}) => {
       },
       onTranscriptionComplete: async (result) => {
         if (result.success) {
+          const completedRecordingGeneration = preparationGenerationRef.current;
           dismissDictationError?.();
           const transcribedText = result.text?.trim();
 
@@ -655,11 +656,33 @@ export const useAudioRecording = (toast, options = {}) => {
                 });
               }
             } else {
-              pasteSucceeded = await audioManagerRef.current.safePaste(result.text, {
-                ...(isStreaming ? { fromStreaming: true } : {}),
-                restoreClipboard: !keepTranscriptionInClipboard,
-                allowClipboardFallback: isAccessibilitySkipped(),
-              });
+              try {
+                pasteSucceeded = await audioManagerRef.current.safePaste(result.text, {
+                  ...(isStreaming ? { fromStreaming: true } : {}),
+                  restoreClipboard: !keepTranscriptionInClipboard,
+                  allowClipboardFallback: isAccessibilitySkipped(),
+                  suppressError: true,
+                });
+              } catch (error) {
+                pasteSucceeded = false;
+                logger.warn(
+                  "Failed to paste transcription",
+                  { error: error?.message },
+                  "clipboard"
+                );
+              }
+              if (
+                !pasteSucceeded &&
+                completedRecordingGeneration === preparationGenerationRef.current &&
+                localStorage.getItem("onboardingCompleted") === "true"
+              ) {
+                const copied = await keepInClipboard("paste-fallback");
+                if (completedRecordingGeneration === preparationGenerationRef.current) {
+                  onShowTranscriptRef.current?.(result.text, {
+                    copyFallback: copied ? "copied" : "copy",
+                  });
+                }
+              }
             }
             logger.info(
               "Paste timing",
@@ -672,10 +695,8 @@ export const useAudioRecording = (toast, options = {}) => {
               },
               "streaming"
             );
-            // The text has landed at the cursor; a preview lingering with the
-            // final transcript after the paste reads as a stray surface. A
-            // failed paste keeps the final flash so the transcript stays
-            // visible somewhere.
+            // Successful delivery closes the preview; failed delivery keeps
+            // the final text available in the manual-copy panel.
             if (pasteSucceeded) {
               window.electronAPI?.hideDictationPreview?.();
               if (result.cleanupFailure) recordCleanupFailure(result.cleanupFailure);

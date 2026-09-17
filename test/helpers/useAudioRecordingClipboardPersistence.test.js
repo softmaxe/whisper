@@ -27,6 +27,9 @@ export default class FakeAudioManager {
   saveTranscription(...args) {
     return globalThis.__saveClipboardPersistenceTranscription(...args);
   }
+  safePaste(...args) {
+    return globalThis.__clipboardPersistencePaste(...args);
+  }
   shouldUseStreaming() {
     return false;
   }
@@ -74,6 +77,8 @@ async function mountCompletionHarness(
     writeClipboard = async () => ({ success: true }),
     replaceSelectedText = async () => ({ success: true }),
     saveTranscription = async () => true,
+    safePaste = async () => true,
+    onboardingCompleted = true,
   }
 ) {
   let root = null;
@@ -102,20 +107,29 @@ async function mountCompletionHarness(
 
   const bridgeWrites = [];
   const saves = [];
+  const pastes = [];
+  const recoveryPanels = [];
+  const toasts = [];
+  let hiddenPreviews = 0;
+  let prepareDictation;
   const noopDispose = () => () => {};
   installBrowserGlobals(t, {
+    initialStorage: { onboardingCompleted: String(onboardingCompleted) },
     window: {
       electronAPI: {
         onToggleDictation: noopDispose,
         onToggleVoiceAgent: noopDispose,
         onToggleTranslation: noopDispose,
         onStartDictation: noopDispose,
-        onPrepareDictation: noopDispose,
+        onPrepareDictation: (listener) => {
+          prepareDictation = listener;
+          return NOOP;
+        },
         onCancelDictationPreparation: noopDispose,
         onStopDictation: noopDispose,
         dictationLifecycleStateChanged: NOOP,
         completeDictationPreview: NOOP,
-        hideDictationPreview: NOOP,
+        hideDictationPreview: () => hiddenPreviews++,
         setScreenContextEnabled: NOOP,
         async writeClipboard(text) {
           bridgeWrites.push(text);
@@ -142,6 +156,17 @@ async function mountCompletionHarness(
     saves.push(args);
     return saveTranscription(...args);
   };
+  globalThis.__clipboardPersistencePaste = async (...args) => {
+    pastes.push(args);
+    return safePaste(...args);
+  };
+  t.after(() => {
+    delete globalThis.__clipboardPersistenceAudioManager;
+    delete globalThis.__clipboardPersistenceSettings;
+    delete globalThis.__clipboardPersistenceLogs;
+    delete globalThis.__saveClipboardPersistenceTranscription;
+    delete globalThis.__clipboardPersistencePaste;
+  });
 
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-audio-recording-clipboard-persistence-",
@@ -151,13 +176,17 @@ async function mountCompletionHarness(
       "/stores/settingsStore": SETTINGS_STORE_SOURCE,
       "/stores/policyStore": POLICY_STORE_SOURCE,
       "/utils/logger": LOGGER_SOURCE,
+      "/utils/visualFrame": `export const waitForVisualFrames = async () => {};`,
       "react-i18next": TRANSLATION_SOURCE,
     },
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
 
   function Harness() {
-    useAudioRecording(NOOP, { onDemoEvent: NOOP });
+    useAudioRecording((toast) => toasts.push(toast), {
+      onDemoEvent: NOOP,
+      onShowTranscript: (text, options) => recoveryPanels.push({ text, options }),
+    });
     return null;
   }
 
@@ -175,6 +204,11 @@ async function mountCompletionHarness(
     },
     logs: globalThis.__clipboardPersistenceLogs,
     navigatorWrites,
+    pastes,
+    recoveryPanels,
+    toasts,
+    getHiddenPreviews: () => hiddenPreviews,
+    prepareDictation: () => prepareDictation(),
     saves,
   };
 }
@@ -315,4 +349,127 @@ test("the Insights timestamp rides along on the persistence call", async (t) => 
       },
     ],
   ]);
+});
+
+test("a failed dictation paste exposes the final expanded text with previews and history disabled", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: {
+      autoPasteEnabled: true,
+      keepTranscriptionInClipboard: false,
+      showTranscriptionPreview: false,
+      dataRetentionEnabled: false,
+      snippets: [{ trigger: "signature", replacement: "Kind regards, Alex" }],
+    },
+    safePaste: async () => false,
+  });
+
+  await harness.complete({
+    success: true,
+    text: "Thanks. signature",
+    rawText: "thanks um signature",
+    clientTranscriptionId: "no-editable-target",
+    source: "openai",
+  });
+
+  assert.deepEqual(harness.recoveryPanels, [
+    { text: "Thanks. Kind regards, Alex", options: { copyFallback: "copied" } },
+  ]);
+  assert.deepEqual(harness.bridgeWrites, ["Thanks. Kind regards, Alex"]);
+  assert.deepEqual(harness.saves, [
+    [
+      "Thanks. Kind regards, Alex",
+      "thanks um signature",
+      { clientTranscriptionId: "no-editable-target" },
+    ],
+  ]);
+  assert.equal(harness.pastes[0][1].suppressError, true);
+  assert.equal(harness.getHiddenPreviews(), 0);
+  assert.deepEqual(harness.toasts, []);
+});
+
+for (const [failure, safePaste] of [
+  ["returns false", async () => false],
+  [
+    "throws",
+    async () => {
+      throw new Error("paste bridge unavailable");
+    },
+  ],
+]) {
+  for (const [clipboardFailure, writeClipboard] of [
+    ["returns failure", async () => ({ success: false })],
+    [
+      "throws",
+      async () => {
+        throw new Error("clipboard unavailable");
+      },
+    ],
+  ]) {
+    test(`paste recovery survives when paste ${failure} and clipboard ${clipboardFailure}`, async (t) => {
+      const harness = await mountCompletionHarness(t, {
+        settings: { autoPasteEnabled: true, keepTranscriptionInClipboard: false },
+        safePaste,
+        writeClipboard,
+      });
+
+      await harness.complete({
+        success: true,
+        text: "Final recoverable text",
+        rawText: "raw recoverable text",
+        source: "deepgram-streaming",
+      });
+
+      assert.deepEqual(harness.recoveryPanels, [
+        { text: "Final recoverable text", options: { copyFallback: "copy" } },
+      ]);
+      assert.equal(harness.pastes[0][1].fromStreaming, true);
+      assert.equal(harness.saves.length, 1);
+      assert.deepEqual(harness.saves[0].slice(0, 2), [
+        "Final recoverable text",
+        "raw recoverable text",
+      ]);
+      assert.deepEqual(harness.toasts, []);
+    });
+  }
+}
+
+test("a successful paste closes the preview without opening copy recovery", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true },
+  });
+
+  await harness.complete({ success: true, text: "Delivered text", source: "openai" });
+
+  assert.deepEqual(harness.recoveryPanels, []);
+  assert.deepEqual(harness.bridgeWrites, []);
+  assert.equal(harness.getHiddenPreviews(), 1);
+});
+
+test("an onboarding demo does not open copy recovery for its intentionally skipped paste", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true },
+    safePaste: async () => false,
+    onboardingCompleted: false,
+  });
+
+  await harness.complete({ success: true, text: "Demo text", source: "openai" });
+
+  assert.deepEqual(harness.recoveryPanels, []);
+  assert.deepEqual(harness.bridgeWrites, []);
+});
+
+test("a late clipboard write cannot reopen recovery after the next recording starts preparing", async (t) => {
+  const harness = await mountCompletionHarness(t, {
+    settings: { autoPasteEnabled: true },
+    safePaste: async () => false,
+    writeClipboard: async () => {
+      await harness.prepareDictation();
+      return { success: true };
+    },
+  });
+
+  await harness.complete({ success: true, text: "Previous result", source: "openai" });
+
+  assert.deepEqual(harness.recoveryPanels, []);
+  assert.equal(harness.saves.length, 1);
 });
