@@ -434,7 +434,7 @@ class WindowManager {
       this._activeHorizontalDirection = null;
     }
 
-    // Returning to BASE restores the exact pre-grow bounds. Anchoring the
+    // Edge positions restore the exact pre-grow bounds on return to BASE. Anchoring the
     // shrink on the grown bounds instead would re-anchor on whatever the
     // work-area clamp did on the way up, walking the pill away from where the
     // user put it a little more on every grow/shrink cycle.
@@ -442,10 +442,17 @@ class WindowManager {
       // The work area can shrink while the window is grown (dock/taskbar
       // reappearing, resolution change) — clamp the restore so the pill
       // cannot come back off-screen.
-      const restored = {
-        ...this._baseBoundsBeforeResize,
-        ...WindowPositionUtil.clampToWorkArea(this._baseBoundsBeforeResize, display),
-      };
+      const restored =
+        this._panelStartPosition === "center"
+          ? WindowPositionUtil.getMainWindowPosition(
+              display,
+              this._baseBoundsBeforeResize,
+              "center"
+            )
+          : {
+              ...this._baseBoundsBeforeResize,
+              ...WindowPositionUtil.clampToWorkArea(this._baseBoundsBeforeResize, display),
+            };
       const restoreAnchor =
         this._panelStartPosition === "center"
           ? "center"
@@ -508,10 +515,11 @@ class WindowManager {
       newX = currentBounds.x;
       newY = currentBounds.y + currentBounds.height - newSize.height;
     } else if (position === "center") {
-      // Anchor bottom-center: expand symmetrically and upward
-      const centerX = currentBounds.x + currentBounds.width / 2;
-      newX = centerX - newSize.width / 2;
-      newY = currentBounds.y + currentBounds.height - newSize.height;
+      // Recompute from the display so stale or dragged bounds cannot shift
+      // the pill's center through a grow/shrink cycle.
+      const centered = WindowPositionUtil.getMainWindowPosition(display, newSize, "center");
+      newX = centered.x;
+      newY = centered.y;
     } else {
       // bottom-right (default): anchor bottom-right corner, expand leftward and upward
       const bottomRightX = currentBounds.x + currentBounds.width;
@@ -1162,8 +1170,8 @@ class WindowManager {
     this._panelStartPosition = position || "bottom-right";
     this._mainWindowPlacementCoordinator.resetManualPosition();
     this._activeHorizontalDirection = null;
-    // Reposition the window immediately
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+    return this._enqueueMainWindowMutation(() => {
+      if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
       const currentBounds = this.mainWindow.getBounds();
       const display = this._getMainWindowDisplayFor(currentBounds);
       const newPos = WindowPositionUtil.getMainWindowPosition(
@@ -1173,8 +1181,11 @@ class WindowManager {
       );
       this._clearRendererResizeMask();
       this.mainWindow.setBounds(newPos);
+      this._baseBoundsBeforeResize = null;
+      this._lastResizeBounds = { ...newPos };
+      this._activeHorizontalDirection = null;
       this._notifyMainWindowHorizontalDirection();
-    }
+    });
   }
 
   setHotkeyListeningMode(enabled) {
@@ -1235,17 +1246,23 @@ class WindowManager {
 
   async stopWindowDrag() {
     const result = await this.dragManager.stopWindowDrag();
+    let recenter = false;
     if (result.success && this.mainWindow && !this.mainWindow.isDestroyed()) {
       const draggedBounds = this.mainWindow.getBounds();
       const start = this._dragStartBounds;
-      // Every pill click goes through start/stopWindowDrag; only an actual
-      // move hands position ownership to the user.
+      // Every pill click goes through start/stopWindowDrag. Only an actual
+      // move changes placement; center mode snaps back on the drop display.
       const moved =
         !start ||
         Math.abs(draggedBounds.x - start.x) > DRAG_MOVE_TOLERANCE_PX ||
         Math.abs(draggedBounds.y - start.y) > DRAG_MOVE_TOLERANCE_PX;
       if (moved) {
-        this._mainWindowPlacementCoordinator.markManuallyPositioned();
+        if (this._panelStartPosition === "center") {
+          this._mainWindowPlacementCoordinator.resetManualPosition();
+          recenter = true;
+        } else {
+          this._mainWindowPlacementCoordinator.markManuallyPositioned();
+        }
         this._baseBoundsBeforeResize = null;
         this._lastResizeBounds = { ...draggedBounds };
       }
@@ -1253,6 +1270,9 @@ class WindowManager {
     this._dragStartBounds = null;
     this._activeHorizontalDirection = null;
     this._notifyMainWindowHorizontalDirection();
+    if (recenter) {
+      await this._recenterMainWindow();
+    }
     return result;
   }
 
@@ -1482,8 +1502,25 @@ class WindowManager {
   }
 
   _repositionToActiveDisplay(targetPidPromise) {
+    return this._repositionMainWindow(() => this._resolveActiveDisplay(targetPidPromise));
+  }
+
+  _recenterMainWindow(display = null) {
+    if (
+      this._panelStartPosition !== "center" ||
+      !this.mainWindow ||
+      this.mainWindow.isDestroyed()
+    ) {
+      return Promise.resolve({ applied: false, reason: "unavailable" });
+    }
+    return this._repositionMainWindow(
+      () => display || this._getMainWindowDisplayFor(this.mainWindow.getBounds())
+    );
+  }
+
+  _repositionMainWindow(resolveDisplay) {
     return this._mainWindowPlacementCoordinator.request(
-      () => this._resolveActiveDisplay(targetPidPromise),
+      resolveDisplay,
       (activeDisplay, isCurrent) =>
         this._enqueueMainWindowMutation(() =>
           this._performActiveDisplayReposition(activeDisplay, isCurrent)
@@ -1504,7 +1541,7 @@ class WindowManager {
     const currentBounds = this.mainWindow.getBounds();
     const currentDisplay = this._getMainWindowDisplayFor(currentBounds);
 
-    if (currentDisplay.id === activeDisplay.id) {
+    if (currentDisplay.id === activeDisplay.id && this._panelStartPosition !== "center") {
       // Nearest-display math can't tell "on this display" from "just past its
       // edge", so a rearranged monitor or a drag that ended over another
       // display can leave the panel stranded in dead space, looking like the
@@ -1526,8 +1563,11 @@ class WindowManager {
       { width: currentBounds.width, height: currentBounds.height },
       this._panelStartPosition
     );
+    if (newPos.x === currentBounds.x && newPos.y === currentBounds.y) {
+      return { applied: false, reason: "same-position" };
+    }
     debugLogger.debug(
-      "[WindowManager] Moving dictation panel to the active display",
+      "[WindowManager] Repositioning dictation panel",
       { from: currentBounds, to: newPos, displayId: activeDisplay.id },
       "window"
     );
@@ -1555,6 +1595,8 @@ class WindowManager {
     }
     if (reposition) {
       void this._repositionToActiveDisplay(targetPidPromise);
+    } else if (options.reposition === undefined) {
+      void this._recenterMainWindow();
     }
     if (this.mainWindow.isMinimized()) {
       this.mainWindow.restore();
@@ -2011,9 +2053,28 @@ class WindowManager {
       if (this._assistantPanelOpen) this.showAgentDictationPill();
     });
 
-    this.mainWindow.on("move", () => this.positionAgentDictationPill());
+    let mainWindowDisplayId = this._getMainWindowDisplayFor(this.mainWindow.getBounds()).id;
+    this.mainWindow.on("move", () => {
+      mainWindowDisplayId = this._getMainWindowDisplayFor(this.mainWindow.getBounds()).id;
+      this.positionAgentDictationPill();
+    });
+
+    const displayEvents = ["display-added", "display-removed", "display-metrics-changed"];
+    const recenterOnDisplayChange = () => {
+      if (this._panelStartPosition !== "center" || this._assistantPanelOpen) return;
+      // A rearranged display may no longer cover the old window coordinates.
+      // Keep its identity until it disconnects, then use the nearest display.
+      const display = screen.getAllDisplays().find(({ id }) => id === mainWindowDisplayId);
+      void this._recenterMainWindow(display).catch((error) => {
+        debugLogger.warn("Failed to recenter dictation panel", { error: error.message }, "window");
+      });
+    };
+    for (const event of displayEvents) screen.on(event, recenterOnDisplayChange);
 
     this.mainWindow.on("closed", () => {
+      clearTimeout(showTimeout);
+      for (const event of displayEvents) screen.removeListener(event, recenterOnDisplayChange);
+      this._mainWindowPlacementCoordinator.cancelPending();
       this.dragManager.cleanup();
       const pillWindow = this.agentDictationPillWindow;
       if (pillWindow && !pillWindow.isDestroyed()) pillWindow.close();
