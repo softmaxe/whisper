@@ -73,6 +73,7 @@ export default function HistoryView({
   const discardedToggle = (
     <button
       onClick={onToggleDiscarded}
+      aria-pressed={showDiscarded}
       className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-muted-foreground/70 hover:!text-foreground hover:!bg-black/5 dark:hover:!bg-white/5 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring/30 transition-all duration-200"
     >
       <Archive size={11} />
@@ -106,9 +107,12 @@ export default function HistoryView({
               </div>
             ) : history.length === 0 ? (
               <>
-                <p className="pt-2 pb-2.5 text-sm text-muted-foreground">
-                  {t("controlPanel.history.sectionTitle")}
-                </p>
+                <div className="flex items-center justify-between pt-2 pb-2.5">
+                  <p className="text-sm text-muted-foreground">
+                    {t("controlPanel.history.sectionTitle")}
+                  </p>
+                  {discardedToggle}
+                </div>
                 <EmptyStateCard
                   icon={Mic}
                   title={t("controlPanel.history.empty")}

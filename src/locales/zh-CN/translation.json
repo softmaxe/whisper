@@ -206,8 +206,8 @@
       "noAiProcessing": "此转录未应用 AI 处理",
       "rawTranscript": "原始转录",
       "discarded": {
-        "show": "显示已放弃",
-        "hide": "隐藏已放弃",
+        "show": "显示失败和已放弃的记录",
+        "hide": "隐藏失败和已放弃的记录",
         "badge": "已放弃",
         "recording": "已放弃的录音",
         "recordingWithDuration": "已放弃的录音 · {{duration}}",

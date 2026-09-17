@@ -82,11 +82,19 @@ export async function initializeTranscriptions(
 
 export function addTranscription(item: TranscriptionItem) {
   if (!item) return;
-  if (item.status === "discarded" && !useTranscriptionStore.getState().includeDiscarded) return;
+  if (
+    (item.status === "failed" || item.status === "discarded") &&
+    !useTranscriptionStore.getState().includeDiscarded
+  ) {
+    removeTranscription(item.id);
+    return;
+  }
   const { transcriptions } = useTranscriptionStore.getState();
   const withoutDuplicate = transcriptions.filter((existing) => existing.id !== item.id);
   useTranscriptionStore.setState({
-    transcriptions: [item, ...withoutDuplicate].slice(0, currentLimit),
+    transcriptions: [item, ...withoutDuplicate]
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+      .slice(0, currentLimit),
   });
 }
 
@@ -99,10 +107,8 @@ export function removeTranscription(id: number) {
 }
 
 export function updateTranscription(item: TranscriptionItem) {
-  if (!item) return;
-  const { transcriptions } = useTranscriptionStore.getState();
-  const next = transcriptions.map((existing) => (existing.id === item.id ? item : existing));
-  useTranscriptionStore.setState({ transcriptions: next });
+  // A retry can make a hidden recording visible, or move a visible row into the filter.
+  addTranscription(item);
 }
 
 export function clearTranscriptions() {

@@ -1881,7 +1881,7 @@ class DatabaseManager {
       if (!this.db) {
         throw new Error("Database not initialized");
       }
-      const statusFilter = includeDiscarded ? "" : " AND status != 'discarded'";
+      const statusFilter = includeDiscarded ? "" : " AND status NOT IN ('failed', 'discarded')";
       const stmt = this.db.prepare(
         `SELECT * FROM transcriptions WHERE deleted_at IS NULL${statusFilter} ORDER BY timestamp DESC LIMIT ?`
       );
