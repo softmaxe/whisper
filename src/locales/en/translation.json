@@ -206,8 +206,8 @@
       "clearAllErrorTitle": "Couldn't clear history",
       "clearAllErrorDescription": "Something went wrong. Please try again.",
       "discarded": {
-        "show": "Show discarded",
-        "hide": "Hide discarded",
+        "show": "Show failed and discarded",
+        "hide": "Hide failed and discarded",
         "badge": "Discarded",
         "recording": "Discarded recording",
         "recordingWithDuration": "Discarded recording · {{duration}}",
