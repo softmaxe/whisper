@@ -1828,8 +1828,8 @@ class IPCHandlers {
         webContents: event.sender,
         targetWindow,
         checkPasteTarget:
-          process.platform === "darwin" && this.textEditMonitor
-            ? () => this.textEditMonitor.canPasteAtTarget(targetPid)
+          process.platform === "darwin"
+            ? () => this.textEditMonitor?.canPasteAtTarget(targetPid) ?? null
             : undefined,
       });
       const pasted = pasteResult?.pasted !== false;

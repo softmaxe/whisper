@@ -320,8 +320,8 @@ class TextEditMonitor extends EventEmitter {
   }
 
   async canPasteAtTarget(pid, timeoutMs = 700) {
-    // Missing capture metadata is not evidence that the current app cannot
-    // paste. Preserve the existing delivery path when capture was unavailable.
+    // Without capture metadata or a working probe, delivery is unconfirmed.
+    // Dictation keeps the transcript available for manual copy in this case.
     if (process.platform !== "darwin" || !pid) return null;
     const resolved = this.resolveBinary();
     if (!resolved) return null;

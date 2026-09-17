@@ -191,3 +191,23 @@ test("onboarding paste does not probe or touch the clipboard", async () => {
     pasted: false,
   });
 });
+
+test(
+  "macOS dictation still requires target confirmation when the monitor is unavailable",
+  { skip: process.platform !== "darwin" },
+  async () => {
+    target.textEditMonitor = null;
+    target.windowManager = { isOnboardingDemoActive: () => false };
+    target.clipboardManager = {
+      pasteText: async (_text, options) => {
+        assert.equal(typeof options.checkPasteTarget, "function");
+        const canPaste = await options.checkPasteTarget();
+        assert.equal(canPaste, null);
+        return { pasted: canPaste === true };
+      },
+    };
+
+    const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "final transcript");
+    assert.deepEqual(result, { success: true, pasted: false });
+  }
+);

@@ -224,44 +224,47 @@ test("pasteText waits for prior clipboard restoration before starting the next p
 });
 
 for (const fastPaste of [true, false]) {
-  test(
-    `no paste target keeps the transcript without invoking ${fastPaste ? "CGEvent" : "osascript"}`,
-    { skip: process.platform !== "darwin" },
-    async () => {
-      resetClipboard({ text: "previous clipboard" });
-      const calls = [];
-      const TestClipboardManager = loadClipboardManager({ spawn: createSuccessfulSpawn(calls) });
-      const manager = new TestClipboardManager();
-      manager.resolveFastPasteBinary = () => (fastPaste ? "/tmp/fast-paste" : null);
-      manager.checkAccessibilityPermissions = async () => true;
-      let restores = 0;
-      manager._restoreClipboardAfterDelay = async () => restores++;
+  for (const verdict of [false, null, undefined, "throws"]) {
+    test(
+      `unconfirmed paste target (${verdict}) keeps the transcript without invoking ${fastPaste ? "CGEvent" : "osascript"}`,
+      { skip: process.platform !== "darwin" },
+      async () => {
+        resetClipboard({ text: "previous clipboard" });
+        const calls = [];
+        const TestClipboardManager = loadClipboardManager({ spawn: createSuccessfulSpawn(calls) });
+        const manager = new TestClipboardManager();
+        manager.resolveFastPasteBinary = () => (fastPaste ? "/tmp/fast-paste" : null);
+        manager.checkAccessibilityPermissions = async () => true;
+        let restores = 0;
+        manager._restoreClipboardAfterDelay = async () => restores++;
 
-      const result = await manager.pasteText("final transcript", {
-        restoreClipboard: true,
-        checkPasteTarget: async () => {
-          assert.equal(fakeClipboard.text, "final transcript", "probe sees the new clipboard");
-          return false;
-        },
-      });
-      await result.restoreComplete;
+        const result = await manager.pasteText("final transcript", {
+          restoreClipboard: true,
+          checkPasteTarget: async () => {
+            assert.equal(fakeClipboard.text, "final transcript", "probe sees the new clipboard");
+            if (verdict === "throws") throw new Error("AX unavailable");
+            return verdict;
+          },
+        });
+        await result.restoreComplete;
 
-      assert.equal(result.pasted, false);
-      assert.equal(fakeClipboard.text, "final transcript");
-      assert.equal(restores, 0);
-      assert.deepEqual(calls, []);
-      // A skipped paste must release the queue for later clipboard work.
-      await manager.runClipboardOperation(() => fakeClipboard.writeText("manual copy"));
-      assert.equal(fakeClipboard.text, "manual copy");
-    }
-  );
+        assert.equal(result.pasted, false);
+        assert.equal(fakeClipboard.text, "final transcript");
+        assert.equal(restores, 0);
+        assert.deepEqual(calls, []);
+        // A skipped paste must release the queue for later clipboard work.
+        await manager.runClipboardOperation(() => fakeClipboard.writeText("manual copy"));
+        assert.equal(fakeClipboard.text, "manual copy");
+      }
+    );
+  }
 }
 
 test(
-  "writable and unknown targets keep the normal paste and restore flow",
+  "confirmed targets and callers without a probe keep the normal paste and restore flow",
   { skip: process.platform !== "darwin" },
   async () => {
-    for (const verdict of [true, null, "throws"]) {
+    for (const checkPasteTarget of [async () => true, undefined]) {
       resetClipboard({ text: "previous clipboard" });
       const manager = new ClipboardManager();
       manager.resolveFastPasteBinary = () => null;
@@ -279,10 +282,7 @@ test(
       };
 
       const result = await manager.pasteText("final transcript", {
-        checkPasteTarget: async () => {
-          if (verdict === "throws") throw new Error("AX unavailable");
-          return verdict;
-        },
+        checkPasteTarget,
       });
       await result.restoreComplete;
 

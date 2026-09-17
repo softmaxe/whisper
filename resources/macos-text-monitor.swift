@@ -110,8 +110,8 @@ func pasteTargetElement(_ value: AnyObject?) -> AXUIElement? {
     return (value as! AXUIElement)
 }
 
-// Custom editors and Chromium may expose no writable AX text field. Their
-// enabled plain Command-V menu item still tells us whether paste is available.
+// Some custom editors and terminals expose no writable AX text field. Use
+// their plain Command-V menu only when the focused target permits this fallback.
 func pasteMenuStatus(_ appElement: AXUIElement, deadline: TimeInterval) -> PasteTargetStatus {
     guard ProcessInfo.processInfo.systemUptime < deadline else { return .unknown }
     guard let menuBar = pasteTargetElement(pasteTargetAttribute(appElement, kAXMenuBarAttribute)) else {
@@ -158,19 +158,19 @@ func focusedPasteTargetStatus(
         if !explicitlyReadOnly, isEditableTextElement(element, allowSelection: true) { return .pasteable }
     }
 
-    // Finder enables Paste on the desktop and in file views to create a
-    // .textClipping file. Only its writable search and rename fields accept text.
+    // Browser menus can enable Paste while a page container has focus. Finder
+    // can create a .textClipping file. Both need a confirmed writable text field.
     if requiresWritableTextField { return .notPasteable }
+
+    if let element = element,
+       let role = pasteTargetAttribute(element, kAXRoleAttribute) as? String,
+       ["AXButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXStaticText", "AXImage", "AXLink", "AXWebArea"].contains(role) {
+        return .notPasteable
+    }
 
     let menuStatus = pasteMenuStatus(appElement, deadline: deadline)
     if menuStatus != .unknown { return menuStatus }
     if explicitlyReadOnly { return .notPasteable }
-
-    if let element = element,
-       let role = pasteTargetAttribute(element, kAXRoleAttribute) as? String,
-       ["AXButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXStaticText", "AXImage"].contains(role) {
-        return .notPasteable
-    }
     return .unknown
 }
 
@@ -179,7 +179,14 @@ func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
           application.processIdentifier == targetPid else {
         return .notPasteable
     }
-    let requiresWritableTextField = application.bundleIdentifier == "com.apple.finder"
+    let bundleIdentifier = application.bundleIdentifier ?? ""
+    // Include browser release channels such as Brave beta/nightly and Chrome
+    // Canary. An unavailable AX tree must use manual copy instead of a menu guess.
+    let requiresWritableTextField = [
+        "com.apple.finder", "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.brave.Browser",
+        "com.google.Chrome", "org.chromium.Chromium", "com.microsoft.edgemac",
+        "org.mozilla.firefox", "company.thebrowser.Browser"
+    ].contains { bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".") }
     guard AXIsProcessTrusted() else {
         return requiresWritableTextField ? .notPasteable : .unknown
     }

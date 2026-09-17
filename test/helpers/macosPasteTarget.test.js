@@ -163,6 +163,10 @@ configure(element("AXStaticText"))
 expect("static text", .notPasteable)
 configure(element("AXButton"))
 expect("focused button", .notPasteable)
+for role in ["AXButton", "AXStaticText", "AXLink", "AXWebArea"] {
+    configure(element(role), menu: pasteMenu(enabled: true))
+    expect("non-editor focus overrides enabled Paste", .notPasteable)
+}
 configure(element("AXScrollArea"), menu: pasteMenu(enabled: false))
 expect("desktop without text focus", .notPasteable)
 configure(nil, menu: pasteMenu(enabled: false))
@@ -201,10 +205,41 @@ configure(finderSearch, bundleIdentifier: "com.apple.finder")
 switchOnRead = true
 expect("Finder loses focus during the probe", .notPasteable)
 
+for browser in [
+    "com.brave.Browser", "com.brave.Browser.beta", "com.brave.Browser.nightly",
+    "com.google.Chrome", "com.google.Chrome.canary", "org.chromium.Chromium",
+    "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.microsoft.edgemac",
+    "org.mozilla.firefox", "company.thebrowser.Browser"
+] {
+    for role in ["AXGroup", "AXWebArea", "AXWindow", "AXScrollArea", "AXLink", "AXButton"] {
+        configure(element(role), menu: pasteMenu(enabled: true), bundleIdentifier: browser)
+        expect(browser + " page without an input cursor", .notPasteable)
+    }
+    configure(nil, menu: pasteMenu(enabled: true), bundleIdentifier: browser)
+    expect(browser + " dormant AX with enabled Paste", .notPasteable)
+    configure(nil, bundleIdentifier: browser)
+    expect(browser + " unavailable focus and menu", .notPasteable)
+    application.unavailable = true
+    expect(browser + " failed AX queries", .notPasteable)
+    configure(readOnly, menu: pasteMenu(enabled: true), bundleIdentifier: browser)
+    expect(browser + " read-only textarea", .notPasteable)
+    configure(element("AXTextField"), menu: pasteMenu(enabled: true), bundleIdentifier: browser)
+    expect(browser + " unconfirmed text field", .notPasteable)
+    for role in ["AXTextField", "AXTextArea", "AXComboBox"] {
+        let input = element(role, writable: true)
+        configure(input, bundleIdentifier: browser)
+        expect(browser + " focused input", .pasteable)
+        input.attributes[kAXSelectedTextAttribute] = "replace this" as NSString
+        expect(browser + " focused selection", .pasteable)
+        input.attributes[kAXEnabledAttribute] = false as NSNumber
+        expect(browser + " disabled input", .notPasteable)
+    }
+}
+
 configure(readOnly, menu: pasteMenu(enabled: true))
 expect("terminal with read-only AX buffer and enabled Paste", .pasteable)
 configure(element("AXWindow"), menu: pasteMenu(enabled: true))
-expect("Chromium with dormant AX editor", .pasteable)
+expect("custom app with dormant AX editor", .pasteable)
 configure(element("AXGroup"), menu: pasteMenu(enabled: true, command: "v"))
 expect("custom editor", .pasteable)
 configure(nil, menu: pasteMenu(enabled: true))
