@@ -3993,17 +3993,20 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   async safePaste(text, options = {}) {
+    const { suppressError = false, ...pasteOptions } = options;
     try {
-      const result = await window.electronAPI.pasteText(text, options);
+      const result = await window.electronAPI.pasteText(text, pasteOptions);
       return result?.pasted === true;
     } catch (error) {
       const message =
         error?.message ??
         (typeof error?.toString === "function" ? error.toString() : String(error));
-      this.onError?.({
-        title: "Paste Error",
-        description: `Failed to paste text. Please check accessibility permissions. ${message}`,
-      });
+      if (!suppressError) {
+        this.onError?.({
+          title: "Paste Error",
+          description: `Failed to paste text. Please check accessibility permissions. ${message}`,
+        });
+      }
       return false;
     }
   }

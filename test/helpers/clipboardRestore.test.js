@@ -223,6 +223,76 @@ test("pasteText waits for prior clipboard restoration before starting the next p
   assert.deepEqual(events, ["start:first", "end:first", "start:second", "end:second"]);
 });
 
+for (const fastPaste of [true, false]) {
+  test(
+    `no paste target keeps the transcript without invoking ${fastPaste ? "CGEvent" : "osascript"}`,
+    { skip: process.platform !== "darwin" },
+    async () => {
+      resetClipboard({ text: "previous clipboard" });
+      const calls = [];
+      const TestClipboardManager = loadClipboardManager({ spawn: createSuccessfulSpawn(calls) });
+      const manager = new TestClipboardManager();
+      manager.resolveFastPasteBinary = () => (fastPaste ? "/tmp/fast-paste" : null);
+      manager.checkAccessibilityPermissions = async () => true;
+      let restores = 0;
+      manager._restoreClipboardAfterDelay = async () => restores++;
+
+      const result = await manager.pasteText("final transcript", {
+        restoreClipboard: true,
+        checkPasteTarget: async () => {
+          assert.equal(fakeClipboard.text, "final transcript", "probe sees the new clipboard");
+          return false;
+        },
+      });
+      await result.restoreComplete;
+
+      assert.equal(result.pasted, false);
+      assert.equal(fakeClipboard.text, "final transcript");
+      assert.equal(restores, 0);
+      assert.deepEqual(calls, []);
+      // A skipped paste must release the queue for later clipboard work.
+      await manager.runClipboardOperation(() => fakeClipboard.writeText("manual copy"));
+      assert.equal(fakeClipboard.text, "manual copy");
+    }
+  );
+}
+
+test(
+  "writable and unknown targets keep the normal paste and restore flow",
+  { skip: process.platform !== "darwin" },
+  async () => {
+    for (const verdict of [true, null, "throws"]) {
+      resetClipboard({ text: "previous clipboard" });
+      const manager = new ClipboardManager();
+      manager.resolveFastPasteBinary = () => null;
+      manager.checkAccessibilityPermissions = async () => true;
+      let pasted = false;
+      manager.pasteMacOS = async (originalClipboard, options) => {
+        pasted = true;
+        assert.equal(options.expectedClipboardText, "final transcript");
+        return {
+          restoreComplete: manager._restoreClipboardAfterDelay(originalClipboard, {
+            delayMs: 0,
+            expectedText: options.expectedClipboardText,
+          }),
+        };
+      };
+
+      const result = await manager.pasteText("final transcript", {
+        checkPasteTarget: async () => {
+          if (verdict === "throws") throw new Error("AX unavailable");
+          return verdict;
+        },
+      });
+      await result.restoreComplete;
+
+      assert.equal(pasted, true);
+      assert.notEqual(result.pasted, false);
+      assert.equal(fakeClipboard.text, "previous clipboard");
+    }
+  }
+);
+
 test("pasteMacOS restores clipboard after the short macOS delay on successful fast paste", async () => {
   const spawnCalls = [];
   const TestClipboardManager = loadClipboardManager({

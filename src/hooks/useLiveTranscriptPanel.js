@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createLatestValueScheduler } from "../utils/latestValueScheduler";
+import logger from "../utils/logger";
 import {
   getLiveTranscriptEntranceTimeline,
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
@@ -11,6 +12,7 @@ const LIVE_TRANSCRIPT_RENDER_INTERVAL_MS = 50;
 const LIVE_TRANSCRIPT_SHELL_GROW_MS = 180;
 const LIVE_TRANSCRIPT_CLOSE_UNMOUNT_MS = 320;
 const LIVE_TRANSCRIPT_FINAL_HIDE_MS = 4000;
+const COPY_RECOVERY_INITIAL_HEIGHT = 280;
 
 /**
  * Owns the live transcript panel: its open/close/entrance choreography, the
@@ -32,6 +34,7 @@ export function useLiveTranscriptPanel({
   const [text, setText] = useState("");
   const [measurementText, setMeasurementText] = useState("");
   const [phase, setPhase] = useState("listening");
+  const [copyFallback, setCopyFallback] = useState(null);
   const [entrancePhase, setEntrancePhase] = useState("idle");
   const [manuallyCollapsed, setManuallyCollapsed] = useState(false);
 
@@ -41,6 +44,7 @@ export function useLiveTranscriptPanel({
   const closeTimerRef = useRef(null);
   const finalHideTimerRef = useRef(null);
   const finalHoldRef = useRef(false);
+  const copyFallbackRef = useRef(null);
   const phaseRef = useRef("listening");
   const openFrameRef = useRef(null);
   const openPromiseRef = useRef(null);
@@ -64,8 +68,10 @@ export function useLiveTranscriptPanel({
   }
 
   useLayoutEffect(() => {
-    openRef.current = open;
-  }, [open]);
+    // Recovery reserves the window while its old preview is unmounted and
+    // the replacement card waits for native sizing.
+    openRef.current = open || Boolean(copyFallbackRef.current);
+  }, [copyFallback, open]);
 
   useLayoutEffect(() => {
     phaseRef.current = phase;
@@ -119,7 +125,7 @@ export function useLiveTranscriptPanel({
   // height, and only then does the visible line update. This prevents a new
   // line from pushing the panel upward before its BrowserWindow catches up.
   useLayoutEffect(() => {
-    if (!open || !contentReadyRef.current) return undefined;
+    if (!open || !contentReadyRef.current || copyFallback) return undefined;
 
     const generation = ++presentationGenerationRef.current;
     let firstFrame = 0;
@@ -154,7 +160,7 @@ export function useLiveTranscriptPanel({
       cancelAnimationFrame(measurementFrame);
       cancelAnimationFrame(revealFrame);
     };
-  }, [measurementText, open]);
+  }, [copyFallback, measurementText, open]);
 
   const clearEntranceTimers = useCallback(() => {
     for (const timer of entranceTimersRef.current) clearTimeout(timer);
@@ -170,6 +176,7 @@ export function useLiveTranscriptPanel({
     ({ suppress = false, clear = false } = {}) => {
       clearFinalHide();
       finalHoldRef.current = false;
+      copyFallbackRef.current = null;
       if (suppress) {
         suppressedRef.current = true;
         setManuallyCollapsed(reopenEligibleRef.current);
@@ -179,6 +186,7 @@ export function useLiveTranscriptPanel({
         textSchedulerRef.current.flush();
       }
       openGenerationRef.current += 1;
+      openPromiseRef.current = null;
       cancelAnimationFrame(openFrameRef.current);
       clearEntranceTimers();
       openRef.current = false;
@@ -189,6 +197,7 @@ export function useLiveTranscriptPanel({
       clearTimeout(closeTimerRef.current);
       closeTimerRef.current = setTimeout(() => {
         setMounted(false);
+        setCopyFallback(null);
         if (clear) {
           resetText();
           setPhase("listening");
@@ -197,6 +206,27 @@ export function useLiveTranscriptPanel({
     },
     [clearEntranceTimers, clearFinalHide, resetText]
   );
+
+  useEffect(() => {
+    if (!copyFallback || !open) return undefined;
+    const api = window.electronAPI;
+    const unsubscribe = api?.onCancelHotkeyPressed?.(() => {
+      if (copyFallbackRef.current && openRef.current) {
+        close({ suppress: true, clear: true });
+      }
+    });
+    // The floating result does not take focus. Share the existing global
+    // cancel key without letting a late recording cleanup release it.
+    void api?.registerCancelHotkey?.("Escape", "copy-recovery")?.catch((error) => {
+      logger.warn("Could not register recovery Escape shortcut", { error: error?.message });
+    });
+    return () => {
+      unsubscribe?.();
+      void api?.unregisterCancelHotkey?.("copy-recovery")?.catch((error) => {
+        logger.warn("Could not release recovery Escape shortcut", { error: error?.message });
+      });
+    };
+  }, [close, copyFallback, open]);
 
   const openPanel = useCallback(() => {
     clearFinalHide();
@@ -298,9 +328,17 @@ export function useLiveTranscriptPanel({
 
   const scheduleFinalHide = useCallback(() => {
     clearFinalHide();
+    if (copyFallbackRef.current) return;
     finalHideTimerRef.current = setTimeout(() => {
       finalHideTimerRef.current = null;
-      if (finalHoldRef.current || phaseRef.current !== "final" || !openRef.current) return;
+      if (
+        copyFallbackRef.current ||
+        finalHoldRef.current ||
+        phaseRef.current !== "final" ||
+        !openRef.current
+      ) {
+        return;
+      }
       close({ clear: true });
     }, LIVE_TRANSCRIPT_FINAL_HIDE_MS);
   }, [clearFinalHide, close]);
@@ -320,17 +358,57 @@ export function useLiveTranscriptPanel({
   );
 
   const showFinalText = useCallback(
-    (value) => {
+    (value, { copyFallback = null } = {}) => {
       const finalText = typeof value === "string" ? value.trim() : "";
       if (!finalText) return;
+      copyFallbackRef.current = copyFallback;
+      setCopyFallback(copyFallback);
       suppressedRef.current = false;
       setManuallyCollapsed(false);
+      if (copyFallback) {
+        // A completed result has no streaming entrance. Reserve the native
+        // width before mounting the card, then measure its final typography.
+        const generation = ++openGenerationRef.current;
+        openPromiseRef.current = null;
+        clearTimeout(closeTimerRef.current);
+        clearEntranceTimers();
+        clearFinalHide();
+        cancelAnimationFrame(openFrameRef.current);
+        textSchedulerRef.current.cancel();
+        sourceTextRef.current = finalText;
+        contentReadyRef.current = true;
+        presentationGenerationRef.current += 1;
+        openRef.current = true;
+        setOpen(false);
+        setMounted(false);
+        setText(finalText);
+        setMeasurementText(finalText);
+        setPhase("final");
+        setEntrancePhase("content");
+        const reveal = () => {
+          if (generation !== openGenerationRef.current) return;
+          onWillOpen?.();
+          setMounted(true);
+          setOpen(true);
+          void window.electronAPI?.showDictationPanel?.();
+        };
+        void requestHeight(COPY_RECOVERY_INITIAL_HEIGHT).then(reveal, reveal);
+        return;
+      }
       updateText(finalText, { immediate: true });
       setPhase("final");
       openPanel();
       scheduleFinalHide();
     },
-    [openPanel, scheduleFinalHide, updateText]
+    [
+      clearEntranceTimers,
+      clearFinalHide,
+      onWillOpen,
+      openPanel,
+      requestHeight,
+      scheduleFinalHide,
+      updateText,
+    ]
   );
 
   // Errors replace the live transcript surface, so unmount it immediately
@@ -338,6 +416,8 @@ export function useLiveTranscriptPanel({
   const dismissForError = useCallback(() => {
     clearFinalHide();
     finalHoldRef.current = false;
+    copyFallbackRef.current = null;
+    setCopyFallback(null);
     suppressedRef.current = true;
     openGenerationRef.current += 1;
     openPromiseRef.current = null;
@@ -359,6 +439,7 @@ export function useLiveTranscriptPanel({
     };
 
     const disposeText = window.electronAPI?.onPreviewText?.((incoming) => {
+      if (copyFallbackRef.current) return;
       clearFinalHide();
       const value = incoming?.trim?.() || "";
       updateText(value);
@@ -366,6 +447,7 @@ export function useLiveTranscriptPanel({
       reveal();
     });
     const disposeAppend = window.electronAPI?.onPreviewAppend?.((chunk) => {
+      if (copyFallbackRef.current) return;
       clearFinalHide();
       const value = chunk?.trim?.();
       if (!value) return;
@@ -375,11 +457,13 @@ export function useLiveTranscriptPanel({
       reveal();
     });
     const disposeHold = window.electronAPI?.onPreviewHold?.((payload) => {
+      if (copyFallbackRef.current) return;
       textSchedulerRef.current.flush();
       setPhase(payload?.showCleanup ? "cleanup" : "final");
       reveal();
     });
     const disposeResult = window.electronAPI?.onPreviewResult?.((payload) => {
+      if (copyFallbackRef.current) return;
       const value = payload?.text?.trim?.();
       if (!value) {
         close({ clear: true });
@@ -391,6 +475,7 @@ export function useLiveTranscriptPanel({
       scheduleFinalHide();
     });
     const disposeHide = window.electronAPI?.onPreviewHide?.(() => {
+      if (copyFallbackRef.current) return;
       close({ clear: true });
     });
 
@@ -424,6 +509,10 @@ export function useLiveTranscriptPanel({
   useEffect(() => {
     const normalRecording = isRecording && !isAssistantVoice;
     if (normalRecording && !previousNormalRecordingRef.current) {
+      // Recovery stays visible even with previews disabled, but belongs only
+      // to the completed recording and closes when the next one starts.
+      if (copyFallbackRef.current) close({ clear: true });
+      setCopyFallback(null);
       suppressedRef.current = false;
       setManuallyCollapsed(false);
       const contentWasReady = openRef.current && contentReadyRef.current;
@@ -461,6 +550,7 @@ export function useLiveTranscriptPanel({
     text,
     measurementText,
     phase,
+    copyFallback,
     entrancePhase,
     manuallyCollapsed,
     openRef,

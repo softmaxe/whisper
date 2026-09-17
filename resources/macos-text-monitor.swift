@@ -31,12 +31,12 @@ func writeTextOutput(_ prefix: String, _ value: String) {
     writeOutput("\(prefix):\(truncated)")
 }
 
-func isEditableTextElement(_ element: AXUIElement) -> Bool {
+func isEditableTextElement(_ element: AXUIElement, allowSelection: Bool = false) -> Bool {
     // A live selection means an editable verdict would let generated text
     // paste over the user's highlighted text (--editable-target mode probes
     // an element whose selection state the caller could not read itself).
     var selectedTextValue: AnyObject?
-    if AXUIElementCopyAttributeValue(
+    if !allowSelection, AXUIElementCopyAttributeValue(
         element,
         kAXSelectedTextAttribute as CFString,
         &selectedTextValue
@@ -90,6 +90,109 @@ func isEditableTextElement(_ element: AXUIElement) -> Bool {
     ) == .success && settable.boolValue
 }
 
+enum PasteTargetStatus: String {
+    case pasteable = "PASTEABLE"
+    case notPasteable = "NOT_PASTEABLE"
+    case unknown = "UNKNOWN"
+}
+
+func pasteTargetAttribute(_ element: AXUIElement, _ attribute: String) -> AnyObject? {
+    AXUIElementSetMessagingTimeout(element, 0.05)
+    var value: AnyObject?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else {
+        return nil
+    }
+    return value
+}
+
+func pasteTargetElement(_ value: AnyObject?) -> AXUIElement? {
+    guard let value = value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+    return (value as! AXUIElement)
+}
+
+// Custom editors and Chromium may expose no writable AX text field. Their
+// enabled plain Command-V menu item still tells us whether paste is available.
+func pasteMenuStatus(_ appElement: AXUIElement, deadline: TimeInterval) -> PasteTargetStatus {
+    guard ProcessInfo.processInfo.systemUptime < deadline else { return .unknown }
+    guard let menuBar = pasteTargetElement(pasteTargetAttribute(appElement, kAXMenuBarAttribute)) else {
+        return .unknown
+    }
+
+    var pending: [(AXUIElement, Int)] = [(menuBar, 0)]
+    var visited = 0
+    while let (element, depth) = pending.popLast() {
+        guard visited < 200, ProcessInfo.processInfo.systemUptime < deadline else { return .unknown }
+        visited += 1
+
+        if let command = pasteTargetAttribute(element, kAXMenuItemCmdCharAttribute) as? String,
+           command.lowercased() == "v" {
+            // Command is implicit. Shift, Option, Control and NoCommand are
+            // explicit bits; none belong to the shortcut we actually send.
+            if let modifiers = pasteTargetAttribute(element, kAXMenuItemCmdModifiersAttribute) as? Int,
+               modifiers == 0,
+               let enabled = pasteTargetAttribute(element, kAXEnabledAttribute) as? Bool {
+                return enabled ? .pasteable : .notPasteable
+            }
+        }
+
+        if depth < 5,
+           let children = pasteTargetAttribute(element, kAXChildrenAttribute) as? [AXUIElement] {
+            pending.append(contentsOf: children.prefix(200 - visited).reversed().map { ($0, depth + 1) })
+        }
+    }
+    return .unknown
+}
+
+func focusedPasteTargetStatus(
+    _ appElement: AXUIElement, requiresWritableTextField: Bool
+) -> PasteTargetStatus {
+    let deadline = ProcessInfo.processInfo.systemUptime + 0.35
+    let element = pasteTargetElement(pasteTargetAttribute(appElement, kAXFocusedUIElementAttribute))
+    var explicitlyReadOnly = false
+    if let element = element {
+        if pasteTargetAttribute(element, kAXEnabledAttribute) as? Bool == false ||
+            pasteTargetAttribute(element, kAXSubroleAttribute) as? String == "AXSecureTextField" {
+            return .notPasteable
+        }
+        explicitlyReadOnly = pasteTargetAttribute(element, "AXEditable") as? Bool == false
+        if !explicitlyReadOnly, isEditableTextElement(element, allowSelection: true) { return .pasteable }
+    }
+
+    // Finder enables Paste on the desktop and in file views to create a
+    // .textClipping file. Only its writable search and rename fields accept text.
+    if requiresWritableTextField { return .notPasteable }
+
+    let menuStatus = pasteMenuStatus(appElement, deadline: deadline)
+    if menuStatus != .unknown { return menuStatus }
+    if explicitlyReadOnly { return .notPasteable }
+
+    if let element = element,
+       let role = pasteTargetAttribute(element, kAXRoleAttribute) as? String,
+       ["AXButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXStaticText", "AXImage"].contains(role) {
+        return .notPasteable
+    }
+    return .unknown
+}
+
+func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
+    guard let application = NSWorkspace.shared.frontmostApplication,
+          application.processIdentifier == targetPid else {
+        return .notPasteable
+    }
+    let requiresWritableTextField = application.bundleIdentifier == "com.apple.finder"
+    guard AXIsProcessTrusted() else {
+        return requiresWritableTextField ? .notPasteable : .unknown
+    }
+
+    let status = focusedPasteTargetStatus(
+        AXUIElementCreateApplication(targetPid), requiresWritableTextField: requiresWritableTextField
+    )
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid else {
+        return .notPasteable
+    }
+    return status
+}
+
 func readCurrentValue() -> String? {
     guard let element = monitoredElement else { return nil }
     var value: AnyObject?
@@ -112,24 +215,33 @@ func observerCallback(
 // Usage: macos-text-monitor <pid>
 //        macos-text-monitor --selected-text <pid>
 //        macos-text-monitor --editable-target <pid>
+//        macos-text-monitor --paste-target <pid>
 //        macos-text-monitor --window-bounds <pid>
 let selectionReadMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--selected-text"
 let editableTargetMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--editable-target"
+let pasteTargetMode = CommandLine.arguments.count >= 2 &&
+    CommandLine.arguments[1] == "--paste-target"
 let windowBoundsMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--window-bounds"
-let pidArgumentIndex = selectionReadMode || editableTargetMode || windowBoundsMode ? 2 : 1
+let pidArgumentIndex = selectionReadMode || editableTargetMode || pasteTargetMode || windowBoundsMode ? 2 : 1
 
 guard CommandLine.arguments.count > pidArgumentIndex,
       let targetPid = Int32(CommandLine.arguments[pidArgumentIndex]),
       targetPid > 0 else {
-    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--window-bounds] <pid>")
-    writeOutput("NO_ELEMENT")
+    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--paste-target|--window-bounds] <pid>")
+    writeOutput(pasteTargetMode ? "UNKNOWN" : "NO_ELEMENT")
     exit(1)
 }
 
 monitoredPid = targetPid
+
+// Dictation probing reads no stdin and does not use the monitor's retry ladder.
+if pasteTargetMode {
+    writeOutput(pasteTargetStatus(for: targetPid).rawValue)
+    exit(0)
+}
 
 // Reports the target's window rect so the caller can tell which display the user
 // is working on. Asks the window server rather than accessibility on purpose:

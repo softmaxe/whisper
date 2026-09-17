@@ -35,6 +35,50 @@ test("getSelectedText returns unavailable for an inaccessible target", async () 
 
 const darwinOnly = { skip: process.platform !== "darwin" };
 
+test(
+  "canPasteAtTarget distinguishes unavailable probes from an explicit no-target verdict",
+  darwinOnly,
+  async () => {
+    for (const [output, expected] of [
+      ["PASTEABLE", true],
+      ["NOT_PASTEABLE", false],
+      ["UNKNOWN", null],
+      ["NO_ELEMENT", null],
+      ["INITIAL_VALUE:stale", null],
+    ]) {
+      const monitor = new TextEditMonitor();
+      monitor.resolveBinary = () => ({ command: "/bin/sh", args: ["-c", `echo '${output}'`] });
+      assert.equal(await monitor.canPasteAtTarget(42), expected, output);
+    }
+
+    const monitor = new TextEditMonitor();
+    monitor.resolveBinary = () => null;
+    assert.equal(await monitor.canPasteAtTarget(null), null);
+    assert.equal(await monitor.canPasteAtTarget(42), null);
+    monitor.resolveBinary = () => ({ command: "/nonexistent/paste-probe", args: [] });
+    assert.equal(await monitor.canPasteAtTarget(42), null);
+    monitor.resolveBinary = () => ({ command: "/bin/sh", args: ["-c", "exec sleep 2"] });
+    assert.equal(await monitor.canPasteAtTarget(42, 25), null);
+  }
+);
+
+test(
+  "canPasteAtTarget probes the captured PID and accepts only its first verdict",
+  darwinOnly,
+  async () => {
+    const monitor = new TextEditMonitor();
+    monitor.lastTargetPid = 99;
+    monitor.resolveBinary = () => ({
+      command: "/bin/sh",
+      args: [
+        "-c",
+        '[ "$0" = "--paste-target" ] && [ "$1" = "42" ] && printf "NOT_PASTEABLE\\nPASTEABLE\\n"',
+      ],
+    });
+    assert.equal(await monitor.canPasteAtTarget(42), false);
+  }
+);
+
 test("startMonitoring stops immediately without a target PID", darwinOnly, () => {
   const m = new TextEditMonitor();
   m.startMonitoring("pasted text", 5000, { targetPid: null });

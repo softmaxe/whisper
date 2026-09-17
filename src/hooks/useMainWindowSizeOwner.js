@@ -30,6 +30,7 @@ export function useMainWindowSizeOwner({
   liveTranscriptOpen,
   liveTranscriptMounted,
   liveTranscriptOpenRef,
+  liveTranscriptCopyFallback,
 }) {
   const [handoffActive, setHandoffActive] = useState(false);
   const actionCountRef = useRef(dictationErrorActionCount);
@@ -88,6 +89,7 @@ export function useMainWindowSizeOwner({
     const panelOwnsWindow =
       assistantOpenRef.current ||
       liveTranscriptOpenRef.current ||
+      Boolean(liveTranscriptCopyFallback) ||
       assistantMounted ||
       liveTranscriptMounted;
     if (panelOwnsWindow) {
@@ -180,6 +182,7 @@ export function useMainWindowSizeOwner({
     liveTranscriptOpen,
     liveTranscriptMounted,
     liveTranscriptOpenRef,
+    liveTranscriptCopyFallback,
     isCommandMenuOpen,
     toastCount,
     isCompactPill,

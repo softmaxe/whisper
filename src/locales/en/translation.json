@@ -1136,6 +1136,17 @@
     "label": "Preview",
     "copy": "Copy",
     "copied": "Copied",
+    "recovery": {
+      "title": "Transcription ready",
+      "pasteFailed": "Could not paste automatically. Copy the text below.",
+      "pasteFailedCopied": "Could not paste automatically. Text copied to clipboard.",
+      "copyFailed": "Copy failed. Try again or select the text to copy it.",
+      "copy": "Copy text",
+      "copied": "Copied",
+      "pasteHint": "⌘V to paste",
+      "close": "Close transcription",
+      "text": "Transcription text"
+    },
     "collapse": "Collapse transcript",
     "waitingForInput": "Say something..."
   },

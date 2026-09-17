@@ -1136,6 +1136,17 @@
     "label": "预览",
     "copy": "复制",
     "copied": "已复制",
+    "recovery": {
+      "title": "转写已完成",
+      "pasteFailed": "未能自动粘贴，请复制下方文字。",
+      "pasteFailedCopied": "未能自动粘贴，文字已复制到剪贴板。",
+      "copyFailed": "复制失败，请重试或选中文字后复制。",
+      "copy": "复制文字",
+      "copied": "已复制",
+      "pasteHint": "按 ⌘V 粘贴",
+      "close": "关闭转写结果",
+      "text": "转写文字"
+    },
     "collapse": "折叠转录",
     "waitingForInput": "说点什么..."
   },

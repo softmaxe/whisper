@@ -43,6 +43,25 @@
     transform 280ms cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* Measure the completed result before a short, bottom-anchored entrance. */
+.expanding-panel-surface[data-panel-mode="copy-recovery"] {
+  clip-path: none;
+  border-radius: 16px;
+  transform: translateY(6px) scale(0.985);
+  transform-origin: bottom center;
+  transition:
+    opacity 160ms ease-out,
+    transform 160ms cubic-bezier(0.2, 0, 0, 1);
+  will-change: opacity, transform;
+}
+
+.expanding-panel-surface-open[data-panel-mode="copy-recovery"] {
+  transform: none;
+  transition:
+    opacity 200ms ease-out,
+    transform 260ms cubic-bezier(0.2, 0, 0, 1);
+}
+
 /* Agent close first fades its complex inner tree while the surface is still
    geometrically stable. The following pill-to-surface contraction can then be
    composited as a simple layer instead of repainting markdown, controls, and
@@ -645,6 +664,11 @@
 @media (prefers-reduced-motion: reduce) {
   .expanding-panel-surface {
     transition-duration: 1ms;
+  }
+
+  .expanding-panel-surface[data-panel-mode="copy-recovery"] {
+    transform: none;
+    transition: opacity 120ms ease-out;
   }
 
   .expanding-panel-surface[data-panel-mode="live-transcript"]::before,
