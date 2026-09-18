@@ -858,6 +858,7 @@ export default function App() {
           text={liveTranscript.text}
           copyFallback={liveTranscript.copyFallback}
           onClose={() => liveTranscript.close({ suppress: true, clear: true })}
+          onHoldChange={liveTranscript.holdFinal}
           onPreferredHeightChange={liveTranscript.requestHeight}
         />
       )}

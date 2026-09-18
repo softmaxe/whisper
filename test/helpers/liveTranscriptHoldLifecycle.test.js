@@ -9,6 +9,7 @@ const {
 } = require("../lib/rendererTestHarness");
 
 const FINAL_HIDE_MS = 4000;
+const RECOVERY_HIDE_MS = 5000;
 
 function capturePanelTimers(t) {
   const originalSetTimeout = globalThis.setTimeout;
@@ -30,7 +31,8 @@ function capturePanelTimers(t) {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
   });
-  return () => timers.findLast((timer) => timer.delay === FINAL_HIDE_MS && !timer.cancelled);
+  return (delay = FINAL_HIDE_MS) =>
+    timers.findLast((timer) => timer.delay === delay && !timer.cancelled);
 }
 
 async function mountLiveTranscript(t, initialProps = {}, { trackWindowSizes = false } = {}) {
@@ -302,8 +304,9 @@ test("hovering a final transcript pauses its active hide countdown and leaving r
   assert.equal(getPanel().openRef.current, false);
 });
 
-test("manual-copy recovery survives preview events and timeouts until dismissed", async (t) => {
-  const { getPanel, emitPreview, getShownWindows } = await mountLiveTranscript(t);
+test("manual-copy recovery ignores late previews and dismisses after five seconds", async (t) => {
+  const { getPanel, emitPreview, getShownWindows, shortcutReleases, hasCancelListener } =
+    await mountLiveTranscript(t);
   const advance = capturePresentationClock(t);
 
   await React.act(async () => {
@@ -319,24 +322,108 @@ test("manual-copy recovery survives preview events and timeouts until dismissed"
   await emitPreview("onPreviewHold", { showCleanup: true });
   await emitPreview("onPreviewResult", { text: "late preview result" });
   await emitPreview("onPreviewHide");
-  await React.act(async () => {
-    getPanel().holdFinal(true);
-    getPanel().holdFinal(false);
-  });
-  await advance(12000);
+  await advance(RECOVERY_HIDE_MS - 2200 - 1);
 
   assert.equal(getPanel().open, true);
   assert.equal(getPanel().text, "Final expanded text");
   assert.equal(getPanel().phase, "final");
   assert.equal(getPanel().copyFallback, "copy");
 
-  await React.act(async () => getPanel().close({ suppress: true }));
+  await advance(1);
+  assert.equal(getPanel().open, false);
+  assert.deepEqual(shortcutReleases, ["copy-recovery"]);
+  assert.equal(hasCancelListener(), false);
   assert.equal(getPanel().copyFallback, "copy", "the exit must not flash a streaming panel");
   await advance(400);
   assert.equal(getPanel().mounted, false);
   assert.equal(getPanel().copyFallback, null);
   await emitPreview("onPreviewResult", { text: "late dismissed result" });
   await advance(2200);
+  assert.equal(getPanel().open, false);
+});
+
+test("copied recovery closes after five seconds and restores the base window", async (t) => {
+  const { getPanel, windowSizes } = await mountLiveTranscript(t, {}, { trackWindowSizes: true });
+  const advance = capturePresentationClock(t);
+  await React.act(async () =>
+    getPanel().showFinalText("Copied result", { copyFallback: "copied" })
+  );
+  await advance(RECOVERY_HIDE_MS - 1);
+  assert.equal(getPanel().open, true);
+  await advance(1);
+  assert.equal(getPanel().open, false);
+  await advance(400);
+  assert.equal(getPanel().mounted, false);
+  assert.equal(getPanel().text, "");
+  assert.equal(getPanel().copyFallback, null);
+  await advance(200);
+  assert.deepEqual(windowSizes, ["BASE", "BASE"]);
+});
+
+test("holding recovery pauses dismissal and leaving starts a fresh five seconds", async (t) => {
+  const { getPanel } = await mountLiveTranscript(t);
+  const advance = capturePresentationClock(t);
+  await React.act(async () =>
+    getPanel().showFinalText("Copied result", { copyFallback: "copied" })
+  );
+  await advance(4000);
+  getPanel().holdFinal(true);
+  await advance(10000);
+  assert.equal(getPanel().open, true);
+  getPanel().holdFinal(false);
+  await advance(RECOVERY_HIDE_MS - 1);
+  assert.equal(getPanel().open, true);
+  await advance(1);
+  assert.equal(getPanel().open, false);
+});
+
+test("replacement recovery ignores a stale dismissal and receives a full countdown", async (t) => {
+  const { getPanel } = await mountLiveTranscript(t);
+  const getHideTimer = capturePanelTimers(t);
+  await React.act(async () => getPanel().showFinalText("Same text", { copyFallback: "copied" }));
+  const previous = getHideTimer(RECOVERY_HIDE_MS);
+  assert.ok(previous);
+  await React.act(async () => getPanel().showFinalText("Same text", { copyFallback: "copied" }));
+  const replacement = getHideTimer(RECOVERY_HIDE_MS);
+  assert.ok(replacement);
+  assert.notEqual(previous, replacement);
+  assert.equal(previous.cancelled, true);
+  await React.act(async () => previous.callback());
+  assert.equal(getPanel().open, true);
+  await React.act(async () => replacement.callback());
+  assert.equal(getPanel().open, false);
+});
+
+test("manual dismissal and unmount cancel the recovery countdown", async (t) => {
+  const { getPanel, unmount } = await mountLiveTranscript(t);
+  const getHideTimer = capturePanelTimers(t);
+  await React.act(async () => getPanel().showFinalText("First result", { copyFallback: "copied" }));
+  const previous = getHideTimer(RECOVERY_HIDE_MS);
+  await React.act(async () => getPanel().close({ suppress: true, clear: true }));
+  assert.equal(previous.cancelled, true);
+  await React.act(async () => getPanel().showFinalText("Next result", { copyFallback: "copied" }));
+  await React.act(async () => previous.callback());
+  assert.equal(getPanel().open, true);
+  const active = getHideTimer(RECOVERY_HIDE_MS);
+  await unmount();
+  assert.equal(active.cancelled, true);
+});
+
+test("recovery countdown waits for native sizing before starting", async (t) => {
+  let finishResize;
+  const { getPanel } = await mountLiveTranscript(t, {
+    resizeToContent: () => new Promise((resolve) => (finishResize = resolve)),
+  });
+  const advance = capturePresentationClock(t);
+  await React.act(async () =>
+    getPanel().showFinalText("Pending result", { copyFallback: "copied" })
+  );
+  await advance(10000);
+  assert.equal(getPanel().mounted, false);
+  await React.act(async () => finishResize({ success: true }));
+  await advance(RECOVERY_HIDE_MS - 1);
+  assert.equal(getPanel().open, true);
+  await advance(1);
   assert.equal(getPanel().open, false);
 });
 
@@ -431,7 +518,7 @@ test("closing recovery before its initial resize completes restores the base win
   );
 });
 
-test("the next recording clears persistent recovery even when previews stay disabled", async (t) => {
+test("the next recording clears recovery even when previews stay disabled", async (t) => {
   const { getPanel, rerender, emitPreview, shortcutRegistrations, shortcutReleases } =
     await mountLiveTranscript(t);
   const advance = capturePresentationClock(t);

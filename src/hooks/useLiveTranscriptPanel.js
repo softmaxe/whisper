@@ -13,6 +13,7 @@ const LIVE_TRANSCRIPT_SHELL_GROW_MS = 180;
 const LIVE_TRANSCRIPT_CLOSE_UNMOUNT_MS = 320;
 const LIVE_TRANSCRIPT_FINAL_HIDE_MS = 4000;
 const COPY_RECOVERY_INITIAL_HEIGHT = 280;
+const COPY_RECOVERY_HIDE_MS = 5000;
 
 /**
  * Owns the live transcript panel: its open/close/entrance choreography, the
@@ -328,19 +329,16 @@ export function useLiveTranscriptPanel({
 
   const scheduleFinalHide = useCallback(() => {
     clearFinalHide();
-    if (copyFallbackRef.current) return;
-    finalHideTimerRef.current = setTimeout(() => {
+    if (finalHoldRef.current) return;
+    const delay = copyFallbackRef.current ? COPY_RECOVERY_HIDE_MS : LIVE_TRANSCRIPT_FINAL_HIDE_MS;
+    const timer = setTimeout(() => {
+      if (finalHideTimerRef.current !== timer) return;
       finalHideTimerRef.current = null;
-      if (
-        copyFallbackRef.current ||
-        finalHoldRef.current ||
-        phaseRef.current !== "final" ||
-        !openRef.current
-      ) {
-        return;
-      }
-      close({ clear: true });
-    }, LIVE_TRANSCRIPT_FINAL_HIDE_MS);
+      if (finalHoldRef.current || phaseRef.current !== "final" || !openRef.current) return;
+      // Late preview events must not reopen a dismissed recovery card.
+      close({ suppress: Boolean(copyFallbackRef.current), clear: true });
+    }, delay);
+    finalHideTimerRef.current = timer;
   }, [clearFinalHide, close]);
 
   const holdFinal = useCallback(
@@ -390,6 +388,7 @@ export function useLiveTranscriptPanel({
           onWillOpen?.();
           setMounted(true);
           setOpen(true);
+          scheduleFinalHide();
           void window.electronAPI?.showDictationPanel?.();
         };
         void requestHeight(COPY_RECOVERY_INITIAL_HEIGHT).then(reveal, reveal);
