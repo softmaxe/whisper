@@ -50,6 +50,14 @@ final class MockClock {
     }
 }
 enum ProcessInfo { static let processInfo = MockClock() }
+enum Thread {
+    static func sleep(forTimeInterval interval: TimeInterval) {
+        ProcessInfo.processInfo.time += interval
+    }
+}
+var focusResponses: [AXUIElement?] = []
+var focusReads = 0
+var onRoleRead: ((AXUIElement) -> Void)?
 var application = AXUIElement()
 var trusted = true
 var reads = 0
@@ -70,6 +78,14 @@ func AXUIElementCopyAttributeValue(
         NSWorkspace.shared.frontmostApplication = MockApplication(processIdentifier: 99)
     }
     if element.unavailable { return .cannotComplete }
+    if attribute as String == kAXRoleAttribute { onRoleRead?(element) }
+    if element === application, attribute as String == kAXFocusedUIElementAttribute {
+        focusReads += 1
+        if !focusResponses.isEmpty {
+            value.pointee = focusResponses.removeFirst()
+            return value.pointee == nil ? .noValue : .success
+        }
+    }
     value.pointee = element.attributes[attribute as String]
     return value.pointee == nil ? .attributeUnsupported : .success
 }
@@ -113,6 +129,9 @@ func configure(
     application.attributes[kAXMenuBarAttribute] = menu
     trusted = true
     reads = 0
+    focusReads = 0
+    focusResponses = []
+    onRoleRead = nil
     switchOnRead = false
     NSWorkspace.shared.frontmostApplication = MockApplication(
         processIdentifier: 42, bundleIdentifier: bundleIdentifier
@@ -233,6 +252,106 @@ for browser in [
         expect(browser + " focused selection", .pasteable)
         input.attributes[kAXEnabledAttribute] = false as NSNumber
         expect(browser + " disabled input", .notPasteable)
+    }
+    for role in ["AXGroup", "AXTextArea", "AXTextField", "AXComboBox"] {
+        for attribute in [kAXValueAttribute, kAXSelectedTextAttribute, "AXEditable"] {
+            let editor = element(role, selection: "selected words")
+            if attribute == "AXEditable" {
+                editor.attributes[attribute] = true as NSNumber
+            } else {
+                editor.writable.insert(attribute)
+            }
+            configure(editor, bundleIdentifier: browser)
+            expect(browser + " rich editor with " + attribute, .pasteable)
+            editor.attributes["AXEditable"] = false as NSNumber
+            expect(browser + " explicitly read-only rich editor", .notPasteable)
+            editor.attributes.removeValue(forKey: "AXEditable")
+            editor.attributes[kAXEnabledAttribute] = false as NSNumber
+            expect(browser + " disabled rich editor", .notPasteable)
+            editor.attributes[kAXEnabledAttribute] = true as NSNumber
+            editor.attributes[kAXSubroleAttribute] = "AXSecureTextField" as NSString
+            expect(browser + " secure rich editor", .notPasteable)
+        }
+    }
+    for role in ["AXGroup", "AXTextField", "AXTextArea", "AXComboBox", "AXWebArea", "AXStaticText"] {
+        let selectionOnly = element(role, selection: "read-only page selection")
+        selectionOnly.writable.insert("AXSelectedTextMarkerRange")
+        selectionOnly.writable.insert(kAXSelectedTextRangeAttribute)
+        configure(selectionOnly, menu: pasteMenu(enabled: true), bundleIdentifier: browser)
+        expect(browser + " selectable page is not editable", .notPasteable)
+    }
+    let grokEditor = element("AXGroup")
+    grokEditor.writable.insert(kAXValueAttribute)
+    for initial in [nil, element("AXWindow"), element("AXWebArea")] {
+        configure(grokEditor, bundleIdentifier: browser)
+        focusResponses = [initial, grokEditor]
+        expect(browser + " lazy AX focus resolves to rich editor", .pasteable)
+        guard focusReads == 2 else { fatalError("Browser focus was not retried") }
+    }
+    configure(nil, bundleIdentifier: browser)
+    expect(browser + " unavailable focus has bounded retries", .notPasteable)
+    guard focusReads == 3 else { fatalError("Browser focus retry budget changed") }
+    configure(grokEditor, bundleIdentifier: browser)
+    trusted = false
+    expect(browser + " untrusted rich editor", .notPasteable)
+    guard reads == 0 else { fatalError("Untrusted browser probe queried AX") }
+    configure(grokEditor, bundleIdentifier: browser)
+    switchOnRead = true
+    expect(browser + " rich editor loses app focus", .notPasteable)
+}
+
+let coldEditor = element("AXTextArea", writable: true)
+configure(nil, bundleIdentifier: "com.brave.Browser")
+onRoleRead = { queried in
+    if queried === application { application.attributes[kAXFocusedUIElementAttribute] = coldEditor }
+}
+expect("reading the browser application role wakes native AX", .pasteable)
+
+configure(nil, bundleIdentifier: "com.brave.Browser")
+let webContainer = element("AXScrollArea")
+let windowGroup = element("AXGroup")
+windowGroup.attributes[kAXChildrenAttribute] = [webContainer] as NSArray
+let browserWindow = element("AXWindow")
+browserWindow.attributes[kAXChildrenAttribute] = [windowGroup] as NSArray
+application.attributes[kAXFocusedWindowAttribute] = browserWindow
+onRoleRead = { queried in
+    if queried === webContainer { application.attributes[kAXFocusedUIElementAttribute] = coldEditor }
+}
+expect("reading the web container role wakes web AX without writing attributes", .pasteable)
+
+configure(nil, bundleIdentifier: "com.brave.Browser")
+application.attributes[kAXFocusedWindowAttribute] = browserWindow
+webContainer.attributes[kAXChildrenAttribute] = [coldEditor] as NSArray
+expect("finding an unfocused editor during warmup must not permit paste", .notPasteable)
+
+configure(nil, bundleIdentifier: "com.brave.Browser")
+let cyclicWindow = element("AXWindow")
+cyclicWindow.attributes[kAXChildrenAttribute] = [cyclicWindow] as NSArray
+application.attributes[kAXFocusedWindowAttribute] = cyclicWindow
+expect("browser warmup has a depth budget", .notPasteable)
+guard reads < 45 else { fatalError("Browser warmup exceeded its depth budget") }
+
+configure(nil, bundleIdentifier: "com.brave.Browser")
+let hugeWindow = element("AXWindow")
+hugeWindow.attributes[kAXChildrenAttribute] = (0..<1000).map { _ in element("AXGroup") } as NSArray
+application.attributes[kAXFocusedWindowAttribute] = hugeWindow
+expect("browser warmup has a node budget", .notPasteable)
+guard reads < 215 else { fatalError("Browser warmup exceeded its node budget") }
+
+configure(nil, bundleIdentifier: "com.brave.Browser")
+application.attributes[kAXFocusedWindowAttribute] = hugeWindow
+ProcessInfo.processInfo.step = 0.1
+expect("browser warmup has a time budget", .notPasteable)
+guard reads < 15 else { fatalError("Browser warmup exceeded its time budget") }
+
+for bundle in ["com.apple.finder", "com.example.editor"] {
+    let selectionOnly = element("AXTextField")
+    selectionOnly.writable.insert(kAXSelectedTextRangeAttribute)
+    configure(selectionOnly, bundleIdentifier: bundle)
+    expect("range settability outside a browser is not editability",
+           bundle == "com.apple.finder" ? .notPasteable : .unknown)
+    guard !isEditableTextElement(selectionOnly) else {
+        fatalError("Dictation-specific browser handling changed selection-edit probing")
     }
 }
 
