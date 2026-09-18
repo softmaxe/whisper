@@ -26,7 +26,7 @@ function deferred() {
 
 async function mountPanel(
   t,
-  { text, copyFallback = "copy", writeClipboard, onPreferredHeightChange } = {}
+  { text, copyFallback = "copy", writeClipboard, onPreferredHeightChange, onHoldChange } = {}
 ) {
   let root;
   t.after(async () => {
@@ -74,6 +74,7 @@ async function mountPanel(
     text,
     copyFallback,
     onClose: () => closeCount++,
+    onHoldChange,
     onPreferredHeightChange,
   };
   function Probe() {
@@ -153,7 +154,7 @@ function assertCopiedStatus(panel) {
   );
 }
 
-test("already copied recovery keeps selectable text and paste guidance until explicitly closed", async (t) => {
+test("already copied recovery keeps selectable text, paste guidance, and manual dismissal", async (t) => {
   const writes = [];
   const panel = await mountPanel(t, {
     text: transcript,
@@ -234,6 +235,51 @@ test("Escape closes recovery once and prevents a second document-level dismissal
   panel.shell.props.onKeyDown({ ...event, key: "Escape" });
   assert.equal(panel.closeCount, 1);
   assert.deepEqual(handled, ["preventDefault", "stopPropagation"]);
+});
+
+test("recovery pauses dismissal until visible and while hovered or keyboard-focused", async (t) => {
+  const holds = [];
+  const panel = await mountPanel(t, {
+    text: transcript,
+    onHoldChange: (held) => holds.push(held),
+  });
+  assert.equal(holds.at(-1), true, "native measurement must not consume the reading time");
+  await panel.reveal();
+  assert.equal(holds.at(-1), false);
+  await React.act(async () => panel.shell.props.onMouseEnter());
+  assert.equal(holds.at(-1), true);
+  await React.act(async () => panel.shell.props.onFocus());
+  await React.act(async () => panel.shell.props.onMouseLeave());
+  assert.equal(holds.at(-1), true, "keyboard focus still holds after the pointer leaves");
+  await React.act(async () =>
+    panel.shell.props.onBlur({ currentTarget: { contains: () => true }, relatedTarget: {} })
+  );
+  assert.equal(holds.at(-1), true, "moving focus inside the panel must not resume dismissal");
+  await React.act(async () =>
+    panel.shell.props.onBlur({ currentTarget: { contains: () => false }, relatedTarget: null })
+  );
+  assert.equal(holds.at(-1), false);
+  await React.act(async () => panel.shell.props.onMouseEnter());
+  await panel.unmount();
+  assert.equal(holds.at(-1), false, "an unmounted panel must release its hold");
+});
+
+test("an in-flight copy holds recovery even after the pointer leaves", async (t) => {
+  const holds = [];
+  const copy = deferred();
+  const panel = await mountPanel(t, {
+    text: transcript,
+    writeClipboard: () => copy.promise,
+    onHoldChange: (held) => holds.push(held),
+  });
+  await panel.reveal();
+  await React.act(async () => panel.shell.props.onMouseEnter());
+  await panel.copy();
+  await React.act(async () => panel.shell.props.onMouseLeave());
+  assert.equal(holds.at(-1), true);
+  await React.act(async () => copy.resolve({ success: true }));
+  assert.equal(holds.at(-1), false);
+  assertCopiedStatus(panel);
 });
 
 test("failed copy keeps the result readable and allows a successful retry", async (t) => {

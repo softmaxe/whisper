@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Check, Copy, X } from "../icons";
 import { useCopyFeedback } from "../../hooks/useCopyFeedback";
@@ -9,6 +9,7 @@ interface CopyRecoveryPanelProps {
   text: string;
   copyFallback: "copied" | "copy";
   onClose: () => void;
+  onHoldChange?: (held: boolean) => void;
   onPreferredHeightChange?: (
     height: number,
     measurementRevision?: string | number | null
@@ -25,6 +26,7 @@ export function CopyRecoveryPanel({
   text,
   copyFallback,
   onClose,
+  onHoldChange,
   onPreferredHeightChange,
 }: CopyRecoveryPanelProps) {
   const { t } = useTranslation();
@@ -35,12 +37,21 @@ export function CopyRecoveryPanel({
   const [readyText, setReadyText] = useState<string | null>(null);
   const visible = open && readyText === text;
   const [copying, setCopying] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [copyResult, setCopyResult] = useState<{ text: string; success: boolean } | null>(null);
   const { copyText } = useCopyFeedback(text);
   const result = copyResult?.text === text ? copyResult : null;
   const copyFailed = result?.success === false;
   const readyToPaste = !copyFailed && (result?.success || copyFallback === "copied");
   const noticeKey = copyFailed ? "copyFailed" : readyToPaste ? "pasteFailedCopied" : "pasteFailed";
+
+  useEffect(() => {
+    if (!open) return;
+    // Wait for the measured reveal, and never dismiss during selection or copy.
+    onHoldChange?.(!visible || hovered || focused || copying);
+    return () => onHoldChange?.(false);
+  }, [copying, focused, hovered, onHoldChange, open, visible]);
 
   useLayoutEffect(() => {
     activeTextRef.current = text;
@@ -95,6 +106,12 @@ export function CopyRecoveryPanel({
       data-panel-mode="copy-recovery"
       className="font-sans"
       aria-label={t("transcriptionPreview.recovery.title")}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
