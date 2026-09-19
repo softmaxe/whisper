@@ -11,7 +11,7 @@ struct DictationHomeView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(language.text("Dictation", "听写")).font(.title2).fontWeight(.semibold)
-                Text(language.text("Hold Right Command to speak, then release to transcribe and paste.", "按住右 Command 说话，松开后转录并粘贴。"))
+                Text(language.text("Hold Right Command to speak, or double-tap for Hands-free Dictation.", "按住右 Command 说话，或双击开始免按键听写。"))
                     .foregroundStyle(.secondary)
                 if !application.state.shortcutAvailable {
                     Text(language.text("Enable Accessibility in General settings to use the global shortcut.", "请在通用设置中启用辅助功能，以使用全局快捷键。"))
@@ -89,10 +89,17 @@ struct RecordingStatus: View {
     private var title: String {
         switch phase {
         case .idle: language.text("Ready to record", "等待录音")
-        case .preparing: application.state.dictation.gesture == .candidate
-                ? language.text("Hold to speak…", "继续按住以说话…")
-                : language.text("Preparing microphone…", "正在准备麦克风…")
-        case .recording: language.text("Listening", "正在聆听")
+        case .preparing:
+            if application.state.dictation.gesture == .awaitingSecondTap {
+                language.text("Tap again for Hands-free Dictation…", "再轻按一次以开始免按键听写…")
+            } else if application.state.dictation.gesture.isProvisional {
+                language.text("Hold to speak…", "继续按住以说话…")
+            } else {
+                language.text("Preparing microphone…", "正在准备麦克风…")
+            }
+        case .recording: application.state.dictation.origin == .handsFree
+                ? language.text("Hands-free · Tap Right Command to finish", "免按键听写 · 轻按右 Command 结束")
+                : language.text("Listening", "正在聆听")
         case .processing: application.state.dictation.isCleaning ? language.text("Cleaning up…", "正在整理…") : language.text("Transcribing…", "正在转录…")
         case .result: language.text("Transcription complete", "转录完成")
         case .failed: language.text("Try again", "请重试")
@@ -165,7 +172,7 @@ private struct RecordingPill: View {
                     if dictation.phase == .preparing || dictation.phase == .processing {
                         ProgressView().controlSize(.small).frame(width: 22, height: 22)
                     } else {
-                        Image(systemName: dictation.phase == .result ? "checkmark" : dictation.phase == .failed ? "exclamationmark" : "waveform")
+                        Image(systemName: dictation.phase == .result ? "checkmark" : dictation.phase == .failed ? "exclamationmark" : dictation.origin == .handsFree ? "lock.fill" : "waveform")
                             .font(.system(size: 20)).frame(width: 22, height: 22)
                     }
                     HStack(spacing: 3) {

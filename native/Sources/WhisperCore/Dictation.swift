@@ -143,6 +143,7 @@ extension WhisperApplication {
         }
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil
+        if state.dictation.origin == .handsFree { dictationTarget = pasteSystem.captureTarget() }
         state.dictation.phase = .processing
         state.dictation.level = 0
         state.dictation.timing["stop"] = clock.now - dictationStartedAt
@@ -201,7 +202,7 @@ extension WhisperApplication {
         saveCompletedDictationToHistory(rawText: rawText, text: text, requestID: requestID)
         dictationCapture = nil
         dictationCredential = nil
-        guard state.dictation.origin == .hold else {
+        guard state.dictation.origin != .button else {
             state.dictation.phase = .result
             processingTask = nil
             return
@@ -229,6 +230,8 @@ extension WhisperApplication {
         guard state.dictation.phase.isActive else { return }
         holdDeadline?.cancel()
         holdDeadline = nil
+        doubleTapDeadline?.cancel()
+        doubleTapDeadline = nil
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil
         processingTask?.cancel()
@@ -238,7 +241,7 @@ extension WhisperApplication {
         dictationCredential = nil
         state.dictation.isCleaning = false
         state.dictation.phase = .idle
-        state.dictation.cancellation = kind
+        state.dictation.cancellation = state.dictation.gesture.isProvisional ? .rejectedGesture : kind
         provisionalFailure = nil
         state.dictation.gesture = .none
         state.dictation.text = ""
@@ -249,7 +252,7 @@ extension WhisperApplication {
 
     func failDictation(_ failure: DictationFailure, requestID: UUID) {
         guard state.dictation.requestID == requestID, state.dictation.phase.isActive else { return }
-        if state.dictation.gesture == .candidate {
+        if state.dictation.gesture.isProvisional {
             // A normal Command combination must not leave a microphone/configuration error pill.
             firstAudioDeadline?.cancel()
             firstAudioDeadline = nil
@@ -263,6 +266,8 @@ extension WhisperApplication {
         processingTask?.cancel()
         holdDeadline?.cancel()
         holdDeadline = nil
+        doubleTapDeadline?.cancel()
+        doubleTapDeadline = nil
         processingTask = nil
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil

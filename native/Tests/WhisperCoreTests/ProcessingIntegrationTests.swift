@@ -90,6 +90,31 @@ struct ProcessingIntegrationTests {
         #expect(reopened.state.history.entries.first?.rawText == "New raw ASR")
         #expect(reopened.state.history.entries.first?.text == "新的中文軟體")
     }
+
+    @Test func handsFreeFinalPipelineUsesSubmissionTargetAndSavesOneHistoryEntry() async throws {
+        let fixture = try ProcessingFixture()
+        defer { fixture.remove() }
+        fixture.app.send(.setTranscriptionLanguage("zh-TW"))
+        fixture.app.send(.saveSnippet(trigger: "這是中文軟體", replacement: "Hands-free literal 简体"))
+        let occurredAt = fixture.clock.wallDate
+        await fixture.submit("Hands-free raw fixture", handsFree: true)
+        await settle { await fixture.cleanupHTTP.requests.count == 1 }
+        await fixture.cleanupHTTP.reply(content: "这是中文软件")
+        await fixture.waitForResult()
+        #expect(fixture.app.state.dictation.origin == .handsFree)
+        #expect(fixture.paste.pasted == [PasteTarget(processID: 202)])
+        #expect(fixture.paste.writes == ["Hands-free literal 简体"])
+        await fixture.app.flushHistoryWrites()
+        let reopened = fixture.reopen()
+        reopened.send(.loadHistory)
+        await settle { reopened.state.history.isLoaded && !reopened.state.history.isLoading }
+        #expect(reopened.state.history.totalCount == 1)
+        let entry = try #require(reopened.state.history.entries.first)
+        #expect(entry.rawText == "Hands-free raw fixture")
+        #expect(entry.text == "Hands-free literal 简体")
+        #expect(entry.occurredAt == occurredAt)
+        #expect(entry.source == .dictation)
+    }
 }
 
 @MainActor private final class ProcessingFixture {
@@ -115,14 +140,25 @@ struct ProcessingIntegrationTests {
             pasteSystem: paste, cleanup: SelfHostedCleanup(transport: cleanupHTTP))
     }
 
-    func submit(_ raw: String, index: Int = 0, changeLanguageAfterSubmission: Bool = false) async {
+    func submit(_ raw: String, index: Int = 0, changeLanguageAfterSubmission: Bool = false, handsFree: Bool = false) async {
         app.send(.shortcut(.init(keyCode: ShortcutInput.rightCommand, isDown: true)))
         let capture = microphones.sessions.last!
         capture.open()
         capture.deliver([Float](repeating: 0.1, count: 4800))
         await settle { self.app.state.dictation.timing["firstAudio"] != nil }
-        clock.advance(WhisperApplication.holdThreshold)
+        if handsFree {
+            clock.advance(0.04)
+            app.send(.shortcut(.init(keyCode: ShortcutInput.rightCommand, isDown: false)))
+            clock.advance(0.06)
+            app.send(.shortcut(.init(keyCode: ShortcutInput.rightCommand, isDown: true)))
+            clock.advance(0.04)
+            app.send(.shortcut(.init(keyCode: ShortcutInput.rightCommand, isDown: false)))
+            #expect(app.state.dictation.origin == .handsFree)
+            paste.frontmost = PasteTarget(processID: 202)
+            app.send(.shortcut(.init(keyCode: ShortcutInput.rightCommand, isDown: true)))
+        } else { clock.advance(WhisperApplication.holdThreshold) }
         app.send(.shortcut(.init(keyCode: ShortcutInput.rightCommand, isDown: false)))
+        if handsFree { paste.frontmost = PasteTarget(processID: 303) }
         await settle { await self.asr.requests.count == index + 1 }
         if changeLanguageAfterSubmission { app.send(.setTranscriptionLanguage("en-US")) }
         let response = try! JSONEncoder().encode(["text": raw])
