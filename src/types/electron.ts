@@ -10,6 +10,10 @@ import type { CalendarAvailabilityRequest, CalendarAvailabilityResult } from "./
 
 export type LocalTranscriptionProvider = "whisper" | "nvidia" | "cohere";
 
+export interface RecordingRequestOptions {
+  startupRequest?: { requestId: string; acceptedAt: number };
+}
+
 export interface MainWindowInputRegion {
   viewportWidth: number;
   viewportHeight: number;
@@ -1156,14 +1160,18 @@ declare global {
       hideWindow: () => Promise<void>;
       showDictationPanel: () => Promise<void>;
       captureDictationTarget?: () => Promise<{ success: boolean; pid: number | null }>;
-      onToggleDictation: (callback: () => void) => () => void;
-      onToggleVoiceAgent?: (callback: () => void) => () => void;
-      onToggleTranslation?: (callback: () => void) => () => void;
+      onToggleDictation: (callback: (options?: RecordingRequestOptions) => void) => () => void;
+      onToggleVoiceAgent?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
+      onToggleTranslation?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
       onOpenAssistantPanel?: (callback: () => void) => () => void;
-      onStartDictation?: (callback: () => void) => () => void;
+      onStartDictation?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
       onStopDictation?: (callback: () => void) => () => void;
       onPrepareDictation?: (
-        callback: (options?: { inputKind?: "dictation" | "assistant" | "translation" }) => void
+        callback: (
+          options?: RecordingRequestOptions & {
+            inputKind?: "dictation" | "assistant" | "translation";
+          }
+        ) => void
       ) => () => void;
       onCancelDictationPreparation?: (callback: () => void) => () => void;
       onCancelDictation?: (callback: () => void) => () => void;

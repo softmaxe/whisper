@@ -1,5 +1,6 @@
 const { app, screen, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
 const debugLogger = require("./debugLogger");
+const { randomUUID } = require("node:crypto");
 const { createLinuxWindowInputRegion } = require("./linuxWindowInputRegion");
 // Aliased: this class has an openExternalUrl method wrapping the helper.
 const { openExternalUrl: openUrlInExternalBrowser } = require("./externalUrlOpener");
@@ -650,9 +651,10 @@ class WindowManager {
     const MAX_PUSH_DURATION_MS = 300000; // 5 minutes max recording
     const downTime = Date.now();
 
+    const startupRequest = this.createRecordingStartupRequest();
     const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
     this.showDictationPanel({ reposition: true, targetPidPromise });
-    this.sendPrepareDictation();
+    this.sendPrepareDictation({ startupRequest });
 
     const safetyTimeoutId = setTimeout(() => {
       if (this.macCompoundPushState?.active) {
@@ -914,7 +916,7 @@ class WindowManager {
     return blocked;
   }
 
-  _sendDictationToggle(channel, inputKind) {
+  _sendDictationToggle(channel, inputKind, acceptedAt) {
     if (!this._isOnboardingInputAllowed(inputKind)) return;
     if (this._shouldBlockDictationInput(inputKind)) {
       return;
@@ -930,6 +932,9 @@ class WindowManager {
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       const isStarting = !this._isDictatingToggle;
+      const startupRequest = isStarting
+        ? this.createRecordingStartupRequest(acceptedAt)
+        : undefined;
       // Capture the paste target and any selection on every toggle press,
       // before the overlay steals focus — the paste can't refocus the target
       // otherwise (#668). The renderer owns the real recording state and may
@@ -953,9 +958,10 @@ class WindowManager {
       // toggle's own kind so the pre-warm survives the assistant demo, whose
       // gate rejects "dictation".
       if (isStarting) {
-        this.sendPrepareDictation({ inputKind });
+        this.sendPrepareDictation({ inputKind, startupRequest });
       }
-      this.mainWindow.webContents.send(channel);
+      this._preparedStartupRequest = null;
+      this.mainWindow.webContents.send(channel, startupRequest ? { startupRequest } : undefined);
     }
   }
 
@@ -1014,8 +1020,8 @@ class WindowManager {
     return shouldIgnoreDictationHotkey(this._dictationLifecycleState);
   }
 
-  sendToggleDictation() {
-    this._sendDictationToggle("toggle-dictation", "dictation");
+  sendToggleDictation(acceptedAt) {
+    this._sendDictationToggle("toggle-dictation", "dictation", acceptedAt);
   }
 
   sendToggleVoiceAgent() {
@@ -1049,14 +1055,17 @@ class WindowManager {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      const startupRequest = this._preparedStartupRequest ?? this.createRecordingStartupRequest();
+      this._preparedStartupRequest = null;
       const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
       void this.selectionManager?.captureTarget?.();
       this.showDictationPanel({ reposition: true, targetPidPromise });
-      this.mainWindow.webContents.send("start-dictation");
+      this.mainWindow.webContents.send("start-dictation", { startupRequest });
     }
   }
 
   sendStopDictation() {
+    this._preparedStartupRequest = null;
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
@@ -1065,7 +1074,23 @@ class WindowManager {
     }
   }
 
-  sendPrepareDictation({ inputKind = "dictation" } = {}) {
+  createRecordingStartupRequest(acceptedAt = performance.timeOrigin + performance.now()) {
+    const request = { requestId: randomUUID(), acceptedAt };
+    debugLogger.info(
+      "Recording startup",
+      {
+        ...request,
+        sequence: 0,
+        stages: { requestAccepted: 0 },
+        outcome: "pending",
+        totalMs: null,
+      },
+      "audio"
+    );
+    return request;
+  }
+
+  sendPrepareDictation({ inputKind = "dictation", startupRequest } = {}) {
     if (!this._isOnboardingInputAllowed(inputKind)) return;
     if (this._shouldBlockDictationInput(inputKind)) {
       return;
@@ -1077,17 +1102,21 @@ class WindowManager {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send("prepare-dictation", { inputKind });
+      startupRequest ??= this.createRecordingStartupRequest();
+      this._preparedStartupRequest = startupRequest;
+      this.mainWindow.webContents.send("prepare-dictation", { inputKind, startupRequest });
     }
   }
 
   sendCancelDictationPreparation() {
+    this._preparedStartupRequest = null;
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("cancel-dictation-preparation");
     }
   }
 
   sendCancelDictation() {
+    this._preparedStartupRequest = null;
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
@@ -1103,6 +1132,7 @@ class WindowManager {
   // main window's renderer owns the recording state, so it decides what
   // "cancel" means at arrival time.
   sendCancelActiveDictation() {
+    this._preparedStartupRequest = null;
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("cancel-dictation");
     }

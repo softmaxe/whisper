@@ -17,7 +17,12 @@ Module._load = function loadWindowManagerWithStubs(request, parent, isMain) {
     };
   }
   if (request === "./debugLogger") {
-    return { warn: () => undefined, debug: () => undefined, log: () => undefined };
+    return {
+      info: () => undefined,
+      warn: () => undefined,
+      debug: () => undefined,
+      log: () => undefined,
+    };
   }
   if (request === "./hotkeyManager") {
     const FakeHotkeyManager = class {};
@@ -91,6 +96,24 @@ function startPush(t) {
   assert.deepEqual(harness.channels(), ["prepare-dictation", "start-dictation"]);
   return harness;
 }
+
+test("a push request carries its accepted timestamp through preparation and start", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  t.after(() => t.mock.timers.reset());
+  let now = 10;
+  t.mock.method(performance, "now", () => now);
+  const { manager, sent } = makeManager();
+  manager.showDictationPanel = () => {
+    now += 20;
+  };
+  manager.startMacCompoundPushToTalk("Control+Space");
+  t.mock.timers.tick(150);
+  const prepared = sent.find(({ channel }) => channel === "prepare-dictation").payload;
+  const started = sent.find(({ channel }) => channel === "start-dictation").payload;
+  assert.equal(prepared.startupRequest.acceptedAt, performance.timeOrigin + 10);
+  assert.deepEqual(started.startupRequest, prepared.startupRequest);
+  manager.handleMacPushModifierUp("control");
+});
 
 test("a physical release stops dictation without reporting a forced stop", (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
