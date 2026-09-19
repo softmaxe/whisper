@@ -193,6 +193,11 @@ extension WhisperApplication {
 
     public func prepareForTermination() async {
         state.isTerminating = true
+        let insightsRead = insightsReadTask
+        insightsRead?.cancel()
+        insightsReadTask = nil
+        insightsGeneration += 1
+        state.insights.isLoading = false
         retentionTimer?.cancel()
         retentionTimer = nil
         cancelDictation()
@@ -202,6 +207,7 @@ extension WhisperApplication {
         correctionLearning.stop()
         pillFeedbackDeadline?.cancel()
         await mediaOwnership.shutdown()
+        await insightsRead?.value
         await flushHistoryWrites()
     }
 }

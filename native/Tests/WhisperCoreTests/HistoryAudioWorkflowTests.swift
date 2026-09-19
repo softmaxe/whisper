@@ -377,7 +377,7 @@ struct HistoryAudioWorkflowTests {
     }
 }
 
-@MainActor private final class ControlledHistoryAudio: HistoryAudioSystem {
+@MainActor final class ControlledHistoryAudio: HistoryAudioSystem {
     var played: [URL] = []
     var revealed: [URL] = []
     var completion: (@MainActor @Sendable () -> Void)?
@@ -389,7 +389,7 @@ struct HistoryAudioWorkflowTests {
     func finish() { let done = completion; completion = nil; done?() }
 }
 
-@MainActor private final class AudioHistoryFixture {
+@MainActor final class AudioHistoryFixture {
     let profile: ProfileFixture
     let microphones = ControlledMicrophones()
     let clock = ControlledClock()

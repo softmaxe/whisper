@@ -225,6 +225,7 @@ extension WhisperApplication {
     /// The application lifecycle stops producers before awaiting this accepted-write barrier.
     public func flushHistoryWrites() async {
         _ = await historyWriteTask?.value
+        await flushInsightsWrites()
     }
 
     @discardableResult func enqueueHistory(_ change: HistoryChange) -> Task<Result<Bool, HistoryFailure>, Never> {
@@ -278,6 +279,8 @@ extension WhisperApplication {
                 switch change {
                 case .save, .recording, .retry:
                     if let savedEntry {
+                        // Enqueue recovery accounting before this write tail completes so shutdown can join it.
+                        if case .retry = change { self.recordRecoveredDictationInsights(savedEntry) }
                         self.state.history.lastSavedID = savedEntry.id
                         if self.state.history.selectedEntry?.id == savedEntry.id { self.state.history.selectedEntry = savedEntry }
                     }
@@ -286,11 +289,15 @@ extension WhisperApplication {
                 case .clear:
                     self.state.history.selectedEntry = nil
                     self.state.history.lastSavedID = nil
-                case .clearAudio, .expire: self.state.history.selectedEntry = nil
+                    self.refreshInsights()
+                case .clearAudio: self.state.history.selectedEntry = nil
+                case .expire:
+                    self.state.history.selectedEntry = nil
+                    if retention?.transcriptCutoff != nil { self.refreshInsights() }
                 }
             case let .failure(failure): self.state.history.failure = failure
             }
-            if self.state.history.pendingChanges == 0 {
+            if !self.state.isTerminating, self.state.history.pendingChanges == 0 {
                 self.refreshHistory()
                 self.searchHistory(self.state.history.searchQuery)
             }

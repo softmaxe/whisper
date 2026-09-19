@@ -202,6 +202,7 @@ extension WhisperApplication {
         markDictationStage("result", requestID: requestID)
         state.dictation.rawText = rawText
         state.dictation.text = text
+        recordLiveDictationInsights(rawText: rawText, requestID: requestID)
         saveCompletedDictationToHistory(rawText: rawText, text: text, requestID: requestID)
         dictationCapture = nil
         dictationCredential = nil

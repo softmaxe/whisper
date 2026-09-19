@@ -17,6 +17,7 @@ extension WhisperApplication {
     }
 
     private func scheduleHistoryRetention() {
+        guard !state.isTerminating else { return }
         retentionTimer = clock.schedule(after: 6 * 3600) { [weak self] in
             self?.runHistoryRetention()
             self?.scheduleHistoryRetention()
@@ -24,6 +25,7 @@ extension WhisperApplication {
     }
 
     func runHistoryRetention() {
+        guard !state.isTerminating else { return }
         guard profileReadable else { return }
         enqueueHistory(.expire(state.settings.history, clock.wallDate))
     }
@@ -160,7 +162,7 @@ extension WhisperApplication {
     }
 
     func finishHistoryRetry(_ entry: HistoryEntry) {
-        // Recovered Dictation Insights can use the unchanged original occurrence and source here.
+        // Persistence and recovered Insights have already been enqueued in the History write tail.
         state.history.retry.isRunning = false
         state.history.retry.failure = nil
         historyRetryTask = nil

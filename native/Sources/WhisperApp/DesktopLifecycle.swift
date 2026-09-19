@@ -246,7 +246,7 @@ import WhisperCore
         shortcuts?.stop()
         Task { @MainActor in
             await application?.prepareForTermination()
-            // prepareForTermination stops new commands and flushes accepted audio and History writes.
+            // The barrier joins accepted audio, History, and the Insights events queued by those writes.
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
