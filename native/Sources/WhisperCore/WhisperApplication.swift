@@ -31,6 +31,9 @@ public enum AppCommand {
     case saveDesktopPreferences(DesktopPreferences)
     case bootstrapDesktop(launchedAtLogin: Bool)
     case showMainWindow, closeMainWindow, dismissPillFeedback
+    case recordingPillAction
+    case copyRecoveryPresented(UUID, Bool), copyRecoveryHeld(UUID, Bool)
+    case updatePillGeometry(size: CGSize, currentFrame: CGRect?)
     case setLaunchAtLogin(Bool), refreshLoginItemStatus, openLoginItemsSettings
     case saveShortcuts([String])
     case beginShortcutCapture(index: Int?), endShortcutCapture
@@ -95,6 +98,15 @@ public final class WhisperApplication {
     @ObservationIgnored var desktopBootstrapped = false
     @ObservationIgnored var readinessFeedbackOwner: UUID?
     @ObservationIgnored var pillFeedbackDeadline: (any ScheduledAction)?
+    @ObservationIgnored var copyRecoveryDeadline: (any ScheduledAction)?
+    @ObservationIgnored let pillDisplays: any PillDisplaySystem
+    @ObservationIgnored var pillGeometryTask: Task<Void, Never>?
+    @ObservationIgnored var pillGeometryDeadline: (any ScheduledAction)?
+    @ObservationIgnored var pillGeometryGeneration = 0
+    @ObservationIgnored var pillDisplayTarget: PasteTarget?
+    @ObservationIgnored var pillResolvedRequestID: UUID?
+    @ObservationIgnored var pillHasResolvedRequest = false
+    @ObservationIgnored var pillGeometryPlacement: PillPlacement?
 
     @ObservationIgnored let microphones: any MicrophoneProvider
     @ObservationIgnored let transcriber: any TranscriptionService
@@ -133,9 +145,11 @@ public final class WhisperApplication {
         cleanup: any CleanupService = SelfHostedCleanup(),
         correctionSystem: (any CorrectionMonitoringSystem)? = nil,
         desktopEffects: (any DesktopEffects)? = nil,
-        audioSystem: (any HistoryAudioSystem)? = nil
+        audioSystem: (any HistoryAudioSystem)? = nil,
+        pillDisplays: (any PillDisplaySystem)? = nil
     ) {
         self.cleanup = cleanup
+        self.pillDisplays = pillDisplays ?? InertPillDisplaySystem()
         self.audioSystem = audioSystem ?? NativeHistoryAudioSystem()
         let effects = desktopEffects ?? InertDesktopEffects()
         self.desktopEffects = effects
@@ -165,6 +179,9 @@ public final class WhisperApplication {
     }
 
     isolated deinit {
+        pillGeometryTask?.cancel()
+        pillGeometryDeadline?.cancel()
+        copyRecoveryDeadline?.cancel()
         historyRetryOwnership?.cancel()
         historyRetryTask?.cancel()
         historyAudioTask?.cancel()
@@ -213,6 +230,10 @@ public final class WhisperApplication {
             resetDesktopFeedback()
             state.desktop.dismissedRequestID = state.dictation.requestID
             if case .recovery = state.dictation.delivery { state.dictation.delivery = .none }
+        case .recordingPillAction: recordingPillAction()
+        case let .copyRecoveryPresented(revision, presented): setCopyRecoveryPresented(revision, presented)
+        case let .copyRecoveryHeld(revision, held): setCopyRecoveryHeld(revision, held)
+        case let .updatePillGeometry(size, frame): updatePillGeometry(size: size, currentFrame: frame)
         case let .setLaunchAtLogin(enabled): setLaunchAtLogin(enabled)
         case .refreshLoginItemStatus: state.desktop.loginItemStatus = desktopEffects.loginItemStatus()
         case .openLoginItemsSettings: desktopEffects.openLoginItemsSettings()
@@ -253,7 +274,12 @@ public final class WhisperApplication {
         case .copyDictationResult:
             guard !state.dictation.text.isEmpty else { return }
             state.dictation.resultCopied = clipboard.writeResult(state.dictation.text)
-            if !state.dictation.resultCopied { state.dictation.delivery = .recovery(copied: false) }
+            if !state.dictation.resultCopied {
+                state.dictation.delivery = .recovery(copied: false)
+                if let requestID = state.dictation.requestID { beginCopyRecovery(requestID: requestID) }
+            } else if case .recovery = state.dictation.delivery {
+                state.dictation.delivery = .recovery(copied: true)
+            }
         case let .setHistoryEnabled(enabled): setHistoryEnabled(enabled)
         case .loadHistory: refreshHistory()
         case .loadMoreHistory: refreshHistory(more: true)

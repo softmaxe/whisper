@@ -59,9 +59,17 @@ public struct RecordingPillPresentation: Equatable, Sendable {
     public let feedback: PillFeedback
     public let placement: PillPlacement
     public let theme: AppTheme
+    public let requestID: UUID?
+    public let recoveryRevision: UUID?
+    public let frame: CGRect?
+    public let geometryPending: Bool
 }
 
 public struct DesktopState: Equatable, Sendable {
+    public var copyRecovery = CopyRecoveryState()
+    public var pillFrame: CGRect?
+    public var pillDisplayID: String?
+    public var pillGeometryPending = false
     public var mainWindowVisible = true
     public var loginItemStatus: LoginItemStatus = .disabled
     public var loginItemChangePending = false
@@ -113,7 +121,9 @@ extension ApplicationState {
             || desktop.transientFeedback != nil
         return RecordingPillPresentation(
             visible: !isTerminating && (needsFeedback || (settings.desktop.pillVisible && !settings.desktop.floatingIconAutoHide)),
-            feedback: feedback, placement: settings.desktop.panelStartPosition, theme: settings.desktop.theme
+            feedback: feedback, placement: settings.desktop.panelStartPosition, theme: settings.desktop.theme,
+            requestID: dictation.requestID, recoveryRevision: desktop.copyRecovery.revision,
+            frame: desktop.pillFrame, geometryPending: desktop.pillGeometryPending
         )
     }
 }
@@ -156,6 +166,7 @@ extension WhisperApplication {
     }
 
     func resetDesktopFeedback() {
+        resetCopyRecovery()
         pillFeedbackDeadline?.cancel()
         pillFeedbackDeadline = nil
         state.desktop.transientFeedback = nil
@@ -201,7 +212,9 @@ extension WhisperApplication {
         cancelCleanupTest()
         correctionLearning.stop()
         pillFeedbackDeadline?.cancel()
+        cancelPillTargetLookup()
         await mediaOwnership.shutdown()
+        resetCopyRecovery()
         await flushHistoryWrites()
     }
 }

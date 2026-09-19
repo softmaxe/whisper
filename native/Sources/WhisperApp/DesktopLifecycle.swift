@@ -32,7 +32,7 @@ import WhisperCore
             if let index = arguments.firstIndex(of: "--profile"), arguments.indices.contains(index + 1) {
                 profile = NativeProfile(directory: URL(fileURLWithPath: arguments[index + 1], isDirectory: true))
             } else { profile = try NativeProfile.applicationDefault() }
-            let application = WhisperApplication(profile: profile, desktopEffects: NativeDesktopEffects())
+            let application = WhisperApplication(profile: profile, desktopEffects: NativeDesktopEffects(), pillDisplays: NativePillDisplaySystem())
             self.application = application
             let event = NSAppleEventManager.shared().currentAppleEvent
             let launchedAtLogin = event?.eventID == kAEOpenApplication
@@ -189,7 +189,7 @@ import WhisperCore
         return item
     }
 
-    @objc private func screenChanged() { pill?.update() }
+    @objc private func screenChanged() { pill?.update(refreshGeometry: true) }
     @objc private func showMain() {
         previousWindowVisible = nil
         application?.send(.showMainWindow)

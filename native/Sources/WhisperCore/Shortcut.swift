@@ -19,7 +19,7 @@ public struct ShortcutInput: Equatable, Sendable {
     public static let modifierKeyCodes: Set<UInt16> = [54, 55, 56, 58, 59, 60, 61, 62, 63]
 }
 
-public enum DictationOrigin: String, Sendable { case button, hold, handsFree }
+public enum DictationOrigin: String, Sendable { case button, pill, hold, handsFree }
 public enum DictationGesture: String, Sendable {
     case none, candidate, awaitingSecondTap, secondTap, hold, handsFree, stopCandidate
     public var isProvisional: Bool { self == .candidate || self == .awaitingSecondTap || self == .secondTap }
@@ -42,6 +42,10 @@ extension WhisperApplication {
         else { pressedKeys.remove(input.keyCode) }
         if state.shortcutCapture.isActive {
             receiveShortcutCapture(input)
+            return
+        }
+        if input.keyCode == ShortcutInput.escape, input.isDown, !input.isRepeat, state.canDismissCopyRecovery {
+            send(.dismissPillFeedback)
             return
         }
         if input.keyCode == ShortcutInput.escape, input.isDown, !input.isRepeat,
