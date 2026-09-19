@@ -29,6 +29,13 @@ OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistan
 
 The CI workflow runs checks for pull requests targeting `main` and pushes to `main`, without packaging or uploading the app. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag. It runs the same checks, packages the macOS ARM64 app, and verifies its bundle name, version, architecture, signature, archive, and checksum. Manual builds use ad-hoc signing without release credentials and retain the package as an Actions artifact for seven days. Release builds require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
 
+## Recording startup measurements
+
+For recording startup measurements, use the
+[baseline procedure](../docs/recording-startup-baseline.md). Its renderer tests
+drive the real Dictation Hook and AudioManager with controlled device delivery,
+IPC, visual frames, and time. Hardware latency samples remain a separate check.
+
 ## Release smoke check
 
 Automated checks do not establish microphone, Accessibility, or server compatibility on a user's Mac. Before calling a release ready, check the packaged app on macOS:

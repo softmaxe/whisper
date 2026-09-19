@@ -71,7 +71,7 @@ const scheduleTone = (context, frequency, startTime) => {
 
 const isEnabled = () => getSettings().audioCuesEnabled;
 
-const playCue = async (notes) => {
+const playCue = async (notes, onScheduled) => {
   try {
     if (!isEnabled()) return;
 
@@ -85,6 +85,7 @@ const playCue = async (notes) => {
       const noteStart = baseTime + index * (NOTE_DURATION_SECONDS + NOTE_GAP_SECONDS);
       scheduleTone(context, frequency, noteStart);
     });
+    onScheduled?.();
   } catch (error) {
     logger.debug(
       "Failed to play dictation cue",
@@ -94,6 +95,6 @@ const playCue = async (notes) => {
   }
 };
 
-export const playStartCue = () => playCue(START_NOTES);
+export const playStartCue = (onScheduled) => playCue(START_NOTES, onScheduled);
 
 export const playStopCue = () => playCue(STOP_NOTES);
