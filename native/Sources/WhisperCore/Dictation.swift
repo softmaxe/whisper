@@ -53,10 +53,14 @@ public struct DictationState: Equatable, Sendable {
 @MainActor public protocol WorkflowClock {
     var now: TimeInterval { get }
     var wallDate: Date { get }
+    var timestampSource: any MonotonicTimeSource { get }
     func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void) -> any ScheduledAction
 }
 
-public extension WorkflowClock { var wallDate: Date { Date() } }
+public extension WorkflowClock {
+    var wallDate: Date { Date() }
+    var timestampSource: any MonotonicTimeSource { SystemMonotonicTimeSource() }
+}
 
 @MainActor public final class SystemWorkflowClock: WorkflowClock {
     public init() {}
@@ -79,6 +83,7 @@ public extension WorkflowClock { var wallDate: Date { Date() } }
 extension WhisperApplication {
     func startDictation(origin: DictationOrigin = .button) {
         guard !state.dictation.phase.isActive else { return }
+        dictationStartedAt = clock.now
         correctionLearning.stop()
         resetDesktopFeedback()
         let id = UUID()
@@ -93,13 +98,14 @@ extension WhisperApplication {
         provisionalFailure = nil
         dictationTarget = origin == .hold ? pasteSystem.captureTarget() : nil
         state.dictation.timing["accepted"] = 0
-        dictationStartedAt = clock.now
+        dictationDiagnostics = diagnosticOutput?.begin(id: id, origin: origin, acceptedAt: dictationStartedAt, source: clock.timestampSource)
         do {
             let configuration = try state.settings.asr.validated()
             let credential = try asrCredential()
             let device = try selectedMicrophone()
+            dictationDiagnostics?.mark(.deviceResolved)
             let directory = profileStore.profile.directory.appendingPathComponent("Temporary/" + id.uuidString)
-            let capture = RecordingCapture(directory: directory) { [weak self] event in
+            let capture = RecordingCapture(directory: directory, diagnostics: dictationDiagnostics) { [weak self] event in
                 Task { @MainActor in self?.receiveCapture(event, requestID: id) }
             }
             let session = microphones.makeSession(device: device) { [weak capture] event in capture?.receive(event) }
@@ -107,6 +113,7 @@ extension WhisperApplication {
             dictationCapture = capture
             dictationConfiguration = configuration
             dictationCredential = credential
+            dictationDiagnostics?.mark(.acquisitionRequested)
             session.start()
         } catch {
             failDictation(error as? DictationFailure ?? .configuration, requestID: id)
@@ -117,7 +124,7 @@ extension WhisperApplication {
         guard state.dictation.requestID == requestID, state.dictation.phase.isActive else { return }
         switch event {
         case let .opened(time):
-            state.dictation.timing["acquisitionCompleted"] = (time ?? clock.now) - dictationStartedAt
+            state.dictation.timing["captureConfigured"] = (time ?? clock.now) - dictationStartedAt
             guard state.dictation.phase == .preparing, state.dictation.timing["firstAudio"] == nil, firstAudioDeadline == nil else { return }
             firstAudioDeadline = clock.schedule(after: max(0, 10 - (clock.now - (time ?? clock.now)))) { [weak self] in
                 self?.failDictation(.noAudio, requestID: requestID)
@@ -150,6 +157,7 @@ extension WhisperApplication {
         state.dictation.phase = .processing
         state.dictation.level = 0
         state.dictation.timing["stop"] = clock.now - dictationStartedAt
+        dictationDiagnostics?.mark(.stopAccepted)
         let configuration = dictationConfiguration
         let credential = dictationCredential
         let transcriber = self.transcriber
@@ -163,7 +171,8 @@ extension WhisperApplication {
                 try Task.checkCancellation()
                 guard self?.isCurrentDictation(id) == true, let configuration else { return }
                 self?.state.dictation.duration = audio.duration
-                self?.markDictationStage("asrDispatch", requestID: id)
+                self?.markDictationStage("asrPreparationStarted", requestID: id)
+                options.diagnostics?.mark(.asrPreparationStarted)
                 let text = try await transcriber.transcribe(
                     file: audio.url, configuration: configuration, credential: credential,
                     options: options
@@ -189,6 +198,7 @@ extension WhisperApplication {
             options.prompt,
             configuration: dictationConfiguration ?? state.settings.asr
         )
+        options.diagnostics = dictationDiagnostics
         return options
     }
 
@@ -200,6 +210,7 @@ extension WhisperApplication {
     func completeDictation(rawText: String, text: String, requestID: UUID) {
         guard isCurrentDictation(requestID) else { return }
         markDictationStage("result", requestID: requestID)
+        dictationDiagnostics?.mark(.processingComplete)
         state.dictation.rawText = rawText
         state.dictation.text = text
         recordLiveDictationInsights(rawText: rawText, requestID: requestID)
@@ -207,6 +218,7 @@ extension WhisperApplication {
         dictationCapture = nil
         dictationCredential = nil
         guard state.dictation.origin != .button else {
+            dictationDiagnostics?.finish(.completed)
             state.dictation.phase = .result
             showPillFeedback(.completed, requestID: requestID)
             processingTask = nil
@@ -216,14 +228,17 @@ extension WhisperApplication {
         let settings = state.settings
         let delivery = automaticPaste
         let learning = correctionLearning!
+        let diagnostics = dictationDiagnostics
         processingTask = workflowTasks.start { [weak self] in
             let result = await delivery.deliver(text, target: target, enabled: settings.autoPasteEnabled,
-                keepClipboard: settings.keepTranscriptionInClipboard, willPaste: { [weak self] target in
+                keepClipboard: settings.keepTranscriptionInClipboard, diagnostics: diagnostics, willPaste: { [weak self] target in
                     if self?.state.settings.autoLearnCorrections == true { await learning.prepare(target, text: text) }
                 }) { [weak self] in
                     self?.isCurrentDictation(requestID) == true
                 }
             guard self?.isCurrentDictation(requestID) == true else { return }
+            diagnostics?.setDelivery(result)
+            if case .recovery = result { diagnostics?.finish(.failed) } else { diagnostics?.finish(.completed) }
             if result == .pasted, self?.state.settings.autoLearnCorrections == true { learning.confirmedPaste() }
             else { learning.stop() }
             self?.state.dictation.delivery = result
@@ -255,6 +270,7 @@ extension WhisperApplication {
         state.dictation.isCleaning = false
         state.dictation.phase = .idle
         state.dictation.cancellation = state.dictation.gesture.isProvisional ? .rejectedGesture : kind
+        dictationDiagnostics?.finish(state.dictation.cancellation == .rejectedGesture ? .rejected : .cancelled)
         provisionalFailure = nil
         state.dictation.gesture = .none
         state.dictation.text = ""
@@ -296,6 +312,7 @@ extension WhisperApplication {
         state.dictation.isCleaning = false
         state.dictation.phase = .failed
         state.dictation.failure = failure
+        dictationDiagnostics?.finish(.failed)
         state.dictation.level = 0
         state.dictation.timing["failed"] = clock.now - dictationStartedAt
     }

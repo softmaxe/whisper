@@ -119,7 +119,7 @@ struct DesktopWorkflowTests {
         fixture.app.send(.saveDesktopPreferences(preferences))
         let capture = fixture.begin()
         capture.open()
-        await settle { fixture.app.state.dictation.timing["acquisitionCompleted"] != nil }
+        await settle { fixture.app.state.dictation.timing["captureConfigured"] != nil }
         #expect(fixture.desktop.cues.isEmpty)
         #expect(fixture.desktop.mediaEvents.isEmpty)
         capture.deliver([Float](repeating: 0, count: 4800))

@@ -3,6 +3,7 @@ import Foundation
 public struct TranscriptionOptions: Sendable {
     public var language: String?
     public var prompt: String?
+    public var diagnostics: RequestDiagnostics?
     public var expectedStatus: Int?
     public init(language: String? = nil, prompt: String? = nil, expectedStatus: Int? = nil) {
         self.language = language; self.prompt = prompt; self.expectedStatus = expectedStatus
@@ -21,12 +22,21 @@ public struct HTTPResponse: Sendable {
 
 public protocol FileHTTPTransport: Sendable {
     func upload(_ request: URLRequest, file: URL) async throws -> HTTPResponse
+    func upload(_ request: URLRequest, file: URL, diagnostics: NetworkDiagnostics?) async throws -> HTTPResponse
+}
+public extension FileHTTPTransport {
+    func upload(_ request: URLRequest, file: URL, diagnostics: NetworkDiagnostics?) async throws -> HTTPResponse {
+        try await observeHTTP(diagnostics) { try await upload(request, file: file) }
+    }
 }
 
 /// Redirects may normalize paths within the configured origin; audio and credentials cannot leave it.
 public final class URLSessionFileTransport: NSObject, FileHTTPTransport, URLSessionTaskDelegate, @unchecked Sendable {
     public override init() { super.init() }
     public func upload(_ request: URLRequest, file: URL) async throws -> HTTPResponse {
+        try await upload(request, file: file, diagnostics: nil)
+    }
+    public func upload(_ request: URLRequest, file: URL, diagnostics: NetworkDiagnostics?) async throws -> HTTPResponse {
         let configuration = URLSessionConfiguration.ephemeral
         // Match the self-hosted fetch contract: cancellation is explicit; long inference has no client deadline.
         configuration.timeoutIntervalForRequest = .greatestFiniteMagnitude
@@ -35,14 +45,16 @@ public final class URLSessionFileTransport: NSObject, FileHTTPTransport, URLSess
         configuration.urlCache = nil
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        do {
-            let (data, response) = try await session.upload(for: request, fromFile: file)
-            guard let response = response as? HTTPURLResponse else { throw DictationFailure.invalidResponse }
-            return HTTPResponse(status: response.statusCode, body: data)
-        } catch is CancellationError { throw CancellationError() }
-        catch let error as URLError where error.code == .cancelled { throw CancellationError() }
-        catch let error as DictationFailure { throw error }
-        catch { throw DictationFailure.network }
+        return try await observeHTTP(diagnostics) {
+            do {
+                let (data, response) = try await session.upload(for: request, fromFile: file)
+                guard let response = response as? HTTPURLResponse else { throw DictationFailure.invalidResponse }
+                return HTTPResponse(status: response.statusCode, body: data)
+            } catch is CancellationError { throw CancellationError() }
+            catch let error as URLError where error.code == .cancelled { throw CancellationError() }
+            catch let error as DictationFailure { throw error }
+            catch { throw DictationFailure.network }
+        }
     }
     public func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
         guard let origin = task.originalRequest?.url, let destination = request.url,
@@ -91,12 +103,13 @@ public struct SelfHostedTranscriber: TranscriptionService {
             if Self.isAzure(url) { request.setValue(credential, forHTTPHeaderField: "api-key") }
             else { request.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization") }
         }
-        let response = try await transport.upload(request, file: body)
+        let response = try await transport.upload(request, file: body, diagnostics: options.diagnostics?.network(.asr))
         try Task.checkCancellation()
         guard options.expectedStatus.map({ response.status == $0 }) ?? (200...299).contains(response.status) else { throw DictationFailure.service(response.status) }
         struct Result: Decodable { let text: String }
         guard let result = try? JSONDecoder().decode(Result.self, from: response.body) else { throw DictationFailure.invalidResponse }
         guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DictationFailure.emptyTranscript }
+        options.diagnostics?.mark(.asrResponseCompleted)
         return result.text
     }
 

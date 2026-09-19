@@ -2,6 +2,7 @@
 
 This is the collection protocol and evidence ledger for
 [ticket #36](https://github.com/softmaxe/whisper/issues/36) and
+[ticket #54](https://github.com/softmaxe/whisper/issues/54), under
 [specification #35](https://github.com/softmaxe/whisper/issues/35).
 The ticket remains incomplete until controlled packaged measurements and numerical
 budgets have been recorded. A successful build, a simulated microphone, and a
@@ -233,6 +234,130 @@ score, preserve its native unit in separate evidence; do not relabel it as joule
 Reports use the arithmetic middle-pair median and nearest-rank p90, plus minimum,
 maximum, successful count, and each unsuccessful outcome count. Empty groups
 return null statistics. Preserve raw numeric observations privately for review.
+
+## Native request diagnostics
+
+Native collection is off by default and is not saved as a preference. Enable it
+explicitly through Settings > Privacy > Performance diagnostics, or pass
+`--diagnostics` with an absolute local output filename when launching the test
+bundle. This starts collection for subsequent Dictations only. It never opens a
+microphone, grants a permission, samples resources, or starts a request by itself.
+Upload, History retry and cleanup prompt tests are outside these traces.
+
+Run the following only in the reserved hardware session, using the native
+package produced from the reviewed candidate and the original signing identity.
+Keep baseline and candidate bundles at distinct verified paths. This is a
+reproduction procedure, not a record of an executed trial:
+
+```sh
+native_trial=$(mktemp -d "${TMPDIR:-/tmp}/whisper-native-trial.XXXXXX")
+dist/native-arm64/Whisper.app/Contents/MacOS/Whisper \
+  --profile "$native_trial/profile" \
+  --diagnostics "$native_trial/timing.jsonl"
+```
+
+Use one output file per manifest condition. Configure the disposable profile,
+collect the physical trials described above, then quit normally. The application
+flushes diagnostics before AppKit confirms termination. The Flush to file action
+also checkpoints an active request as pending and flushes accepted writes.
+Summarize the resulting file with the same repository revision's reader:
+
+```sh
+node scripts/measure-performance.js native "$native_trial/timing.jsonl"
+```
+
+Only fixed stage names, random request/collection UUIDs, relative monotonic milliseconds,
+HTTP status numbers, attempt indexes and enumerated outcomes enter this schema.
+It cannot contain text, speech, waveform samples, clipboard values, physical key
+contents, device/app labels or identifiers, models, URLs, prompts, credentials,
+paths, free-form errors or application-state snapshots. The reader omits UUIDs
+and rejects unknown fields without printing their contents. The trace does not
+enter service requests, History or Insights. Keep local files private even when
+their content is numeric; they still reveal request usage.
+
+The output is newline-delimited JSON with the fixed header
+`{"schema":"whisper-native-timing","version":1}`. A new file has mode `0600`.
+Appending requires a regular file owned by the current user, no group/world
+permissions, this exact header, a final newline and an exclusive writer lock.
+Symlinks and unrelated or truncated files are rejected without replacement.
+The parent directory must already exist. A write failure shows a diagnostic
+warning and leaves Dictation working. No file is uploaded automatically.
+After preserving reviewed numeric evidence, remove only this disposable trial
+with `rm -rf "$native_trial"`.
+
+The collector enqueues snapshots at acceptance, readiness, termination and an
+explicit flush. It keeps at most 200 queued snapshots and 64 service attempts
+per request, independently of recording duration. These are diagnostic storage
+limits, not trial counts or performance budgets. Overflow increments
+`droppedRecords`; a collection with drops cannot establish a complete trial set.
+The reader sums each collection's drop count when a file contains several sessions.
+Stop diagnostics freezes an active trace as incomplete, closes its writer and
+detaches collection. It preserves the already exported file. Reopening the same
+file waits for the previous writer to release its lock.
+
+All stages share the workflow clock's synchronous monotonic source across the
+application, audio owner and transport actors. Serialization, file writes and
+`fsync` run on a utility queue. Stage probes add no actor hop, network call or
+diagnostic await to capture, ASR dispatch or paste. There is no per-frame trace
+log. Record enabled-versus-disabled probe overhead during packaged comparison.
+
+| Stage                                                 | Native boundary                                                                                                                                               |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requestAccepted`                                     | The application accepts a new button/provisional shortcut request; time origin.                                                                               |
+| `gestureResolved`                                     | The request becomes a hold or genuine double tap.                                                                                                             |
+| `deviceResolved`                                      | The application has selected one physical input; its identity is omitted.                                                                                     |
+| `acquisitionRequested`                                | Immediately before requesting source start, including later permission/control-queue work.                                                                    |
+| `captureConfigured`                                   | Session input/output configuration is ready, before `startRunning`. Replaces the misleading public receipt `acquisitionCompleted`.                            |
+| `captureStartRequested`, `captureStartReturned`       | Immediately before/after the blocking `AVCaptureSession.startRunning()` call. Neither means audible readiness.                                                |
+| `firstAudio`                                          | Timestamp after the source validates/copies its first nonempty PCM frame, accepted by the recording writer. Silence qualifies; this is not hardware ADC time. |
+| `readyFeedback`                                       | The application commits Recording readiness after first audio and gesture resolution. Physical presentation and sound are separate observations.              |
+| `stopAccepted`                                        | The application accepts submission of the recording.                                                                                                          |
+| `captureReleased`                                     | Source stop completion confirms input release and delegate drain. A cancelled request may freeze before this arrives.                                         |
+| `recordingFinalized`                                  | The recording file has closed after source release.                                                                                                           |
+| `asrPreparationStarted`                               | Before multipart/file/request preparation. This replaces the misleading public receipt `asrDispatch`.                                                         |
+| `asrRequestDispatched`                                | Immediately before the actual URLSession upload call, after multipart and session preparation.                                                                |
+| `asrResponseReceived`, `asrResponseCompleted`         | Response-body delivery, then successful parsing/validation.                                                                                                   |
+| `cleanupPreparationStarted`                           | Cleanup workflow entry before request construction, including later retries/backoff. Replaces the public receipt `cleanupDispatch`.                           |
+| `cleanupRequestDispatched`, `cleanupResponseReceived` | First actual cleanup URLSession dispatch and most recent completed response body. Each attempt also has its own dispatch/response pair and outcome.           |
+| `cleanupCompleted`                                    | Final cleanup success or raw-text fallback decision.                                                                                                          |
+| `processingComplete`                                  | Final text is ready after cleanup/fallback, Chinese conversion and Snippets. No text is recorded.                                                             |
+| `deliveryStarted`                                     | Entry into the clipboard/paste coordinator, before queue, held-modifier, target and correction preparation.                                                   |
+| `pasteDispatched`, `pasteSettled`                     | Immediately before native synthetic key posting, then the native adapter's verdict. Visible insertion is not observed by these probes.                        |
+| `requestFinished`                                     | Terminal outcome freezes the request. Clipboard restoration is outside this interval.                                                                         |
+
+Audio can arrive before `startRunning` returns. The collector preserves that
+overlap without reordering or clamping. The summary excludes legacy
+`inputAcquisition` and `acquisitionToFirstAudio` comparisons for native traces.
+Compare request-to-first-audio and request-to-readiness directly, and report
+native `captureStartDuration` separately.
+
+`asrPreparation` isolates multipart/request preparation; `stopToRequestDispatch`
+also includes source release and recording finalization. `serverRoundTrip` ends
+after ASR parsing, matching the legacy definition. It includes client parsing
+and network time, not just server inference. `cleanupProcessing` includes all
+attempts and backoff. `cleanupRoundTrip` uses a single completed HTTP attempt;
+multi-attempt success is excluded from that metric and reported in attempt
+counts. A successful raw fallback can have a completed Dictation and failed
+cleanup at the same time.
+
+The summary reports startup outcomes independently of whole-request outcomes.
+A request that becomes ready and then fails ASR or is cancelled still supplies
+a successful startup observation. Pending, incomplete, rejected, failed and
+cancelled outcomes remain explicit; rejected gestures map to excluded metric
+observations. Missing stages and backwards intervals never become zero-time
+successes. Button and Recording pill requests are excluded from shortcut-to-audio/readiness metrics.
+Copy-only delivery has no successful paste observation, and recovery is failed
+delivery. Cancellation marks pending service attempts cancelled, freezes the
+request and ignores later callbacks. A pending attempt in another terminal
+record means no transport completion was observed before freezing.
+
+Deterministic workflow tests verify real synthetic AAC/multipart preparation,
+capture overlap, transport and paste boundaries, timeout/recovery, rejection,
+cancellation, late callbacks, output safety and opt-out. Reader tests verify
+strict privacy, sequence freezing and outcome accounting. They supply no
+physical-key, microphone, UI, resource, energy, service or latency evidence.
+#54 remains incomplete until matched packaged samples and baseline-derived
+budgets are recorded below.
 
 ## Numerical acceptance gate
 

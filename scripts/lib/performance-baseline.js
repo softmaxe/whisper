@@ -14,6 +14,12 @@ const METRICS = Object.freeze({
   processingCompleteToPasteDispatch: "ms",
   processingCompleteToPaste: "ms",
   serverRoundTrip: "ms",
+  captureStartDuration: "ms",
+  stopToCaptureRelease: "ms",
+  recordingFinalization: "ms",
+  asrPreparation: "ms",
+  cleanupRoundTrip: "ms",
+  cleanupProcessing: "ms",
   idleRss: "MiB",
   idleCpu: "percent-of-one-core",
   idleEnergy: "joules",
@@ -170,6 +176,226 @@ function summarizeCompletion(log) {
   });
 }
 
+const NATIVE_STAGES = new Set([
+  "requestAccepted",
+  "gestureResolved",
+  "deviceResolved",
+  "acquisitionRequested",
+  "captureConfigured",
+  "captureStartRequested",
+  "captureStartReturned",
+  "firstAudio",
+  "readyFeedback",
+  "stopAccepted",
+  "captureReleased",
+  "recordingFinalized",
+  "asrPreparationStarted",
+  "asrRequestDispatched",
+  "asrResponseReceived",
+  "asrResponseCompleted",
+  "cleanupPreparationStarted",
+  "cleanupRequestDispatched",
+  "cleanupResponseReceived",
+  "cleanupCompleted",
+  "processingComplete",
+  "deliveryStarted",
+  "pasteDispatched",
+  "pasteSettled",
+  "requestFinished",
+]);
+const NATIVE_OUTCOMES = ["pending", "completed", "failed", "cancelled", "rejected", "incomplete"];
+const nativeError = () => new Error("Invalid native timing data");
+const nativeID = (value) =>
+  typeof value === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+const hasOnly = (value, keys) =>
+  value &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  Object.keys(value).every((key) => keys.includes(key));
+
+function summarizeNative(log) {
+  if (typeof log !== "string" || !log.endsWith("\n")) throw nativeError();
+  let rows;
+  try {
+    rows = log
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+  } catch {
+    throw nativeError();
+  }
+  const header = rows.shift();
+  if (
+    !hasOnly(header, ["schema", "version"]) ||
+    header.schema !== "whisper-native-timing" ||
+    header.version !== 1
+  )
+    throw nativeError();
+  const requests = new Map();
+  let lateRecords = 0;
+  const droppedByCollection = new Map();
+  for (const record of rows) {
+    if (
+      !hasOnly(record, [
+        "collectionId",
+        "requestId",
+        "sequence",
+        "origin",
+        "outcome",
+        "startup",
+        "delivery",
+        "cleanup",
+        "stages",
+        "attempts",
+        "droppedRecords",
+      ]) ||
+      !nativeID(record.collectionId) ||
+      !nativeID(record.requestId) ||
+      !Number.isSafeInteger(record.sequence) ||
+      record.sequence < 1 ||
+      !["button", "pill", "hold", "handsFree"].includes(record.origin) ||
+      !NATIVE_OUTCOMES.includes(record.outcome) ||
+      !NATIVE_OUTCOMES.includes(record.startup) ||
+      !["none", "pasted", "copied", "recovery"].includes(record.delivery) ||
+      !["absent", "pending", "completed", "failed"].includes(record.cleanup) ||
+      !hasOnly(record.stages, [...NATIVE_STAGES]) ||
+      record.stages.requestAccepted !== 0 ||
+      !Object.values(record.stages).every(validNumber) ||
+      !Array.isArray(record.attempts) ||
+      record.attempts.length > 64 ||
+      !Number.isSafeInteger(record.droppedRecords) ||
+      record.droppedRecords < 0
+    )
+      throw nativeError();
+    for (const [index, attempt] of record.attempts.entries()) {
+      if (
+        !hasOnly(attempt, [
+          "service",
+          "index",
+          "dispatchedMs",
+          "responseMs",
+          "outcome",
+          "status",
+        ]) ||
+        !["asr", "cleanup"].includes(attempt.service) ||
+        attempt.index !== index ||
+        !["pending", "completed", "failed", "cancelled"].includes(attempt.outcome) ||
+        ["dispatchedMs", "responseMs"].some(
+          (key) => key in attempt && !validNumber(attempt[key])
+        ) ||
+        ("status" in attempt &&
+          (!Number.isInteger(attempt.status) || attempt.status < 100 || attempt.status > 599)) ||
+        (validNumber(attempt.responseMs) &&
+          (!validNumber(attempt.dispatchedMs) || attempt.responseMs < attempt.dispatchedMs))
+      )
+        throw nativeError();
+    }
+    droppedByCollection.set(
+      record.collectionId,
+      Math.max(droppedByCollection.get(record.collectionId) || 0, record.droppedRecords)
+    );
+    const previous = requests.get(record.requestId);
+    if (previous && record.sequence > previous.sequence && previous.outcome !== "pending") {
+      lateRecords += 1;
+      continue;
+    }
+    if (!previous || record.sequence > previous.sequence) requests.set(record.requestId, record);
+  }
+  const intervals = {
+    shortcutToFirstAudio: ["requestAccepted", "firstAudio"],
+    shortcutToReadyFeedback: ["requestAccepted", "readyFeedback"],
+    clientBeforeAcquisition: ["requestAccepted", "acquisitionRequested"],
+    firstAudioToFeedback: ["firstAudio", "readyFeedback"],
+    captureStartDuration: ["captureStartRequested", "captureStartReturned"],
+    stopToCaptureRelease: ["stopAccepted", "captureReleased"],
+    recordingFinalization: ["captureReleased", "recordingFinalized"],
+    stopToRequestDispatch: ["stopAccepted", "asrRequestDispatched"],
+    asrPreparation: ["asrPreparationStarted", "asrRequestDispatched"],
+    serverRoundTrip: ["asrRequestDispatched", "asrResponseCompleted"],
+    cleanupProcessing: ["cleanupPreparationStarted", "cleanupCompleted"],
+    processingCompleteToPasteDispatch: ["processingComplete", "pasteDispatched"],
+    processingCompleteToPaste: ["processingComplete", "pasteSettled"],
+  };
+  const observations = [];
+  const requestOutcomes = Object.fromEntries(NATIVE_OUTCOMES.map((outcome) => [outcome, 0]));
+  const startupOutcomes = Object.fromEntries(NATIVE_OUTCOMES.map((outcome) => [outcome, 0]));
+  const serviceAttempts = Object.fromEntries(
+    ["asr", "cleanup"].map((service) => [
+      service,
+      { pending: 0, completed: 0, failed: 0, cancelled: 0 },
+    ])
+  );
+  for (const record of requests.values()) {
+    requestOutcomes[record.outcome] += 1;
+    startupOutcomes[record.startup] += 1;
+    for (const attempt of record.attempts) serviceAttempts[attempt.service][attempt.outcome] += 1;
+    const baseOutcome =
+      { completed: "success", failed: "failed", cancelled: "cancelled", rejected: "excluded" }[
+        record.outcome
+      ] || "missing";
+    for (const [metric, [start, end]] of Object.entries(intervals)) {
+      const startupMetric = [
+        "shortcutToFirstAudio",
+        "shortcutToReadyFeedback",
+        "clientBeforeAcquisition",
+        "firstAudioToFeedback",
+        "captureStartDuration",
+      ].includes(metric);
+      let outcome = startupMetric
+        ? { completed: "success", failed: "failed", cancelled: "cancelled", rejected: "excluded" }[
+            record.startup
+          ] || "missing"
+        : baseOutcome;
+      const value = record.stages[end] - record.stages[start];
+      if (outcome === "success") {
+        if (["button", "pill"].includes(record.origin) && metric.startsWith("shortcutTo"))
+          outcome = "excluded";
+        else if (metric === "cleanupProcessing" && record.cleanup === "failed") outcome = "failed";
+        else if (metric.startsWith("processingCompleteToPaste") && record.delivery !== "pasted")
+          outcome = record.delivery === "recovery" ? "failed" : "missing";
+        else if (
+          !validNumber(record.stages[start]) ||
+          !validNumber(record.stages[end]) ||
+          !validNumber(value)
+        )
+          outcome = "missing";
+      }
+      observations.push({ metric, outcome, ...(outcome === "success" ? { value } : {}) });
+    }
+    const cleanup = record.attempts.filter((attempt) => attempt.service === "cleanup");
+    let outcome = baseOutcome;
+    if (outcome === "success") {
+      if (record.cleanup === "failed") outcome = "failed";
+      else if (cleanup.length > 1) outcome = "excluded";
+      else if (
+        cleanup.length !== 1 ||
+        cleanup[0].outcome !== "completed" ||
+        !validNumber(cleanup[0].responseMs) ||
+        !validNumber(cleanup[0].dispatchedMs)
+      )
+        outcome = "missing";
+    }
+    observations.push({
+      metric: "cleanupRoundTrip",
+      outcome,
+      ...(outcome === "success" ? { value: cleanup[0].responseMs - cleanup[0].dispatchedMs } : {}),
+    });
+    // AVCapture start may return after its first frame. These legacy linear intervals are not comparable.
+    for (const metric of ["inputAcquisition", "acquisitionToFirstAudio"])
+      observations.push({ metric, outcome: "excluded" });
+  }
+  return {
+    requestCount: requests.size,
+    requestOutcomes,
+    startupOutcomes,
+    serviceAttempts,
+    lateRecords,
+    droppedRecords: [...droppedByCollection.values()].reduce((sum, count) => sum + count, 0),
+    metrics: summarizeObservations(observations),
+  };
+}
+
 function parseCpuTime(value) {
   const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(value);
   if (!match) throw new Error("Unsupported process CPU time");
@@ -233,6 +459,7 @@ module.exports = {
   summarizeObservations,
   summarizeStartup,
   summarizeCompletion,
+  summarizeNative,
   processSnapshot,
   resourceObservation,
 };

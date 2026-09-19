@@ -20,6 +20,15 @@ public struct ClipboardSnapshot: Equatable, Sendable {
     func activate(_ target: PasteTarget) async -> Bool
     func canPaste(_ target: PasteTarget) async -> Bool
     func paste(_ target: PasteTarget) async -> Bool
+    func paste(_ target: PasteTarget, diagnostics: RequestDiagnostics?) async -> Bool
+}
+public extension AutomaticPasteSystem {
+    func paste(_ target: PasteTarget, diagnostics: RequestDiagnostics?) async -> Bool {
+        diagnostics?.mark(.pasteDispatched)
+        let result = await paste(target)
+        diagnostics?.mark(.pasteSettled)
+        return result
+    }
 }
 
 public enum DeliveryResult: Equatable, Sendable {
@@ -46,9 +55,11 @@ public enum DeliveryResult: Equatable, Sendable {
     }
 
     func deliver(_ text: String, target: PasteTarget?, enabled: Bool, keepClipboard: Bool,
+                 diagnostics: RequestDiagnostics? = nil,
                  willPaste: (@MainActor @Sendable (PasteTarget) async -> Void)? = nil,
                  isCurrent: @escaping @MainActor @Sendable () -> Bool) async -> DeliveryResult {
         let previous = tail
+        diagnostics?.mark(.deliveryStarted)
         return await withCheckedContinuation { continuation in
             tail = tasks.start { [system, clock] in
                 await previous?.value
@@ -73,7 +84,7 @@ public enum DeliveryResult: Equatable, Sendable {
                    await system.activate(target), isCurrent(),
                    await system.canPaste(target), isCurrent(), !system.modifiersHeld {
                     await willPaste?(target)
-                    if isCurrent(), !system.modifiersHeld { pasted = await system.paste(target) }
+                    if isCurrent(), !system.modifiersHeld { pasted = await system.paste(target, diagnostics: diagnostics) }
                 }
                 guard isCurrent() else {
                     if !pasted { system.restoreClipboard(original, ownedRevision: revision) }

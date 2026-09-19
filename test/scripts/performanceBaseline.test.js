@@ -5,6 +5,7 @@ const {
   summarizeObservations,
   summarizeStartup,
   summarizeCompletion,
+  summarizeNative,
   resourceObservation,
 } = require("../../scripts/lib/performance-baseline");
 
@@ -23,6 +24,221 @@ const completed = (requestId, sequence = 10) => ({
     firstAudio: 50,
     readyFeedback: 55,
   },
+});
+
+const nativeRecord = (patch = {}) => ({
+  collectionId: "abcdef01-2345-6789-abcd-ef0123456789",
+  requestId: "01234567-89ab-cdef-0123-456789abcdef",
+  sequence: 3,
+  origin: "hold",
+  outcome: "completed",
+  startup: "completed",
+  delivery: "pasted",
+  cleanup: "absent",
+  stages: {
+    requestAccepted: 0,
+    acquisitionRequested: 5,
+    captureConfigured: 10,
+    captureStartRequested: 11,
+    firstAudio: 25,
+    readyFeedback: 150,
+    captureStartReturned: 200,
+    stopAccepted: 300,
+    captureReleased: 310,
+    recordingFinalized: 315,
+    asrPreparationStarted: 320,
+    asrRequestDispatched: 350,
+    asrResponseReceived: 550,
+    asrResponseCompleted: 555,
+    processingComplete: 560,
+    deliveryStarted: 561,
+    pasteDispatched: 580,
+    pasteSettled: 585,
+    requestFinished: 586,
+  },
+  attempts: [
+    {
+      service: "asr",
+      index: 0,
+      dispatchedMs: 350,
+      responseMs: 550,
+      outcome: "completed",
+      status: 200,
+    },
+  ],
+  droppedRecords: 0,
+  ...patch,
+});
+const nativeLog = (...records) =>
+  [{ schema: "whisper-native-timing", version: 1 }, ...records]
+    .map((row) => JSON.stringify(row))
+    .join("\n") + "\n";
+
+test("native summary preserves capture overlap and distinguishes multipart and transport work", () => {
+  const result = summarizeNative(nativeLog(nativeRecord()));
+  assert.equal(result.requestCount, 1);
+  assert.equal(result.metrics.shortcutToFirstAudio.median, 25);
+  assert.equal(result.metrics.captureStartDuration.median, 189);
+  assert.equal(result.metrics.firstAudioToFeedback.median, 125);
+  assert.equal(result.metrics.inputAcquisition.outcomes.excluded, 1);
+  assert.equal(result.metrics.acquisitionToFirstAudio.median, null);
+  assert.equal(result.metrics.stopToCaptureRelease.median, 10);
+  assert.equal(result.metrics.recordingFinalization.median, 5);
+  assert.equal(result.metrics.asrPreparation.median, 30);
+  assert.equal(result.metrics.stopToRequestDispatch.median, 50);
+  assert.equal(result.metrics.serverRoundTrip.median, 205);
+  assert.equal(result.metrics.processingCompleteToPasteDispatch.median, 20);
+  assert.equal(result.metrics.processingCompleteToPaste.median, 25);
+  assert.equal(result.metrics.cleanupRoundTrip.outcomes.missing, 1);
+  assert.equal(result.serviceAttempts.asr.completed, 1);
+  assert.doesNotMatch(JSON.stringify(result), /01234567|requestId|stages|status/);
+});
+
+test("native startup outcomes stay independent of later failures and cancellation", () => {
+  const outcomes = ["completed", "failed", "cancelled", "pending", "rejected", "incomplete"];
+  const records = outcomes.map((outcome, index) =>
+    nativeRecord({
+      requestId: `00000000-0000-0000-0000-${String(index).padStart(12, "0")}`,
+      outcome,
+      startup: ["failed", "cancelled"].includes(outcome) ? "completed" : outcome,
+    })
+  );
+  const result = summarizeNative(nativeLog(...records));
+  assert.deepEqual(
+    result.requestOutcomes,
+    Object.fromEntries(outcomes.map((outcome) => [outcome, 1]))
+  );
+  assert.equal(result.metrics.shortcutToFirstAudio.outcomes.success, 3);
+  assert.deepEqual(result.metrics.serverRoundTrip.outcomes, {
+    success: 1,
+    failed: 1,
+    cancelled: 1,
+    missing: 2,
+    excluded: 1,
+  });
+  const missing = nativeRecord({ stages: { requestAccepted: 0 }, delivery: "copied" });
+  const negativeInterval = nativeRecord({
+    stages: { ...nativeRecord().stages, pasteSettled: 500 },
+  });
+  assert.equal(
+    summarizeNative(nativeLog(missing)).metrics.shortcutToFirstAudio.outcomes.missing,
+    1
+  );
+  assert.equal(
+    summarizeNative(nativeLog(negativeInterval)).metrics.processingCompleteToPaste.outcomes.missing,
+    1
+  );
+  assert.equal(
+    summarizeNative(nativeLog(nativeRecord({ origin: "button" }))).metrics.shortcutToFirstAudio
+      .outcomes.excluded,
+    1
+  );
+  assert.equal(
+    summarizeNative(nativeLog(nativeRecord({ origin: "pill" }))).metrics.shortcutToFirstAudio
+      .outcomes.excluded,
+    1
+  );
+});
+
+test("native terminal snapshots cannot revive and aggregate drop counts remain visible", () => {
+  const final = nativeRecord({ droppedRecords: 4 });
+  const result = summarizeNative(
+    nativeLog(
+      nativeRecord({ sequence: 1, outcome: "pending", startup: "pending" }),
+      final,
+      nativeRecord({ sequence: 4, outcome: "pending", droppedRecords: 8 }),
+      nativeRecord({ sequence: 2, outcome: "pending" })
+    )
+  );
+  assert.equal(result.requestCount, 1);
+  assert.equal(result.requestOutcomes.completed, 1);
+  assert.equal(result.requestOutcomes.pending, 0);
+  assert.equal(result.lateRecords, 1);
+  assert.equal(result.droppedRecords, 8);
+  assert.equal(result.metrics.serverRoundTrip.median, 205);
+  const reopened = summarizeNative(
+    nativeLog(
+      final,
+      nativeRecord({
+        requestId: "11111111-1111-1111-1111-111111111111",
+        collectionId: "22222222-2222-2222-2222-222222222222",
+        droppedRecords: 3,
+      })
+    )
+  );
+  assert.equal(reopened.droppedRecords, 7);
+});
+
+test("native cleanup retry and soft fallback are not single successful round trips", () => {
+  const attempts = [
+    ...nativeRecord().attempts,
+    {
+      service: "cleanup",
+      index: 1,
+      dispatchedMs: 570,
+      responseMs: 600,
+      outcome: "failed",
+      status: 400,
+    },
+    {
+      service: "cleanup",
+      index: 2,
+      dispatchedMs: 610,
+      responseMs: 650,
+      outcome: "completed",
+      status: 200,
+    },
+  ];
+  const record = nativeRecord({
+    cleanup: "completed",
+    attempts,
+    stages: { ...nativeRecord().stages, cleanupPreparationStarted: 560, cleanupCompleted: 655 },
+  });
+  const retried = summarizeNative(nativeLog(record));
+  assert.equal(retried.metrics.cleanupRoundTrip.outcomes.excluded, 1);
+  assert.equal(retried.metrics.cleanupProcessing.median, 95);
+  assert.deepEqual(retried.serviceAttempts.cleanup, {
+    pending: 0,
+    completed: 1,
+    failed: 1,
+    cancelled: 0,
+  });
+  const fallback = summarizeNative(nativeLog({ ...record, cleanup: "failed" }));
+  assert.equal(fallback.requestOutcomes.completed, 1);
+  assert.equal(fallback.metrics.cleanupRoundTrip.outcomes.failed, 1);
+  assert.equal(fallback.metrics.cleanupProcessing.outcomes.failed, 1);
+  const single = { ...record, attempts: [attempts[0], { ...attempts[2], index: 1 }] };
+  assert.equal(summarizeNative(nativeLog(single)).metrics.cleanupRoundTrip.median, 40);
+});
+
+test("native reader rejects unknown or malformed content without echoing private input", () => {
+  const secret = "private-input-fixture";
+  for (const row of [
+    nativeRecord({ transcript: secret }),
+    nativeRecord({ origin: secret }),
+    nativeRecord({ stages: { requestAccepted: 0, [secret]: 9 } }),
+    nativeRecord({ stages: { requestAccepted: 0, firstAudio: -1 } }),
+    nativeRecord({ stages: { requestAccepted: 0, firstAudio: null } }),
+    nativeRecord({ attempts: [{ service: "asr", index: 0, outcome: "completed", responseMs: 2 }] }),
+    nativeRecord({ attempts: [{ service: "asr", index: 0, outcome: "failed", status: 999 }] }),
+    nativeRecord({ sequence: 0 }),
+  ]) {
+    assert.throws(
+      () => summarizeNative(nativeLog(row)),
+      (error) => error.message === "Invalid native timing data" && !error.message.includes(secret)
+    );
+  }
+  for (const text of [
+    secret,
+    nativeLog(nativeRecord()).slice(0, -1),
+    `{${secret}\n`,
+    nativeLog({ schema: secret, version: 1 }),
+  ]) {
+    assert.throws(
+      () => summarizeNative(text),
+      (error) => !error.message.includes(secret)
+    );
+  }
 });
 
 test("reports nearest-rank p90 and leaves empty measurements absent", () => {

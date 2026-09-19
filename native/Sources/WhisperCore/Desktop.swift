@@ -212,6 +212,8 @@ extension WhisperApplication {
         await workflowTasks.waitForAll()
         await insightsRead?.value
         await flushHistoryWrites()
+        await flushDiagnostics()
+        _ = await diagnosticOutput?.flush(close: true)
     }
 }
 

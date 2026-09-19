@@ -70,7 +70,9 @@ struct SettingsRootView: View {
                         }
                         case .speechToText: speechSettings
                         case .textCleanup: CleanupSettingsView(application: application)
-                        case .privacyAndData: HistoryPrivacyView(application: application)
+                        case .privacyAndData:
+                            HistoryPrivacyView(application: application)
+                            PerformanceDiagnosticsView(application: application)
                         }
                     }
                     .frame(maxWidth: 720, alignment: .leading)

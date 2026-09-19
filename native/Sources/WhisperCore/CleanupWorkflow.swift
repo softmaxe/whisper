@@ -93,7 +93,8 @@ extension WhisperApplication {
                        preferences suppliedPreferences: TranscriptionPreferences? = nil) -> @MainActor () async -> Void {
         guard isCurrentDictation(requestID) else { return {} }
         let configuration = state.settings.cleanup
-        let context = suppliedContext ?? cleanupContext()
+        var context = suppliedContext ?? cleanupContext()
+        context.diagnostics = dictationDiagnostics
         let preferences = suppliedPreferences ?? state.settings.transcription
         let service = cleanup
         let clock = clock
@@ -101,7 +102,9 @@ extension WhisperApplication {
         let shouldClean = configuration.enabled && !configuration.serverURL.isEmpty
         let credential: Result<String?, any Error> = shouldClean ? Result { try cleanupCredential() } : .success(nil)
         if shouldClean {
-            markDictationStage("cleanupDispatch", requestID: requestID)
+            markDictationStage("cleanupPreparationStarted", requestID: requestID)
+            context.diagnostics?.mark(.cleanupPreparationStarted)
+            context.diagnostics?.setCleanup(.pending)
             state.dictation.isCleaning = true
         }
         return { [weak self] in
@@ -112,11 +115,14 @@ extension WhisperApplication {
                     guard case let .success(secret) = credential else { throw CleanupFailure.configuration }
                     text = try await Self.runCleanup(rawText, configuration: configuration, credential: secret,
                                                      context: context, service: service, clock: clock, tasks: tasks)
+                    context.diagnostics?.setCleanup(.completed)
                 } catch is CancellationError { return }
                 catch {
                     guard self?.isCurrentDictation(requestID) == true else { return }
                     self?.state.dictation.cleanupFailure = error as? CleanupFailure ?? .network
+                    context.diagnostics?.setCleanup(.failed)
                 }
+                context.diagnostics?.mark(.cleanupCompleted)
             }
             guard self?.isCurrentDictation(requestID) == true, !Task.isCancelled else { return }
             self?.state.dictation.isCleaning = false

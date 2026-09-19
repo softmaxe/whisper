@@ -10,7 +10,7 @@ struct DictationWorkflowTests {
         let capture = f.begin()
         #expect(f.app.state.dictation.phase == .preparing)
         capture.open()
-        await settle { f.app.state.dictation.timing["acquisitionCompleted"] != nil }
+        await settle { f.app.state.dictation.timing["captureConfigured"] != nil }
         f.clock.advance(0.2)
         capture.deliver([])
         #expect(f.app.state.dictation.phase == .preparing)
@@ -53,7 +53,7 @@ struct DictationWorkflowTests {
         f.clock.advance(60)
         #expect(f.app.state.dictation.phase == .preparing)
         first.open()
-        await settle { f.app.state.dictation.timing["acquisitionCompleted"] != nil }
+        await settle { f.app.state.dictation.timing["captureConfigured"] != nil }
         f.clock.advance(9.9)
         #expect(f.app.state.dictation.phase == .preparing)
         f.clock.advance(0.1)

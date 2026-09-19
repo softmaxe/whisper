@@ -19,7 +19,7 @@ public struct ShortcutInput: Equatable, Sendable {
     public static let modifierKeyCodes: Set<UInt16> = [54, 55, 56, 58, 59, 60, 61, 62, 63]
 }
 
-public enum DictationOrigin: String, Sendable { case button, hold, handsFree }
+public enum DictationOrigin: String, Codable, Sendable { case button, hold, handsFree }
 public enum DictationGesture: String, Sendable {
     case none, candidate, awaitingSecondTap, secondTap, hold, handsFree, stopCandidate
     public var isProvisional: Bool { self == .candidate || self == .awaitingSecondTap || self == .secondTap }
@@ -97,6 +97,8 @@ extension WhisperApplication {
                     }
                 } else if state.dictation.gesture == .secondTap {
                     state.dictation.origin = .handsFree
+                    dictationDiagnostics?.setOrigin(.handsFree)
+                    dictationDiagnostics?.mark(.gestureResolved)
                     state.dictation.gesture = .handsFree
                     dictationTarget = nil
                     if let failure = provisionalFailure, let id = state.dictation.requestID {
@@ -125,6 +127,7 @@ extension WhisperApplication {
     }
 
     private func recognizeHold() {
+        dictationDiagnostics?.mark(.gestureResolved)
         state.dictation.gesture = .hold
         if let failure = provisionalFailure, let id = state.dictation.requestID {
             failDictation(failure, requestID: id)
@@ -192,6 +195,7 @@ extension WhisperApplication {
               !state.dictation.gesture.isProvisional else { return }
         state.dictation.phase = .recording
         state.dictation.timing["readyFeedback"] = clock.now - dictationStartedAt
+        dictationDiagnostics?.mark(.readyFeedback)
         dictationBecameReady()
     }
 }

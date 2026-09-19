@@ -26,9 +26,11 @@ public struct AudioFrame: Sendable {
 
 public enum CaptureEvent: Sendable {
     case opened(at: TimeInterval? = nil)
+    case timing(CaptureTimingStage, at: TimeInterval)
     case frame(AudioFrame)
     case failed(DictationFailure)
 }
+public enum CaptureTimingStage: Sendable { case startRequested, startReturned }
 
 public protocol MicrophoneSession: AnyObject, Sendable {
     func start()
@@ -72,9 +74,11 @@ final class RecordingCapture: @unchecked Sendable {
     private var lastFeedback: TimeInterval = -.infinity
     private let directory: URL
     private let receiveEvent: @Sendable (RecordingEvent) -> Void
+    private let diagnostics: RequestDiagnostics?
 
-    init(directory: URL, receive: @escaping @Sendable (RecordingEvent) -> Void) {
+    init(directory: URL, diagnostics: RequestDiagnostics? = nil, receive: @escaping @Sendable (RecordingEvent) -> Void) {
         self.directory = directory
+        self.diagnostics = diagnostics
         receiveEvent = receive
     }
 
@@ -85,7 +89,11 @@ final class RecordingCapture: @unchecked Sendable {
     func receive(_ event: CaptureEvent) {
         guard !isEnded else { return }
         switch event {
-        case let .opened(time): receiveEvent(.opened(at: time))
+        case let .opened(time):
+            diagnostics?.mark(.captureConfigured, at: time)
+            receiveEvent(.opened(at: time))
+        case let .timing(stage, time):
+            diagnostics?.mark(stage == .startRequested ? .captureStartRequested : .captureStartReturned, at: time)
         case let .failed(failure): receiveEvent(.failed(failure))
         case let .frame(frame):
             // The serial source callback waits for this bounded write. Frames cannot accumulate unbounded tasks.
@@ -98,6 +106,7 @@ final class RecordingCapture: @unchecked Sendable {
               frame.sampleRate.isFinite, frame.sampleRate > 0,
               frame.samples.allSatisfy(\.isFinite) else { return }
         do {
+            if frames == 0 { diagnostics?.mark(.firstAudio, at: frame.capturedAt) }
             if file == nil {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
                 sampleRate = frame.sampleRate
@@ -138,8 +147,10 @@ final class RecordingCapture: @unchecked Sendable {
             let session = self.session
             let stream = AsyncThrowingStream<CapturedAudio, any Error> { continuation in
                 let complete: @Sendable () -> Void = { [self] in
+                    diagnostics?.mark(.captureReleased)
                     writerQueue.async { [self] in
                         file?.close()
+                        diagnostics?.mark(.recordingFinalized)
                         file = nil
                         lock.withLock { self.session = nil }
                         if frames > 0 {

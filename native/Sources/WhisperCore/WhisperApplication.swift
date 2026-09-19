@@ -41,6 +41,7 @@ public enum AppCommand {
     case selectUpload(URL), startUpload, cancelUpload, resetUpload, copyUploadResult
     case chooseUploadFiles([URL]), addUploadBatchFiles([URL]), startUploadBatch, cancelUploadBatch, clearUploadBatch
     case removeUploadBatchItem(UUID), copyUploadBatchItem(UUID)
+    case setDiagnosticsOutput(URL?)
     case dismissMessage
 }
 
@@ -66,6 +67,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var shortcutError: ShortcutConfigurationError?
     public var shortcutWarning: ShortcutConfigurationError?
     public var shortcutCapture = ShortcutCaptureState()
+    public var diagnostics = DiagnosticsState()
     public var credentialConfigured: Bool { settings.asrCredentialAccount != nil }
 
     public init(settings: AppSettings = .init(), configurationError: ConfigurationError? = nil) {
@@ -136,6 +138,9 @@ public final class WhisperApplication {
     @ObservationIgnored var activeShortcutKey: UInt16?
     @ObservationIgnored var shortcutPressActive = false
     @ObservationIgnored var captureModifierPeak = Set<UInt16>()
+    @ObservationIgnored var diagnosticOutput: DiagnosticOutput?
+    @ObservationIgnored var dictationDiagnostics: RequestDiagnostics?
+    @ObservationIgnored var diagnosticsFlushTask: Task<Void, Never>?
 
     public init(
         profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore(),
@@ -187,6 +192,7 @@ public final class WhisperApplication {
         historyAudioTask?.cancel()
         retentionTimer?.cancel()
         audioSystem.stop()
+        dictationDiagnostics?.finish(.incomplete)
         cleanupTestTask?.cancel()
         mediaOwnership.releaseAll()
         pillFeedbackDeadline?.cancel()
@@ -202,6 +208,7 @@ public final class WhisperApplication {
         guard !state.isTerminating else { return }
         switch command {
         case .loadInsights: refreshInsights()
+        case let .setDiagnosticsOutput(destination): setDiagnosticsOutput(destination)
         case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
         case .undoLearnedCorrections: undoLearnedCorrections()
         case .dismissLearnedCorrections: state.corrections = CorrectionLearningState()
