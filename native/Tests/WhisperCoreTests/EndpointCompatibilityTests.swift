@@ -8,6 +8,14 @@ struct EndpointCompatibilityTests {
         ("http://localhost:8178/v1/responses?fixture=1", "http://localhost:8178/v1/audio/transcriptions?fixture=1"),
         ("https://asr.example.com/prefix/CHAT/COMPLETIONS?gateway=a%2Fb", "https://asr.example.com/prefix/audio/transcriptions?gateway=a%2Fb"),
         ("https://asr.example.com/v1/MODELS", "https://asr.example.com/v1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1/RESPONSES", "https://asr.example.com/Prefix/v1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1/CHAT/COMPLETIONS", "https://asr.example.com/Prefix/v1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1/MODELS", "https://asr.example.com/Prefix/v1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1/AUDIO/TRANSCRIPTIONS", "https://asr.example.com/Prefix/v1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1/AUDIO/TRANSLATIONS", "https://asr.example.com/Prefix/v1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1", "https://asr.example.com/Prefix/V1/audio/transcriptions"),
+        ("https://asr.example.com/Prefix/V1/COMPLETIONS?gateway=fixture", "https://asr.example.com/Prefix/V1/COMPLETIONS/audio/transcriptions?gateway=fixture"),
+        ("https://asr.example.com/Prefix%2FName/V1/RESPONSES?gateway=a%2Fb", "https://asr.example.com/Prefix%2FName/v1/audio/transcriptions?gateway=a%2Fb"),
         ("https://asr.example.com/AUDIO/TRANSLATIONS/", "https://asr.example.com/audio/transcriptions"),
         ("https://asr.example.com/prefix%2Fnamespace/v1/RESPONSES?api-version=fixture", "https://asr.example.com/prefix%2Fnamespace/v1/audio/transcriptions?api-version=fixture"),
         ("https://resource.openai.azure.com.evil.example/v1/responses", "https://resource.openai.azure.com.evil.example/v1/audio/transcriptions"),
@@ -128,6 +136,14 @@ struct EndpointCompatibilityTests {
     @Test(arguments: [
         ("http://localhost:8080/custom/RESPONSES?gateway=fixture", "http://localhost:8080/custom/v1/chat/completions?gateway=fixture"),
         ("https://cleanup.example.com/v1/CHAT/COMPLETIONS?api-version=pinned", "https://cleanup.example.com/v1/chat/completions?api-version=pinned"),
+        ("https://cleanup.example.com/Prefix/V1/RESPONSES", "https://cleanup.example.com/Prefix/v1/chat/completions"),
+        ("https://cleanup.example.com/Prefix/V1/CHAT/COMPLETIONS", "https://cleanup.example.com/Prefix/v1/chat/completions"),
+        ("https://cleanup.example.com/Prefix/V1/MODELS", "https://cleanup.example.com/Prefix/v1/chat/completions"),
+        ("https://cleanup.example.com/Prefix/V1/AUDIO/TRANSCRIPTIONS", "https://cleanup.example.com/Prefix/v1/chat/completions"),
+        ("https://cleanup.example.com/Prefix/V1/AUDIO/TRANSLATIONS", "https://cleanup.example.com/Prefix/v1/chat/completions"),
+        ("https://cleanup.example.com/Prefix/V1", "https://cleanup.example.com/Prefix/V1/v1/chat/completions"),
+        ("https://cleanup.example.com/Prefix/V1/COMPLETIONS?gateway=fixture", "https://cleanup.example.com/Prefix/V1/COMPLETIONS/v1/chat/completions?gateway=fixture"),
+        ("https://cleanup.example.com/Prefix%2FName/V1/RESPONSES?gateway=a%2Fb", "https://cleanup.example.com/Prefix%2FName/v1/chat/completions?gateway=a%2Fb"),
         ("https://resource.openai.azure.com/v1/MODELS", "https://resource.openai.azure.com/v1/chat/completions")
     ])
     func cleanupRetainsItsExistingCaseInsensitiveRouteAndIndependentBearerKey(base: String, endpoint: String) async throws {

@@ -68,7 +68,9 @@ recording duration. Hardware is released before file finalization and ASR.
 The ASR client uploads a disk-backed multipart body to the configured base plus
 `/audio/transcriptions`, preserving explicit `/v1`, encoded path segments and
 query parameters. Common endpoint suffixes, including `/responses`, are removed
-case-insensitively. Recognized Azure resource hosts retain the existing deployment
+case-insensitively. Only their adjacent `/v1` segment is canonicalized; arbitrary
+path casing and custom paths ending `/completions` remain intact.
+Recognized Azure resource hosts retain the existing deployment
 route: the model becomes an encoded deployment name, `api-version` is preserved
 or defaults to the reference's `2025-03-01-preview`, and a fully pinned audio URL
 is used unchanged. Host matching does not treat lookalike domains as Azure.

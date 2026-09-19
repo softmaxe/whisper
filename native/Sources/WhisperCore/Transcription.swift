@@ -115,8 +115,13 @@ public struct SelfHostedTranscriber: TranscriptionService {
                 components.percentEncodedQuery = "api-version=" + encodeComponent(version.isEmpty ? "2025-03-01-preview" : version)
             }
         } else {
-            for suffix in ["/audio/transcriptions", "/audio/translations", "/chat/completions", "/responses", "/completions", "/models"] {
-                if path.lowercased().hasSuffix(suffix) { path.removeLast(suffix.count); break }
+            for suffix in ["/audio/transcriptions", "/audio/translations", "/chat/completions", "/responses", "/models"] {
+                if path.lowercased().hasSuffix(suffix) {
+                    path.removeLast(suffix.count)
+                    // Only a recognized endpoint suffix canonicalizes its adjacent v1 segment.
+                    if path.lowercased().hasSuffix("/v1") { path.removeLast(3); path += "/v1" }
+                    break
+                }
             }
             components.percentEncodedPath = path + "/audio/transcriptions"
         }
