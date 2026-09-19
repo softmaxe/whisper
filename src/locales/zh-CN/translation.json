@@ -268,6 +268,7 @@
   "hooks": {
     "audioRecording": {
       "errorTitles": {
+        "microphoneUnavailable": "麦克风不可用",
         "sessionExpired": "会话已过期",
         "offline": "你已离线",
         "agentUnavailable": "助手不可用",
@@ -299,6 +300,7 @@
         "description": "部分录音内容无法转录。"
       },
       "errorDescriptions": {
+        "microphoneUnavailable": "所选麦克风无法采集音频。请重新连接，在系统设置中检查麦克风权限，或在设置中选择其他麦克风后重试。",
         "sessionExpired": "转录服务会话不可用，请检查服务配置。",
         "offline": "网络不可用，请检查与转录服务器的连接。",
         "providerRateLimited": "你的转录服务商限制了请求频率。请稍候再试。",

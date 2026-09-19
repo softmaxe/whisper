@@ -30,6 +30,7 @@ export class ActiveMicRecoveryController {
     mediaDevices,
     acquire,
     onRecovered,
+    onFailure,
     onStatusChange,
     resolvePreferredDevice,
     debounceMs = DEFAULT_DEBOUNCE_MS,
@@ -38,6 +39,7 @@ export class ActiveMicRecoveryController {
   }) {
     this.mediaDevices = mediaDevices;
     this.acquire = acquire;
+    this.onFailure = onFailure;
     this.onRecovered = onRecovered;
     this.onStatusChange = onStatusChange;
     this.resolvePreferredDevice = resolvePreferredDevice;
@@ -95,7 +97,7 @@ export class ActiveMicRecoveryController {
       this.onTrackMute();
     }
     // The lid can change while the initial microphone is still opening.
-    if (this.resolvePreferredDevice) await this.evaluateDeviceChange();
+    if (this.resolvePreferredDevice || this.onFailure) await this.evaluateDeviceChange();
   }
 
   attachStream(stream) {
@@ -209,6 +211,11 @@ export class ActiveMicRecoveryController {
 
   recover(reason) {
     if (!this.started) return Promise.resolve(false);
+    if (this.onFailure) {
+      this.stop();
+      this.onFailure(reason);
+      return Promise.resolve(false);
+    }
     if (this.recoveryPromise) return this.recoveryPromise;
 
     clearTimeout(this.retryTimer);

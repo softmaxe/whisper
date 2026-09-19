@@ -10,6 +10,9 @@ type RecordingError = {
 };
 
 export function getRecordingErrorTitle(error: RecordingError, t: TFunction): string {
+  if (error.code === "MIC_CAPTURE_FAILED") {
+    return t("hooks.audioRecording.errorTitles.microphoneUnavailable");
+  }
   if (error.code?.startsWith("SELECTION_EDIT_")) {
     return t("hooks.audioRecording.selectionEditing.notAppliedTitle");
   }

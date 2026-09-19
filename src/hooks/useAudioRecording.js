@@ -163,6 +163,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
         startupTrace = getStartupTrace(startupRequest);
         startupTrace.mark("preparationEntered");
+        manager.selectMicrophoneForSession?.();
 
         const assistantSelectionContext = voiceAgentRequested
           ? (getAssistantSelectionContextRef.current?.() ?? null)
@@ -246,7 +247,7 @@ export const useAudioRecording = (toast, options = {}) => {
         if (!isCurrent()) return false;
         const didStart = audioManagerRef.current.shouldUseStreaming()
           ? await audioManagerRef.current.startStreamingRecording()
-          : await audioManagerRef.current.startRecording(false, startupTrace);
+          : await audioManagerRef.current.startRecording(startupTrace);
         if (!isCurrent()) return false;
         recordingStarted = didStart;
         if (didStart) startupTrace.startSettled();
@@ -444,6 +445,11 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       },
       onError: (error) => {
+        if (error?.code === "MIC_CAPTURE_FAILED") {
+          startupTraceRef.current?.finish("failed", "microphone_unavailable");
+          invalidatePreparation();
+          reportLifecycle("idle");
+        }
         setIsPreparing(false);
         setIsStopping(false);
         if (error?.code === "TRANSCRIPTION_CANCELLED" || error?.code === "REASON_CANCELLED") return;
@@ -836,6 +842,7 @@ export const useAudioRecording = (toast, options = {}) => {
       if (!canStartDictation(audioManagerRef.current.getState())) return;
       const startupTrace = getStartupTrace(options?.startupRequest);
       startupTrace.mark("preparationEntered");
+      audioManagerRef.current.selectMicrophoneForSession?.();
       const generation = ++preparationGenerationRef.current;
       setIsAssistantVoice(false);
       setIsPreparing(true);

@@ -81,7 +81,8 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
       if (
         microphoneSelectionMode === "specific" &&
         resolvedSelection.device &&
-        (resolvedSelection.status === "remapped" || !selectedMicDeviceLabel)
+        resolvedSelection.status === "exact" &&
+        !selectedMicDeviceLabel
       ) {
         onDeviceSelect(resolvedSelection.device.deviceId, resolvedSelection.device.label);
       }

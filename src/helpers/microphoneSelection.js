@@ -61,6 +61,18 @@ export function resolveSystemDefaultMicDevice(devices, systemDefault) {
   }
 
   if (chromiumDefault) {
+    const matches = physicalInputs.filter((device) =>
+      chromiumDefault.groupId
+        ? device.groupId === chromiumDefault.groupId
+        : normalizeMicrophoneLabel(device.label) &&
+          normalizeMicrophoneLabel(device.label) === normalizeMicrophoneLabel(chromiumDefault.label)
+    );
+    if (matches.length === 1) {
+      return { device: matches[0], status: "chromium-physical", systemDefault };
+    }
+  }
+
+  if (chromiumDefault) {
     return {
       device: chromiumDefault,
       status: nativeName ? "chromium-default-unmatched" : "chromium-default",
