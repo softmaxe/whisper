@@ -270,6 +270,8 @@ the clock by two hours while recording, writes over thirteen minutes of actual
 synthetic audio in bounded frames, then decodes the resulting file incrementally
 to verify its opening/ending samples and complete frame count. A generous 96 MiB
 process-memory growth envelope detects retaining the full 147 MiB PCM fixture.
+`native:test` runs this process-wide memory assertion in a separate test process
+after all other tests, so concurrent large Upload fixtures cannot affect its RSS.
 This is a regression check, not a hardware latency or energy benchmark.
 Cancellation and source failures still release the affected request, and old
 timers, acquisitions or ASR responses cannot stop a new one.
@@ -504,3 +506,54 @@ in one transaction and keeps its persisted occurrence cutoff, so late old result
 cannot revive statistics. The retention integration deletes counter rows by the
 same creation-time cutoff, including counters whose History rows were individually
 deleted, and rejects late writes older than that persisted retention cutoff.
+
+## Single-file Upload
+
+Upload accepts the existing 33 audio/video extensions. MP3, WAV, M4A, WebM, Ogg,
+OGA, FLAC, AAC and Opus are sent unchanged with their existing MIME types. Other
+accepted containers pass through the packaged FFmpeg executable as mono 16 kHz,
+64 kbit/s MP3 with video removed. The runtime resolves only
+`Contents/Resources/bin/ffmpeg`; it does not launch Node.js or search Homebrew/PATH
+for an alternate converter. Native packaging supplies the redistributable media
+build and its license/source materials.
+
+Selection, start, cancellation, result copy and retry use `WhisperApplication.send`
+and `state.upload`. Progress describes preparation or transcription without
+inventing a percentage. The job snapshots its ASR configuration, credential and
+language at start. Upload sends language only, with no Dictionary or Chinese
+prompt bias, and accepts HTTP 200 as the legacy file-transcription route does.
+It returns raw text without cleanup, Chinese conversion, Snippets or Automatic
+paste. Its History source is `upload`, with no retained audio or Dictation usage
+record. Disabling History while a request is pending prevents its later save;
+current text remains copyable when persistence or clipboard delivery fails.
+
+Multipart bodies and conversion output live in separate, owned temporary
+folders with owner-only access. The source file remains untouched, including
+when its parent directory is read-only. Multipart copying uses bounded chunks
+and has no third-party 25 MiB cap. File preparation explicitly leaves the UI
+actor with `@concurrent`, following [Swift SE-0461](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0461-async-function-isolation.md).
+Cancellation releases the visible job immediately, cancels the network operation
+or conversion process, and rejects late work by request identity before History.
+`cancelUploadsAndWait` closes Upload to new jobs, waits for active and previously
+cancelled work to remove its temporary files, then waits for accepted History
+writes. `prepareForTermination()` awaits this operation before exit, after blocking
+new commands. Its final History/Insights flush also joins accepted retained-audio
+operations. Upload results remain excluded from Dictation Insights and audio retry.
+
+Upload tests run the real application, file preparation, multipart transport and
+isolated History store with generated media. All 33 extensions have positive
+fixtures, including a video track, genuine AIFC, synthetic AMR frames and a
+CRC-checked APE silence frame. Their binary layouts follow FFmpeg's
+[AMR demuxer](https://github.com/FFmpeg/FFmpeg/blob/n6.0/libavformat/amr.c),
+[APE demuxer](https://github.com/FFmpeg/FFmpeg/blob/n6.0/libavformat/ape.c) and
+[APE decoder](https://github.com/FFmpeg/FFmpeg/blob/n6.0/libavcodec/apedec.c).
+No downloaded or private speech fixture is required. The tests also cover
+read-only sources, raw output with all live transforms configured, server and
+conversion failures, clipboard/History failures, large files, late cancellation,
+and awaited process/network cleanup during termination.
+
+For native conversion tests, build the native media tools first or set
+`WHISPER_TEST_FFMPEG` to the generated FFmpeg executable. Test fixture generation
+prefers that override, then `resources/bin/ffmpeg`; the legacy npm binary is a
+local-test fallback only. Shipping conversion uses the packaged native helper.
+English/Chinese visual and picker checks remain part of full interface acceptance.

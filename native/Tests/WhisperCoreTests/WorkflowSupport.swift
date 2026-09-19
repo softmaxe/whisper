@@ -101,13 +101,16 @@ actor ControlledHTTPTransport: FileHTTPTransport {
     private(set) var requests: [Request] = []
     private var replies: [Int: CheckedContinuation<HTTPResponse, any Error>] = [:]
     func upload(_ request: URLRequest, file: URL) async throws -> HTTPResponse {
+        let body = try Data(contentsOf: file)
         let audioURL = file.deletingLastPathComponent().appendingPathComponent("audio.m4a")
+        try multipartAudio(request: request, body: body).write(to: audioURL)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
         let audioFile = try AVAudioFile(forReading: audioURL)
         let buffer = AVAudioPCMBuffer(pcmFormat: audioFile.processingFormat, frameCapacity: AVAudioFrameCount(audioFile.length))!
         try audioFile.read(into: buffer)
         let samples = Array(UnsafeBufferPointer(start: buffer.floatChannelData![0], count: Int(buffer.frameLength)))
         let index = requests.count
-        requests.append(Request(request: request, body: try Data(contentsOf: file), audio: samples))
+        requests.append(Request(request: request, body: body, audio: samples))
         return try await withCheckedThrowingContinuation { replies[index] = $0 }
     }
     func reply(_ index: Int = 0, status: Int = 200, body: String = "{\"text\":\"Fixture transcript\"}") {
@@ -155,4 +158,13 @@ actor ControlledHTTPTransport: FileHTTPTransport {
         try? await Task.sleep(for: .milliseconds(2))
     }
     Issue.record("Workflow did not reach the expected observable outcome.", sourceLocation: sourceLocation)
+}
+
+func multipartAudio(request: URLRequest, body: Data) throws -> Data {
+    let type = try #require(request.value(forHTTPHeaderField: "Content-Type"))
+    let boundary = try #require(type.components(separatedBy: "boundary=").last)
+    let fileHeader = try #require(body.range(of: Data("name=\"file\";".utf8)))
+    let headerEnd = try #require(body.range(of: Data("\r\n\r\n".utf8), in: fileHeader.upperBound..<body.endIndex))
+    let payloadEnd = try #require(body.range(of: Data(("\r\n--" + boundary).utf8), in: headerEnd.upperBound..<body.endIndex))
+    return body.subdata(in: headerEnd.upperBound..<payloadEnd.lowerBound)
 }

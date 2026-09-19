@@ -226,7 +226,12 @@ private actor StreamingAudioInspection: FileHTTPTransport {
     var firstMean: Float = 0
     var lastMean: Float = 0
     func upload(_ request: URLRequest, file: URL) async throws -> HTTPResponse {
-        let audio = try AVAudioFile(forReading: file.deletingLastPathComponent().appendingPathComponent("audio.m4a"))
+        let audioURL = file.deletingLastPathComponent().appendingPathComponent("inspection.m4a")
+        // Map the encoded body instead of loading the long recording into process memory.
+        let body = try Data(contentsOf: file, options: .alwaysMapped)
+        try multipartAudio(request: request, body: body).write(to: audioURL)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let audio = try AVAudioFile(forReading: audioURL)
         let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: 16_000)!
         while audio.framePosition < audio.length {
             let remaining = AVAudioFrameCount(min(Int64(buffer.frameCapacity), audio.length - audio.framePosition))

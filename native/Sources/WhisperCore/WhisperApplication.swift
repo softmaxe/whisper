@@ -38,6 +38,7 @@ public enum AppCommand {
     case setShortcutWarning(ShortcutConfigurationError?)
     case setHistoryRetention(HistoryPreferences), runHistoryRetention, clearHistoryAudio
     case retryHistory(UUID), cancelHistoryRetry, playHistory(UUID), stopHistoryPlayback, revealHistoryAudio(UUID)
+    case selectUpload(URL), startUpload, cancelUpload, resetUpload, copyUploadResult
     case dismissMessage
 }
 
@@ -54,6 +55,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var history = HistoryState()
     public var desktop = DesktopState()
     public var insights = InsightsState()
+    public var upload = UploadState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -89,6 +91,9 @@ public final class WhisperApplication {
     @ObservationIgnored var historyRetryTask: Task<Void, Never>?
     @ObservationIgnored var historyRetryOwnership: HistoryRetryOwnership?
     @ObservationIgnored var retentionTimer: (any ScheduledAction)?
+    @ObservationIgnored let uploadConverter: any UploadMediaConverter
+    @ObservationIgnored var uploadTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored var uploadShutdown = false
 
     @ObservationIgnored let cleanup: any CleanupService
     @ObservationIgnored var cleanupTestTask: Task<Void, Never>?
@@ -138,9 +143,11 @@ public final class WhisperApplication {
         cleanup: any CleanupService = SelfHostedCleanup(),
         correctionSystem: (any CorrectionMonitoringSystem)? = nil,
         desktopEffects: (any DesktopEffects)? = nil,
-        audioSystem: (any HistoryAudioSystem)? = nil
+        audioSystem: (any HistoryAudioSystem)? = nil,
+        uploadConverter: any UploadMediaConverter = FFmpegUploadConverter()
     ) {
         self.cleanup = cleanup
+        self.uploadConverter = uploadConverter
         self.audioSystem = audioSystem ?? NativeHistoryAudioSystem()
         let effects = desktopEffects ?? InertDesktopEffects()
         self.desktopEffects = effects
@@ -183,6 +190,7 @@ public final class WhisperApplication {
         insightsReadTask?.cancel()
         historyReadTask?.cancel()
         historySearchTask?.cancel()
+        for task in uploadTasks.values { task.cancel() }
     }
 
     public func send(_ command: AppCommand) {
@@ -192,6 +200,14 @@ public final class WhisperApplication {
         case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
         case .undoLearnedCorrections: undoLearnedCorrections()
         case .dismissLearnedCorrections: state.corrections = CorrectionLearningState()
+        case let .selectUpload(source): selectUpload(source)
+        case .startUpload: startUpload()
+        case .cancelUpload: cancelUpload()
+        case .resetUpload: resetUpload()
+        case .copyUploadResult:
+            guard !state.upload.text.isEmpty else { return }
+            state.upload.resultCopied = clipboard.writeResult(state.upload.text)
+            state.upload.copyFailed = !state.upload.resultCopied
         case let .setMicrophone(preference): setMicrophone(preference)
         case .refreshMicrophones: refreshMicrophones()
         case let .saveSnippet(trigger, replacement, editingID): saveSnippet(trigger: trigger, replacement: replacement, editingID: editingID)

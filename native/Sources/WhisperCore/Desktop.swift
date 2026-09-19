@@ -206,6 +206,7 @@ extension WhisperApplication {
         cancelCleanupTest()
         correctionLearning.stop()
         pillFeedbackDeadline?.cancel()
+        await cancelUploadsAndWait()
         await mediaOwnership.shutdown()
         await insightsRead?.value
         await flushHistoryWrites()

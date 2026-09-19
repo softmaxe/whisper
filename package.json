@@ -41,7 +41,7 @@
     "preview": "cd src && vite preview",
     "clean": "node cleanup.js",
     "native:build": "xcrun swift build --package-path native --arch arm64",
-    "native:test": "xcrun swift test --package-path native --arch arm64",
+    "native:test": "xcrun swift test --package-path native --arch arm64 --skip longHandsFreeRecordingUsesBoundedMemoryAndAnIncrementalFile && xcrun swift test --package-path native --arch arm64 --skip-build --filter longHandsFreeRecordingUsesBoundedMemoryAndAnIncrementalFile",
     "native:pack": "npm run pack:release",
     "native:run": "npm run pack && node scripts/run-native.js",
     "legacy:start": "npm run compile:native && electron .",

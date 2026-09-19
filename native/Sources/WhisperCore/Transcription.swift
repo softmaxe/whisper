@@ -3,7 +3,10 @@ import Foundation
 public struct TranscriptionOptions: Sendable {
     public var language: String?
     public var prompt: String?
-    public init(language: String? = nil, prompt: String? = nil) { self.language = language; self.prompt = prompt }
+    public var expectedStatus: Int?
+    public init(language: String? = nil, prompt: String? = nil, expectedStatus: Int? = nil) {
+        self.language = language; self.prompt = prompt; self.expectedStatus = expectedStatus
+    }
 }
 
 public protocol TranscriptionService: Sendable {
@@ -65,14 +68,19 @@ public struct SelfHostedTranscriber: TranscriptionService {
     private let transport: any FileHTTPTransport
     public init(transport: any FileHTTPTransport = URLSessionFileTransport()) { self.transport = transport }
 
-    public func transcribe(file: URL, configuration: ASRConfiguration, credential: String?, options: TranscriptionOptions) async throws -> String {
+    @concurrent public func transcribe(file: URL, configuration: ASRConfiguration, credential: String?, options: TranscriptionOptions) async throws -> String {
         let configuration = try configuration.validated()
         let url = try Self.endpoint(configuration)
         let boundary = "Whisper-" + UUID().uuidString
-        let body = file.deletingLastPathComponent().appendingPathComponent("multipart-" + UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: body) }
+        let directory: PrivateUploadDirectory
+        do { directory = try PrivateUploadDirectory(prefix: "whisper-multipart-") }
+        catch { throw DictationFailure.storageFailed }
+        defer { directory.remove() }
+        let body = directory.url.appendingPathComponent("body.multipart")
         // File preparation runs on Swift's generic executor, never the main actor.
-        try Self.writeMultipart(audio: file, body: body, boundary: boundary, configuration: configuration, options: options)
+        do { try Self.writeMultipart(audio: file, body: body, boundary: boundary, configuration: configuration, options: options) }
+        catch is CancellationError { throw CancellationError() }
+        catch { throw DictationFailure.storageFailed }
         try Task.checkCancellation()
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -80,7 +88,7 @@ public struct SelfHostedTranscriber: TranscriptionService {
         if let credential, !credential.isEmpty { request.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization") }
         let response = try await transport.upload(request, file: body)
         try Task.checkCancellation()
-        guard (200...299).contains(response.status) else { throw DictationFailure.service(response.status) }
+        guard options.expectedStatus.map({ response.status == $0 }) ?? (200...299).contains(response.status) else { throw DictationFailure.service(response.status) }
         struct Result: Decodable { let text: String }
         guard let result = try? JSONDecoder().decode(Result.self, from: response.body) else { throw DictationFailure.invalidResponse }
         guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw DictationFailure.emptyTranscript }
@@ -112,7 +120,7 @@ public struct SelfHostedTranscriber: TranscriptionService {
         if let language = options.language, language != "auto", !language.isEmpty { try field("language", String(language.split(separator: "-")[0])) }
         if let prompt = options.prompt, !prompt.isEmpty { try field("prompt", prompt) }
         let ext = audio.pathExtension.lowercased()
-        let mime = ["m4a": "audio/mp4", "wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac", "ogg": "audio/ogg", "webm": "audio/webm", "mp4": "video/mp4"][ext] ?? "application/octet-stream"
+        let mime = UploadFormats.directMIMETypes[ext] ?? (ext == "mp4" ? "video/mp4" : "application/octet-stream")
         try write("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"audio.\(ext)\"\r\nContent-Type: \(mime)\r\n\r\n")
         let input = try FileHandle(forReadingFrom: audio)
         defer { try? input.close() }

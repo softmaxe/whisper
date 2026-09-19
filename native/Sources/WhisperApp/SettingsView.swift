@@ -61,6 +61,7 @@ struct SettingsRootView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         switch section {
                         case .home: DictationHomeView(application: application)
+                        case .upload: UploadView(application: application, onOpenSettings: { section = .speechToText }, onOpenHistory: { section = .home })
                         case .dictionary: DictionaryPage(application: application)
                         case .insights: InsightsView(application: application)
                         case .general: generalSettings
@@ -224,10 +225,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, insights, dictionary, general, hotkeys, speechToText, textCleanup, privacyAndData
+    case home, insights, upload, dictionary, general, hotkeys, speechToText, textCleanup, privacyAndData
     var id: Self { self }
-    var icon: String { self == .insights ? "chart.bar" : self == .hotkeys ? "keyboard" : self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .upload ? "arrow.up.doc" : self == .insights ? "chart.bar" : self == .hotkeys ? "keyboard" : self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .insights ? language.text("Insights", "统计") : self == .hotkeys ? language.text("Hotkeys", "快捷键") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .upload ? language.text("Upload", "上传") : self == .insights ? language.text("Insights", "统计") : self == .hotkeys ? language.text("Hotkeys", "快捷键") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }
