@@ -39,17 +39,29 @@ public struct ASRConfiguration: Codable, Equatable, Sendable {
 public struct AppSettings: Codable, Equatable, Sendable {
     public var language: AppLanguage
     public var asr: ASRConfiguration
+    public var microphone: MicrophonePreference
     // The opaque account is persisted; the credential itself exists only in Keychain.
     public var asrCredentialAccount: String?
 
     public init(
         language: AppLanguage = .english,
         asr: ASRConfiguration = .init(),
-        asrCredentialAccount: String? = nil
+        asrCredentialAccount: String? = nil,
+        microphone: MicrophonePreference = .init()
     ) {
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
+        self.microphone = microphone
+    }
+
+    enum CodingKeys: String, CodingKey { case language, asr, asrCredentialAccount, microphone }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        language = try values.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .english
+        asr = try values.decodeIfPresent(ASRConfiguration.self, forKey: .asr) ?? .init()
+        asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
+        microphone = try values.decodeIfPresent(MicrophonePreference.self, forKey: .microphone) ?? .init()
     }
 }
 

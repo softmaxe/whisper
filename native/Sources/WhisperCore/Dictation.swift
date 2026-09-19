@@ -75,7 +75,7 @@ extension WhisperApplication {
         do {
             let configuration = try state.settings.asr.validated()
             let credential = try asrCredential()
-            let device = try microphones.resolveDevice()
+            let device = try selectedMicrophone()
             let directory = profileStore.profile.directory.appendingPathComponent("Temporary/" + id.uuidString)
             let capture = RecordingCapture(directory: directory) { [weak self] event in
                 Task { @MainActor in self?.receiveCapture(event, requestID: id) }

@@ -109,6 +109,7 @@ struct SettingsRootView: View {
             .padding(16).background(.primary.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+            MicrophoneSettingsView(application: application)
             feedback
         }
     }

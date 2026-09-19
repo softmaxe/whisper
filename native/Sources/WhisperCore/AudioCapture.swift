@@ -4,7 +4,12 @@ import Foundation
 public struct MicrophoneDevice: Equatable, Sendable {
     public let id: String
     public let name: String
-    public init(id: String, name: String) { self.id = id; self.name = name }
+    public let category: MicrophoneCategory
+    public init(id: String, name: String, category: MicrophoneCategory = .external) {
+        self.id = id
+        self.name = name
+        self.category = category
+    }
 }
 
 /// One bounded, mono Float32 source frame. Zero amplitude is valid audio.
@@ -34,6 +39,7 @@ public protocol MicrophoneSession: AnyObject, Sendable {
 @MainActor public protocol MicrophoneProvider {
     /// Resolve a physical UID once per request, with no fallback after acquisition failure.
     func resolveDevice() throws -> MicrophoneDevice
+    func inputSnapshot() throws -> MicrophoneSnapshot
     func makeSession(device: MicrophoneDevice, receive: @escaping @Sendable (CaptureEvent) -> Void) -> any MicrophoneSession
 }
 
