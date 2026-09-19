@@ -950,7 +950,6 @@ for (const cues of [true, false]) {
   test("readiness is visible and emitted once with cues " + cues, async (t) => {
     const h = await setup(t, { cues });
     await React.act(async () => h.events.StartDictation({ startupRequest: h.request }));
-    await h.paint();
     await React.act(async () => h.target.resolve());
     assert.equal(h.hook().isPreparing, true);
     assert.equal(h.tones.length, 0);
@@ -958,6 +957,12 @@ for (const cues of [true, false]) {
     await h.deliver();
     assert.equal(h.hook().isRecording, true);
     assert.equal(h.hook().isPreparing, false);
+    assert.equal(h.lifecycle.filter((state) => state === "recording").length, 1);
+    assert.equal(h.tones.length, cues ? 2 : 0);
+    const trace = h.timing().at(-1);
+    assert.equal(trace.outcome, "completed");
+    assert.ok(trace.stages.firstAudio <= trace.stages.readyFeedback);
+    await h.paint();
     assert.equal(h.lifecycle.filter((state) => state === "recording").length, 1);
     assert.equal(h.tones.length, cues ? 2 : 0);
   });

@@ -98,10 +98,13 @@ Missing stages stay absent and `totalMs` stays null. Late events carry
 stages. A main-process acceptance with no renderer record is also incomplete
 evidence, never a successful zero-duration startup.
 
-Existing recovery can retry acquisition or select another device. The capture
+The #23 baseline can retry acquisition or select another device. Builds including
+[#25](https://github.com/softmaxe/whisper/issues/25) fix the effective device for
+each request and fail instead of substituting another microphone. The capture
 timestamps describe the current attempt; track health can include internal
-health-check retries. Exclude trials with recovery or cross-request reuse from a
-same-device hardware comparison and report them separately.
+health-check retries. Exclude baseline trials with device substitution and trials
+with cross-request reuse from a same-device hardware comparison and report them
+separately. A device substitution in the candidate is a regression.
 
 ## Acquisition scheduling evidence for #26
 
