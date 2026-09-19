@@ -49,7 +49,6 @@ export const useAudioRecording = (toast, options = {}) => {
   const [partialTranscript, setPartialTranscript] = useState("");
   const audioManagerRef = useRef(null);
   const startLockRef = useRef(false);
-  const stopRequestedDuringStartRef = useRef(false);
   const pushForceStoppedRef = useRef(false);
   const stopLockRef = useRef(false);
   const preparationGenerationRef = useRef(0);
@@ -114,14 +113,26 @@ export const useAudioRecording = (toast, options = {}) => {
     window.electronAPI?.dictationLifecycleStateChanged?.(state, inputKind);
   }, []);
 
+  const invalidatePreparation = useCallback(() => {
+    preparationGenerationRef.current += 1;
+    startLockRef.current = false;
+    setIsPreparing(false);
+    setIsStopping(false);
+    setIsAssistantVoice(false);
+  }, []);
+
   const performStartRecording = useCallback(
     async ({ voiceAgentRequested = false, translationRequested = false } = {}) => {
       if (startLockRef.current) return false;
       lastStartOptionsRef.current = { voiceAgentRequested, translationRequested };
       startLockRef.current = true;
-      stopRequestedDuringStartRef.current = false;
       pushForceStoppedRef.current = false;
       let recordingStarted = false;
+      const preparationGeneration = ++preparationGenerationRef.current;
+      const manager = audioManagerRef.current;
+      const isCurrent = () =>
+        preparationGeneration === preparationGenerationRef.current &&
+        manager === audioManagerRef.current;
       try {
         if (!audioManagerRef.current) return false;
         const policyState = usePolicyStore.getState();
@@ -140,7 +151,6 @@ export const useAudioRecording = (toast, options = {}) => {
           ? (getAssistantSelectionContextRef.current?.() ?? null)
           : null;
 
-        const preparationGeneration = ++preparationGenerationRef.current;
         setIsStopping(false);
         setIsPreparing(true);
         // Preserve the requested identity while Windows is still opening the
@@ -164,6 +174,7 @@ export const useAudioRecording = (toast, options = {}) => {
           logger.warn("Failed to refresh dictation target", { error: error?.message });
         }
 
+        if (!isCurrent()) return false;
         demoKindRef.current = getOnboardingDemoKind(voiceAgentRequested);
         audioManagerRef.current.setVoiceAgentRequested(voiceAgentRequested);
         audioManagerRef.current.setAssistantSelectionContext(assistantSelectionContext);
@@ -204,7 +215,7 @@ export const useAudioRecording = (toast, options = {}) => {
         if (needsSttConfigBeforeStart(getSettings()) && !audioManagerRef.current.sttConfig) {
           const configFetch = (async () => {
             const config = await window.electronAPI.getSttConfig?.();
-            if (config?.success) {
+            if (isCurrent() && config?.success) {
               audioManagerRef.current.setSttConfig(config);
             }
           })().catch((error) => {
@@ -215,27 +226,13 @@ export const useAudioRecording = (toast, options = {}) => {
           }
         }
 
+        if (!isCurrent()) return false;
         const didStart = audioManagerRef.current.shouldUseStreaming()
           ? await audioManagerRef.current.startStreamingRecording()
           : await audioManagerRef.current.startRecording();
+        if (!isCurrent()) return false;
         recordingStarted = didStart;
         if (didStart) dismissDictationError?.();
-
-        // A stop that landed while the start was still awaiting the mic open was
-        // dropped (isRecording was still false), leaving a runaway recording
-        // until the next hotkey press. Honor it now that we started.
-        if (didStart && stopRequestedDuringStartRef.current) {
-          window.electronAPI?.unregisterCancelHotkey?.();
-          // Cue semantics mirror performStopRecording: unconditional for
-          // streaming, gated on the stop landing for batch.
-          if (audioManagerRef.current.getState().isStreaming) {
-            void playStopCue();
-            await audioManagerRef.current.stopStreamingRecording();
-          } else if (audioManagerRef.current.stopRecording()) {
-            void playStopCue();
-          }
-          return didStart;
-        }
 
         // A quick tap can end the recording inside the start call itself (deferred
         // streaming stop) — don't pause media for a recording that already ended. See #1060.
@@ -249,24 +246,22 @@ export const useAudioRecording = (toast, options = {}) => {
 
         return didStart;
       } finally {
-        startLockRef.current = false;
-        // A stop that landed mid-start set isStopping expecting the started
-        // recording's state change to clear it; if the recording never began,
-        // no state change will ever arrive.
-        if (stopRequestedDuringStartRef.current && !recordingStarted) setIsStopping(false);
-        stopRequestedDuringStartRef.current = false;
-        if (!recordingStarted) {
-          setIsPreparing(false);
-          setIsAssistantVoice(false);
-          // Covers every exit above that never started a recording — the
-          // policy-block early return, the mic-open failure, a stale
-          // preparation generation, etc. Without this, a failed start leaves
-          // the main process (and the companion pill) stuck reporting
-          // "preparing" forever, since startRecording's failure path only
-          // fires onError, never the onStateChange that normally reports
-          // "idle". The signature dedup makes this a no-op when
-          // onStateChange already reported it first.
-          if (reportedLifecycleRef.current?.startsWith("preparing:")) reportLifecycle("idle");
+        if (isCurrent()) {
+          startLockRef.current = false;
+          if (!recordingStarted) {
+            manager?.cancelPreparedMicCapture?.();
+            setIsPreparing(false);
+            setIsAssistantVoice(false);
+            // Covers every exit above that never started a recording — the
+            // policy-block early return, the mic-open failure, a stale
+            // preparation generation, etc. Without this, a failed start leaves
+            // the main process (and the companion pill) stuck reporting
+            // "preparing" forever, since startRecording's failure path only
+            // fires onError, never the onStateChange that normally reports
+            // "idle". The signature dedup makes this a no-op when
+            // onStateChange already reported it first.
+            if (reportedLifecycleRef.current?.startsWith("preparing:")) reportLifecycle("idle");
+          }
         }
       }
     },
@@ -274,10 +269,14 @@ export const useAudioRecording = (toast, options = {}) => {
   );
 
   const performStopRecording = useCallback(async () => {
-    if (startLockRef.current) {
-      stopRequestedDuringStartRef.current = true;
-      setIsPreparing(false);
-      setIsStopping(true);
+    if (
+      !audioManagerRef.current?.getState().isRecording &&
+      (startLockRef.current || reportedLifecycleRef.current?.startsWith("preparing:"))
+    ) {
+      invalidatePreparation();
+      audioManagerRef.current?.cancelRecording();
+      window.electronAPI?.unregisterCancelHotkey?.();
+      reportLifecycle("idle");
       return true;
     }
     if (stopLockRef.current) return false;
@@ -291,9 +290,6 @@ export const useAudioRecording = (toast, options = {}) => {
       window.electronAPI?.unregisterCancelHotkey?.();
       setIsPreparing(false);
       setIsStopping(true);
-      // Contract to the stable thinking state before MediaRecorder/streaming
-      // finalization can occupy the renderer on slower Windows machines.
-      await waitForVisualFrames();
 
       if (currentState.isStreaming || currentState.isStreamingStartInProgress) {
         void playStopCue();
@@ -311,7 +307,7 @@ export const useAudioRecording = (toast, options = {}) => {
       stopLockRef.current = false;
       setIsStopping(false);
     }
-  }, []);
+  }, [invalidatePreparation, reportLifecycle]);
 
   useEffect(() => {
     audioManagerRef.current = new AudioManager();
@@ -760,7 +756,11 @@ export const useAudioRecording = (toast, options = {}) => {
 
       // A start still awaiting the mic open leaves isRecording false, so without
       // the lock check this toggle-off would take the start branch and be lost.
-      if (startLockRef.current || currentState.isRecording) {
+      if (
+        startLockRef.current ||
+        currentState.isRecording ||
+        reportedLifecycleRef.current?.startsWith("preparing:")
+      ) {
         await performStopRecording();
       } else if (canStartDictation(currentState)) {
         await performStartRecording({ voiceAgentRequested, translationRequested });
@@ -811,9 +811,8 @@ export const useAudioRecording = (toast, options = {}) => {
     });
 
     const disposeCancelPreparation = window.electronAPI.onCancelDictationPreparation?.(() => {
-      preparationGenerationRef.current += 1;
-      setIsPreparing(false);
-      audioManagerRef.current?.cancelPreparedMicCapture?.();
+      invalidatePreparation();
+      audioManagerRef.current?.cancelRecording();
       if (reportedLifecycleRef.current?.startsWith("preparing:")) reportLifecycle("idle");
     });
 
@@ -832,6 +831,8 @@ export const useAudioRecording = (toast, options = {}) => {
 
     // Cleanup
     return () => {
+      preparationGenerationRef.current += 1;
+      startLockRef.current = false;
       reportLifecycle("idle");
       unsubscribePolicy();
       disposeToggle?.();
@@ -854,14 +855,14 @@ export const useAudioRecording = (toast, options = {}) => {
     dismissDictationError,
     onDictationError,
     reportLifecycle,
+    invalidatePreparation,
     t,
   ]);
 
   const cancelRecording = useCallback(async () => {
     if (audioManagerRef.current) {
-      preparationGenerationRef.current += 1;
-      setIsPreparing(false);
-      setIsStopping(false);
+      invalidatePreparation();
+      reportLifecycle("idle");
       audioManagerRef.current.cancelPreparedMicCapture?.();
       window.electronAPI?.unregisterCancelHotkey?.();
       const state = audioManagerRef.current.getState();
@@ -876,7 +877,7 @@ export const useAudioRecording = (toast, options = {}) => {
       return audioManagerRef.current.cancelRecording();
     }
     return false;
-  }, []);
+  }, [invalidatePreparation, reportLifecycle]);
 
   const cancelProcessing = useCallback(() => {
     if (audioManagerRef.current) {
@@ -915,7 +916,9 @@ export const useAudioRecording = (toast, options = {}) => {
     voiceAgentRequested = false,
     translationRequested = false,
   } = {}) => {
-    if (!isRecording && !isProcessing) {
+    if (startLockRef.current || isPreparing) {
+      await performStopRecording();
+    } else if (!isRecording && !isProcessing) {
       await performStartRecording({ voiceAgentRequested, translationRequested });
     } else if (isRecording) {
       await performStopRecording();

@@ -65,9 +65,7 @@ async function mountSettings(
   };
   const vite = await createRendererServer(t, {
     cachePrefix: "whisper-microphone-ui-",
-    mockModules: {
-      "/stores/settingsStore": "export const MIC_WARM_HOLD_CHOICES = [0, 10, 60, 900];",
-    },
+    mockModules: {},
   });
   const { MicrophoneSettings } = await vite.ssrLoadModule("/components/ui/MicrophoneSettings.tsx");
   const { I18nextProvider } = await import("react-i18next");
@@ -77,10 +75,8 @@ async function mountSettings(
     microphoneSelectionMode: "auto",
     selectedMicDeviceId: "",
     selectedMicDeviceLabel: "",
-    micWarmHoldSeconds: 0,
     onSelectionModeChange: (mode) => changes.push(["mode", mode]),
     onDeviceSelect: (id, label) => changes.push(["device", id, label]),
-    onMicWarmHoldSecondsChange() {},
     ...props,
   };
   function Probe() {

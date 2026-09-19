@@ -92,6 +92,7 @@ export class PreparedMicCapture {
   }
 
   async take() {
+    const generation = this.generation;
     if (this.pending) {
       try {
         await this.pending;
@@ -99,6 +100,8 @@ export class PreparedMicCapture {
         // The caller can fall back to a normal acquisition.
       }
     }
+    // A cancelled waiter must not consume a newer request's prepared capture.
+    if (generation !== this.generation) return null;
     const prepared = this.prepared;
     this.prepared = null;
     this.generation += 1;

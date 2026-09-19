@@ -208,13 +208,8 @@ function readNumber(key: string, fallback: number): number {
   return isNaN(parsed) ? fallback : parsed;
 }
 
-// Durations offered by the mic warm-hold select; unknown values snap to 0 (off)
-// so a hand-edited localStorage entry can never hold the mic open indefinitely.
-export const MIC_WARM_HOLD_CHOICES = [0, 10, 60, 900] as const;
-
-function snapMicWarmHold(value: number): number {
-  return (MIC_WARM_HOLD_CHOICES as readonly number[]).includes(value) ? value : 0;
-}
+// Idle microphone capture is no longer supported. Remove only its retired preference.
+if (isBrowser) localStorage.removeItem("micWarmHoldSeconds");
 
 function readStringArray(key: string, fallback: string[]): string[] {
   if (!isBrowser) return fallback;
@@ -325,7 +320,6 @@ const ARRAY_SETTINGS = new Set([
 ]);
 
 const NUMERIC_SETTINGS = new Set([
-  "micWarmHoldSeconds",
   "audioRetentionDays",
   "transcriptRetentionDays",
   "whisperVadThreshold",
@@ -1166,7 +1160,6 @@ export interface SettingsState
   setPreferBuiltInMic: (value: boolean) => void;
   setMicrophoneSelectionMode: (mode: MicrophoneSelectionMode) => void;
   setSelectedMicDevice: (deviceId: string, label: string) => void;
-  setMicWarmHoldSeconds: (seconds: number) => void;
 
   setTheme: (value: "light" | "dark" | "auto") => void;
   setCloudBackupEnabled: (value: boolean) => void;
@@ -1547,7 +1540,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   preferBuiltInMic: readString("microphoneSelectionMode", "auto") === "built-in",
   selectedMicDeviceId: readString("selectedMicDeviceId", ""),
   selectedMicDeviceLabel: readString("selectedMicDeviceLabel", ""),
-  micWarmHoldSeconds: snapMicWarmHold(readNumber("micWarmHoldSeconds", 0)),
 
   theme: (() => {
     const v = readString("theme", "auto");
@@ -2283,11 +2275,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setCloudBackupEnabled: createBooleanSetter("cloudBackupEnabled"),
   setInsightsSyncEnabled: createBooleanSetter("insightsSyncEnabled"),
   setTelemetryEnabled: createBooleanSetter("telemetryEnabled"),
-  setMicWarmHoldSeconds: (value: number) => {
-    const snapped = snapMicWarmHold(value);
-    if (isBrowser) localStorage.setItem("micWarmHoldSeconds", String(snapped));
-    set({ micWarmHoldSeconds: snapped });
-  },
   setAudioRetentionDays: createNumberSetter("audioRetentionDays"),
   setTranscriptRetentionDays: createNumberSetter("transcriptRetentionDays"),
   setDataRetentionEnabled: (value: boolean) => {
@@ -3355,10 +3342,6 @@ export async function initializeSettings(): Promise<void> {
           key === "audioRetentionDays" ? 30 : (state as unknown as Record<string, unknown>)[key];
       } else if (key === "audioRetentionDays") {
         value = Math.round(parsed);
-      } else if (key === "micWarmHoldSeconds") {
-        // Same whitelist as the setter — a hand-edited localStorage value
-        // synced from another window must not exceed the offered durations.
-        value = snapMicWarmHold(parsed);
       } else {
         value = parsed;
       }

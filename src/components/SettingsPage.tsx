@@ -149,10 +149,8 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     microphoneSelectionMode,
     selectedMicDeviceId,
     selectedMicDeviceLabel,
-    micWarmHoldSeconds,
     setMicrophoneSelectionMode,
     setSelectedMicDevice,
-    setMicWarmHoldSeconds,
     setUiLanguage,
     setDictationKey,
     autoLearnCorrections,
@@ -620,10 +618,8 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     microphoneSelectionMode={microphoneSelectionMode}
                     selectedMicDeviceId={selectedMicDeviceId}
                     selectedMicDeviceLabel={selectedMicDeviceLabel}
-                    micWarmHoldSeconds={micWarmHoldSeconds}
                     onSelectionModeChange={setMicrophoneSelectionMode}
                     onDeviceSelect={setSelectedMicDevice}
-                    onMicWarmHoldSecondsChange={setMicWarmHoldSeconds}
                   />
                 </SettingsPanelRow>
               </SettingsPanel>
