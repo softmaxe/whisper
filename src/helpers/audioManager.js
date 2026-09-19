@@ -18,6 +18,7 @@ import {
 import { getBaseLanguageCode, getLanguageLabel } from "../utils/languageSupport";
 import logger from "../utils/logger";
 import { isAzureOpenAIEndpoint } from "../utils/urlUtils";
+import { observeFirstAudio, waitForFirstAudio } from "./firstAudio";
 import { ActiveMicRecoveryController } from "./activeMicRecovery";
 import {
   ANALYTICS_COUNTER_VERSION,
@@ -1093,6 +1094,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       settings: { ...getSettings(), setSelectedMicDevice: undefined },
       controller: new AbortController(),
       streams: new Set(),
+      observations: new Map(),
       taps: new Set(),
     });
   }
@@ -1109,6 +1111,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     const session = this._captureSession;
     this._captureSession = null;
     session?.controller.abort();
+    for (const observation of session?.observations.values() ?? []) observation.cancel();
     this._startInProgress = false;
     this.preparedMicCapture?.cancel();
     this.micRecovery.stop();
@@ -1143,7 +1146,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     prepared.startupTrace = startupTrace;
     const attempt = startupTrace.beginCapture("prepared");
     startupTrace.markCapture(attempt, "acquisitionCompleted");
-    startupTrace.observeCapture(prepared.stream, attempt);
+    startupTrace.observeCapture(
+      prepared.stream,
+      attempt,
+      this._getCaptureSession().observations.get(prepared.stream)
+    );
   }
 
   // Tells the main process whether this renderer is preparing capture. Recordings are gated by
@@ -1162,6 +1169,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this._captureSession.preparationExpired = true;
     }
     if (this.micRecovery.stream === prepared.stream) this.micRecovery.stop();
+    this._captureSession?.observations.get(prepared.stream)?.cancel();
+    this._captureSession?.observations.delete(prepared.stream);
     disposePreparedCapture(prepared);
     this._markCaptureStreamReleased();
   }
@@ -1230,7 +1239,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     const stream = await this.acquireHealthyMicStream(rawStream, constraints, session);
     this._assertCaptureSession(session);
     this._stampMicWarm();
-    startupTrace?.observeCapture(stream, attempt);
+    const observation = observeFirstAudio(stream.getAudioTracks()[0]);
+    session.observations.set(stream, observation);
+    startupTrace?.observeCapture(stream, attempt, observation);
     return stream;
   }
 
@@ -1362,6 +1373,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this.createBatchRecorder(micStream, preRoll);
       freshTap?.attach(micStream);
       preparedAdopted = true;
+      await waitForFirstAudio(
+        session.observations.get(micStream),
+        micStream.getAudioTracks()[0],
+        session.controller.signal
+      );
+      this._assertCaptureSession(session);
       this.isRecording = true;
       this.onStateChange?.({
         isRecording: true,
@@ -1445,6 +1462,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this.isRecording = false;
       this._closeBatchPcmTap();
       void this.cleanupPreview({ dismiss: true });
+      if (error.name === "FirstAudioUnavailableError") {
+        this.onNoAudio?.();
+        return false;
+      }
       this.onError?.(MICROPHONE_CAPTURE_ERROR);
       return false;
     } finally {
