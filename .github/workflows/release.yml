@@ -104,7 +104,7 @@ jobs:
   tap-sync:
     name: Update Homebrew tap
     needs: [build, release]
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 20
     concurrency:
       group: homebrew-tap-whisper
@@ -177,13 +177,12 @@ jobs:
               end
 
               depends_on arch: :arm64
-              depends_on macos: :monterey
+              depends_on macos: :golden_gate
 
               app "Whisper.app"
 
               zap trash: [
-                "~/Library/Application Support/whisper",
-                "~/Library/Caches/whisper",
+                "~/Library/Application Support/WhisperNative",
                 "~/Library/Preferences/local.whisper.desktop.plist",
               ]
             end
@@ -196,8 +195,14 @@ jobs:
           set -euo pipefail
           cask="$GITHUB_WORKSPACE/homebrew-tap/Casks/whisper.rb"
           ruby -c "$cask"
-          brew info --cask "$cask"
-          brew fetch --cask "$cask"
+          validation_tap="whisper-build/native-release-check"
+          brew tap-new --no-git "$validation_tap"
+          trap 'brew untap --force "$validation_tap"' EXIT
+          validation_path="$(brew --repository "$validation_tap")/Casks/whisper.rb"
+          mkdir -p "$(dirname "$validation_path")"
+          cp "$cask" "$validation_path"
+          brew info --cask "$validation_tap/whisper"
+          brew fetch --cask "$validation_tap/whisper"
 
       - name: Commit and push cask
         working-directory: homebrew-tap

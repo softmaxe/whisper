@@ -30,7 +30,9 @@
 
 ## 安装
 
-需要搭载 Apple Silicon 的 Mac，运行 macOS 12 Monterey 或更高版本。
+Native builds require Apple Silicon and macOS 27 or later. Native migration is
+still under acceptance; the commands below install the latest published release.
+See [native development](native/README.md) before switching daily use.
 
 ```sh
 brew install --cask softmaxe/tap/whisper
@@ -64,7 +66,7 @@ brew upgrade --cask softmaxe/tap/whisper
 
 ```sh
 npm ci
-npm run dev
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run pack
 ```
 
 `npm run quality-check` 检查 lint、TypeScript、翻译和回归测试。`npm run pack` 构建 ad-hoc 签名的开发版应用。测试范围与 CI 见[测试说明](test/README.md)，发布构建见 [macOS 签名说明](docs/macos-signing.md)。
@@ -72,3 +74,8 @@ npm run dev
 ## 许可证
 
 [MIT](LICENSE)。基于 [OpenWhispr](https://github.com/OpenWhispr/openwhispr) 1.10.2 的 `834a0771` 提交，保留上游署名。内置 JetBrains Mono 字体采用 [OFL-1.1](src/assets/fonts/jetbrains-mono/OFL.txt)。
+
+Native archives include the standalone [FFmpeg](https://ffmpeg.org/) executable
+under LGPL 2.1 or later and [LAME](https://lame.sourceforge.io/) under LGPL 2.0 or
+later. Exact source archives, licenses and rebuild instructions are included in
+`Whisper.app/Contents/Resources/licenses/ffmpeg` alongside the distributed binary.

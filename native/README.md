@@ -2,8 +2,9 @@
 
 This Swift application develops alongside the existing Electron application. It
 targets Apple Silicon and macOS 27. It implements Settings, button-started
-Dictation, text cleanup, and Right Command Hold-to-talk and Hands-free with
-Automatic paste; remaining workflows follow through specification #35.
+Dictation, text cleanup, History, Dictionary, correction learning, and Right
+Command Hold-to-talk and Hands-free with Automatic paste. Remaining workflows
+follow through specification #35.
 
 Use Xcode 27 per command without changing the global Command Line Tools selection:
 
@@ -15,10 +16,13 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run native:pack
 
 Use Node.js 24 and `npm ci` for repository scripts. The Swift package has no external
 dependencies. Node.js is only a build tool; the app contains Swift code, system
-frameworks, app resources, and no Web runtime. Packaging requires the original
-[signing identity](../docs/macos-signing.md) and verifies the pinned certificate,
-bundle identifier, architecture, minimum OS, and runtime dependencies. It creates
-`dist/native-arm64/Whisper.app` without installing or launching it.
+frameworks, app resources, and no Web runtime. `native:pack` and `pack:release` require the original
+[signing identity](../docs/macos-signing.md). `pack` makes a separate, credential-free
+ad-hoc development build. Packaging verifies identity, architecture, minimum OS,
+runtime dependencies and extracted archive contents. Release output is
+`dist/native-arm64/Whisper.app` plus a versioned ZIP and checksum in `release/`.
+Development output is `dist/native-development-arm64/Whisper.app` with a
+`-development.zip` archive. Neither mode installs or launches the app.
 
 The native app uses `~/Library/Application Support/WhisperNative` and a separate
 Keychain service, `local.whisper.desktop.native`. It never reads the legacy profile
@@ -51,7 +55,7 @@ claims. Do not replace the daily-use app during this staged implementation.
 
 ## Button-started Dictation
 
-Home starts one built-in microphone request through `WhisperApplication.send`.
+Home starts one selected-microphone request through `WhisperApplication.send`.
 The source adapter pins its physical UID and owns an `AVCaptureSession` with a
 private control queue. A cancelled or failed request cannot revive when a late
 open, frame, or server response arrives. An uninterruptible AVFoundation call may
@@ -294,3 +298,34 @@ workflow tests drive actual shortcut capture, AAC/ASR requests, automatic paste,
 controlled field observations, Dictionary persistence and the next ASR prompt.
 Actual Accessibility compatibility and the learned-word notification still need
 coordinated physical and English/Chinese visual acceptance.
+
+## Packaged resources and helpers
+
+Production Swift resource bundles are copied from the release product directory;
+declared test-target bundles are excluded using Swift package metadata.
+`native/packaging.json` explicitly declares other resources, helper build scripts,
+helper destinations and redistribution licenses. Paths are relative to the repo
+and the app's Resources directory. Existing helpers must retain their `bin/` path,
+framework identifiers and executable names because those determine their stable
+signing identifiers. Every helper entry requires its license files. Third-party
+FFmpeg or other native decoders can be build-time dependencies, but package only
+the arm64 binary and required resources/licenses, never `node_modules` or Node.js.
+All bundled Mach-O code is detected and signed, including helper code added by
+later feature tickets. Native verification rejects build-machine library paths.
+
+`npm run dev` packages and launches a development bundle with its usage descriptions
+and an isolated `native/.development-profile`. This is an ad-hoc development
+identity; use the original signed package for permission-retention acceptance.
+Remove only that disposable development data with
+`rm -r native/.development-profile` when it is no longer needed.
+
+The codec build requires `pkgconf` (`brew install pkgconf`). Packaging builds a
+pinned FFmpeg and LAME from SHA-256-verified official source archives. External
+library autodetection, nonfree, GPL and version3 components are disabled; the
+standalone arm64 decoder links LAME statically. The bundle includes complete
+corresponding source archives, upstream license texts and its rebuild script in
+`Contents/Resources/licenses/ffmpeg`. The npm `ffmpeg-static` binary is never
+packaged because its current macOS build contains nonfree components.
+
+Media control packages the existing MediaRemoteAdapter framework and Perl bridge
+under their original `Contents/Resources/bin` paths with the upstream license.

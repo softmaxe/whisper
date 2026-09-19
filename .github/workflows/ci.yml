@@ -15,9 +15,11 @@ concurrency:
 
 jobs:
   checks:
-    name: Check Whisper
-    runs-on: macos-15
-    timeout-minutes: 30
+    name: Check native app and legacy regressions
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -47,8 +49,29 @@ jobs:
           assert.equal(lock.packages[""].version, pkg.version);
           NODE
 
+      - name: Install native codec build dependency
+        run: command -v pkg-config >/dev/null || brew install pkgconf
+
       - name: Install dependencies
         run: npm ci
 
-      - name: Check Whisper
+      - name: Check native app and legacy regressions
         run: npm run quality-check
+
+      - name: Record and validate native toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          xcrun swift --version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 27
+          test "$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)" -ge 27
+
+      - name: Build packaged decoder for native format tests
+        run: node scripts/build-native-ffmpeg.js
+
+      - name: Test native workflows
+        run: npm run native:test
+
+      - name: Package credential-free native development app
+        run: npm run pack

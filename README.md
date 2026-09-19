@@ -30,7 +30,10 @@ This fork focuses on dictation and file transcription. It does not include OpenW
 
 ## Install
 
-Requires an Apple Silicon Mac with macOS 12 Monterey or later.
+Native builds require an Apple Silicon Mac with macOS 27 or later. This branch is
+undergoing [native migration acceptance](docs/native-migration-status.md); the
+commands below install the latest published release. Keep the existing daily-use
+app until native acceptance and a separate release are complete.
 
 ```sh
 brew install --cask softmaxe/tap/whisper
@@ -60,15 +63,35 @@ Processing stays on your Mac only when your servers run locally. Local and priva
 
 ## Development
 
-Use Node.js 24 from [`.nvmrc`](.nvmrc).
+Use Xcode 27 with the macOS 27 SDK and Node.js 24 from [`.nvmrc`](.nvmrc).
+Node.js is a build/test tool; native packages contain no Electron, Chromium or
+Node.js runtime.
 
 ```sh
+brew install pkgconf
 npm ci
-npm run dev
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run native:test
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run pack
 ```
 
-Run `npm run quality-check` for lint, TypeScript, translations, and regression tests. `npm run pack` builds an ad-hoc signed development app. See [Tests](test/README.md) for coverage and CI, and [macOS signing](docs/macos-signing.md) for release builds.
+`npm run build` builds native Swift code. `npm run pack` produces a credential-free,
+ad-hoc native development bundle and archive. `npm run pack:release` uses the
+original signing identity and fails if it is unavailable or mismatched. Both
+commands verify arm64, macOS 27, native runtime dependencies, archive contents and
+checksum without installing anything. Use the signed bundle with a disposable
+`--profile` for manual development; see [native development](native/README.md).
+
+Run `npm run quality-check` for retained legacy lint, TypeScript, translation and
+regression coverage, plus `npm run native:test` for native workflows. Explicit
+`legacy:dev`, `legacy:pack`, and `legacy:pack:release` commands preserve the legacy
+comparison workflow. Packaging does not delete existing baseline archives. See
+[Tests](test/README.md) and [macOS signing](docs/macos-signing.md).
 
 ## License
 
 [MIT](LICENSE). Forked from [OpenWhispr](https://github.com/OpenWhispr/openwhispr) 1.10.2 at commit `834a0771`, with its attribution retained. Bundled JetBrains Mono fonts use [OFL-1.1](src/assets/fonts/jetbrains-mono/OFL.txt).
+
+Native archives include the standalone [FFmpeg](https://ffmpeg.org/) executable
+under LGPL 2.1 or later and [LAME](https://lame.sourceforge.io/) under LGPL 2.0 or
+later. Exact source archives, licenses and rebuild instructions are included in
+`Whisper.app/Contents/Resources/licenses/ffmpeg` alongside the distributed binary.

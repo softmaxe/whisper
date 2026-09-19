@@ -32,6 +32,12 @@ Keep an encrypted backup of both private files outside the repository, with acce
 npm run pack:release
 ```
 
+The default package is the native arm64 application for macOS 27. It writes
+`dist/native-arm64/Whisper.app`, `release/whisper-VERSION-macos-arm64.zip` and its
+`.sha256` file. Packaging stages and verifies the bundle and extracted archive
+before replacing those exact outputs; a failure preserves previous artifacts and
+removes temporary staging material. Existing legacy baseline archives are retained.
+
 The release build reads the saved identity and password from `~/.config/whisper/signing/`. It signs the app, helpers, and bundled executable code, then checks the result against the pinned public certificate. Missing or mismatched credentials fail the build instead of producing an ad-hoc signed release.
 
 To supply credentials from a secret store, set both environment variables:
@@ -43,7 +49,12 @@ To supply credentials from a secret store, set both environment variables:
 
 Local files are used only when both environment variables are absent. Setting just one is an error. Avoid putting either value in shell history, logs, source files, or committed configuration.
 
-`npm run pack` remains available for development without release credentials. Installing that build over a release can change the identity again; use release builds for permission-retention testing.
+`npm run pack` builds the native app without reading any release credentials,
+even if signing environment variables or local backups exist. It writes
+`dist/native-development-arm64/Whisper.app` and an explicitly named
+`-development.zip` archive. Installing an ad-hoc development build over a release
+can change its identity; use release builds for permission-retention testing.
+`npm run legacy:pack:release` remains available for legacy baseline comparisons.
 
 On macOS, check that changed app and native helper binaries keep the same signing identity:
 
@@ -51,7 +62,8 @@ On macOS, check that changed app and native helper binaries keep the same signin
 npm run test:signing
 ```
 
-This test requires the original signing credentials, using the same local files or environment variables as the release build. It signs two temporary app versions with different code, compares their designated requirements, and checks that each version satisfies the other's requirement. It also checks that a native helper cannot satisfy the main app's requirement. The test does not install an app or request permissions, so it cannot replace the [upgrade smoke check](../test/README.md#release-smoke-check).
+This test requires the original signing credentials, using the same local files or environment variables as the release build. It signs two temporary app versions with different code, compares their designated requirements, and checks that each version satisfies the other's requirement. It also checks that a native helper cannot satisfy the main app's requirement. The test also checks that temporary private files and Keychain entries disappear
+after successful signing and a failed PKCS12 import. The test does not install an app or request permissions, so it cannot replace the [upgrade smoke check](../test/README.md#release-smoke-check).
 
 ## Configure GitHub releases
 
@@ -62,7 +74,8 @@ base64 -i "$HOME/.config/whisper/signing/identity.p12" | gh secret set WHISPER_S
 gh secret set WHISPER_SIGNING_PASSWORD < "$HOME/.config/whisper/signing/password"
 ```
 
-The Release workflow passes these named secrets to the reusable Build workflow for tagged releases and runs `npm run test:signing` before packaging. Pull requests and pushes to `main` run checks without packaging or signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. Release signing imports the identity into a temporary build keychain, verifies signatures against `resources/mac/signing-certificate.pem`, and cleans up its temporary keychain. A release cannot proceed with a different certificate or an ad-hoc signature.
+The Release workflow passes these named secrets to the reusable Build workflow for tagged releases and runs `npm run test:signing` before packaging. Pull requests and pushes to `main` run native tests and development packaging
+without signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. Release signing imports the identity into a temporary build keychain, verifies signatures against `resources/mac/signing-certificate.pem`, and cleans up its temporary keychain. A release cannot proceed with a different certificate or an ad-hoc signature.
 
 Restore these same secret values when moving the release workflow to another repository. Do not generate a fresh certificate on each runner or release. The private key is needed only to build releases; users do not need the signing files.
 

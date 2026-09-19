@@ -1,0 +1,47 @@
+{
+  "buildScripts": ["scripts/build-mediaremote-adapter.js", "scripts/build-native-ffmpeg.js"],
+  "resources": [
+    {
+      "from": "LICENSE",
+      "to": "LICENSE"
+    },
+    {
+      "from": "src/assets/icon.icns",
+      "to": "icon.icns"
+    },
+    {
+      "from": "native/Resources/en.lproj",
+      "to": "en.lproj"
+    },
+    {
+      "from": "native/Resources/zh-CN.lproj",
+      "to": "zh-CN.lproj"
+    },
+    {
+      "from": "resources/mediaremote-adapter/bin/mediaremote-adapter.pl",
+      "to": "bin/mediaremote-adapter.pl"
+    }
+  ],
+  "helpers": [
+    {
+      "from": "resources/bin/MediaRemoteAdapter.framework",
+      "to": "bin/MediaRemoteAdapter.framework",
+      "licenses": [
+        {
+          "from": "resources/mediaremote-adapter/LICENSE",
+          "to": "bin/mediaremote-adapter.LICENSE"
+        }
+      ]
+    },
+    {
+      "from": "resources/bin/ffmpeg",
+      "to": "bin/ffmpeg",
+      "licenses": [
+        {
+          "from": "resources/bin/ffmpeg-licenses",
+          "to": "licenses/ffmpeg"
+        }
+      ]
+    }
+  ]
+}
