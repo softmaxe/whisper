@@ -337,7 +337,7 @@ struct DesktopWorkflowTests {
         #expect(!fixture.app.state.desktop.mainWindowVisible)
     }
 
-    @Test func errorAndCopyRecoveryRemainVisibleUntilDismissed() async throws {
+    @Test func errorPersistsAndRecoveryCountdownWaitsForNativePresentation() async throws {
         let fixture = try ShortcutFixture()
         defer { fixture.remove() }
         var preferences = DesktopPreferences()
@@ -358,7 +358,10 @@ struct DesktopWorkflowTests {
         fixture.clock.advance(5)
         #expect(fixture.app.state.recordingPill.feedback == .recovery)
         #expect(fixture.app.state.recordingPill.visible)
-        fixture.app.send(.dismissPillFeedback)
+        #expect(!fixture.app.state.desktop.copyRecovery.isPresented)
+        let revision = try #require(fixture.app.state.desktop.copyRecovery.revision)
+        fixture.app.send(.copyRecoveryPresented(revision, true))
+        fixture.clock.advance(5)
         #expect(!fixture.app.state.recordingPill.visible)
         #expect(fixture.app.state.dictation.text == "Fixture transcript")
     }

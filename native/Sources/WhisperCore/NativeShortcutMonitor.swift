@@ -121,12 +121,13 @@ import Carbon.HIToolbox
         var bindings = application.state.settings.shortcuts
         if application.state.dictation.phase.isActive, application.state.dictation.origin != .button,
            let active = application.activeShortcut { bindings.append(active.value) }
-        let consume = suppression.consume(input, pressed: physicalKeys, bindings: bindings, capturing: capturing)
+        let recoveryEscape = application.state.canDismissCopyRecovery
+        let consume = suppression.consume(input, pressed: physicalKeys, bindings: bindings, capturing: capturing, dismissingRecovery: recoveryEscape)
         let configuredEscape = application.activeShortcut?.key == "Esc"
             && application.activeShortcut?.matches(input, pressed: physicalKeys) == true
             && application.state.dictation.phase != .processing
         if input.keyCode == ShortcutInput.escape, input.isDown, !capturing,
-           application.state.dictation.phase.isActive, !configuredEscape {
+           (application.state.dictation.phase.isActive && !configuredEscape) || recoveryEscape {
             // Cancellation only invalidates ownership; do it before an already queued server reply.
             application.send(.shortcut(input))
             return true

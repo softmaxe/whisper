@@ -63,11 +63,13 @@ import WhisperCore
     let clipboard = ControlledClipboard()
     let desktop = ControlledDesktopEffects()
     var app: WhisperApplication
-    init(transport customTransport: (any FileHTTPTransport)? = nil, correctionSystem: (any CorrectionMonitoringSystem)? = nil) throws {
+    init(transport customTransport: (any FileHTTPTransport)? = nil, correctionSystem: (any CorrectionMonitoringSystem)? = nil,
+         cleanup: any CleanupService = SelfHostedCleanup(), pillDisplays: (any PillDisplaySystem)? = nil) throws {
         profile = try ProfileFixture()
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials,
             microphones: microphones, transcriber: SelfHostedTranscriber(transport: customTransport ?? transport),
-            clock: clock, clipboard: clipboard, pasteSystem: paste, correctionSystem: correctionSystem ?? InertCorrectionMonitoringFixture(), desktopEffects: desktop)
+            clock: clock, clipboard: clipboard, pasteSystem: paste, cleanup: cleanup,
+            correctionSystem: correctionSystem ?? InertCorrectionMonitoringFixture(), desktopEffects: desktop, pillDisplays: pillDisplays)
         app.send(.saveASR(.init(serverURL: "http://localhost:8178/v1", model: "fixture"), credential: .unchanged))
     }
     func key(_ code: UInt16 = ShortcutInput.rightCommand, down: Bool = true, repeat repeated: Bool = false) {

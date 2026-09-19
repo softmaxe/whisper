@@ -256,6 +256,26 @@ struct DiagnosticsWorkflowTests {
         await f.app.prepareForTermination()
     }
 
+    @Test func recordingPillOriginKeepsItsTargetAndItsOwnDiagnosticOutcome() async throws {
+        let f = DiagnosticsFixture(); defer { f.remove() }
+        let target = f.paste.base.frontmost
+        f.app.send(.recordingPillAction)
+        let capture = try #require(f.microphones.sessions.first)
+        capture.open(); capture.deliver([Float](repeating: 0, count: 4800))
+        await settle { f.app.state.dictation.phase == .recording }
+        f.paste.base.frontmost = PasteTarget(processID: 404)
+        f.app.send(.recordingPillAction)
+        await settle { await f.asr.base.requests.count == 1 }
+        await f.reply()
+        await settle { f.app.state.dictation.phase == .result }
+        #expect(f.paste.base.pasted == [target])
+        let record = try #require(try await f.records().last)
+        #expect(record["origin"] as? String == "pill")
+        #expect(record["outcome"] as? String == "completed")
+        #expect(record["delivery"] as? String == "pasted")
+        await f.app.prepareForTermination()
+    }
+
     @Test func terminationClosesDiagnosticsAfterRetainedAudioAndInsightsAreDurable() async throws {
         let f = DiagnosticsFixture(); defer { f.remove() }
         _ = await f.record(); await f.submit(); await f.reply()

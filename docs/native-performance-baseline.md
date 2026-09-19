@@ -303,7 +303,7 @@ log. Record enabled-versus-disabled probe overhead during packaged comparison.
 
 | Stage                                                 | Native boundary                                                                                                                                               |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requestAccepted`                                     | The application accepts a new button/provisional shortcut request; time origin.                                                                               |
+| `requestAccepted`                                     | The application accepts a new button, Recording pill or provisional shortcut request; time origin.                                                            |
 | `gestureResolved`                                     | The request becomes a hold or genuine double tap.                                                                                                             |
 | `deviceResolved`                                      | The application has selected one physical input; its identity is omitted.                                                                                     |
 | `acquisitionRequested`                                | Immediately before requesting source start, including later permission/control-queue work.                                                                    |

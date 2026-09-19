@@ -114,6 +114,13 @@ struct RecordingStatus: View {
 @MainActor final class RecordingPillController {
     private let application: WhisperApplication
     private let panel: NonactivatingRecordingPanel
+    private struct LayoutRequest: Equatable {
+        let size: CGSize
+        let placement: PillPlacement
+        let requestID: UUID?
+    }
+    private var lastLayout: LayoutRequest?
+    private var presentedRecovery: UUID?
     init(application: WhisperApplication) {
         self.application = application
         panel = NonactivatingRecordingPanel(contentRect: NSRect(x: 0, y: 0, width: 170, height: 64), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -125,25 +132,38 @@ struct RecordingStatus: View {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = NSHostingView(rootView: RecordingPill(application: application))
     }
-    func update() {
+    func update(refreshGeometry: Bool = false) {
         let presentation = application.state.recordingPill
-        guard presentation.visible else { panel.orderOut(nil); return }
-        if let screen = NSScreen.main {
-            let recovery: Bool
-            if case .recovery = application.state.dictation.delivery { recovery = true } else { recovery = false }
-            let failure = presentation.feedback == .failed
-            let learning = presentation.feedback == .learned
-            let width: CGFloat = recovery || failure || learning ? 390 : 170
-            let frame = screen.visibleFrame
-            let x: CGFloat = switch presentation.placement {
-            case .bottomLeft: frame.minX + 4
-            case .center: frame.midX - width / 2
-            case .bottomRight: frame.maxX - width - 4
-            }
-            panel.setFrame(NSRect(x: max(frame.minX, min(x, frame.maxX - width)), y: frame.minY + 4,
-                width: width, height: recovery ? 220 : failure ? 150 : learning ? 160 : 64), display: true)
+        guard presentation.visible else {
+            panel.orderOut(nil)
+            if let revision = presentedRecovery { application.send(.copyRecoveryPresented(revision, false)) }
+            presentedRecovery = nil
+            lastLayout = nil
+            return
         }
+        let recovery = presentation.feedback == .recovery
+        let failure = presentation.feedback == .failed
+        let learning = presentation.feedback == .learned
+        let size = CGSize(width: recovery || failure || learning ? 390 : 170,
+                          height: recovery ? 220 : failure ? 150 : learning ? 160 : 64)
+        let layout = LayoutRequest(size: size, placement: presentation.placement, requestID: presentation.requestID)
+        if refreshGeometry || lastLayout != layout {
+            lastLayout = layout
+            application.send(.updatePillGeometry(size: size, currentFrame: panel.isVisible ? panel.frame : application.state.desktop.pillFrame))
+        }
+        let resolved = application.state.recordingPill
+        if let frame = resolved.frame { panel.setFrame(frame, display: true) }
+        else { panel.setContentSize(size) }
         panel.orderFrontRegardless()
+        let readyRecovery = recovery && !resolved.geometryPending ? resolved.recoveryRevision : nil
+        if presentedRecovery != readyRecovery {
+            if let revision = presentedRecovery { application.send(.copyRecoveryPresented(revision, false)) }
+            presentedRecovery = readyRecovery
+            if let revision = readyRecovery {
+                // Start the countdown only after native bounds and visibility are applied.
+                application.send(.copyRecoveryPresented(revision, true))
+            }
+        }
     }
 }
 
@@ -155,6 +175,8 @@ private final class NonactivatingRecordingPanel: NSPanel {
 private struct RecordingPill: View {
     let application: WhisperApplication
     @State private var levels = [Float](repeating: 0, count: 10)
+    @State private var recoveryHovered = false
+    @FocusState private var recoveryFocused: Bool
     private var dictation: DictationState { application.state.dictation }
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
@@ -162,10 +184,12 @@ private struct RecordingPill: View {
             CorrectionLearningFeedback(application: application)
                 .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
         } else if case .recovery = dictation.delivery {
+            let recoveryRevision = application.state.desktop.copyRecovery.revision
             VStack(alignment: .leading, spacing: 10) {
                 Text(dictation.delivery.message(in: language) ?? "").font(.system(size: 12))
-                ScrollView { Text(dictation.text).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading) }
+                ScrollView { Text(dictation.text).textSelection(.enabled).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading) }
                     .frame(maxHeight: 100)
+                    .focusable().focused($recoveryFocused)
                 Button(language.text(dictation.resultCopied ? "Copied" : "Copy text", dictation.resultCopied ? "已复制" : "复制文字")) {
                     application.send(.copyDictationResult)
                 }
@@ -173,12 +197,23 @@ private struct RecordingPill: View {
                 Button(language.text("Dismiss", "关闭")) { application.send(.dismissPillFeedback) }
             }
             .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
+            .onHover { held in
+                recoveryHovered = held
+                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, held || recoveryFocused)) }
+            }
+            .onChange(of: recoveryFocused) {
+                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, recoveryHovered || recoveryFocused)) }
+            }
+            .onChange(of: recoveryRevision) {
+                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, recoveryHovered || recoveryFocused)) }
+            }
+            .onExitCommand { application.send(.dismissPillFeedback) }
         } else if application.state.recordingPill.feedback == .failed {
             VStack(alignment: .leading, spacing: 12) {
                 Label(dictation.failure?.message(in: language) ?? language.text("Try again", "请重试"), systemImage: "exclamationmark.triangle")
                     .font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button(language.text("Retry", "重试")) { application.send(.startDictation) }
+                    Button(language.text("Retry", "重试")) { application.send(.recordingPillAction) }
                     Button(language.text("Dismiss", "关闭")) { application.send(.dismissPillFeedback) }
                 }
             }
@@ -202,10 +237,7 @@ private struct RecordingPill: View {
     private var compactPill: some View {
         HStack(spacing: 6) {
             Button {
-                if application.state.recordingPill.feedback == .idle { application.send(.startDictation) }
-                else if dictation.phase == .recording { application.send(.stopDictation) }
-                else if dictation.phase == .result { application.send(.copyDictationResult) }
-                else if dictation.phase == .failed || dictation.phase == .idle { application.send(.startDictation) }
+                application.send(.recordingPillAction)
             } label: {
                 HStack(spacing: 6) {
                     if dictation.phase == .preparing || dictation.phase == .processing {

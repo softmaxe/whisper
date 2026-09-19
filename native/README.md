@@ -640,3 +640,28 @@ one matched condition. The [measurement protocol](../docs/native-performance-bas
 defines stages, append safety, outcome handling and packaged collection steps.
 Automated diagnostics tests do not complete #54's hardware or numerical-budget
 acceptance gates.
+
+## Recording pill actions and display placement
+
+The pill's Start and Retry controls send `recordingPillAction`. They use a separate
+`pill` Dictation origin that captures the frontmost target at startup and follows
+the complete processing, History and Automatic paste pipeline. The ordinary
+`startDictation` button command retains its copyable-result behavior and does not
+probe the operating system for a paste target.
+
+Copy recovery waits for the native panel to apply its bounds and become visible
+before starting its five-second dismissal timer. Hovering or focusing the card
+pauses the timer; releasing that hold starts a fresh five seconds. Escape closes
+the visible recovery without deleting the current result or History. A revision
+ties presentation events and timer callbacks to one recovery, so stale callbacks
+cannot dismiss a replacement result or a newer recording.
+
+`PillDisplaySystem` supplies display metadata and the target's ordinary on-screen
+window bounds. The policy selects the display intersecting the largest target
+window, falling back to the cursor when no window is available or the reference
+700 ms query deadline expires. A late query cannot override that fallback. Subsequent panel
+resizes retain that display; Hands-free submission changes its paste target without
+moving the existing pill. Display removal and work-area changes clamp the frame
+within the selected display, including negative origins. The native adapter reads
+window-server geometry without reading titles or requesting permissions. Headless
+library consumers use an inert adapter; workflow tests provide synthetic bounds.

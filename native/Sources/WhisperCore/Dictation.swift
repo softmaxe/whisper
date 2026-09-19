@@ -96,7 +96,8 @@ extension WhisperApplication {
         state.dictation.origin = origin
         state.dictation.gesture = origin == .hold ? .candidate : .none
         provisionalFailure = nil
-        dictationTarget = origin == .hold ? pasteSystem.captureTarget() : nil
+        dictationTarget = origin == .hold || origin == .pill ? pasteSystem.captureTarget() : nil
+        beginPillTarget(dictationTarget)
         state.dictation.timing["accepted"] = 0
         dictationDiagnostics = diagnosticOutput?.begin(id: id, origin: origin, acceptedAt: dictationStartedAt, source: clock.timestampSource)
         do {
@@ -243,6 +244,7 @@ extension WhisperApplication {
             else { learning.stop() }
             self?.state.dictation.delivery = result
             self?.state.dictation.phase = .result
+            if case .recovery = result { self?.beginCopyRecovery(requestID: requestID) }
             self?.showPillFeedback(.completed, requestID: requestID)
             self?.processingTask = nil
         }
@@ -254,6 +256,7 @@ extension WhisperApplication {
 
     func cancelDictation(kind: DictationCancellation = .user) {
         guard state.dictation.phase.isActive else { return }
+        cancelPillTargetLookup()
         correctionLearning.stop()
         if let id = state.dictation.requestID { endRecordingFeedback(requestID: id, stopped: false) }
         preserveEndedRecording(.discarded, rejected: kind == .rejectedGesture || state.dictation.gesture.isProvisional)
