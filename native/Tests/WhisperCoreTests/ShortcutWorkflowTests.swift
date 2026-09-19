@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import WhisperCore
 
-@MainActor private final class ControlledPasteSystem: AutomaticPasteSystem {
+@MainActor final class ControlledPasteSystem: AutomaticPasteSystem {
     var frontmost = PasteTarget(processID: 101)
     var modifiersHeld = false
     var clipboard = ClipboardSnapshot(items: [["public.utf8-plain-text": Data("original".utf8), "public.rtf": Data("rich fixture".utf8)]])
@@ -48,7 +48,7 @@ import WhisperCore
     func releaseProbe(_ result: Bool) { probeContinuation?.resume(returning: result); probeContinuation = nil }
 }
 
-@MainActor private final class ShortcutFixture {
+@MainActor final class ShortcutFixture {
     let profile: ProfileFixture
     let microphones = ControlledMicrophones()
     let clock = ControlledClock()
@@ -56,10 +56,10 @@ import WhisperCore
     let paste = ControlledPasteSystem()
     let clipboard = ControlledClipboard()
     let app: WhisperApplication
-    init() throws {
+    init(transport customTransport: (any FileHTTPTransport)? = nil) throws {
         profile = try ProfileFixture()
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials,
-            microphones: microphones, transcriber: SelfHostedTranscriber(transport: transport),
+            microphones: microphones, transcriber: SelfHostedTranscriber(transport: customTransport ?? transport),
             clock: clock, clipboard: clipboard, pasteSystem: paste)
         app.send(.saveASR(.init(serverURL: "http://localhost:8178/v1", model: "fixture"), credential: .unchanged))
     }
@@ -142,6 +142,7 @@ struct ShortcutWorkflowTests {
         }
         f.clock.advance(0.05)
         f.key(down: false)
+        f.clock.advance(WhisperApplication.doubleTapWindow)
         if !deliverAudio { capture.open() }
         #expect(f.app.state.dictation.phase == .idle)
         #expect(f.app.state.dictation.cancellation == .rejectedGesture)
@@ -150,6 +151,10 @@ struct ShortcutWorkflowTests {
         #expect(f.paste.writes.isEmpty)
         f.clock.advance(1)
         #expect(f.app.state.dictation.phase == .idle)
+        await settle {
+            let temporary = f.profile.profile.directory.appendingPathComponent("Temporary")
+            return ((try? FileManager.default.contentsOfDirectory(atPath: temporary.path)) ?? []).isEmpty
+        }
     }
 
     @Test func leftAndRightOverlapAndCommandCombinationsDoNotDictate() async throws {

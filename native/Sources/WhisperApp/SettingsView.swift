@@ -116,7 +116,7 @@ struct SettingsRootView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
             VStack(alignment: .leading, spacing: 12) {
                 Text(language.text("Dictation shortcut", "听写快捷键")).font(.headline)
-                Text(language.text("Hold Right Command to speak, then release to transcribe. Esc cancels.", "按住右 Command 说话，松开后转录。按 Esc 取消。"))
+                Text(language.text("Hold Right Command and release to submit. Double-tap for Hands-free Dictation, then tap to finish. Esc cancels.", "按住右 Command 说话，松开提交。双击开始免按键听写，再轻按一次结束。按 Esc 取消。"))
                     .font(.caption).foregroundStyle(.secondary)
                 if !application.state.shortcutAvailable {
                     Button(language.text("Enable Accessibility for global shortcuts", "启用辅助功能以使用全局快捷键")) {

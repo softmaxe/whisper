@@ -49,6 +49,9 @@ public final class WhisperApplication {
     @ObservationIgnored var dictationTarget: PasteTarget?
     @ObservationIgnored var pressedKeys = Set<UInt16>()
     @ObservationIgnored var holdDeadline: (any ScheduledAction)?
+    @ObservationIgnored var doubleTapDeadline: (any ScheduledAction)?
+    @ObservationIgnored var gesturePressedAt: TimeInterval = 0
+    @ObservationIgnored var firstTapReleasedAt: TimeInterval = 0
     @ObservationIgnored var provisionalFailure: DictationFailure?
 
     public init(

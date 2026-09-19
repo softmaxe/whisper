@@ -2,7 +2,7 @@
 
 This Swift application develops alongside the existing Electron application. It
 targets Apple Silicon and macOS 27. It implements Settings, button-started
-Dictation, and Right Command Hold-to-talk with Automatic paste; the remaining
+Dictation, and Right Command Hold-to-talk and Hands-free with Automatic paste; the remaining
 workflows and pages follow through specification #35.
 
 Use Xcode 27 per command without changing the global Command Line Tools selection:
@@ -89,8 +89,7 @@ The first physical Right Command press starts provisional capture. A standalone
 hold becomes Dictation; release submits the recording. A short tap or an
 intervening Command combination always discards provisional audio without ASR.
 The initial hold threshold is the legacy 150 ms value. It is provisional until
-physical keyboard acceptance measures it. Double-tap Hands-free and configurable
-bindings follow in #40 and #41.
+physical keyboard acceptance measures it. Configurable bindings follow in #41.
 
 The session event tap reads each modifier's physical key state rather than the
 aggregate Command flag, so Left Command cannot masquerade as a Right Command
@@ -124,3 +123,28 @@ not establish physical key delivery, Accessibility permission behavior, actual
 insertion into target editors, or native English/Chinese visual acceptance.
 Those checks remain pending against a signed disposable-profile build, without
 replacing the installed daily-use app or resetting system permissions.
+
+## Hands-free Dictation
+
+Double-tap Right Command from idle to keep recording after release. A later
+standalone press finishes only when released. Command combinations, including
+app switching, preserve their ordinary action and keep Hands-free recording.
+The Target app is captured at submission and kept fixed during processing.
+Hold-to-talk continues to use its startup target.
+
+The provisional double-tap window is 300 ms from the first short release to the
+second press. Both taps must be shorter than the 150 ms hold threshold; a held
+second press follows Hold-to-talk instead. The first tap keeps the same
+provisional capture during that window to preserve opening audio. When the
+window expires, all provisional audio is discarded without ASR or History.
+Gesture recognition never substitutes for first-source-frame readiness. These
+thresholds are implementation defaults, pending physical keyboard measurements.
+
+There is no recording duration ceiling. A deterministic workflow test advances
+the clock by two hours while recording, writes over thirteen minutes of actual
+synthetic audio in bounded frames, then decodes the resulting file incrementally
+to verify its opening/ending samples and complete frame count. A generous 96 MiB
+process-memory growth envelope detects retaining the full 147 MiB PCM fixture.
+This is a regression check, not a hardware latency or energy benchmark.
+Cancellation and source failures still release the affected request, and old
+timers, acquisitions or ASR responses cannot stop a new one.
