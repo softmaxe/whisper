@@ -39,6 +39,8 @@ public enum AppCommand {
     case setHistoryRetention(HistoryPreferences), runHistoryRetention, clearHistoryAudio
     case retryHistory(UUID), cancelHistoryRetry, playHistory(UUID), stopHistoryPlayback, revealHistoryAudio(UUID)
     case selectUpload(URL), startUpload, cancelUpload, resetUpload, copyUploadResult
+    case chooseUploadFiles([URL]), addUploadBatchFiles([URL]), startUploadBatch, cancelUploadBatch, clearUploadBatch
+    case removeUploadBatchItem(UUID), copyUploadBatchItem(UUID)
     case dismissMessage
 }
 
@@ -56,6 +58,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var desktop = DesktopState()
     public var insights = InsightsState()
     public var upload = UploadState()
+    public var batchUpload = BatchUploadState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -200,6 +203,13 @@ public final class WhisperApplication {
         case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
         case .undoLearnedCorrections: undoLearnedCorrections()
         case .dismissLearnedCorrections: state.corrections = CorrectionLearningState()
+        case let .chooseUploadFiles(sources): chooseUploadFiles(sources)
+        case let .addUploadBatchFiles(sources): addUploadBatchFiles(sources)
+        case .startUploadBatch: startUploadBatch()
+        case .cancelUploadBatch: cancelUploadBatch()
+        case .clearUploadBatch: clearUploadBatch()
+        case let .removeUploadBatchItem(id): removeUploadBatchItem(id)
+        case let .copyUploadBatchItem(id): copyUploadBatchItem(id)
         case let .selectUpload(source): selectUpload(source)
         case .startUpload: startUpload()
         case .cancelUpload: cancelUpload()

@@ -114,6 +114,7 @@ actor ControlledUploadTransport: FileHTTPTransport {
         let body = try JSONSerialization.data(withJSONObject: ["text": text])
         replies.removeValue(forKey: index)?.resume(returning: HTTPResponse(status: status, body: body))
     }
+    func abort(_ index: Int = 0) { replies.removeValue(forKey: index)?.resume(throwing: CancellationError()) }
 }
 
 actor ForbiddenUploadCleanup: CleanupService {

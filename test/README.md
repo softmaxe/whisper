@@ -14,6 +14,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run pack
 
 Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite inside Electron's Node runtime, matching the SQLite binding built by `npm ci`. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the CI and Build workflows.
 
+`native:test` runs the complete native suite in two processes: ordinary workflows
+first, then the long-recording memory check alone. Every test still runs. The
+separate process keeps the process-wide RSS assertion independent of concurrent
+Upload fixtures larger than 25 MiB; its memory threshold is unchanged.
+
 On macOS, run `npm run test:signing` with the original [release signing credentials](../docs/macos-signing.md#build-locally) to check identity continuity. The test signs two app versions and native helpers with different code, compares their designated requirements, and verifies that each version satisfies the other's requirement. It also rejects a helper matching the main app's identity. Release runs this test automatically before packaging. It does not install the app or request permissions and cannot replace the upgrade smoke check below.
 
 ## Coverage

@@ -557,3 +557,36 @@ For native conversion tests, build the native media tools first or set
 prefers that override, then `resources/bin/ffmpeg`; the legacy npm binary is a
 local-test fallback only. Shipping conversion uses the packaged native helper.
 English/Chinese visual and picker checks remain part of full interface acceptance.
+
+## Batch Upload
+
+Selecting several files creates an application-owned queue. Selecting one file
+uses the single-file view when the queue is empty; later selections join an
+existing queue, including a running one. Repeated selections of the same file
+create separate explicit items. Queued items can be removed. Clearing a queue
+cancels its outstanding work and removes queue results without deleting History
+or source files.
+
+The queue processes one file at a time using the same file-processing operation
+as single Upload. Each run snapshots ASR settings, credential and language once,
+including for files appended while it runs. A subsequent run uses current
+settings. Per-file preparation, transcription and History state remain visible
+through navigation; aggregate progress counts settled files rather than guessing
+network progress. A conversion, server or save failure leaves later items runnable.
+Successful raw text remains copyable when its History save fails or later work is
+cancelled. Every item preserves Upload's exclusions from cleanup, Chinese
+conversion, Snippets, audio retention, Automatic paste and Dictation Insights.
+
+Cancellation immediately unlocks the queue, keeps settled rows and marks unfinished
+rows cancelled. Run identity checks prevent an old response from accepting a new
+History write or changing another run. Writes already accepted before cancellation
+finish independently, as they do for single Upload and application termination.
+Stable item identities make persistence idempotent. The shared
+`cancelUploadsAndWait` also owns batch tasks, including previously cancelled runs,
+so the termination caller needs no additional cancellation API.
+
+Batch workflow tests use actual media and isolated persistence to verify duplicate
+selection, removal, dynamic append, sequential requests, per-run snapshots, mixed
+failures, raw results with History on/off, copy recovery, cancellation, clear/new-run
+isolation, application teardown and actual conversion-process cleanup. The queue's
+UI and commands remain separate from file conversion and protocol adapters.
