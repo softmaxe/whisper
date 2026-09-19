@@ -51,6 +51,7 @@ struct DesktopIntegrationTests {
         #expect(f.app.state.dictation.delivery == .pasted)
         #expect(f.desktop.cues == [.ready, .stopped])
         #expect(f.app.state.recordingPill.feedback == .completed)
+        f.clock.advance(0.45)
         await f.app.prepareForTermination()
         #expect(f.desktop.mediaEvents == ["pause", "resume"])
         let reopened = f.profile.open()
@@ -71,10 +72,13 @@ struct DesktopIntegrationTests {
         app.send(.testCleanupPrompt(text: "Synthetic draft", prompt: nil))
         await settle { await http.requests.count == 1 }
         #expect(app.state.cleanupTest.isRunning)
-        await app.prepareForTermination()
+        var finished = false
+        let termination = Task { await app.prepareForTermination(); finished = true }
+        await settle { !app.state.cleanupTest.isRunning }
         #expect(!app.state.cleanupTest.isRunning)
+        #expect(!finished)
         await http.reply(content: "Late result must not publish")
-        try await Task.sleep(for: .milliseconds(10))
+        await termination.value
         #expect(app.state.cleanupTest.text.isEmpty)
         #expect(app.state.cleanupTest.failure == nil)
     }

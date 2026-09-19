@@ -81,6 +81,7 @@ public final class WhisperApplication {
     public let profileStore: ProfileStore
     @ObservationIgnored let credentials: any CredentialStore
     @ObservationIgnored var profileReadable = true
+    @ObservationIgnored let workflowTasks = WorkflowTasks()
     @ObservationIgnored let historyStore: HistoryStore
     @ObservationIgnored var historyReadTask: Task<Void, Never>?
     @ObservationIgnored var historySearchTask: Task<Void, Never>?
@@ -161,7 +162,7 @@ public final class WhisperApplication {
         self.clipboard = clipboard ?? SystemTextClipboard()
         let pasteSystem = pasteSystem ?? NativeAutomaticPasteSystem()
         self.pasteSystem = pasteSystem
-        self.automaticPaste = AutomaticPaste(system: pasteSystem, clock: self.clock)
+        self.automaticPaste = AutomaticPaste(system: pasteSystem, clock: self.clock, tasks: workflowTasks)
         self.profileStore = ProfileStore(profile: profile)
         self.historyStore = HistoryStore(profile: profile)
         self.credentials = credentials
@@ -173,13 +174,14 @@ public final class WhisperApplication {
         }
         loadDictionary()
         loadSnippets()
-        correctionLearning = CorrectionLearning(system: correctionSystem ?? NativeCorrectionMonitoringSystem(), clock: self.clock) { [weak self] words in
+        correctionLearning = CorrectionLearning(system: correctionSystem ?? NativeCorrectionMonitoringSystem(), clock: self.clock, tasks: workflowTasks) { [weak self] words in
             self?.saveLearnedCorrections(words)
         }
         startHistoryRetention()
     }
 
     isolated deinit {
+        workflowTasks.cancelAll()
         historyRetryOwnership?.cancel()
         historyRetryTask?.cancel()
         historyAudioTask?.cancel()

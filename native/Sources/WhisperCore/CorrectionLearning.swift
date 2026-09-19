@@ -47,8 +47,9 @@ public struct CorrectionLearningState: Equatable, Sendable {
     var baselineAttempts = 0
     var queryAgain = false
 
-    init(system: any CorrectionMonitoringSystem, clock: any WorkflowClock, learned: @escaping @MainActor ([String]) -> Void) {
-        self.system = system; self.clock = clock; self.learned = learned
+    private let tasks: WorkflowTasks
+    init(system: any CorrectionMonitoringSystem, clock: any WorkflowClock, tasks: WorkflowTasks, learned: @escaping @MainActor ([String]) -> Void) {
+        self.system = system; self.clock = clock; self.tasks = tasks; self.learned = learned
     }
     deinit { observation?.cancel(); readTask?.cancel(); commitTask?.cancel() }
 
@@ -105,7 +106,7 @@ public struct CorrectionLearningState: Equatable, Sendable {
     private func query(_ id: UUID) {
         guard generation == id, let field else { return }
         guard readTask == nil else { queryAgain = true; return }
-        readTask = Task { [weak self] in
+        readTask = tasks.start { [weak self] in
             let snapshot = await field.read()
             guard let self, generation == id, !Task.isCancelled else { return }
             defer {
@@ -142,7 +143,7 @@ public struct CorrectionLearningState: Equatable, Sendable {
         guard generation == id, let field else { return }
         debounce = nil
         let original = original
-        commitTask = Task { [weak self] in
+        commitTask = tasks.start { [weak self] in
             // Recheck field, focus and selection after the debounce, before storing any word.
             let snapshot = await field.read()
             guard self?.generation == id, !Task.isCancelled,

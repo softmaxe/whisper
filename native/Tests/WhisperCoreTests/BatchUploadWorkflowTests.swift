@@ -185,7 +185,10 @@ struct BatchUploadWorkflowTests {
         let currentRun = f.app.state.batchUpload.runID
         await settle { await f.transport.requests.count == 3 }
         try await f.transport.reply(1, text: "Cancelled late result")
-        await settle { !FileManager.default.fileExists(atPath: lateBody.deletingLastPathComponent().path) }
+        await settle {
+            !FileManager.default.fileExists(atPath: lateBody.deletingLastPathComponent().path)
+                && !FileManager.default.fileExists(atPath: lateAudio.deletingLastPathComponent().path)
+        }
         #expect(!FileManager.default.fileExists(atPath: lateAudio.deletingLastPathComponent().path))
         #expect(f.app.state.batchUpload.runID == currentRun && f.app.state.batchUpload.isProcessing)
         try await f.transport.reply(2, text: "New run result")

@@ -376,6 +376,17 @@ over. Pill updates never activate the main window or make the pill key/main.
 correction observation, awaits owned media cleanup, and flushes accepted History
 writes before the delegate replies to AppKit's termination request.
 
+Resource-owning workflow tasks remain registered until they actually finish,
+including requests already cancelled before another request starts. Termination
+joins microphone release even when no History row is saved, ASR and cleanup work,
+retained-audio retry leases, pending correction reads and Automatic paste's
+clipboard-restoration queue. Normal cancellation still returns immediately.
+The existing cleanup deadline may release its UI waiter before the cancelled
+server request finishes; the underlying request remains owned for termination.
+Clipboard restoration keeps its normal 450 ms delay after a successful paste.
+Deterministic shutdown tests advance that controlled timer or release held
+external callbacks before awaiting termination.
+
 Deterministic tests cover preference persistence, system-operation requests through
 controlled adapters, delayed pause/cancel/retry ordering, preparation and provisional
 capture, hold/hands-free feedback, error/copy recovery, and auto-hide timers. They
