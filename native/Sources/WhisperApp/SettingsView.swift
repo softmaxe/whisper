@@ -67,6 +67,7 @@ struct SettingsRootView: View {
                         case .general: generalSettings
                         case .speechToText: speechSettings
                         case .textCleanup: CleanupSettingsView(application: application)
+                        case .privacyAndData: HistoryPrivacyView(application: application)
                         }
                     }
                     .frame(maxWidth: 720, alignment: .leading)
@@ -235,10 +236,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, dictionary, general, speechToText, textCleanup
+    case home, dictionary, general, speechToText, textCleanup, privacyAndData
     var id: Self { self }
-    var icon: String { self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }

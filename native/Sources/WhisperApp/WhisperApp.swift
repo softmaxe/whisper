@@ -6,6 +6,7 @@ import WhisperCore
 @main
 struct WhisperMacApp: App {
     @State private var application: WhisperApplication?
+    @NSApplicationDelegateAdaptor(WhisperLifecycle.self) private var lifecycle
 
     init() {
         for name in ["JetBrainsMono-Regular", "JetBrainsMono-SemiBold"] {
@@ -31,6 +32,7 @@ struct WhisperMacApp: App {
         Window("Whisper", id: "main") {
             if let application {
                 SettingsRootView(application: application)
+                    .onAppear { lifecycle.application = application }
             } else {
                 ContentUnavailableView(
                     "Whisper", systemImage: "exclamationmark.triangle",
@@ -50,5 +52,20 @@ struct WhisperMacApp: App {
                 .keyboardShortcut(",")
             }
         }
+    }
+}
+
+@MainActor private final class WhisperLifecycle: NSObject, NSApplicationDelegate {
+    var application: WhisperApplication?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let application else { return .terminateNow }
+        application.send(.cancelDictation)
+        application.send(.cancelCleanupPromptTest)
+        Task {
+            await application.flushHistoryWrites()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }

@@ -37,6 +37,7 @@ public struct ASRConfiguration: Codable, Equatable, Sendable {
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
+    public var history: HistoryPreferences
     public var language: AppLanguage
     public var cleanup: CleanupConfiguration
     public var cleanupCredentialAccount: String?
@@ -57,8 +58,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         keepTranscriptionInClipboard: Bool = false,
         transcription: TranscriptionPreferences = .init(),
         cleanup: CleanupConfiguration = .init(),
-        cleanupCredentialAccount: String? = nil
+        cleanupCredentialAccount: String? = nil,
+        history: HistoryPreferences = .init()
     ) {
+        self.history = history
         self.cleanup = cleanup
         self.cleanupCredentialAccount = cleanupCredentialAccount
         self.language = language
@@ -71,12 +74,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount
+        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount, history
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        language = try values.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .english
-        asr = try values.decodeIfPresent(ASRConfiguration.self, forKey: .asr) ?? .init()
+        language = try values.decode(AppLanguage.self, forKey: .language)
+        asr = try values.decode(ASRConfiguration.self, forKey: .asr)
         asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
         microphone = try values.decodeIfPresent(MicrophonePreference.self, forKey: .microphone) ?? .init()
         transcription = try values.decodeIfPresent(TranscriptionPreferences.self, forKey: .transcription) ?? .init()
@@ -84,6 +87,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
         cleanup = try values.decodeIfPresent(CleanupConfiguration.self, forKey: .cleanup) ?? .init()
         cleanupCredentialAccount = try values.decodeIfPresent(String.self, forKey: .cleanupCredentialAccount)
+        history = try values.decodeIfPresent(HistoryPreferences.self, forKey: .history) ?? .init()
     }
 }
 

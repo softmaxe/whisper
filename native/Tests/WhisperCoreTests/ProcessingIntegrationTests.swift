@@ -4,12 +4,13 @@ import WhisperCore
 
 @Suite(.serialized) @MainActor
 struct ProcessingIntegrationTests {
-    @Test(arguments: [false, true])
-    func reopenedPipelineCleansThenConvertsThenExpandsBeforePaste(cleanupFails: Bool) async throws {
+    @Test(arguments: [false, true], [false, true])
+    func reopenedPipelineCleansThenConvertsThenExpandsBeforePaste(cleanupFails: Bool, historyEnabled: Bool) async throws {
         let fixture = try ProcessingFixture()
         defer { fixture.remove() }
         let replacement = "简体保留 $1"
         fixture.app.send(.setTranscriptionLanguage("zh-TW"))
+        fixture.app.send(.setHistoryEnabled(historyEnabled))
         fixture.app.send(.importDictionary("OpenWhispr"))
         fixture.app.send(.saveSnippet(trigger: "這是中文軟體", replacement: replacement))
         fixture.app.send(.saveSnippet(trigger: "简体保留", replacement: "Must not cascade"))
@@ -17,6 +18,7 @@ struct ProcessingIntegrationTests {
         #expect(fixture.app.state.snippets.entries.count == 2)
         #expect(fixture.app.state.settings.transcription.preferredLanguage == "zh-TW")
         let raw = cleanupFails ? "这是中文软件" : "Um, preserve the original ASR response."
+        let occurredAt = fixture.clock.wallDate
         await fixture.submit(raw, changeLanguageAfterSubmission: true)
         await settle { await fixture.cleanupHTTP.requests.count == 1 }
         let asr = try #require(await fixture.asr.requests.first)
@@ -44,6 +46,20 @@ struct ProcessingIntegrationTests {
         #expect(fixture.paste.pasted == [PasteTarget(processID: 101)])
         fixture.app.send(.copyRawDictationResult)
         #expect(fixture.clipboard.values == [raw])
+        await fixture.app.flushHistoryWrites()
+        let reopened = fixture.reopen()
+        reopened.send(.loadHistory)
+        await settle { reopened.state.history.isLoaded && !reopened.state.history.isLoading }
+        #expect(reopened.state.settings.history.enabled == historyEnabled)
+        #expect(reopened.state.history.totalCount == (historyEnabled ? 1 : 0))
+        if historyEnabled {
+            let entry = try #require(reopened.state.history.entries.first)
+            #expect(entry.id == fixture.app.state.dictation.requestID)
+            #expect(entry.text == replacement && entry.rawText == raw)
+            #expect(entry.occurredAt == occurredAt)
+            #expect(entry.source == .dictation)
+            #expect(entry.model == "asr-fixture")
+        }
     }
 
     @Test func cancelledCleanupCannotExpandPasteOrReplaceTheNextResult() async throws {
@@ -66,6 +82,13 @@ struct ProcessingIntegrationTests {
         #expect(fixture.app.state.dictation.text == "新的中文軟體")
         #expect(fixture.paste.writes == ["新的中文軟體"])
         #expect(fixture.paste.pasted.count == 1)
+        await fixture.app.flushHistoryWrites()
+        let reopened = fixture.reopen()
+        reopened.send(.loadHistory)
+        await settle { reopened.state.history.isLoaded && !reopened.state.history.isLoading }
+        #expect(reopened.state.history.totalCount == 1)
+        #expect(reopened.state.history.entries.first?.rawText == "New raw ASR")
+        #expect(reopened.state.history.entries.first?.text == "新的中文軟體")
     }
 }
 

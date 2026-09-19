@@ -245,12 +245,16 @@ final class ProfileFixture {
     func open() -> WhisperApplication { WhisperApplication(profile: profile, credentials: credentials) }
     func remove() {
         if let keychain { #expect(SecKeychainDelete(keychain) == errSecSuccess) }
+        let removal = root.deletingLastPathComponent().appendingPathComponent("whisper-native-removing-" + UUID().uuidString)
         do {
-            try FileManager.default.removeItem(at: root)
+            // Move first so accepted background writes cannot create WAL files during recursive deletion.
+            try FileManager.default.moveItem(at: root, to: removal)
+            try FileManager.default.removeItem(at: removal)
         } catch {
             Issue.record("Temporary native profile cleanup failed.")
         }
         #expect(!FileManager.default.fileExists(atPath: root.path))
+        #expect(!FileManager.default.fileExists(atPath: removal.path))
     }
 }
 

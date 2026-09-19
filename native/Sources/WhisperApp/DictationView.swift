@@ -70,6 +70,7 @@ struct DictationHomeView: View {
             .padding(20).background(.primary.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.12)))
+            HistoryView(application: application)
         }
     }
 }
