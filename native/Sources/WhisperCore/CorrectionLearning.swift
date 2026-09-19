@@ -45,6 +45,7 @@ public struct CorrectionLearningState: Equatable, Sendable {
     var lastRegion: String?
     var baselineConfirmed = false
     var baselineAttempts = 0
+    var queryAgain = false
 
     init(system: any CorrectionMonitoringSystem, clock: any WorkflowClock, learned: @escaping @MainActor ([String]) -> Void) {
         self.system = system; self.clock = clock; self.learned = learned
@@ -89,6 +90,7 @@ public struct CorrectionLearningState: Equatable, Sendable {
         original = ""; prefix = ""; suffix = ""; lastRegion = nil
         baselineConfirmed = false
         baselineAttempts = 0
+        queryAgain = false
     }
 
     private func region(_ snapshot: CorrectionSnapshot) -> String? {
@@ -101,11 +103,18 @@ public struct CorrectionLearningState: Equatable, Sendable {
     }
 
     private func query(_ id: UUID) {
-        guard generation == id, readTask == nil, let field else { return }
+        guard generation == id, let field else { return }
+        guard readTask == nil else { queryAgain = true; return }
         readTask = Task { [weak self] in
             let snapshot = await field.read()
             guard let self, generation == id, !Task.isCancelled else { return }
-            readTask = nil
+            defer {
+                readTask = nil
+                if generation == id, queryAgain {
+                    queryAgain = false
+                    query(id)
+                }
+            }
             guard let snapshot, let edited = region(snapshot) else { stop(); return }
             if !baselineConfirmed {
                 // Seeing the exact inserted text proves the paste landed in this captured scope.

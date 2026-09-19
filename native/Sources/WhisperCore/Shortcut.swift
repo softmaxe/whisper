@@ -144,5 +144,6 @@ extension WhisperApplication {
               !state.dictation.gesture.isProvisional else { return }
         state.dictation.phase = .recording
         state.dictation.timing["readyFeedback"] = clock.now - dictationStartedAt
+        dictationBecameReady()
     }
 }

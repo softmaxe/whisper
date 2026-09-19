@@ -28,6 +28,10 @@ public enum AppCommand {
     case saveHistory(HistoryEntry), deleteHistory(UUID), clearHistory
     case searchHistory(String), moveHistorySearchSelection(Int), selectHistoryEntry(UUID), dismissHistoryEntry
     case copyHistory(UUID, HistoryTextVersion)
+    case saveDesktopPreferences(DesktopPreferences)
+    case bootstrapDesktop(launchedAtLogin: Bool)
+    case showMainWindow, closeMainWindow, dismissPillFeedback
+    case setLaunchAtLogin(Bool), refreshLoginItemStatus, openLoginItemsSettings
     case dismissMessage
 }
 
@@ -41,6 +45,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var dictionary = DictionaryState()
     public var snippets = SnippetsState()
     public var history = HistoryState()
+    public var desktop = DesktopState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -69,6 +74,12 @@ public final class WhisperApplication {
 
     @ObservationIgnored let cleanup: any CleanupService
     @ObservationIgnored var cleanupTestTask: Task<Void, Never>?
+    @ObservationIgnored let desktopEffects: any DesktopEffects
+    @ObservationIgnored let mediaOwnership: MediaOwnership
+    @ObservationIgnored var desktopBootstrapped = false
+    @ObservationIgnored var readinessFeedbackOwner: UUID?
+    @ObservationIgnored var pillFeedbackDeadline: (any ScheduledAction)?
+
     @ObservationIgnored let microphones: any MicrophoneProvider
     @ObservationIgnored let transcriber: any TranscriptionService
     @ObservationIgnored let clock: any WorkflowClock
@@ -99,9 +110,13 @@ public final class WhisperApplication {
         clipboard: (any TextClipboard)? = nil,
         pasteSystem: (any AutomaticPasteSystem)? = nil,
         cleanup: any CleanupService = SelfHostedCleanup(),
-        correctionSystem: (any CorrectionMonitoringSystem)? = nil
+        correctionSystem: (any CorrectionMonitoringSystem)? = nil,
+        desktopEffects: (any DesktopEffects)? = nil
     ) {
         self.cleanup = cleanup
+        let effects = desktopEffects ?? InertDesktopEffects()
+        self.desktopEffects = effects
+        self.mediaOwnership = MediaOwnership(effects: effects)
         self.microphones = microphones ?? NativeMicrophoneProvider()
         self.transcriber = transcriber
         self.clock = clock ?? SystemWorkflowClock()
@@ -125,8 +140,10 @@ public final class WhisperApplication {
         }
     }
 
-    deinit {
+    isolated deinit {
         cleanupTestTask?.cancel()
+        mediaOwnership.releaseAll()
+        pillFeedbackDeadline?.cancel()
         dictationCapture?.cancel()
         processingTask?.cancel()
         historyReadTask?.cancel()
@@ -156,6 +173,17 @@ public final class WhisperApplication {
             state.dictionary.failure = nil
             state.dictionary.addedCount = nil
             state.dictionary.exportCompleted = false
+        case let .saveDesktopPreferences(preferences): saveDesktopPreferences(preferences)
+        case let .bootstrapDesktop(launchedAtLogin): bootstrapDesktop(launchedAtLogin: launchedAtLogin)
+        case .showMainWindow: state.desktop.mainWindowVisible = true
+        case .closeMainWindow: state.desktop.mainWindowVisible = false
+        case .dismissPillFeedback:
+            resetDesktopFeedback()
+            state.desktop.dismissedRequestID = state.dictation.requestID
+            if case .recovery = state.dictation.delivery { state.dictation.delivery = .none }
+        case let .setLaunchAtLogin(enabled): setLaunchAtLogin(enabled)
+        case .refreshLoginItemStatus: state.desktop.loginItemStatus = desktopEffects.loginItemStatus()
+        case .openLoginItemsSettings: desktopEffects.openLoginItemsSettings()
         case let .shortcut(input): receiveShortcut(input)
         case let .setShortcutAvailable(available): state.shortcutAvailable = available
         case let .resetShortcutInput(keys):

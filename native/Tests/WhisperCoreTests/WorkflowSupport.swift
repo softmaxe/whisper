@@ -123,11 +123,12 @@ actor ControlledHTTPTransport: FileHTTPTransport {
     let clock = ControlledClock()
     let transport = ControlledHTTPTransport()
     let clipboard = ControlledClipboard()
+    let desktop = ControlledDesktopEffects()
     let app: WhisperApplication
     init(server: String = "http://localhost:8178/v1?route=fixture", credential: String? = nil, transport customTransport: (any FileHTTPTransport)? = nil) throws {
         profile = try ProfileFixture(keychain: credential != nil)
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials, microphones: microphones,
-            transcriber: SelfHostedTranscriber(transport: customTransport ?? transport), clock: clock, clipboard: clipboard)
+            transcriber: SelfHostedTranscriber(transport: customTransport ?? transport), clock: clock, clipboard: clipboard, desktopEffects: desktop)
         app.send(.saveASR(.init(serverURL: server, model: "whisper-fixture"), credential: credential.map(CredentialChange.replace) ?? .unchanged))
     }
     func begin() -> ControlledCapture {

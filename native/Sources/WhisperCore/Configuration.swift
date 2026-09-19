@@ -47,6 +47,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     // The opaque account is persisted; the credential itself exists only in Keychain.
     public var asrCredentialAccount: String?
     public var autoLearnCorrections: Bool
+    public var desktop: DesktopPreferences
     public var autoPasteEnabled: Bool
     public var keepTranscriptionInClipboard: Bool
 
@@ -61,7 +62,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         transcription: TranscriptionPreferences = .init(),
         cleanup: CleanupConfiguration = .init(),
         cleanupCredentialAccount: String? = nil,
-        history: HistoryPreferences = .init()
+        history: HistoryPreferences = .init(),
+        desktop: DesktopPreferences = .init()
     ) {
         self.history = history
         self.cleanup = cleanup
@@ -74,10 +76,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.autoLearnCorrections = autoLearnCorrections
         self.autoPasteEnabled = autoPasteEnabled
         self.keepTranscriptionInClipboard = keepTranscriptionInClipboard
+        self.desktop = desktop
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount, history, autoLearnCorrections
+        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount, history, autoLearnCorrections, desktop
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -87,6 +90,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         microphone = try values.decodeIfPresent(MicrophonePreference.self, forKey: .microphone) ?? .init()
         transcription = try values.decodeIfPresent(TranscriptionPreferences.self, forKey: .transcription) ?? .init()
         autoLearnCorrections = try values.decodeIfPresent(Bool.self, forKey: .autoLearnCorrections) ?? true
+        desktop = try values.decodeIfPresent(DesktopPreferences.self, forKey: .desktop) ?? .init()
         autoPasteEnabled = try values.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? true
         keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
         cleanup = try values.decodeIfPresent(CleanupConfiguration.self, forKey: .cleanup) ?? .init()

@@ -329,3 +329,65 @@ packaged because its current macOS build contains nonfree components.
 
 Media control packages the existing MediaRemoteAdapter framework and Perl bridge
 under their original `Contents/Resources/bin` paths with the upstream license.
+
+## Desktop preferences and lifecycle
+
+General settings persist appearance, readiness/stop sounds, media pause, idle pill
+visibility, auto-hide, placement, menu bar visibility, and background startup.
+Login-item registration remains a system setting through `SMAppService.mainApp`;
+its current enabled/approval state is read when the app starts and becomes active.
+A registration requiring approval links to System Settings instead of reporting a
+successful enabled state without explanation.
+
+`DesktopEffects` controls external sound, media and login-item operations. The
+library defaults to `InertDesktopEffects`. Only the executable explicitly creates
+`NativeDesktopEffects`; deterministic fixtures inject `ControlledDesktopEffects`.
+Tests must never construct the production effects adapter or launch the executable
+for these checks. No test should play a cue, control real media, register a login
+item, open System Settings, or request permissions.
+
+Readiness effects start only after both accepted gestures and the first valid
+audio frame. Repeated frames and provisional taps cannot replay the cue. Normal
+stop plays the stop cue; cancellation and failures release media ownership without
+a stop cue. Media pause/resume operations are serialized so a late pause after
+cancellation is balanced before a retry can acquire its own pause. Disabling media
+pause during recording also returns the pause already owned by that request.
+
+The production adapter reuses the existing `MediaRemoteAdapter.framework` and
+`mediaremote-adapter.pl` from `Contents/Resources/bin`, plus the existing media-key
+fallback behavior. Probe output is bounded and never logged. Helper deadlines
+and inherited pipe closure cannot leave the media queue waiting indefinitely.
+The app's About menu links to bundled third-party licenses.
+
+An AppKit application delegate owns the main window, shortcut monitor and
+nonactivating Recording pill independently. Closing the main window keeps
+Dictation available and hides the Dock icon. Reopening through Finder or the menu
+bar restores the main window. A login launch or Start minimized preference keeps
+it in the background. Appearance changes apply only to Whisper, not system-wide.
+The pill follows its configured bottom-left/center/bottom-right placement; active
+Dictation, errors and copy recovery remain visible even when idle auto-hide is on.
+Success/cancellation feedback lasts 500 ms before the idle visibility policy takes
+over. Pill updates never activate the main window or make the pill key/main.
+
+`prepareForTermination()` cancels capture, processing and prompt tests, stops
+correction observation, awaits owned media cleanup, and flushes accepted History
+writes before the delegate replies to AppKit's termination request.
+
+Deterministic tests cover preference persistence, system-operation requests through
+controlled adapters, delayed pause/cancel/retry ordering, preparation and provisional
+capture, hold/hands-free feedback, error/copy recovery, and auto-hide timers. They
+do not prove native focus, media compatibility, sounds, menu bar layout, login
+registration, or physical permission behavior. Check those only in a coordinated
+signed-app smoke test with the user awake.
+
+Desktop integration keeps correction notifications visible even with idle pill
+visibility disabled. The persistent lifecycle owns pill/shortcut updates after the
+main window closes. `prepareForTermination()` cancels Dictation and prompt tests,
+stops correction observation, waits for owned media release, and flushes accepted
+History writes before AppKit replies that termination may proceed. Controlled
+integration tests verify this sequence against real SQLite storage for both hold
+and hands-free requests, without playing sound or changing system media/login state.
+
+The Third-party licenses action opens a directory containing FFmpeg/LAME sources
+and notices, MediaRemoteAdapter BSD 3-Clause, JetBrains Mono OFL, and OpenCC MIT/Apache-2.0
+notices. Their original resource locations remain intact.

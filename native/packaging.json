@@ -20,6 +20,22 @@
     {
       "from": "resources/mediaremote-adapter/bin/mediaremote-adapter.pl",
       "to": "bin/mediaremote-adapter.pl"
+    },
+    {
+      "from": "resources/mediaremote-adapter/LICENSE",
+      "to": "licenses/MediaRemoteAdapter-BSD-3-Clause.txt"
+    },
+    {
+      "from": "native/Sources/WhisperApp/Resources/Fonts/OFL.txt",
+      "to": "licenses/JetBrainsMono-OFL.txt"
+    },
+    {
+      "from": "native/Sources/WhisperCore/Resources/OpenCC/MIT.txt",
+      "to": "licenses/OpenCC-MIT.txt"
+    },
+    {
+      "from": "native/Sources/WhisperCore/Resources/OpenCC/LICENSE",
+      "to": "licenses/OpenCC-Apache-2.0.txt"
     }
   ],
   "helpers": [
