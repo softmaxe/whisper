@@ -41,6 +41,7 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
         if ended { release() } else { receive(.opened()) }
     }
     func deliver(_ samples: [Float], rate: Double = 48_000) { receive(.frame(AudioFrame(samples: samples, sampleRate: rate))) }
+    func timing(_ stage: CaptureTimingStage, at time: TimeInterval) { receive(.timing(stage, at: time)) }
     func fail(_ failure: DictationFailure) { receive(.failed(failure)) }
     func stop(completion: @escaping @Sendable () -> Void) {
         let opened = lock.withLock {
@@ -62,7 +63,12 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
 }
 
 @MainActor final class ControlledClock: WorkflowClock {
-    var now: TimeInterval = 0
+    let timeSource = ControlledTimestampSource()
+    var timestampSource: any MonotonicTimeSource { timeSource }
+    var now: TimeInterval {
+        get { timeSource.timestamp() }
+        set { timeSource.set(newValue) }
+    }
     var wallDate = Date(timeIntervalSince1970: 1_789_920_000)
     private var scheduled: [Action] = []
     var nextDelay: TimeInterval? { scheduled.filter { !$0.cancelled }.map { $0.deadline - now }.min() }
@@ -86,6 +92,14 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
         init(deadline: TimeInterval, action: @escaping @MainActor @Sendable () -> Void) { self.deadline = deadline; self.action = action }
         func cancel() { cancelled = true }
     }
+}
+
+final class ControlledTimestampSource: MonotonicTimeSource, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval = 0
+    func timestamp() -> TimeInterval { lock.withLock { value } }
+    func set(_ value: TimeInterval) { lock.withLock { self.value = value } }
+    func advance(_ value: TimeInterval) { lock.withLock { self.value += value } }
 }
 
 actor ControlledHTTPTransport: FileHTTPTransport {

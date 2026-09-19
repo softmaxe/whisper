@@ -38,6 +38,7 @@ public struct CleanupContext: Sendable {
     public var agentName: String
     public var systemPromptOverride: String?
     public var interfaceLanguage: AppLanguage
+    public var diagnostics: RequestDiagnostics?
     public init(language: String = "auto", vocabulary: [String] = [], interfaceLanguage: AppLanguage = .english, systemPromptOverride: String? = nil, agentName: String = "OpenWhispr") {
         self.agentName = agentName
         self.systemPromptOverride = systemPromptOverride
@@ -71,10 +72,19 @@ public enum CleanupFailure: Error, Equatable, Sendable {
 
 public protocol JSONHTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> HTTPResponse
+    func send(_ request: URLRequest, diagnostics: NetworkDiagnostics?) async throws -> HTTPResponse
+}
+public extension JSONHTTPTransport {
+    func send(_ request: URLRequest, diagnostics: NetworkDiagnostics?) async throws -> HTTPResponse {
+        try await observeHTTP(diagnostics) { try await send(request) }
+    }
 }
 
 extension URLSessionFileTransport: JSONHTTPTransport {
     public func send(_ request: URLRequest) async throws -> HTTPResponse {
+        try await send(request, diagnostics: nil)
+    }
+    public func send(_ request: URLRequest, diagnostics: NetworkDiagnostics?) async throws -> HTTPResponse {
         let configuration = URLSessionConfiguration.ephemeral
         // The application owns the cancellable 30-second deadline, including fallback attempts.
         configuration.timeoutIntervalForRequest = .greatestFiniteMagnitude
@@ -83,14 +93,16 @@ extension URLSessionFileTransport: JSONHTTPTransport {
         configuration.urlCache = nil
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let response = response as? HTTPURLResponse else { throw CleanupFailure.invalidResponse }
-            return HTTPResponse(status: response.statusCode, body: data)
-        } catch is CancellationError { throw CancellationError() }
-        catch let error as URLError where error.code == .cancelled { throw CancellationError() }
-        catch let error as CleanupFailure { throw error }
-        catch { throw CleanupFailure.network }
+        return try await observeHTTP(diagnostics) {
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let response = response as? HTTPURLResponse else { throw CleanupFailure.invalidResponse }
+                return HTTPResponse(status: response.statusCode, body: data)
+            } catch is CancellationError { throw CancellationError() }
+            catch let error as URLError where error.code == .cancelled { throw CancellationError() }
+            catch let error as CleanupFailure { throw error }
+            catch { throw CleanupFailure.network }
+        }
     }
 }
 
@@ -107,14 +119,14 @@ public struct SelfHostedCleanup: CleanupService {
         do { configuration = try configurationForRequest(input) } catch { throw CleanupFailure.configuration }
         let endpoint = try Self.endpoint(configuration.serverURL)
         var body = CleanupRequest(configuration: configuration, context: context, text: text, endpoint: endpoint)
-        var response = try await fetch(endpoint, body: body, credential: credential)
+        var response = try await fetch(endpoint, body: body, credential: credential, diagnostics: context.diagnostics)
         if [400, 422].contains(response.status) {
             if body.reasoning != nil {
                 body.reasoning = nil
-                response = try await fetch(endpoint, body: body, credential: credential)
+                response = try await fetch(endpoint, body: body, credential: credential, diagnostics: context.diagnostics)
             }
             if [400, 422].contains(response.status), body.stripNamedParameters(String(decoding: response.body, as: UTF8.self)) {
-                response = try await fetch(endpoint, body: body, credential: credential)
+                response = try await fetch(endpoint, body: body, credential: credential, diagnostics: context.diagnostics)
             }
         }
         guard (200...299).contains(response.status) else { throw CleanupFailure.service(response.status) }
@@ -142,7 +154,7 @@ public struct SelfHostedCleanup: CleanupService {
         return try copy.validated()
     }
 
-    private func fetch(_ endpoint: URL, body: CleanupRequest, credential: String?) async throws -> HTTPResponse {
+    private func fetch(_ endpoint: URL, body: CleanupRequest, credential: String?, diagnostics: RequestDiagnostics?) async throws -> HTTPResponse {
         try Task.checkCancellation()
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -151,7 +163,7 @@ public struct SelfHostedCleanup: CleanupService {
         if !credential.isEmpty { request.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization") }
         request.httpBody = try JSONEncoder().encode(body)
         do {
-            let response = try await transport.send(request)
+            let response = try await transport.send(request, diagnostics: diagnostics?.network(.cleanup))
             try Task.checkCancellation()
             return response
         } catch is CancellationError { throw CancellationError() }

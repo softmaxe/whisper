@@ -310,7 +310,10 @@ final class ControlledCorrectionObservation: CorrectionObservation, @unchecked S
         let reads = field.reads
         await paste(text, index: index)
         f.clock.advance(0.5)
-        await settle { self.field.reads > reads }
+        // A read starting does not prove its result reached the learning workflow yet.
+        await settle {
+            self.field.reads > reads && self.f.clock.scheduledDelays.contains { abs($0 - 0.5) < 0.000001 }
+        }
     }
     func edit(_ text: String) async {
         field.setRegion(text)

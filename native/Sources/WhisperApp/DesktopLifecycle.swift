@@ -34,6 +34,12 @@ import WhisperCore
             } else { profile = try NativeProfile.applicationDefault() }
             let application = WhisperApplication(profile: profile, desktopEffects: NativeDesktopEffects())
             self.application = application
+            if let index = arguments.firstIndex(of: "--diagnostics") {
+                guard arguments.indices.contains(index + 1), arguments[index + 1].hasPrefix("/") else {
+                    throw CocoaError(.fileWriteInvalidFileName)
+                }
+                application.send(.setDiagnosticsOutput(URL(fileURLWithPath: arguments[index + 1])))
+            }
             let event = NSAppleEventManager.shared().currentAppleEvent
             let launchedAtLogin = event?.eventID == kAEOpenApplication
                 && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
@@ -246,7 +252,7 @@ import WhisperCore
         shortcuts?.stop()
         Task { @MainActor in
             await application?.prepareForTermination()
-            // prepareForTermination cancels work, releases owned media, and flushes History.
+            // prepareForTermination cancels work, releases owned media, and flushes History and diagnostics.
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

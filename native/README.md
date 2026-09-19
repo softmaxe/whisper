@@ -442,3 +442,25 @@ monitor while waiting for cleanup. A request snapshots all candidate bindings, s
 later saved chords cannot adopt its provisional modifier capture. Repeated native
 configuration refresh also preserves a newer user Globe choice when the action
 was already disabled before Whisper started using it.
+
+## Optional request diagnostics
+
+Settings > Privacy can opt into numeric Dictation timings in an explicitly chosen
+private local JSONL file. The executable also accepts `--diagnostics /absolute/file.jsonl`.
+Collection defaults off on every launch. It has no speech, key contents,
+clipboard values, device/app labels, URLs, credentials or serialized app state.
+File writes run off the audio callback and main thread; normal termination
+flushes accepted writes. Stop diagnostics freezes active collection as incomplete
+without interrupting Dictation, and retains the file already requested.
+
+Request owners freeze on completion, failure, cancellation or rejected gestures.
+Actual URLSession dispatch follows multipart preparation; first audio can precede
+`startRunning` returning. Native key posting does not prove visible insertion.
+The public timing receipts now use `captureConfigured`, `asrPreparationStarted`
+and `cleanupPreparationStarted` to describe their actual boundaries.
+
+Use `node scripts/measure-performance.js native /absolute/file.jsonl` to summarize
+one matched condition. The [measurement protocol](../docs/native-performance-baseline.md#native-request-diagnostics)
+defines stages, append safety, outcome handling and packaged collection steps.
+Automated diagnostics tests do not complete #54's hardware or numerical-budget
+acceptance gates.

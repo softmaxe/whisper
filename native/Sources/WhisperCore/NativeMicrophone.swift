@@ -78,7 +78,9 @@ private final class NativeMicrophoneSession: NSObject, MicrophoneSession, AVCapt
                 })
                 guard !isEnded else { releaseCapture(); return }
                 emit(.opened(at: ProcessInfo.processInfo.systemUptime))
+                emit(.timing(.startRequested, at: ProcessInfo.processInfo.systemUptime))
                 session.startRunning()
+                emit(.timing(.startReturned, at: ProcessInfo.processInfo.systemUptime))
                 guard !isEnded else { releaseCapture(); return }
                 guard session.isRunning else { throw DictationFailure.captureFailed }
             } catch {

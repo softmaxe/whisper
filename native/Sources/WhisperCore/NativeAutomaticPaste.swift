@@ -71,6 +71,9 @@ let whisperPasteEventTag: Int64 = 0x57535052
         return verdict && NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processID
     }
     public func paste(_ target: PasteTarget) async -> Bool {
+        await paste(target, diagnostics: nil)
+    }
+    public func paste(_ target: PasteTarget, diagnostics: RequestDiagnostics?) async -> Bool {
         guard AXIsProcessTrusted(), !modifiersHeld,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processID,
               let key = Self.lookupVirtualKey(for: "v"),
@@ -80,10 +83,12 @@ let whisperPasteEventTag: Int64 = 0x57535052
             event.flags = .maskCommand
             event.setIntegerValueField(.eventSourceUserData, value: whisperPasteEventTag)
         }
+        diagnostics?.mark(.pasteDispatched)
         down.post(tap: .cgSessionEventTap)
         // Always balance our own key, even if the task was cancelled after key-down.
         try? await Task.sleep(for: .milliseconds(8))
         up.post(tap: .cgSessionEventTap)
+        diagnostics?.mark(.pasteSettled)
         return true
     }
 

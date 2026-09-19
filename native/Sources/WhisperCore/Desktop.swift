@@ -198,6 +198,8 @@ extension WhisperApplication {
         pillFeedbackDeadline?.cancel()
         await mediaOwnership.shutdown()
         await flushHistoryWrites()
+        await flushDiagnostics()
+        _ = await diagnosticOutput?.flush(close: true)
     }
 }
 

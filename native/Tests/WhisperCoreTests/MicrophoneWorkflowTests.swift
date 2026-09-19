@@ -164,7 +164,7 @@ struct MicrophoneWorkflowTests {
         f.app.send(.startDictation)
         let timedOut = try #require(f.inputs.sessions.last)
         timedOut.open()
-        await settle { f.app.state.dictation.timing["acquisitionCompleted"] != nil }
+        await settle { f.app.state.dictation.timing["captureConfigured"] != nil }
         f.clock.advance(10)
         #expect(f.app.state.dictation.failure == .noAudio)
         #expect(!timedOut.physicallyOpen)
