@@ -40,6 +40,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var language: AppLanguage
     public var asr: ASRConfiguration
     public var microphone: MicrophonePreference
+    public var transcription: TranscriptionPreferences
     // The opaque account is persisted; the credential itself exists only in Keychain.
     public var asrCredentialAccount: String?
     public var autoPasteEnabled: Bool
@@ -51,18 +52,20 @@ public struct AppSettings: Codable, Equatable, Sendable {
         asrCredentialAccount: String? = nil,
         microphone: MicrophonePreference = .init(),
         autoPasteEnabled: Bool = true,
-        keepTranscriptionInClipboard: Bool = false
+        keepTranscriptionInClipboard: Bool = false,
+        transcription: TranscriptionPreferences = .init()
     ) {
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
         self.microphone = microphone
+        self.transcription = transcription
         self.autoPasteEnabled = autoPasteEnabled
         self.keepTranscriptionInClipboard = keepTranscriptionInClipboard
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard
+        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -70,6 +73,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         asr = try values.decodeIfPresent(ASRConfiguration.self, forKey: .asr) ?? .init()
         asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
         microphone = try values.decodeIfPresent(MicrophonePreference.self, forKey: .microphone) ?? .init()
+        transcription = try values.decodeIfPresent(TranscriptionPreferences.self, forKey: .transcription) ?? .init()
         autoPasteEnabled = try values.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? true
         keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
     }

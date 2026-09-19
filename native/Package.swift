@@ -9,8 +9,8 @@ let package = Package(
         .executable(name: "Whisper", targets: ["WhisperApp"])
     ],
     targets: [
-        .target(name: "WhisperCore"),
+        .target(name: "WhisperCore", resources: [.copy("Resources")]),
         .executableTarget(name: "WhisperApp", dependencies: ["WhisperCore"], resources: [.copy("Resources")]),
-        .testTarget(name: "WhisperCoreTests", dependencies: ["WhisperCore"])
+        .testTarget(name: "WhisperCoreTests", dependencies: ["WhisperCore"], resources: [.copy("Resources")])
     ]
 )

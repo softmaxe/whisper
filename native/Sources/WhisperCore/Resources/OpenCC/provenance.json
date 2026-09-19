@@ -1,0 +1,57 @@
+{
+  "openccJSVersion": "1.4.1",
+  "openccJSRevision": "c410ad49ce6565c007a08faa20454863d2aaff26",
+  "dataVersion": "1.4.1",
+  "dataRevision": "c7b739cec68223304b49ac89f181e58802767d0b",
+  "openccRevision": "81223ed87ae53283ef518e2deac34b7971f8a39e",
+  "files": {
+    "CJK_Compatibility_Ideographs.txt": {
+      "sha256": "45d8b1dff7ac913bfa249409eb79437e269847beb9ad103dfba8d20f76073495",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/CJK_Compatibility_Ideographs.txt"
+    },
+    "STPhrases.txt": {
+      "sha256": "c9ecde2456fecf9787cccd9929f495f5f1f1c8df8466f4175a0435f918737fca",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/STPhrases.txt"
+    },
+    "STPhrases_GeneratedFromRegionalPhrases.txt": {
+      "sha256": "db04a5b1542349cbb5f6345d9c7c5f641d212aa7e772ef496d7e29780eca7f56",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/STPhrases_GeneratedFromRegionalPhrases.txt"
+    },
+    "STCharacters.txt": {
+      "sha256": "25e58fec37e9b52bdcd8ef54ceab11ad381c716b0c8560effec2e936fd4296d6",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/STCharacters.txt"
+    },
+    "TWPhrases.txt": {
+      "sha256": "4b31157f3dab85a05efe5c2abd809332160bff0c2cecbff8862d6d470d01b4b8",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TWPhrases.txt"
+    },
+    "TWVariantsPhrases.txt": {
+      "sha256": "79b198c538c8b4c9707c7188081f5034238b6b7f192ad76a1947ffe9efb9e6fe",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TWVariantsPhrases.txt"
+    },
+    "TWVariants.txt": {
+      "sha256": "ee96968b1552433be2bfcd527a09c674b853e5d1b5af76f2703b2835fc800efc",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TWVariants.txt"
+    },
+    "TSPhrases.txt": {
+      "sha256": "1442324ee1c7e69f52c1d462d59fb7a3f246813b2d5e0ce261d4232891990cad",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TSPhrases.txt"
+    },
+    "TWPhrasesRev.txt": {
+      "sha256": "3f1d68320eb8aafd9473b419556499894f59358ca65ac68f7058846146366922",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TWPhrasesRev.txt"
+    },
+    "TWVariantsRevPhrases.txt": {
+      "sha256": "ccad06cc5adf62f97ecd1430b025d7b5cf25239a07eb73176bbc8c999437b2a2",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TWVariantsRevPhrases.txt"
+    },
+    "TWVariantsRev.txt": {
+      "sha256": "821a79ecc1fd420d3e3097d098098ce539ae4595c8a8bd919bbc8c891301b078",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TWVariantsRev.txt"
+    },
+    "TSCharacters.txt": {
+      "sha256": "2e59660ba9891ceacaa25fcb1181277490b279a7d5c8378abf1cc0de9fc70391",
+      "source": "https://raw.githubusercontent.com/nk2028/opencc-data/c7b739cec68223304b49ac89f181e58802767d0b/data/TSCharacters.txt"
+    }
+  }
+}

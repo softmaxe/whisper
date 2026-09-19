@@ -1,0 +1,432 @@
+{
+  "openccJSVersion": "1.4.1",
+  "cases": [
+    {
+      "name": "traditional: 這是繁體中文軟體",
+      "input": "這是繁體中文軟體",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "這是繁體中文軟體"
+    },
+    {
+      "name": "simplified: 這是繁體中文軟體",
+      "input": "這是繁體中文軟體",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "这是繁体中文软件"
+    },
+    {
+      "name": "traditional: 这是简体中文软件",
+      "input": "这是简体中文软件",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "這是簡體中文軟體"
+    },
+    {
+      "name": "simplified: 这是简体中文软件",
+      "input": "这是简体中文软件",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "这是简体中文软件"
+    },
+    {
+      "name": "traditional: 数据库 鼠标 硬盘 网络",
+      "input": "数据库 鼠标 硬盘 网络",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "資料庫 滑鼠 硬碟 網路"
+    },
+    {
+      "name": "simplified: 数据库 鼠标 硬盘 网络",
+      "input": "数据库 鼠标 硬盘 网络",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "数据库 鼠标 硬盘 网络"
+    },
+    {
+      "name": "traditional: 資料庫 滑鼠 硬碟 網路",
+      "input": "資料庫 滑鼠 硬碟 網路",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "資料庫 滑鼠 硬碟 網路"
+    },
+    {
+      "name": "simplified: 資料庫 滑鼠 硬碟 網路",
+      "input": "資料庫 滑鼠 硬碟 網路",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "数据库 鼠标 硬盘 网络"
+    },
+    {
+      "name": "traditional: 干净的头发",
+      "input": "干净的头发",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "乾淨的頭髮"
+    },
+    {
+      "name": "simplified: 干净的头发",
+      "input": "干净的头发",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "干净的头发"
+    },
+    {
+      "name": "traditional: 他很干练",
+      "input": "他很干练",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "他很乾練"
+    },
+    {
+      "name": "simplified: 他很干练",
+      "input": "他很干练",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "他很干练"
+    },
+    {
+      "name": "traditional: 面条和方便面",
+      "input": "面条和方便面",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "麵條和泡麵"
+    },
+    {
+      "name": "simplified: 面条和方便面",
+      "input": "面条和方便面",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "面条和方便面"
+    },
+    {
+      "name": "traditional: 皇后在后面",
+      "input": "皇后在后面",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "皇后在後面"
+    },
+    {
+      "name": "simplified: 皇后在后面",
+      "input": "皇后在后面",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "皇后在后面"
+    },
+    {
+      "name": "traditional: 車和路",
+      "input": "車和路",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "車和路"
+    },
+    {
+      "name": "simplified: 車和路",
+      "input": "車和路",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "车和路"
+    },
+    {
+      "name": "traditional: ⿰后土",
+      "input": "⿰后土",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "⿰后土"
+    },
+    {
+      "name": "simplified: ⿰后土",
+      "input": "⿰后土",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "⿰后土"
+    },
+    {
+      "name": "traditional: ⿰⿱后土车",
+      "input": "⿰⿱后土车",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "⿰⿱后土车"
+    },
+    {
+      "name": "simplified: ⿰⿱后土车",
+      "input": "⿰⿱后土车",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "⿰⿱后土车"
+    },
+    {
+      "name": "traditional: ⿰⿱后",
+      "input": "⿰⿱后",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "⿰⿱后"
+    },
+    {
+      "name": "simplified: ⿰⿱后",
+      "input": "⿰⿱后",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "⿰⿱后"
+    },
+    {
+      "name": "traditional: ⿰⿱",
+      "input": "⿰⿱",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "⿰⿱"
+    },
+    {
+      "name": "simplified: ⿰⿱",
+      "input": "⿰⿱",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "⿰⿱"
+    },
+    {
+      "name": "traditional: 𣗊溪與𣲘溪",
+      "input": "𣗊溪與𣲘溪",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "樠谿與潕谿"
+    },
+    {
+      "name": "simplified: 𣗊溪與𣲘溪",
+      "input": "𣗊溪與𣲘溪",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "𣗊溪与𣲘溪"
+    },
+    {
+      "name": "traditional: 这是 OpenAI 的 API。 \n軟體 ✅ café",
+      "input": "这是 OpenAI 的 API。 \n軟體 ✅ café",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "這是 OpenAI 的 API。 \n軟體 ✅ café"
+    },
+    {
+      "name": "simplified: 这是 OpenAI 的 API。 \n軟體 ✅ café",
+      "input": "这是 OpenAI 的 API。 \n軟體 ✅ café",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "这是 OpenAI 的 API。 \n软件 ✅ café"
+    },
+    {
+      "name": "traditional: 軟體︀与软件",
+      "input": "軟體︀与软件",
+      "language": "zh-TW",
+      "preference": "simplified",
+      "expected": "軟體︀與軟體"
+    },
+    {
+      "name": "simplified: 軟體︀与软件",
+      "input": "軟體︀与软件",
+      "language": "zh-CN",
+      "preference": "traditional",
+      "expected": "软件︀与软件"
+    },
+    {
+      "name": "auto: 这是简体中文",
+      "input": "这是简体中文",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "这是简体中文"
+    },
+    {
+      "name": "auto: 這是繁體中文",
+      "input": "這是繁體中文",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "这是繁体中文"
+    },
+    {
+      "name": "auto: 今天天气很好",
+      "input": "今天天气很好",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "今天天气很好"
+    },
+    {
+      "name": "auto: 今天天氣很好",
+      "input": "今天天氣很好",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "今天天气很好"
+    },
+    {
+      "name": "auto: Hello 世界",
+      "input": "Hello 世界",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "Hello 世界"
+    },
+    {
+      "name": "auto: Meet at 東京駅",
+      "input": "Meet at 東京駅",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "Meet at 東京駅"
+    },
+    {
+      "name": "auto: 東京駅",
+      "input": "東京駅",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "東京駅"
+    },
+    {
+      "name": "auto: 会議資料",
+      "input": "会議資料",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "会議資料"
+    },
+    {
+      "name": "auto: 開発資料",
+      "input": "開発資料",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "開発資料"
+    },
+    {
+      "name": "auto: 設定変更",
+      "input": "設定変更",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "設定変更"
+    },
+    {
+      "name": "auto: 電気",
+      "input": "電気",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "電気"
+    },
+    {
+      "name": "auto: 資料確認",
+      "input": "資料確認",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "資料確認"
+    },
+    {
+      "name": "auto: 導入試験",
+      "input": "導入試験",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "導入試験"
+    },
+    {
+      "name": "auto: 会議の資料を確認してください",
+      "input": "会議の資料を確認してください",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "会議の資料を確認してください"
+    },
+    {
+      "name": "auto: 今日は時間がありますか",
+      "input": "今日は時間がありますか",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "今日は時間がありますか"
+    },
+    {
+      "name": "auto: 한국어 漢字 텍스트",
+      "input": "한국어 漢字 텍스트",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "한국어 漢字 텍스트"
+    },
+    {
+      "name": "auto: hello world",
+      "input": "hello world",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "hello world"
+    },
+    {
+      "name": "auto: 这是中文和かな",
+      "input": "这是中文和かな",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "这是中文和かな"
+    },
+    {
+      "name": "auto: 這是中文與한국어",
+      "input": "這是中文與한국어",
+      "language": "auto",
+      "preference": "simplified",
+      "expected": "這是中文與한국어"
+    },
+    {
+      "name": "explicit non-Chinese keeps text",
+      "input": "這是繁體中文軟體",
+      "language": "en-US",
+      "preference": "simplified",
+      "expected": "這是繁體中文軟體"
+    },
+    {
+      "name": "as transcribed",
+      "input": "這是繁體中文軟體",
+      "language": "auto",
+      "preference": "as-transcribed",
+      "expected": "這是繁體中文軟體"
+    },
+    {
+      "name": "segmentation: SQL注入攻擊",
+      "input": "SQL注入攻擊",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "SQL隱碼攻擊攻擊"
+    },
+    {
+      "name": "segmentation: 任務管理器",
+      "input": "任務管理器",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "任務管理器"
+    },
+    {
+      "name": "segmentation: 伯克希爾-哈撒韋",
+      "input": "伯克希爾-哈撒韋",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "伯克希爾-哈撒韋"
+    },
+    {
+      "name": "segmentation: 伯克希爾-哈撒韋公司",
+      "input": "伯克希爾-哈撒韋公司",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "伯克希爾-哈撒韋公司"
+    },
+    {
+      "name": "segmentation: 伯克希爾哈撒韋",
+      "input": "伯克希爾哈撒韋",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "伯克希爾哈撒韋"
+    },
+    {
+      "name": "segmentation: 伯克希爾哈撒韋公司",
+      "input": "伯克希爾哈撒韋公司",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "伯克希爾哈撒韋公司"
+    },
+    {
+      "name": "segmentation: 俄克拉何馬",
+      "input": "俄克拉何馬",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "俄克拉何馬"
+    },
+    {
+      "name": "segmentation: 俄克拉何馬城",
+      "input": "俄克拉何馬城",
+      "language": "zh-TW",
+      "preference": "as-transcribed",
+      "expected": "俄克拉何馬城"
+    }
+  ]
+}

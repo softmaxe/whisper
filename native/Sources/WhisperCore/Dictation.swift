@@ -36,6 +36,7 @@ public struct DictationState: Equatable, Sendable {
     public var gesture: DictationGesture = .none
     public var cancellation: DictationCancellation?
     public var delivery: DeliveryResult = .none
+    public var chineseConversionFailed = false
     public var failure: DictationFailure?
     public var level: Float = 0
     public var duration: TimeInterval = 0
@@ -139,6 +140,7 @@ extension WhisperApplication {
         let credential = dictationCredential
         let transcriber = self.transcriber
         let options = dictationTranscriptionOptions()
+        let transcriptionPreferences = state.settings.transcription
         processingTask = Task { [weak self] in
             do {
                 let file = try await capture.finish()
@@ -151,8 +153,11 @@ extension WhisperApplication {
                     options: options
                 )
                 try Task.checkCancellation()
-                guard !DictionaryPrompt.isEcho(text, prompt: options.prompt) else { throw DictationFailure.dictionaryEcho }
-                self?.completeDictation(rawText: text, text: text, requestID: id)
+                guard !DictionaryPrompt.isEcho(text, prompt: options.prompt),
+                      !DictionaryPrompt.isEcho(text, prompt: transcriptionPreferences.dictionaryPrompt(from: options.prompt)) else {
+                    throw DictationFailure.dictionaryEcho
+                }
+                await self?.finishDictationText(rawText: text, text: text, requestID: id, preferences: transcriptionPreferences)
             } catch is CancellationError {
                 capture.removeFiles()
             } catch {
@@ -163,10 +168,12 @@ extension WhisperApplication {
     }
 
     func dictationTranscriptionOptions() -> TranscriptionOptions {
-        TranscriptionOptions(prompt: DictionaryPrompt.capped(
-            dictionaryHintWords().joined(separator: ", "),
+        var options = state.settings.transcription.requestOptions(dictionaryPrompt: dictionaryHintWords().joined(separator: ", "))
+        options.prompt = DictionaryPrompt.capped(
+            options.prompt,
             configuration: dictationConfiguration ?? state.settings.asr
-        ))
+        )
+        return options
     }
 
     func markDictationStage(_ stage: String, requestID: UUID) {

@@ -328,4 +328,27 @@ struct ShortcutWorkflowTests {
         #expect(f.app.state.dictation.phase == .idle)
         #expect(f.app.state.dictation.text.isEmpty)
     }
+
+    @Test func chineseConversionPrecedesAutomaticPasteAndKeepsRawASR() async throws {
+        let f = try ShortcutFixture(); defer { f.remove() }
+        f.app.send(.setTranscriptionLanguage("zh-TW"))
+        f.app.send(.importDictionary("OpenWhispr"))
+        _ = await f.hold()
+        f.key(down: false)
+        await settle { await f.transport.requests.count == 1 }
+        let request = try #require(await f.transport.requests.first)
+        #expect(String(decoding: request.body, as: UTF8.self).contains("以下是繁體中文。語言、學習、軟體、網路。 OpenWhispr"))
+        f.app.send(.setTranscriptionLanguage("zh-CN"))
+        await f.transport.reply(body: "{\"text\":\"这是中文软件\"}")
+        for _ in 0..<5000 {
+            if f.app.state.dictation.phase == .result { break }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        #expect(f.app.state.dictation.phase == .result)
+        #expect(f.app.state.dictation.delivery == .pasted)
+        #expect(f.app.state.dictation.rawText == "这是中文软件")
+        #expect(f.app.state.dictation.text == "這是中文軟體")
+        #expect(f.paste.writes == ["這是中文軟體"])
+        #expect(f.paste.pasted == [PasteTarget(processID: 101)])
+    }
 }
