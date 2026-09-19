@@ -81,7 +81,7 @@ export class RecordingStartupTrace {
     this.mark(stage, timestamp);
   }
 
-  observeCapture(stream, attempt) {
+  observeCapture(stream, attempt, captureObservation = null) {
     if (this.outcome !== "pending" || attempt !== this.captureAttempt) return;
     const track = stream.getAudioTracks()[0];
     if (!track) return;
@@ -90,10 +90,10 @@ export class RecordingStartupTrace {
     };
     checkTrack();
     track.addEventListener?.("unmute", checkTrack);
-    const observation = observeFirstAudio(track);
+    const observation = captureObservation ?? observeFirstAudio(track);
     this.stopObservingCapture = () => {
       track.removeEventListener?.("unmute", checkTrack);
-      observation.cancel();
+      if (!captureObservation) observation.cancel();
     };
     void observation.firstAudio.then((timestamp) => {
       if (timestamp !== null) this.markCapture(attempt, "firstAudio", timestamp);

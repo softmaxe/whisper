@@ -6,7 +6,11 @@ checks, device fallback, pre-roll, ready condition, and idle-hold preference.
 Compare that baseline with later behavior changes described in
 [#22](https://github.com/softmaxe/whisper/issues/22). Builds including
 [#24](https://github.com/softmaxe/whisper/issues/24) release capture immediately
-and no longer offer idle hold.
+and no longer offer idle hold. Builds including
+[#27](https://github.com/softmaxe/whisper/issues/27) keep preparing until the
+recording input delivers its first valid frame, including silence. The recorder
+buffers audio during this wait. A ten-second wait without a frame fails and
+releases capture; stop, cancel, and teardown end the wait immediately.
 
 ## Reference and current evidence
 
@@ -42,7 +46,8 @@ recording acquires another stream, its capture stages start afresh under the
 next attempt. Earlier attempts remain in earlier log records. Only the selected
 attempt's frames can complete the trace. Reusing another request's prepared
 stream records the reuse time and attaches an observer for the new request;
-it does not claim another platform open. Do not combine capture stages from
+it does not claim another platform open. With #27 the capture owns the observer,
+so reuse also retains an already observed frame from that same live input. Do not combine capture stages from
 different attempts. Late callbacks also identify `lateCaptureAttempt` when needed.
 
 | Stage                                     | Observation                                                                                                                |
@@ -69,7 +74,8 @@ is a sink on that track. After the first frame its reader is cancelled and the
 frame is closed. The reusable `observeFirstAudio` helper also supports cancellation.
 
 `readyFeedback` measures application state committed for display, not physical
-screen presentation. In this reference behavior it can precede `firstAudio`.
+screen presentation. In the #23 reference behavior it can precede `firstAudio`. With #27,
+`readyFeedback` follows `firstAudio`; subtract the two to measure feedback delay.
 The sound cue is optional and may finish scheduling after the startup trace
 completes; that event retains the original identity as a `lateStage`.
 
