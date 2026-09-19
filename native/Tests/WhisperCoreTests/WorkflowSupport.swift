@@ -4,7 +4,7 @@ import Testing
 import WhisperCore
 
 @MainActor final class ControlledMicrophones: MicrophoneProvider {
-    var device = MicrophoneDevice(id: "built-in-fixture", name: "Test input")
+    var device = MicrophoneDevice(id: "built-in-fixture", name: "Test input", category: .builtIn)
     var rejection: DictationFailure?
     private(set) var sessions: [ControlledCapture] = []
     func resolveDevice() throws -> MicrophoneDevice {

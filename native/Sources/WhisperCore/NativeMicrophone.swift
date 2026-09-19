@@ -5,12 +5,10 @@ import Foundation
 @MainActor public final class NativeMicrophoneProvider: MicrophoneProvider {
     public init() {}
     public func resolveDevice() throws -> MicrophoneDevice {
-        let devices = AVCaptureDevice.DiscoverySession(deviceTypes: [.microphone], mediaType: .audio, position: .unspecified).devices
-        guard let device = devices.first(where: { $0.transportType == kAudioDeviceTransportTypeBuiltIn && $0.isConnected }) else {
-            throw DictationFailure.inputUnavailable
-        }
-        return MicrophoneDevice(id: device.uniqueID, name: device.localizedName)
+        try MicrophoneSelection.resolve(.init(mode: .builtIn), snapshot: inputSnapshot())
     }
+
+    public func inputSnapshot() -> MicrophoneSnapshot { NativeMicrophoneInventory.snapshot() }
 
     public func makeSession(device: MicrophoneDevice, receive: @escaping @Sendable (CaptureEvent) -> Void) -> any MicrophoneSession {
         NativeMicrophoneSession(device: device, receive: receive)
@@ -48,7 +46,7 @@ private final class NativeMicrophoneSession: NSObject, MicrophoneSession, AVCapt
         control.async { [self] in
             guard !isEnded else { return }
             do {
-                guard let inputDevice = AVCaptureDevice(uniqueID: device.id), inputDevice.isConnected else {
+                guard let inputDevice = AVCaptureDevice(uniqueID: device.id), inputDevice.isConnected, !inputDevice.isSuspended else {
                     throw DictationFailure.inputUnavailable
                 }
                 let input = try AVCaptureDeviceInput(device: inputDevice)

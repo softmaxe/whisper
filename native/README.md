@@ -81,3 +81,28 @@ isolated profile. `WorkflowSupport.swift` contains shared fixtures for subsequen
 workflow tests. Real loopback HTTP tests exercise URLSession uploads and redirect
 handling without opening hardware or using real speech. Native UI uses a
 nonactivating AppKit Recording pill with the current 98 × 40 compact footprint.
+
+## Microphone selection
+
+General Settings saves Auto, System default, Built-in microphone, or Specific
+microphone. Auto prefers the built-in input with an open or unknown lid. With a
+closed lid it prefers Continuity/iPhone, then another external input. If that
+category is unavailable, Auto uses the current physical system default. Built-in
+and Specific modes do not fall back. An unavailable saved UID remains saved and
+visible as unavailable; an identically named replacement does not inherit it.
+
+The selection policy receives a metadata snapshot through
+`MicrophoneProvider.inputSnapshot()`. Native snapshots combine AVCapture device
+UIDs with exact CoreAudio transport/default-device metadata and the IOKit lid
+property. They never open capture. The application resolves one UID when accepting
+a request. Later preference, default-input, device-list, and lid changes apply
+only to new requests. The selected input's failure or disconnect ends its request;
+reconnection cannot revive it. Refreshing the Settings list is metadata-only.
+Device categories and selection never depend on a display-name match.
+
+Workflow tests preserve and reopen real native settings, exercise all four modes,
+Auto ordering and fallback, same-named stale IDs, preference changes during
+acquisition and recording, external input failure, delayed frames, timeout,
+disconnection, reconnection, and full recording-to-copyable-result processing.
+These controlled cases do not replace built-in and wireless iPhone acceptance on
+the signed application.

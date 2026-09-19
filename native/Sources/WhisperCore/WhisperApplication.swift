@@ -5,11 +5,14 @@ public enum AppCommand {
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
     case startDictation, stopDictation, cancelDictation, copyDictationResult
+    case setMicrophone(MicrophonePreference), refreshMicrophones
     case dismissMessage
 }
 
 public struct ApplicationState: Equatable, Sendable {
     public var dictation = DictationState()
+    public var microphoneInputs = MicrophoneSnapshot()
+    public var microphoneFailure: DictationFailure?
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -68,6 +71,8 @@ public final class WhisperApplication {
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .setMicrophone(preference): setMicrophone(preference)
+        case .refreshMicrophones: refreshMicrophones()
         case .startDictation: startDictation()
         case .stopDictation: stopDictation()
         case .cancelDictation: cancelDictation()
