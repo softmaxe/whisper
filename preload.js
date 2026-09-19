@@ -83,11 +83,23 @@ contextBridge.exposeInMainWorld("electronAPI", {
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
   captureDictationTarget: () => ipcRenderer.invoke("capture-dictation-target"),
-  onToggleDictation: registerListener("toggle-dictation", (callback) => () => callback()),
-  onToggleVoiceAgent: registerListener("toggle-voice-agent", (callback) => () => callback()),
-  onToggleTranslation: registerListener("toggle-translation", (callback) => () => callback()),
+  onToggleDictation: registerListener(
+    "toggle-dictation",
+    (callback) => (_event, options) => callback(options)
+  ),
+  onToggleVoiceAgent: registerListener(
+    "toggle-voice-agent",
+    (callback) => (_event, options) => callback(options)
+  ),
+  onToggleTranslation: registerListener(
+    "toggle-translation",
+    (callback) => (_event, options) => callback(options)
+  ),
   onOpenAssistantPanel: registerListener("open-assistant-panel", (callback) => () => callback()),
-  onStartDictation: registerListener("start-dictation", (callback) => () => callback()),
+  onStartDictation: registerListener(
+    "start-dictation",
+    (callback) => (_event, options) => callback(options)
+  ),
   onStopDictation: registerListener("stop-dictation", (callback) => () => callback()),
   onPrepareDictation: registerListener(
     "prepare-dictation",

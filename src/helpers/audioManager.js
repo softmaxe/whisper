@@ -1101,7 +1101,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   // recorder already captured — to the real recording. Replaces the one-shot
   // warmupMicDriver (#845): a raced warm-up never resolved before the
   // recording's own open, so it only ever added a concurrent double open.
-  async prepareMicCapture() {
+  async prepareMicCapture(startupTrace = null) {
     // Preparing opens the device, so it answers to the same policy as the
     // recording it anticipates — otherwise a blocked user's key-down would
     // still light the mic and buffer pre-roll.
@@ -1126,10 +1126,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         const pcmTap = this._startPcmTap();
         try {
           const constraints = await this.getAudioConstraints();
-          const stream = await this._acquireCaptureStream(constraints);
+          const stream = await this._acquireCaptureStream(constraints, startupTrace);
           const value = {
             stream,
             constraints,
+            startupTrace,
             recorder: null,
             chunks: [],
             pcmTap: null,
@@ -1144,6 +1145,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         }
       });
       if (prepared) {
+        this.observePreparedCapture(prepared, startupTrace);
         logger.debug("Microphone capture prepared", { preRoll: !!prepared.recorder }, "audio");
       }
       return prepared;
@@ -1155,6 +1157,16 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
   cancelPreparedMicCapture() {
     this.preparedMicCapture.cancel();
+  }
+
+  observePreparedCapture(prepared, startupTrace) {
+    if (!startupTrace || prepared.startupTrace === startupTrace) return;
+    // Another accepted request can reuse this capture. Observe it under the
+    // new request without replacing its stream, recorder, or opening audio.
+    prepared.startupTrace = startupTrace;
+    const attempt = startupTrace.beginCapture("prepared");
+    startupTrace.markCapture(attempt, "acquisitionCompleted");
+    startupTrace.observeCapture(prepared.stream, attempt);
   }
 
   // Tells the main process whether this renderer is holding the mic open outside
@@ -1232,19 +1244,23 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     this.micStreamHold.touch();
   }
 
-  async _acquireCaptureStream(constraints) {
+  async _acquireCaptureStream(constraints, startupTrace = null) {
     const key = this._constraintsKey(constraints);
     const held = this.micStreamHold.acquireClone(key);
+    const attempt = startupTrace?.beginCapture(held ? "held" : "device");
     if (held) {
+      startupTrace?.markCapture(attempt, "acquisitionCompleted");
+      startupTrace?.observeCapture(held, attempt);
       this._stampMicWarm();
       return held;
     }
-    const stream = await this.acquireHealthyMicStream(
-      await navigator.mediaDevices.getUserMedia(constraints),
-      constraints
-    );
+    const rawStream = await navigator.mediaDevices.getUserMedia(constraints);
+    startupTrace?.markCapture(attempt, "acquisitionCompleted");
+    const stream = await this.acquireHealthyMicStream(rawStream, constraints);
     this._stampMicWarm();
-    return this.micStreamHold.adoptAndClone(stream, key);
+    const capture = this.micStreamHold.adoptAndClone(stream, key);
+    startupTrace?.observeCapture(capture, attempt);
+    return capture;
   }
 
   // TTL-gated warm-up used only by the streaming-connection warm-up. The
@@ -1325,7 +1341,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return stream;
   }
 
-  async startRecording(forceDefaultMic = false) {
+  async startRecording(forceDefaultMic = false, startupTrace = null) {
     let prepared = null;
     let preparedAdopted = false;
     let freshTap = null;
@@ -1345,14 +1361,14 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         return false;
       }
 
-      const startRequestedAt = performance.now();
       prepared = forceDefaultMic ? null : await this.preparedMicCapture.take();
+      if (prepared) this.observePreparedCapture(prepared, startupTrace);
       const constraints =
         prepared?.constraints ?? (await this.getAudioConstraints(forceDefaultMic));
       // Without a prepared capture the tap starts here, before the mic opens.
       freshTap = prepared ? null : this._startPcmTap();
-      const micStream = prepared?.stream ?? (await this._acquireCaptureStream(constraints));
-      const micReadyAt = performance.now();
+      const micStream =
+        prepared?.stream ?? (await this._acquireCaptureStream(constraints, startupTrace));
 
       const audioTrack = micStream.getAudioTracks()[0];
 
@@ -1434,17 +1450,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         isRecording: true,
         isProcessing: false,
         micCaptureStatus: "active",
+        startupTrace,
       });
-      logger.info(
-        "Recording start timing",
-        {
-          micReadyMs: Math.round(micReadyAt - startRequestedAt),
-          totalMs: Math.round(performance.now() - startRequestedAt),
-          usedPreparedCapture: !!prepared,
-          preparedAgeMs: prepared?.startedAt ? Date.now() - prepared.startedAt : 0,
-        },
-        "audio"
-      );
 
       const {
         showTranscriptionPreview,
@@ -1510,7 +1517,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         // Pinned mic is gone (Chromium rotates IDs / device unplugged). Retry once on the default mic. See #900.
         logger.warn("Pinned microphone unavailable, retrying on default mic", {}, "audio");
         this.cachedMicDeviceId = null;
-        return this.startRecording(true);
+        return this.startRecording(true, startupTrace);
       }
 
       let errorTitle = "Recording Error";

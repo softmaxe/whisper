@@ -567,6 +567,7 @@ async function startApp() {
         if (mainWindowLive && windowManager.isDictationProcessing()) {
           debugLogger?.debug("[Globe] Ignored — dictation processing");
         } else if (mainWindowLive) {
+          const acceptedAt = performance.timeOrigin + performance.now();
           // Capture target app PID BEFORE showing the overlay
           if (textEditMonitor) textEditMonitor.captureTargetPid();
           const activationMode = windowManager.getActivationMode();
@@ -576,8 +577,9 @@ async function startApp() {
               debugLogger?.debug("[Globe] Ignored — cooldown active");
               return;
             }
+            const startupRequest = windowManager.createRecordingStartupRequest(acceptedAt);
             windowManager.showDictationPanel();
-            windowManager.sendPrepareDictation();
+            windowManager.sendPrepareDictation({ startupRequest });
             const pressTime = now;
             globeKeyDownTime = pressTime;
             globeKeyIsRecording = false;
@@ -589,7 +591,7 @@ async function startApp() {
               }
             }, MIN_HOLD_DURATION_MS);
           } else {
-            windowManager.sendToggleDictation();
+            windowManager.sendToggleDictation(acceptedAt);
           }
         } else {
           debugLogger?.debug("[Globe] Ignored — mainWindow not live");
@@ -695,14 +697,16 @@ async function startApp() {
       if (!isLiveWindow(windowManager.mainWindow)) return;
       if (windowManager.isDictationProcessing()) return;
 
+      const acceptedAt = performance.timeOrigin + performance.now();
       const activationMode = windowManager.getActivationMode();
       if (textEditMonitor) textEditMonitor.captureTargetPid();
       if (activationMode === "push") {
         if (rightModActiveKey && rightModActiveKey !== modifier) return;
         const now = Date.now();
         if (now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) return;
+        const startupRequest = windowManager.createRecordingStartupRequest(acceptedAt);
         windowManager.showDictationPanel();
-        windowManager.sendPrepareDictation();
+        windowManager.sendPrepareDictation({ startupRequest });
         const pressTime = now;
         rightModActiveKey = modifier;
         rightModDownTime = pressTime;
@@ -714,7 +718,7 @@ async function startApp() {
           }
         }, MIN_HOLD_DURATION_MS);
       } else {
-        windowManager.sendToggleDictation();
+        windowManager.sendToggleDictation(acceptedAt);
       }
     });
 
@@ -783,6 +787,7 @@ async function startApp() {
       if (!isLiveWindow(windowManager.mainWindow)) return;
       if (windowManager.isDictationProcessing()) return;
 
+      const acceptedAt = performance.timeOrigin + performance.now();
       const activationMode = windowManager.getActivationMode();
       if (textEditMonitor) textEditMonitor.captureTargetPid();
 
@@ -790,8 +795,9 @@ async function startApp() {
         if (mouseButtonActiveButton && mouseButtonActiveButton !== button) return;
         const now = Date.now();
         if (now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
+        const startupRequest = windowManager.createRecordingStartupRequest(acceptedAt);
         windowManager.showDictationPanel();
-        windowManager.sendPrepareDictation();
+        windowManager.sendPrepareDictation({ startupRequest });
         const pressTime = now;
         mouseButtonActiveButton = button;
         mouseButtonDownTime = pressTime;
@@ -803,7 +809,7 @@ async function startApp() {
           }
         }, MIN_HOLD_DURATION_MS);
       } else {
-        windowManager.sendToggleDictation();
+        windowManager.sendToggleDictation(acceptedAt);
       }
     });
 
