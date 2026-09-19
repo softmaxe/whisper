@@ -11,6 +11,7 @@ const METRICS = Object.freeze({
   acquisitionToFirstAudio: "ms",
   firstAudioToFeedback: "ms",
   stopToRequestDispatch: "ms",
+  processingCompleteToPasteDispatch: "ms",
   processingCompleteToPaste: "ms",
   serverRoundTrip: "ms",
   idleRss: "MiB",
@@ -66,9 +67,11 @@ function summarizeObservations(observations) {
 }
 
 // File logging emits pretty-printed JSON. Parse only the fixed timing message.
-function startupRecords(log) {
+function timingRecords(log, completion) {
   const records = [];
-  const marker = /^\[[^\n]+\] \[INFO\]\[audio\](?:\[[^\]\n]+\])? Recording startup (\{)/gm;
+  const marker = completion
+    ? /^\[[^\n]+\] \[INFO\]\[performance\](?:\[[^\]\n]+\])? Dictation completion (\{)/gm
+    : /^\[[^\n]+\] \[INFO\]\[audio\](?:\[[^\]\n]+\])? Recording startup (\{)/gm;
   for (const match of log.matchAll(marker)) {
     const start = match.index + match[0].length - 1;
     let depth = 0;
@@ -88,27 +91,27 @@ function startupRecords(log) {
           records.push(JSON.parse(log.slice(start, cursor + 1)));
           complete = true;
         } catch {
-          throw new Error("Malformed Recording startup JSON");
+          throw new Error("Malformed timing JSON");
         }
         break;
       }
     }
-    if (!complete) throw new Error("Truncated Recording startup JSON");
+    if (!complete) throw new Error("Truncated timing JSON");
   }
   return records;
 }
 
-function summarizeStartup(log) {
+function summarizeTiming(log, { intervals, completion = false }) {
   const requests = new Map();
   let lateEvents = 0;
-  for (const record of startupRecords(log)) {
+  for (const record of timingRecords(log, completion)) {
     if (
       typeof record.requestId !== "string" ||
       !Number.isInteger(record.sequence) ||
       record.sequence < 0 ||
       !["pending", "completed", "failed", "cancelled", "incomplete"].includes(record.outcome)
     ) {
-      throw new Error("Invalid Recording startup identity or outcome");
+      throw new Error("Invalid timing identity or outcome");
     }
     if (record.lateStage !== undefined) {
       lateEvents += 1;
@@ -117,14 +120,6 @@ function summarizeStartup(log) {
     const previous = requests.get(record.requestId);
     if (!previous || record.sequence > previous.sequence) requests.set(record.requestId, record);
   }
-  const intervals = {
-    shortcutToFirstAudio: ["requestAccepted", "firstAudio"],
-    shortcutToReadyFeedback: ["requestAccepted", "readyFeedback"],
-    clientBeforeAcquisition: ["requestAccepted", "acquisitionRequested"],
-    inputAcquisition: ["acquisitionRequested", "acquisitionCompleted"],
-    acquisitionToFirstAudio: ["acquisitionCompleted", "firstAudio"],
-    firstAudioToFeedback: ["firstAudio", "readyFeedback"],
-  };
   const observations = [];
   for (const record of requests.values()) {
     for (const [metric, [start, end]] of Object.entries(intervals)) {
@@ -136,7 +131,10 @@ function summarizeStartup(log) {
       if (outcome === "success") {
         if (!validNumber(stages[start]) || !validNumber(stages[end]) || !validNumber(value)) {
           outcome = "missing";
-        } else if (record.captureSource === "held" || record.captureAttempt !== 1) {
+        } else if (
+          !completion &&
+          (record.captureSource === "held" || record.captureAttempt !== 1)
+        ) {
           // A second attempt or held input is not a matched device-open trial.
           outcome = "excluded";
         }
@@ -145,6 +143,31 @@ function summarizeStartup(log) {
     }
   }
   return { requestCount: requests.size, lateEvents, metrics: summarizeObservations(observations) };
+}
+
+function summarizeStartup(log) {
+  return summarizeTiming(log, {
+    intervals: {
+      shortcutToFirstAudio: ["requestAccepted", "firstAudio"],
+      shortcutToReadyFeedback: ["requestAccepted", "readyFeedback"],
+      clientBeforeAcquisition: ["requestAccepted", "acquisitionRequested"],
+      inputAcquisition: ["acquisitionRequested", "acquisitionCompleted"],
+      acquisitionToFirstAudio: ["acquisitionCompleted", "firstAudio"],
+      firstAudioToFeedback: ["firstAudio", "readyFeedback"],
+    },
+  });
+}
+
+function summarizeCompletion(log) {
+  return summarizeTiming(log, {
+    completion: true,
+    intervals: {
+      stopToRequestDispatch: ["stopAccepted", "asrRequestDispatched"],
+      serverRoundTrip: ["asrRequestDispatched", "asrResponseCompleted"],
+      processingCompleteToPasteDispatch: ["processingComplete", "pasteDispatched"],
+      processingCompleteToPaste: ["processingComplete", "pasteSettled"],
+    },
+  });
 }
 
 function parseCpuTime(value) {
@@ -209,6 +232,7 @@ module.exports = {
   distribution,
   summarizeObservations,
   summarizeStartup,
+  summarizeCompletion,
   processSnapshot,
   resourceObservation,
 };

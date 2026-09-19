@@ -309,6 +309,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
       const currentState = audioManagerRef.current.getState();
       if (!currentState.isRecording && !currentState.isStreamingStartInProgress) return false;
+      startupTraceRef.current?.completionTrace?.mark("stopAccepted");
 
       window.electronAPI?.unregisterCancelHotkey?.();
       setIsPreparing(false);
@@ -515,13 +516,14 @@ export const useAudioRecording = (toast, options = {}) => {
             );
         }
       },
-      onTranscriptionComplete: async (result) => {
+      onTranscriptionComplete: async (result, completionTrace = null) => {
         if (result.success) {
           const completedRecordingGeneration = preparationGenerationRef.current;
           dismissDictationError?.();
           const transcribedText = result.text?.trim();
 
           if (!transcribedText) {
+            completionTrace?.finish("incomplete");
             window.electronAPI?.hideDictationPreview?.();
             showDictationError({
               title: t("hooks.audioRecording.noAudio.title"),
@@ -536,6 +538,7 @@ export const useAudioRecording = (toast, options = {}) => {
           if (!result.selectionEdit?.sessionId) {
             result.text = expandSnippets(result.text, getSettings().snippets);
           }
+          completionTrace?.mark("processingComplete");
 
           setTranscript(result.text);
           if (result.assistantConversation) {
@@ -696,6 +699,7 @@ export const useAudioRecording = (toast, options = {}) => {
                   restoreClipboard: !keepTranscriptionInClipboard,
                   allowClipboardFallback: isAccessibilitySkipped(),
                   suppressError: true,
+                  ...(completionTrace ? { completionTrace } : {}),
                 });
               } catch (error) {
                 pasteSucceeded = false;
@@ -763,6 +767,7 @@ export const useAudioRecording = (toast, options = {}) => {
             audioManagerRef.current.warmupStreamingConnection();
           }
 
+          completionTrace?.finish("completed");
           await persistencePromise;
         }
       },

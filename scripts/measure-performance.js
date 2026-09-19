@@ -4,6 +4,7 @@ const { setTimeout: delay } = require("node:timers/promises");
 const {
   summarizeObservations,
   summarizeStartup,
+  summarizeCompletion,
   processSnapshot,
   resourceObservation,
 } = require("./lib/performance-baseline");
@@ -12,6 +13,9 @@ async function main(args) {
   const [command, input, countArgument = "30", intervalArgument = "1000"] = args;
   if (command === "startup" && args.length === 2) {
     return summarizeStartup(fs.readFileSync(input, "utf8"));
+  }
+  if (command === "completion" && args.length === 2) {
+    return summarizeCompletion(fs.readFileSync(input, "utf8"));
   }
   if (command === "summarize" && args.length === 2) {
     return { metrics: summarizeObservations(JSON.parse(fs.readFileSync(input, "utf8"))) };
@@ -54,7 +58,7 @@ async function main(args) {
     };
   }
   throw new Error(
-    "Usage: node scripts/measure-performance.js startup LOG | summarize JSON | sample-process PID [COUNT=30] [INTERVAL_MS=1000]"
+    "Usage: node scripts/measure-performance.js startup LOG | completion LOG | summarize JSON | sample-process PID [COUNT=30] [INTERVAL_MS=1000]"
   );
 }
 

@@ -24,6 +24,11 @@ archive; it does not establish identical compiled helper binaries or a measured
 startup time. The prepared package is the normal build output at
 `dist/mac-arm64/Whisper.app`.
 
+The completion probes described below were added after this reference package.
+Rebuild the instrumented baseline and record its exact revision and archive hash
+before collecting completion intervals. Keep the reference package identity
+separate; the additional diagnostics do not change its existing archive.
+
 Read-only hardware inspection on September 20, 2026 confirmed an Apple M2 Pro,
 32 GB memory, and macOS 27.0 build `26A428`. The Mac was on battery and concurrent
 development work was running. No controlled timing or idle-resource samples were
@@ -109,12 +114,13 @@ daily app to manufacture a cold launch. Alternate revision order across runs.
 | Server round trip            | Request dispatch to response completion                                              | Report ASR and cleanup independently. Server processing duration needs a server-side observation; total round trip also includes transport.                           |
 | Idle resources               | Stable idle process tree over 5 minutes                                              | Sample RSS and interval CPU at 1 second, after a 60-second settling period. Measure energy independently with a supported Instruments instrument and record its unit. |
 
-The current packaged baseline has correlated startup diagnostics, but does not
-have correlated monotonic stop-dispatch or final-text-to-paste probes. Those two
-metrics remain unobserved until the measurement session supplies verified probes
-at the listed boundaries. Record any probe patch, timing resolution, and observer
-overhead with the measured build. Do not derive these intervals by subtracting
-unrelated wall-clock log messages or a whole processing duration.
+The instrumented baseline records startup and completion through the same random
+request identity. Its completion stages use the renderer's monotonic clock and
+the startup trace's origin. The probes add no awaits, server requests, device
+opens, or capture retention. They use the existing logger and debug-file logging
+configuration. Record the instrumented revision, timing resolution, and observer
+overhead with the measured build. Do not derive intervals by subtracting unrelated
+wall-clock log messages or a whole processing duration.
 
 For UI presentation, use a timestamped frame recording of the synthetic fixture
 and a visible input marker, or an equivalent instrument with measured resolution.
@@ -128,8 +134,9 @@ The fixture must return synthetic text and fixed delays without recording reques
 bodies or credentials. Missing server timing stays missing. Do not subtract two
 independently computed medians to estimate per-request client work.
 
-Use built-in and available external inputs, including wireless iPhone input when
-available. In addition to timing, verify first spoken words, valid silence, real
+The required comparison inputs are the built-in microphone and wireless iPhone,
+both confirmed available by the user. Keep their samples separate and use
+anonymous aliases. In addition to timing, verify first spoken words, valid silence, real
 readiness feedback, normal Command combinations, capture release, disconnection,
 target changes, and long Hands-free Dictation. The new gesture thresholds require
 physical Right Command holds, genuine double taps, and accidental taps. The legacy
@@ -144,6 +151,7 @@ private:
 
 ```sh
 node scripts/measure-performance.js startup "$trial_root/profile/logs/debug-RUN.log"
+node scripts/measure-performance.js completion "$trial_root/profile/logs/debug-RUN.log"
 ```
 
 It uses the highest sequence per request and ignores late callbacks. It reports
@@ -153,6 +161,33 @@ It does not merge capture attempts. Multiple acquisition attempts and held
 capture are excluded. Confirm that prepared capture belongs to this request and
 that the selected device did not change. The log does not prove either physical
 condition; mark contaminated trials separately before comparison.
+
+`Dictation completion` records describe self-hosted Dictation. They share the
+startup `requestId`, but have their own `sequence`, frozen `stages`, and terminal
+`outcome`. They contain no text, device labels, endpoints, models, or credentials.
+
+| Stage                  | Observation                                                                                                                                                      |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `stopAccepted`         | The real Dictation Hook accepts stop after confirming an active recording. It includes subsequent recorder finalization in the stop-to-dispatch interval.        |
+| `asrRequestDispatched` | Immediately before the renderer calls `fetch` for the ASR request. No server or network delay has completed yet.                                                 |
+| `asrResponseCompleted` | The ASR response body has been received and parsed. The interval includes transport, server work, and client response parsing, so it is not pure inference time. |
+| `processingComplete`   | The Hook has the result after cleanup/fallback, Chinese conversion and Snippets.                                                                                 |
+| `pasteDispatched`      | Immediately before invoking the main-process paste IPC.                                                                                                          |
+| `pasteSettled`         | The paste IPC resolves. Success requires its `pasted` result to be true; actual text-field insertion remains a separate physical observation.                    |
+
+`processingCompleteToPasteDispatch` measures client work before the paste IPC;
+`processingCompleteToPaste` measures through that IPC's completion. The latter is
+not a screen-presented insertion measurement. Clipboard-only delivery has no
+paste stages and therefore reports missing paste observations. Failed paste,
+failed processing, cancellation, unfinished processing, and late responses do
+not become successful zero-time samples. Cancellation freezes the affected
+request even if a new Dictation has already started. The trace is passed alongside
+the result inside the renderer, and is removed from options before paste IPC;
+it is not sent to the ASR service or saved in History.
+
+These probes cover the supported self-hosted Dictation path. A History retry,
+Upload, a recording stopped outside the Hook, or an inherited unsupported provider
+without the required boundaries must not be represented as a complete sample.
 
 Other measurements use an array of fixed metric names, outcomes, and numbers:
 
@@ -185,6 +220,9 @@ app is idle, verify the PID's build, or measure energy. Record those conditions
 separately. Permission or process failures abort sampling without printing paths
 or private process arguments.
 
+`idleEnergy` accepts joules only. If an instrument reports a relative energy-impact
+score, preserve its native unit in separate evidence; do not relabel it as joules.
+
 Reports use the arithmetic middle-pair median and nearest-rank p90, plus minimum,
 maximum, successful count, and each unsuccessful outcome count. Empty groups
 return null statistics. Preserve raw numeric observations privately for review.
@@ -195,14 +233,14 @@ No numerical performance budget has been approved or inferred from language
 choice. Fill the worksheet after the baseline has valid samples. Freeze it before
 evaluating the native candidate; do not relax a budget after seeing its result.
 
-| Priority | Metric                                   | Baseline n / median / p90 / range | Native median limit | Native p90 limit | Status                                          |
-| -------- | ---------------------------------------- | --------------------------------- | ------------------- | ---------------- | ----------------------------------------------- |
-| 1        | Shortcut to first audio, per input       | Pending                           | Pending             | Pending          | Blocked on hardware session                     |
-| 1        | Shortcut to readiness feedback           | Pending                           | Pending             | Pending          | Blocked on hardware session                     |
-| 1        | Routine interaction, per action          | Pending                           | Pending             | Pending          | Blocked on controlled UI observations           |
-| 1        | Stop to dispatch and processing to paste | Pending                           | Pending             | Pending          | Boundary probes and physical paste pending      |
-| 2        | Cold launch and window availability      | Pending                           | Pending             | Pending          | Controlled launch/UI observations pending       |
-| 3        | Idle RSS, CPU and energy                 | Pending                           | Pending             | Pending          | Quiescent session and energy instrument pending |
+| Priority | Metric                                   | Baseline n / median / p90 / range | Native median limit | Native p90 limit | Status                                                        |
+| -------- | ---------------------------------------- | --------------------------------- | ------------------- | ---------------- | ------------------------------------------------------------- |
+| 1        | Shortcut to first audio, per input       | Pending                           | Pending             | Pending          | Blocked on hardware session                                   |
+| 1        | Shortcut to readiness feedback           | Pending                           | Pending             | Pending          | Blocked on hardware session                                   |
+| 1        | Routine interaction, per action          | Pending                           | Pending             | Pending          | Blocked on controlled UI observations                         |
+| 1        | Stop to dispatch and processing to paste | Pending                           | Pending             | Pending          | Controlled processing and physical paste observations pending |
+| 2        | Cold launch and window availability      | Pending                           | Pending             | Pending          | Controlled launch/UI observations pending                     |
+| 3        | Idle RSS, CPU and energy                 | Pending                           | Pending             | Pending          | Quiescent session and energy instrument pending               |
 
 Compare matched conditions only. Do not hide unsuccessful attempts in an average.
 A performance pass also requires no device substitution, no loss of opening
