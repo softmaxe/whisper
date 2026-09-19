@@ -24,6 +24,7 @@ async function mountCapture(
   {
     warmHold = "900",
     captureTarget,
+    firstFrame,
     failRecorder = false,
     initialStorage = {},
     input = "external",
@@ -77,6 +78,19 @@ async function mountCapture(
     return 1;
   };
   installMicCaptureGlobals(t);
+  if (firstFrame) {
+    globalThis.MediaStreamTrackProcessor = class {
+      constructor() {
+        this.readable = {
+          getReader: () => ({
+            read: () => firstFrame.promise,
+            cancel: async () => firstFrame.resolve({ done: true }),
+            releaseLock() {},
+          }),
+        };
+      }
+    };
+  }
   const BaseAudioContext = globalThis.AudioContext;
   globalThis.AudioContext = class extends BaseAudioContext {
     constructor() {
@@ -668,4 +682,26 @@ test("normal stop waits for final recorder data after the input track ends", asy
   assert.equal(h.audioPayloads.length, 1);
   await h.act(() => h.resolveMic(1));
   assert.equal(h.streams[1].getTracks()[0].readyState, "ended");
+});
+
+test("prepared audio and speech immediately after readiness reach transcription in order", async (t) => {
+  const target = deferred();
+  const firstFrame = deferred();
+  const h = await mountCapture(t, { captureTarget: () => target.promise, firstFrame });
+  await h.act(() => h.api().startRecording());
+  await h.act(() => h.resolveMic(0));
+  h.recorders[0].data("opening ");
+  await h.act(() =>
+    firstFrame.resolve({ done: false, value: { numberOfFrames: 480, close() {} } })
+  );
+  assert.equal(h.api().isPreparing, true);
+  await h.act(() => target.resolve());
+  assert.equal(h.api().isRecording, true);
+  h.recorders[0].data("after ready ");
+  await h.act(() => h.api().stopRecording());
+  await h.act(() => h.recorders[0].finish());
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.recorders.length, 1);
+  assert.equal(h.audioPayloads.length, 1);
+  assert.match(await h.audioPayloads[0].get("file").text(), /^opening after ready speech/);
 });

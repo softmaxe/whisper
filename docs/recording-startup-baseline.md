@@ -10,6 +10,11 @@ and no longer offer idle hold.
 Builds including [#26](https://github.com/softmaxe/whisper/issues/26) begin
 prepared capture alongside preparation feedback, without waiting for visual
 frames. Target app capture still completes before recording adopts that capture.
+Builds including
+[#27](https://github.com/softmaxe/whisper/issues/27) keep preparing until the
+recording input delivers its first valid frame, including silence. The recorder
+buffers audio during this wait. A ten-second wait without a frame fails and
+releases capture; stop, cancel, and teardown end the wait immediately.
 
 ## Reference and current evidence
 
@@ -45,7 +50,8 @@ recording acquires another stream, its capture stages start afresh under the
 next attempt. Earlier attempts remain in earlier log records. Only the selected
 attempt's frames can complete the trace. Reusing another request's prepared
 stream records the reuse time and attaches an observer for the new request;
-it does not claim another platform open. Do not combine capture stages from
+it does not claim another platform open. With #27 the capture owns the observer,
+so reuse also retains an already observed frame from that same live input. Do not combine capture stages from
 different attempts. Late callbacks also identify `lateCaptureAttempt` when needed.
 
 | Stage                                     | Observation                                                                                                                |
@@ -72,7 +78,8 @@ is a sink on that track. After the first frame its reader is cancelled and the
 frame is closed. The reusable `observeFirstAudio` helper also supports cancellation.
 
 `readyFeedback` measures application state committed for display, not physical
-screen presentation. In this reference behavior it can precede `firstAudio`.
+screen presentation. In the #23 reference behavior it can precede `firstAudio`. With #27,
+`readyFeedback` follows `firstAudio`; subtract the two to measure feedback delay.
 The sound cue is optional and may finish scheduling after the startup trace
 completes; that event retains the original identity as a `lateStage`.
 
@@ -122,7 +129,9 @@ trace even if no visual frame callback has run. The controlled 40 ms scheduling
 gap is removed; this is not a measured hardware or end-to-end speedup. The
 candidate still waits 140 ms for the test's device delivery and another 30 ms
 for target capture. The fixture deliberately keeps those delivery timestamps
-unchanged so that acquisition scheduling can be examined separately.
+unchanged so that acquisition scheduling can be examined separately. After
+integration with #27, the fixture delivers first audio at 190 ms; ready feedback
+remains absent until that delivery, then completes at 190 ms as well.
 
 The capture lifecycle suite also completes Dictation through transcription and
 Automatic paste with visual frames held, for built-in and external inputs via

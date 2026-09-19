@@ -144,6 +144,24 @@ async function createRendererServer(
 
 // Minimal Web Audio + capture stubs so the mic pipeline can run under Node.
 function installMicCaptureGlobals(t) {
+  const originalProcessor = globalThis.MediaStreamTrackProcessor;
+  // Default device delivery for lifecycle suites. Startup timing tests replace
+  // this boundary with independently controlled frame delivery.
+  globalThis.MediaStreamTrackProcessor = class {
+    constructor() {
+      this.readable = {
+        getReader: () => ({
+          read: async () => ({ done: false, value: { numberOfFrames: 480, close() {} } }),
+          cancel: async () => {},
+          releaseLock() {},
+        }),
+      };
+    }
+  };
+  t.after(() => {
+    if (originalProcessor === undefined) delete globalThis.MediaStreamTrackProcessor;
+    else globalThis.MediaStreamTrackProcessor = originalProcessor;
+  });
   const track = {
     readyState: "live",
     label: "Fake Mic",

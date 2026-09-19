@@ -19,7 +19,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-async function setup(t) {
+async function setup(t, { cues = false } = {}) {
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   let root;
   let hook;
@@ -33,6 +33,8 @@ async function setup(t) {
   const events = {};
   const logs = [];
   const lifecycle = [];
+  const errors = [];
+  const tones = [];
   const target = deferred();
   const electronAPI = {
     getLogLevel: async () => "info",
@@ -52,11 +54,36 @@ async function setup(t) {
       return () => delete events[name];
     };
   }
-  installBrowserGlobals(t, { window: { electronAPI } });
+  const { window } = installBrowserGlobals(t, { window: { electronAPI } });
   const container = installHookDom(t);
   const media = installMicCaptureGlobals(t);
+  media.track.stop = () => {
+    media.track.readyState = "ended";
+  };
   media.track.addEventListener = () => {};
   media.track.removeEventListener = () => {};
+  window.AudioContext = class {
+    state = "running";
+    currentTime = 0;
+    createOscillator() {
+      return {
+        frequency: { setValueAtTime() {} },
+        connect() {},
+        start: () => tones.push("start"),
+        stop() {},
+      };
+    }
+    createGain() {
+      return {
+        connect() {},
+        gain: {
+          setValueAtTime() {},
+          linearRampToValueAtTime() {},
+          exponentialRampToValueAtTime() {},
+        },
+      };
+    }
+  };
   const frames = [];
   globalThis.requestAnimationFrame = (callback) => frames.push(callback);
   let now = 1000;
@@ -111,11 +138,11 @@ async function setup(t) {
     useLocalWhisper: false,
     microphoneSelectionMode: "system",
     micWarmHoldSeconds: 0,
-    audioCuesEnabled: false,
+    audioCuesEnabled: cues,
     dataRetentionEnabled: false,
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
-  const toast = () => {};
+  const toast = (error) => errors.push(error);
   function Harness() {
     hook = useAudioRecording(toast);
     return null;
@@ -124,6 +151,13 @@ async function setup(t) {
   await React.act(async () => root.render(React.createElement(Harness)));
   return {
     events,
+    errors,
+    tones,
+    unmount: () =>
+      React.act(async () => {
+        root.unmount();
+        root = null;
+      }),
     logs,
     lifecycle,
     target,
@@ -184,33 +218,38 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   assert.equal(h.hook().isRecording, false);
   h.advance(30);
   await React.act(async () => h.target.resolve());
-  assert.equal(h.hook().isRecording, true);
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(h.hook().isPreparing, true);
   const trace = h.timing().at(-1);
   assert.equal(trace.requestId, h.request.requestId);
   assert.equal(trace.stages.acquisitionCompleted, 160);
-  assert.equal(trace.stages.readyFeedback, 190);
+  assert.equal(trace.stages.readyFeedback, undefined);
   assert.equal(trace.stages.firstAudio, undefined);
   assert.equal(trace.outcome, "pending");
   await h.deliver();
   assert.equal(h.timing().at(-1).outcome, "completed");
+  assert.equal(h.timing().at(-1).stages.firstAudio, 190);
+  assert.equal(h.timing().at(-1).stages.readyFeedback, 190);
+  assert.equal(h.hook().isRecording, true);
   await React.act(async () => h.hook().cancelRecording());
 });
 
-test("a silent input frame completes startup timing after the existing ready feedback", async (t) => {
+test("a silent input frame establishes readiness after acquisition without waiting for speech", async (t) => {
   const h = await setup(t);
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));
   h.advance(40);
   await h.paint();
   h.advance(10);
   await React.act(async () => h.target.resolve());
-  assert.equal(h.hook().isRecording, true);
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(h.hook().isPreparing, true);
   assert.equal(h.timing().at(-1).outcome, "pending");
   assert.equal(h.timing().at(-1).stages.firstAudio, undefined);
   h.advance(100);
   assert.equal(await h.deliver(), true);
   const trace = h.timing().at(-1);
   assert.equal(trace.stages.firstAudio, 170);
-  assert.equal(trace.stages.readyFeedback, 70);
+  assert.equal(trace.stages.readyFeedback, 170);
   assert.equal(trace.totalMs, 170);
   assert.equal(trace.outcome, "completed");
   assert.equal(h.readers.get(h.media.track).cancelled, true);
@@ -420,21 +459,23 @@ test("stop during acquisition releases late capture without changing a completed
   );
 });
 
-test("an observation timeout is incomplete and does not stop or reclassify an ongoing recording", async (t) => {
+test("no delivered audio fails within ten seconds and releases capture without readiness", async (t) => {
   const h = await setup(t);
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));
   await h.paint();
   await React.act(async () => h.target.resolve());
-  assert.equal(h.hook().isRecording, true);
-  await React.act(async () => t.mock.timers.tick(30000));
+  assert.equal(h.hook().isRecording, false);
+  await React.act(async () => t.mock.timers.tick(10000));
   const trace = h.timing().at(-1);
-  assert.equal(trace.outcome, "incomplete");
-  assert.equal(trace.reason, "observation_timeout");
+  assert.equal(trace.outcome, "failed");
+  assert.equal(h.errors.length, 1);
+  assert.equal(h.hook().isPreparing, false);
+  assert.equal(h.media.track.readyState, "ended");
   assert.equal(trace.totalMs, null);
   assert.equal(trace.stages.firstAudio, undefined);
   assert.equal(h.readers.get(h.media.track).cancelled, true);
-  assert.equal(h.hook().isRecording, true);
-  assert.equal(h.recorders[0].state, "recording");
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(h.recorders[0].state, "inactive");
 });
 
 test("expired preparation cannot supply first audio for the replacement recording input", async (t) => {
@@ -453,7 +494,7 @@ test("expired preparation cannot supply first audio for the replacement recordin
   await React.act(async () => t.mock.timers.tick(10001));
   await React.act(async () => h.target.resolve());
   assert.equal(opens, 2);
-  assert.equal(h.hook().isRecording, true);
+  assert.equal(h.hook().isRecording, false);
   assert.equal(h.recorders.at(-1).stream, replacement);
   assert.equal(h.timing().at(-1).outcome, "pending");
   assert.equal(h.timing().at(-1).stages.firstAudio, undefined);
@@ -502,3 +543,45 @@ test("a new preparation request observes a reused capture without opening anothe
     "incomplete"
   );
 });
+
+for (const action of ["stop", "cancel", "teardown"]) {
+  test(
+    action + " during first-audio waiting suppresses late readiness and releases capture",
+    async (t) => {
+      const h = await setup(t, { cues: true });
+      await React.act(async () => h.events.StartDictation({ startupRequest: h.request }));
+      await h.paint();
+      await React.act(async () => h.target.resolve());
+      assert.equal(h.hook().isPreparing, true);
+      assert.equal(h.tones.length, 0);
+      if (action === "teardown") await h.unmount();
+      else
+        await React.act(async () =>
+          action === "stop" ? h.events.StopDictation() : h.hook().cancelRecording()
+        );
+      await h.deliver();
+      assert.equal(h.media.track.readyState, "ended");
+      assert.equal(h.recorders[0].state, "inactive");
+      assert.equal(h.tones.length, 0);
+      assert.equal(h.lifecycle.includes("recording"), false);
+      assert.equal(h.timing().at(-1).stages.readyFeedback, undefined);
+    }
+  );
+}
+
+for (const cues of [true, false]) {
+  test("readiness is visible and emitted once with cues " + cues, async (t) => {
+    const h = await setup(t, { cues });
+    await React.act(async () => h.events.StartDictation({ startupRequest: h.request }));
+    await h.paint();
+    await React.act(async () => h.target.resolve());
+    assert.equal(h.hook().isPreparing, true);
+    assert.equal(h.tones.length, 0);
+    await h.deliver();
+    await h.deliver();
+    assert.equal(h.hook().isRecording, true);
+    assert.equal(h.hook().isPreparing, false);
+    assert.equal(h.lifecycle.filter((state) => state === "recording").length, 1);
+    assert.equal(h.tones.length, cues ? 2 : 0);
+  });
+}
