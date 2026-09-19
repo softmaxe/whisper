@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import WhisperCore
 
-@MainActor private final class ControlledPasteSystem: AutomaticPasteSystem {
+@MainActor final class ControlledPasteSystem: AutomaticPasteSystem {
     var frontmost = PasteTarget(processID: 101)
     var modifiersHeld = false
     var clipboard = ClipboardSnapshot(items: [["public.utf8-plain-text": Data("original".utf8), "public.rtf": Data("rich fixture".utf8)]])
@@ -18,6 +18,7 @@ import WhisperCore
     var pasted: [PasteTarget] = []
     var writes: [String] = []
     var probes = 0
+    var onPaste: ((String) -> Void)?
     func captureTarget() -> PasteTarget? { captures.append(frontmost); return frontmost }
     func snapshotClipboard() -> ClipboardSnapshot { clipboard }
     func replaceClipboard(with text: String) -> Int? {
@@ -42,13 +43,14 @@ import WhisperCore
     }
     func paste(_ target: PasteTarget) async -> Bool {
         guard allowPaste else { return false }
+        onPaste?(writes.last ?? "")
         pasted.append(target)
         return true
     }
     func releaseProbe(_ result: Bool) { probeContinuation?.resume(returning: result); probeContinuation = nil }
 }
 
-@MainActor private final class ShortcutFixture {
+@MainActor final class ShortcutFixture {
     let profile: ProfileFixture
     let microphones = ControlledMicrophones()
     let clock = ControlledClock()
@@ -56,11 +58,11 @@ import WhisperCore
     let paste = ControlledPasteSystem()
     let clipboard = ControlledClipboard()
     let app: WhisperApplication
-    init() throws {
+    init(correctionSystem: (any CorrectionMonitoringSystem)? = nil) throws {
         profile = try ProfileFixture()
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials,
             microphones: microphones, transcriber: SelfHostedTranscriber(transport: transport),
-            clock: clock, clipboard: clipboard, pasteSystem: paste)
+            clock: clock, clipboard: clipboard, pasteSystem: paste, correctionSystem: correctionSystem)
         app.send(.saveASR(.init(serverURL: "http://localhost:8178/v1", model: "fixture"), credential: .unchanged))
     }
     func key(_ code: UInt16 = ShortcutInput.rightCommand, down: Bool = true, repeat repeated: Bool = false) {

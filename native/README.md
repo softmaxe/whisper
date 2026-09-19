@@ -181,3 +181,29 @@ Dictionary hashes, upstream revisions, and MIT/Apache-2.0 notices are bundled in
 `test/native/chineseConversionOracle.test.js` checks source-data and fixture parity
 against the existing development dependency; the Swift workflow tests replay
 those fixtures through actual ASR requests, publication, and Copy commands.
+
+## Correction learning
+
+The default-enabled **Learn from corrections** preference adds words only after
+confirmed Automatic paste. The app captures the exact Accessibility element and
+selection before insertion. After 500 ms it confirms the inserted text in that
+range, then watches the same field for 30 seconds using AXObserver with a 500 ms
+polling fallback. It waits 1500 ms after the latest edit before learning. A focus
+change, selection outside the inserted region, surrounding-content change,
+disabled preference, new Dictation, or teardown stops the observation. Copy
+recovery and clipboard-only delivery do not start learning.
+
+The matcher preserves the existing word-level LCS, common-word, minimum-length,
+case, edit-distance and rewrite filters. It runs off the UI thread and bounds
+quadratic comparisons to four million cells. Oversized comparisons skip learning;
+recording and transcription remain unlimited. Only newly learned words and their
+source metadata are persisted. Field snapshots remain in request memory and are
+never logged or saved. Undo removes only the entries from that notification that
+still have learned provenance, preserving words later promoted manually.
+
+The adapter reuses `resources/macos-text-monitor.swift` behavior inside the main
+signed application. It adds no helper executable or permission identity. The
+workflow tests drive actual shortcut capture, AAC/ASR requests, automatic paste,
+controlled field observations, Dictionary persistence and the next ASR prompt.
+Actual Accessibility compatibility and the learned-word notification still need
+coordinated physical and English/Chinese visual acceptance.

@@ -90,6 +90,7 @@ struct SettingsRootView: View {
             pill?.update()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in shortcuts?.start() }
+        .onChange(of: application.state.corrections) { pill?.update() }
         .onChange(of: application.state.dictation.phase) { pill?.update() }
         .onChange(of: application.state.dictation.delivery) { pill?.update() }
     }
@@ -115,6 +116,7 @@ struct SettingsRootView: View {
             .padding(16).background(.primary.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+            CorrectionLearningSetting(application: application)
             MicrophoneSettingsView(application: application)
             VStack(alignment: .leading, spacing: 12) {
                 Text(language.text("Dictation shortcut", "听写快捷键")).font(.headline)

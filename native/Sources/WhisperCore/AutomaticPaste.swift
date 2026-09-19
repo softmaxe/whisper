@@ -43,6 +43,7 @@ public enum DeliveryResult: Equatable, Sendable {
     init(system: any AutomaticPasteSystem, clock: any WorkflowClock) { self.system = system; self.clock = clock }
 
     func deliver(_ text: String, target: PasteTarget?, enabled: Bool, keepClipboard: Bool,
+                 willPaste: (@MainActor @Sendable (PasteTarget) async -> Void)? = nil,
                  isCurrent: @escaping @MainActor @Sendable () -> Bool) async -> DeliveryResult {
         let previous = tail
         return await withCheckedContinuation { continuation in
@@ -68,7 +69,8 @@ public enum DeliveryResult: Equatable, Sendable {
                 if !system.modifiersHeld, let target,
                    await system.activate(target), isCurrent(),
                    await system.canPaste(target), isCurrent(), !system.modifiersHeld {
-                    pasted = await system.paste(target)
+                    await willPaste?(target)
+                    if isCurrent(), !system.modifiersHeld { pasted = await system.paste(target) }
                 }
                 guard isCurrent() else {
                     if !pasted { system.restoreClipboard(original, ownedRevision: revision) }
