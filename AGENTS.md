@@ -15,3 +15,20 @@
 - After signing or packaging changes, run `npm run test:signing` and `npm run pack:release` on macOS. Verify temporary private files and keychains are cleaned up on success and failure.
 - Publish only when requested. Before reporting a release complete, verify all Release workflow jobs, the published archive and checksum, and the Homebrew cask version.
 - For release readiness or permission-retention validation, follow the [release smoke check](test/README.md#release-smoke-check). Report automated signature checks separately from actual microphone, Accessibility, and Keychain behavior after a Homebrew upgrade.
+
+## Agent skills
+
+### Issue tracker
+
+Track issues and specs in GitHub Issues. Before issue tracker operations, read
+[issue tracker conventions](docs/agents/issue-tracker.md).
+
+### Triage labels
+
+Use the five canonical triage labels. Before triaging issues, read
+[triage labels](docs/agents/triage-labels.md).
+
+### Domain docs
+
+Use a single-context layout. Before exploring the codebase or updating domain
+docs, read [domain documentation rules](docs/agents/domain.md).
