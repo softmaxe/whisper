@@ -9,25 +9,6 @@ struct HistoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Spacer()
-                Button {
-                    application.send(.dismissHistoryEntry)
-                    application.send(.searchHistory(""))
-                    application.send(.openHistorySearch)
-                } label: { Label(language.text("Search", "搜索"), systemImage: "magnifyingglass") }
-                .accessibilityIdentifier("history-search")
-                Menu {
-                    Toggle(language.text("Show discarded recordings", "显示已丢弃的录音"), isOn: Binding(
-                        get: { history.includeDiscarded }, set: { application.send(.showDiscardedHistory($0)) }
-                    ))
-                    Divider()
-                    Button(language.text("Clear all", "清空全部"), role: .destructive) { confirmClear = true }
-                        .disabled(history.totalCount == 0 || history.pendingChanges > 0)
-                } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).frame(width: 24)
-                .accessibilityLabel(language.text("History actions", "历史记录操作"))
-            }
             if !application.state.settings.history.enabled {
                 Label(language.text("History is disabled. New results remain available to copy without being saved.", "历史记录已关闭。新结果仍可复制，但不会保存。"), systemImage: "archivebox")
                     .font(.caption).foregroundStyle(.orange).padding(12)
@@ -54,6 +35,11 @@ struct HistoryView: View {
                 HStack { ProgressView().controlSize(.small); Text(language.text("Loading history…", "正在加载历史记录…")) }
                     .frame(maxWidth: .infinity).padding(32)
             } else if history.entries.isEmpty {
+                HStack {
+                    Text(language.text("History", "历史记录")).font(.custom("JetBrainsMono-Regular", size: 14)).foregroundStyle(.secondary)
+                    Spacer()
+                    historyActions
+                }
                 VStack(spacing: 12) {
                     Image(systemName: "mic").font(.title2).foregroundStyle(.secondary)
                     Text(language.text("No recordings yet", "暂无录音")).font(.headline)
@@ -65,12 +51,15 @@ struct HistoryView: View {
                 .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.12)))
             } else {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(history.groups()) { group in
-                        Text(group.title(in: language)).font(.caption).foregroundStyle(.secondary)
-                            .padding(.top, 14).padding(.bottom, 9)
+                    ForEach(Array(history.groups().enumerated()), id: \.element.id) { index, group in
+                        HStack {
+                            Text(group.title(in: language)).font(.custom("JetBrainsMono-Regular", size: 14)).foregroundStyle(.secondary)
+                            Spacer()
+                            if index == 0 { historyActions }
+                        }.padding(.top, index == 0 ? 8 : 24).padding(.bottom, 10)
                         VStack(spacing: 0) {
                             ForEach(group.entries) { entry in
-                                HistoryEntryView(application: application, entry: entry).padding(16)
+                                HistoryEntryView(application: application, entry: entry).padding(.horizontal, 16).padding(.vertical, 12)
                                 if entry.id != group.entries.last?.id { Divider() }
                             }
                         }
@@ -95,18 +84,34 @@ struct HistoryView: View {
             Text(language.text("All history on this device will be permanently deleted. This cannot be undone.", "将永久删除此设备上的全部历史记录。此操作无法撤销。"))
         }
     }
+
+    private var historyActions: some View {
+        HStack(spacing: 8) {
+            Button { application.send(.showDiscardedHistory(!history.includeDiscarded)) } label: {
+                Label(history.includeDiscarded ? language.text("Hide discarded", "隐藏已丢弃") : language.text("Show discarded", "显示已丢弃"), systemImage: "archivebox")
+            }
+            .accessibilityValue(history.includeDiscarded ? language.text("Shown", "已显示") : language.text("Hidden", "已隐藏"))
+            .accessibilityIdentifier("history-show-discarded")
+            if !history.entries.isEmpty {
+                Button(role: .destructive) { confirmClear = true } label: {
+                    Label(language.text("Clear all", "清空全部"), systemImage: "trash")
+                }.disabled(history.totalCount == 0 || history.pendingChanges > 0)
+                    .accessibilityIdentifier("history-clear-all")
+            }
+        }.buttonStyle(.borderless).font(.custom("JetBrainsMono-Regular", size: 11)).foregroundStyle(.secondary)
+    }
 }
 
 private struct HistoryEntryView: View {
     let application: WhisperApplication
     let entry: HistoryEntry
     var detail = false
-    @State private var expanded = false
+    @State private var rawExpanded = false
     @State private var confirmDelete = false
     private var language: AppLanguage { application.state.settings.language }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(entry.occurredAt.formatted(Date.FormatStyle(date: detail ? .abbreviated : .omitted, time: .shortened, locale: Locale(identifier: language.rawValue))))
                 if entry.source == .upload { Label(language.text("Upload", "上传"), systemImage: "arrow.up.doc") }
@@ -114,59 +119,71 @@ private struct HistoryEntryView: View {
                     Text(entry.status == .failed ? language.text("Failed", "失败") : language.text("Discarded", "已丢弃"))
                 }
                 Spacer()
+                if !entry.text.isEmpty {
+                    copyButton(.processed).labelStyle(.iconOnly).frame(width: 28, height: 28)
+                        .help(language.text("Copy text", "复制文字"))
+                }
+                actions
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .buttonStyle(.borderless).font(.custom("JetBrainsMono-Regular", size: 12)).foregroundStyle(.secondary)
             if !entry.text.isEmpty {
-                Text(entry.text).textSelection(.enabled).lineLimit(detail || expanded ? nil : 4)
+                Text(entry.text).textSelection(.enabled).font(.custom("JetBrainsMono-Regular", size: 16)).lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             if let error = entry.errorMessage {
                 Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
-            if !entry.rawText.isEmpty && entry.rawText != entry.text {
-                DisclosureGroup(language.text("Original transcript", "原始转录")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(entry.rawText).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                        copyButton(.raw)
-                    }.padding(.top, 8)
+            if rawExpanded && !entry.rawText.isEmpty {
+                Divider().padding(.top, 2)
+                HStack {
+                    Text(language.text("ORIGINAL TRANSCRIPT", "原始转录")).font(.custom("JetBrainsMono-SemiBold", size: 10))
+                    Spacer()
+                    copyButton(.raw).labelStyle(.iconOnly).buttonStyle(.borderless).frame(width: 20, height: 20)
+                        .help(language.text("Copy original", "复制原文"))
                 }
-                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text(entry.rawText).textSelection(.enabled).font(.custom("JetBrainsMono-Regular", size: 12)).lineSpacing(3)
+                    .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
-            HStack(spacing: 12) {
-                if !entry.text.isEmpty { copyButton(.processed) }
-                if entry.hasAudio {
-                    Button(application.state.history.playingID == entry.id ? language.text("Stop", "停止") : language.text("Play", "播放")) {
-                        application.send(application.state.history.playingID == entry.id ? .stopHistoryPlayback : .playHistory(entry.id))
-                    }
-                    .accessibilityIdentifier("history-play-" + entry.id.uuidString)
-                    if application.state.history.retry.isRunning && application.state.history.retry.entryID == entry.id {
-                        Button(language.text("Cancel retry", "取消重试")) { application.send(.cancelHistoryRetry) }
-                    } else {
-                        Button(entry.status == .completed ? language.text("Retry", "重试") : language.text("Recover", "恢复")) {
-                            application.send(.retryHistory(entry.id))
-                        }
-                        .accessibilityIdentifier("history-retry-" + entry.id.uuidString)
-                    }
-                    Button { application.send(.revealHistoryAudio(entry.id)) } label: { Image(systemName: "folder") }
-                        .accessibilityLabel(language.text("Show audio in Finder", "在 Finder 中显示音频"))
-                }
-                if !detail {
-                    Button(language.text("Open", "打开")) { application.send(.openHistorySearchResult(entry.id)) }
-                }
-                if !detail && entry.text.count > 180 {
-                    Button(language.text(expanded ? "Show less" : "Show more", expanded ? "收起" : "展开")) { expanded.toggle() }
-                }
-                Spacer()
-                Button(role: .destructive) { confirmDelete = true } label: { Image(systemName: "trash") }
-                    .accessibilityLabel(language.text("Delete recording", "删除录音"))
-                    .accessibilityIdentifier("history-delete-" + entry.id.uuidString)
-            }
-            .buttonStyle(.borderless).font(.caption)
         }
         .alert(language.text("Delete recording?", "删除录音？"), isPresented: $confirmDelete) {
             Button(language.text("Cancel", "取消"), role: .cancel) {}
             Button(language.text("Delete", "删除"), role: .destructive) { application.send(.deleteHistory(entry.id)) }
         } message: { Text(language.text("This history item will be permanently deleted.", "此历史记录将被永久删除。")) }
+    }
+
+    private var actions: some View {
+        Menu {
+            if entry.hasAudio {
+                Button(application.state.history.playingID == entry.id ? language.text("Stop playback", "停止播放") : language.text("Play audio", "播放音频")) {
+                    application.send(application.state.history.playingID == entry.id ? .stopHistoryPlayback : .playHistory(entry.id))
+                }.accessibilityIdentifier("history-play-" + entry.id.uuidString)
+                if application.state.history.retry.isRunning && application.state.history.retry.entryID == entry.id {
+                    Button(language.text("Cancel retry", "取消重试")) { application.send(.cancelHistoryRetry) }
+                } else {
+                    Button(entry.status == .completed ? language.text("Retry", "重试") : language.text("Recover", "恢复")) { application.send(.retryHistory(entry.id)) }
+                        .accessibilityIdentifier("history-retry-" + entry.id.uuidString)
+                }
+            }
+            if entry.status == .completed && !entry.rawText.isEmpty {
+                Button(rawExpanded ? language.text("Hide original transcript", "隐藏原始转录") : language.text("View original transcript", "查看原始转录")) { rawExpanded.toggle() }
+                    .accessibilityIdentifier("history-original-" + entry.id.uuidString)
+            }
+            if entry.hasAudio {
+                Button(language.text("Show audio in Finder", "在 Finder 中显示音频")) { application.send(.revealHistoryAudio(entry.id)) }
+            }
+            if !detail {
+                Button(language.text("Open", "打开")) { application.send(.openHistorySearchResult(entry.id)) }
+            }
+            Divider()
+            Button(language.text("Delete recording", "删除录音"), role: .destructive) { confirmDelete = true }
+                .accessibilityIdentifier("history-delete-" + entry.id.uuidString)
+        } label: {
+            Image(systemName: "ellipsis").rotationEffect(.degrees(90)).frame(width: 28, height: 28)
+        }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .accessibilityLabel(language.text("More actions", "更多操作"))
+            .accessibilityIdentifier("history-actions-" + entry.id.uuidString)
+            .help(language.text("More actions", "更多操作"))
     }
 
     private func copyButton(_ version: HistoryTextVersion) -> some View {
@@ -205,6 +222,7 @@ struct HistorySearchView: View {
                     get: { history.searchQuery }, set: { application.send(.searchHistory($0)) }
                 ))
                 .textFieldStyle(.roundedBorder).focused($focused)
+                .onAppear { focused = true }
                 .onSubmit(openSelection).accessibilityIdentifier("history-search-query")
                 if history.isSearching { ProgressView().controlSize(.small) }
                 else if history.searchResults.isEmpty {
@@ -212,14 +230,9 @@ struct HistorySearchView: View {
                 }
                 VStack(spacing: 4) {
                     ForEach(Array(history.searchResults.enumerated()), id: \.element.id) { index, entry in
-                        Button { application.send(.openHistorySearchResult(entry.id)) } label: {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(entry.text.isEmpty ? entry.rawText : entry.text).lineLimit(2)
-                                Text(entry.occurredAt.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: Locale(identifier: language.rawValue)))).font(.caption).foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                            .background(index == history.searchSelection ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                        }.buttonStyle(.plain).disabled(history.isSearching)
+                        if index == history.searchSelection {
+                            resultButton(entry, selected: true).keyboardShortcut(.defaultAction)
+                        } else { resultButton(entry, selected: false) }
                     }
                 }
                 Spacer(minLength: 0)
@@ -228,7 +241,6 @@ struct HistorySearchView: View {
             }
         }
         .padding(24).frame(width: 560, height: 440)
-        .onAppear { focused = true }
         .onKeyPress(.downArrow) {
             guard history.selectedEntry == nil else { return .ignored }
             application.send(.moveHistorySearchSelection(1)); return .handled
@@ -237,6 +249,19 @@ struct HistorySearchView: View {
             guard history.selectedEntry == nil else { return .ignored }
             application.send(.moveHistorySearchSelection(-1)); return .handled
         }
+    }
+
+    private func resultButton(_ entry: HistoryEntry, selected: Bool) -> some View {
+        Button { application.send(.openHistorySearchResult(entry.id)) } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                Text(entry.text.isEmpty ? entry.rawText : entry.text).lineLimit(2)
+                Text(entry.occurredAt.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: Locale(identifier: language.rawValue)))).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(12)
+            .background(selected ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(.plain).disabled(history.isSearching)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityIdentifier("history-search-result-" + entry.id.uuidString)
     }
 
     private func openSelection() {
