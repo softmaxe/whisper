@@ -127,7 +127,7 @@ extension WhisperApplication {
         }
     }
 
-    private func mutateDictionary(_ change: (inout [DictionaryEntry]) throws -> Int) {
+    func mutateDictionary(_ change: (inout [DictionaryEntry]) throws -> Int) {
         state.dictionary.failure = nil
         state.dictionary.addedCount = nil
         state.dictionary.exportCompleted = false

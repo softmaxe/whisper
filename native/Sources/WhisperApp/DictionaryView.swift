@@ -64,6 +64,7 @@ private struct DictionaryWordsPage: View {
                     .help(language.text("Import words", "导入词条"))
                     .accessibilityLabel(language.text("Import words", "导入词条"))
             }
+            CorrectionLearningFeedback(application: application)
             if showingImport { importForm }
             if let failure = dictionary.failure {
                 Label(failure.message(in: language), systemImage: "exclamationmark.triangle")

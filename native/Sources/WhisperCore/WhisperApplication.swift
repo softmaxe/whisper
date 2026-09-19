@@ -6,6 +6,7 @@ public enum AppCommand {
     case saveCleanupPrompt(String?)
     case testCleanupPrompt(text: String, prompt: String?), cancelCleanupPromptTest, resetCleanupPrompt
     case copyRawDictationResult
+    case setAutoLearnCorrections(Bool), undoLearnedCorrections, dismissLearnedCorrections
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
     case setTranscriptionLanguage(String)
@@ -36,6 +37,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var dictation = DictationState()
     public var microphoneInputs = MicrophoneSnapshot()
     public var microphoneFailure: DictationFailure?
+    public var corrections = CorrectionLearningState()
     public var dictionary = DictionaryState()
     public var snippets = SnippetsState()
     public var history = HistoryState()
@@ -77,6 +79,7 @@ public final class WhisperApplication {
     @ObservationIgnored var dictationStartedAt: TimeInterval = 0
     @ObservationIgnored var dictationConfiguration: ASRConfiguration?
     @ObservationIgnored var dictationCredential: String?
+    @ObservationIgnored var correctionLearning: CorrectionLearning!
     @ObservationIgnored let pasteSystem: any AutomaticPasteSystem
     @ObservationIgnored let automaticPaste: AutomaticPaste
     @ObservationIgnored var dictationTarget: PasteTarget?
@@ -95,7 +98,8 @@ public final class WhisperApplication {
         clock: (any WorkflowClock)? = nil,
         clipboard: (any TextClipboard)? = nil,
         pasteSystem: (any AutomaticPasteSystem)? = nil,
-        cleanup: any CleanupService = SelfHostedCleanup()
+        cleanup: any CleanupService = SelfHostedCleanup(),
+        correctionSystem: (any CorrectionMonitoringSystem)? = nil
     ) {
         self.cleanup = cleanup
         self.microphones = microphones ?? NativeMicrophoneProvider()
@@ -116,6 +120,9 @@ public final class WhisperApplication {
         }
         loadDictionary()
         loadSnippets()
+        correctionLearning = CorrectionLearning(system: correctionSystem ?? NativeCorrectionMonitoringSystem(), clock: self.clock) { [weak self] words in
+            self?.saveLearnedCorrections(words)
+        }
     }
 
     deinit {
@@ -128,6 +135,9 @@ public final class WhisperApplication {
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
+        case .undoLearnedCorrections: undoLearnedCorrections()
+        case .dismissLearnedCorrections: state.corrections = CorrectionLearningState()
         case let .setMicrophone(preference): setMicrophone(preference)
         case .refreshMicrophones: refreshMicrophones()
         case let .saveSnippet(trigger, replacement, editingID): saveSnippet(trigger: trigger, replacement: replacement, editingID: editingID)

@@ -18,6 +18,7 @@ struct DictationHomeView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            CorrectionLearningFeedback(application: application)
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
                     RecordingStatus(application: application)
@@ -122,13 +123,14 @@ struct RecordingStatus: View {
         panel.contentView = NSHostingView(rootView: RecordingPill(application: application))
     }
     func update() {
-        guard application.state.dictation.phase != .idle else { panel.orderOut(nil); return }
+        guard application.state.dictation.phase != .idle || !application.state.corrections.learned.isEmpty else { panel.orderOut(nil); return }
         if let screen = NSScreen.main {
             let recovery: Bool
             if case .recovery = application.state.dictation.delivery { recovery = true } else { recovery = false }
-            let width: CGFloat = recovery ? 390 : 170
+            let learning = !application.state.corrections.learned.isEmpty && !application.state.dictation.phase.isActive
+            let width: CGFloat = recovery || learning ? 390 : 170
             panel.setFrame(NSRect(x: screen.visibleFrame.midX - width / 2, y: screen.visibleFrame.minY + 18,
-                width: width, height: recovery ? 220 : 64), display: true)
+                width: width, height: recovery ? 220 : learning ? 160 : 64), display: true)
         }
         panel.orderFrontRegardless()
     }
@@ -145,7 +147,10 @@ private struct RecordingPill: View {
     private var dictation: DictationState { application.state.dictation }
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
-        if case .recovery = dictation.delivery {
+        if !application.state.corrections.learned.isEmpty && !dictation.phase.isActive {
+            CorrectionLearningFeedback(application: application)
+                .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
+        } else if case .recovery = dictation.delivery {
             VStack(alignment: .leading, spacing: 10) {
                 Text(dictation.delivery.message(in: language) ?? "").font(.system(size: 12))
                 ScrollView { Text(dictation.text).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading) }

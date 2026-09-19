@@ -91,6 +91,65 @@ struct ProcessingIntegrationTests {
         #expect(reopened.state.history.entries.first?.text == "新的中文軟體")
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func correctionLearningUsesFinalPastedTextAndKeepsHistory(handsFree: Bool, pasteSucceeds: Bool) async throws {
+        let field = ControlledCorrectionField(before: "", range: 0..<0)
+        let monitor = ControlledCorrectionSystem(field: field)
+        let fixture = try ProcessingFixture(correctionSystem: monitor)
+        defer { fixture.remove() }
+        fixture.app.send(.setTranscriptionLanguage("zh-TW"))
+        fixture.app.send(.saveSnippet(trigger: "這是中文軟體", replacement: "Hey Shunade how are you"))
+        fixture.paste.allowPaste = pasteSucceeds
+        fixture.paste.onPaste = { field.setRegion($0) }
+        let raw = "Original ASR learning fixture"
+        await fixture.submit(raw, handsFree: handsFree)
+        await settle { await fixture.cleanupHTTP.requests.count == 1 }
+        await fixture.cleanupHTTP.reply(content: "这是中文软件")
+        await fixture.waitForResult()
+        let firstID = try #require(fixture.app.state.dictation.requestID)
+        #expect(fixture.app.state.dictation.text == "Hey Shunade how are you")
+        #expect(fixture.app.state.dictation.rawText == raw)
+        #expect(fixture.app.state.dictation.origin == (handsFree ? .handsFree : .hold))
+        #expect(monitor.targets == [PasteTarget(processID: handsFree ? 202 : 101)])
+        fixture.clock.advance(0.5)
+        if pasteSucceeds {
+            await settle { field.reads == 1 }
+            field.setRegion("Hey Sinead how are you")
+            field.observation?.changed()
+            await settle { fixture.clock.scheduledDelays.contains { abs($0 - 1.5) < 0.000001 } }
+            fixture.clock.advance(1.5)
+            await settle { fixture.app.state.dictionary.words == ["Sinead"] }
+            #expect(fixture.app.state.corrections.learned.first?.source == .learned)
+            await fixture.submit("Second ASR learning fixture", index: 1, handsFree: handsFree)
+            await settle { await fixture.cleanupHTTP.requests.count == 2 }
+            let secondASR = try #require(await fixture.asr.requests.last)
+            #expect(String(decoding: secondASR.body, as: UTF8.self).contains("Sinead"))
+            let secondCleanup = try #require(await fixture.cleanupHTTP.requests.last?.httpBody)
+            let json = try #require(JSONSerialization.jsonObject(with: secondCleanup) as? [String: Any])
+            let messages = try #require(json["messages"] as? [[String: String]])
+            #expect(messages.first?["content"]?.contains("Sinead") == true)
+            await fixture.cleanupHTTP.reply(1, content: "Hey Sinead how are you")
+            await fixture.waitForResult()
+        } else {
+            field.setRegion("Hey Sinead how are you")
+            fixture.clock.advance(2)
+            #expect(field.reads == 0)
+            #expect(field.observation == nil)
+            #expect(fixture.app.state.corrections.learned.isEmpty)
+            #expect(fixture.app.state.dictionary.words.isEmpty)
+            #expect(fixture.app.state.dictation.delivery == .recovery(copied: true))
+        }
+        await fixture.app.flushHistoryWrites()
+        let reopened = fixture.reopen()
+        reopened.send(.loadHistory)
+        await settle { reopened.state.history.isLoaded && !reopened.state.history.isLoading }
+        #expect(reopened.state.history.totalCount == (pasteSucceeds ? 2 : 1))
+        let first = try #require(reopened.state.history.entries.first { $0.id == firstID })
+        #expect(first.rawText == raw)
+        #expect(first.text == "Hey Shunade how are you")
+        #expect(reopened.state.dictionary.words == (pasteSucceeds ? ["Sinead"] : []))
+    }
+
     @Test func handsFreeFinalPipelineUsesSubmissionTargetAndSavesOneHistoryEntry() async throws {
         let fixture = try ProcessingFixture()
         defer { fixture.remove() }
@@ -126,8 +185,10 @@ struct ProcessingIntegrationTests {
     let clipboard = ControlledClipboard()
     let paste = ControlledPasteSystem()
     var app: WhisperApplication!
+    let correctionSystem: (any CorrectionMonitoringSystem)?
 
-    init() throws {
+    init(correctionSystem: (any CorrectionMonitoringSystem)? = nil) throws {
+        self.correctionSystem = correctionSystem
         profile = try ProfileFixture(keychain: false)
         app = reopen()
         app.send(.saveASR(.init(serverURL: "http://localhost:8178", model: "asr-fixture"), credential: .unchanged))
@@ -137,7 +198,7 @@ struct ProcessingIntegrationTests {
     func reopen() -> WhisperApplication {
         WhisperApplication(profile: profile.profile, credentials: profile.credentials, microphones: microphones,
             transcriber: SelfHostedTranscriber(transport: asr), clock: clock, clipboard: clipboard,
-            pasteSystem: paste, cleanup: SelfHostedCleanup(transport: cleanupHTTP))
+            pasteSystem: paste, cleanup: SelfHostedCleanup(transport: cleanupHTTP), correctionSystem: correctionSystem)
     }
 
     func submit(_ raw: String, index: Int = 0, changeLanguageAfterSubmission: Bool = false, handsFree: Bool = false) async {
@@ -174,6 +235,7 @@ struct ProcessingIntegrationTests {
     }
 
     func remove() {
+        app.send(.setAutoLearnCorrections(false))
         app.send(.cancelDictation)
         clock.advance(10)
         profile.remove()

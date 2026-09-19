@@ -79,6 +79,7 @@ public extension WorkflowClock { var wallDate: Date { Date() } }
 extension WhisperApplication {
     func startDictation(origin: DictationOrigin = .button) {
         guard !state.dictation.phase.isActive else { return }
+        correctionLearning.stop()
         let id = UUID()
         state.dictation = DictationState()
         state.dictation.requestID = id
@@ -210,12 +211,17 @@ extension WhisperApplication {
         let target = dictationTarget
         let settings = state.settings
         let delivery = automaticPaste
+        let learning = correctionLearning!
         processingTask = Task { [weak self] in
             let result = await delivery.deliver(text, target: target, enabled: settings.autoPasteEnabled,
-                keepClipboard: settings.keepTranscriptionInClipboard) { [weak self] in
+                keepClipboard: settings.keepTranscriptionInClipboard, willPaste: { [weak self] target in
+                    if self?.state.settings.autoLearnCorrections == true { await learning.prepare(target, text: text) }
+                }) { [weak self] in
                     self?.isCurrentDictation(requestID) == true
                 }
             guard self?.isCurrentDictation(requestID) == true else { return }
+            if result == .pasted, self?.state.settings.autoLearnCorrections == true { learning.confirmedPaste() }
+            else { learning.stop() }
             self?.state.dictation.delivery = result
             self?.state.dictation.phase = .result
             self?.processingTask = nil
@@ -228,6 +234,7 @@ extension WhisperApplication {
 
     func cancelDictation(kind: DictationCancellation = .user) {
         guard state.dictation.phase.isActive else { return }
+        correctionLearning.stop()
         holdDeadline?.cancel()
         holdDeadline = nil
         doubleTapDeadline?.cancel()
@@ -263,6 +270,7 @@ extension WhisperApplication {
             return
         }
         provisionalFailure = nil
+        correctionLearning.stop()
         processingTask?.cancel()
         holdDeadline?.cancel()
         holdDeadline = nil

@@ -66,6 +66,7 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
     var wallDate = Date(timeIntervalSince1970: 1_789_920_000)
     private var scheduled: [Action] = []
     var nextDelay: TimeInterval? { scheduled.filter { !$0.cancelled }.map { $0.deadline - now }.min() }
+    var scheduledDelays: [TimeInterval] { scheduled.filter { !$0.cancelled }.map { $0.deadline - now } }
     func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void) -> any ScheduledAction {
         let item = Action(deadline: now + seconds, action: action)
         scheduled.append(item)
