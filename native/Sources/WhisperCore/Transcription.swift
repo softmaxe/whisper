@@ -52,8 +52,10 @@ public final class URLSessionFileTransport: NSObject, FileHTTPTransport, URLSess
             return
         }
         var redirected = request
-        // URLSession can strip Authorization even for a same-origin 307. Restore it only after origin validation.
-        redirected.setValue(task.originalRequest?.value(forHTTPHeaderField: "Authorization"), forHTTPHeaderField: "Authorization")
+        // Restore only the explicitly configured credential, after validating the redirect origin.
+        for header in ["Authorization", "api-key"] {
+            redirected.setValue(task.originalRequest?.value(forHTTPHeaderField: header), forHTTPHeaderField: header)
+        }
         completionHandler(redirected)
     }
 
@@ -85,7 +87,10 @@ public struct SelfHostedTranscriber: TranscriptionService {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=" + boundary, forHTTPHeaderField: "Content-Type")
-        if let credential, !credential.isEmpty { request.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization") }
+        if let credential, !credential.isEmpty {
+            if Self.isAzure(url) { request.setValue(credential, forHTTPHeaderField: "api-key") }
+            else { request.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization") }
+        }
         let response = try await transport.upload(request, file: body)
         try Task.checkCancellation()
         guard options.expectedStatus.map({ response.status == $0 }) ?? (200...299).contains(response.status) else { throw DictationFailure.service(response.status) }
@@ -97,15 +102,38 @@ public struct SelfHostedTranscriber: TranscriptionService {
 
     private static func endpoint(_ configuration: ASRConfiguration) throws -> URL {
         guard var components = URLComponents(string: configuration.serverURL) else { throw DictationFailure.configuration }
-        var path = components.path
+        var path = components.percentEncodedPath
         while path.hasSuffix("/") { path.removeLast() }
-        for suffix in ["/audio/transcriptions", "/audio/translations", "/chat/completions", "/completions", "/models"] {
-            if path.hasSuffix(suffix) { path.removeLast(suffix.count); break }
+        if let url = components.url, isAzure(url) {
+            // Preserve an explicitly pinned Azure audio route, including its query and trailing slash.
+            if !["/audio/transcriptions", "/audio/translations"].contains(where: { path.lowercased().hasSuffix($0) }) {
+                var query = components
+                // URLSearchParams treats '+' as a space; Foundation queryItems does not.
+                query.percentEncodedQuery = query.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%20")
+                let version = query.queryItems?.first(where: { $0.name == "api-version" })?.value ?? ""
+                components.percentEncodedPath = "/openai/deployments/" + encodeComponent(configuration.model) + "/audio/transcriptions"
+                components.percentEncodedQuery = "api-version=" + encodeComponent(version.isEmpty ? "2025-03-01-preview" : version)
+            }
+        } else {
+            for suffix in ["/audio/transcriptions", "/audio/translations", "/chat/completions", "/responses", "/completions", "/models"] {
+                if path.lowercased().hasSuffix(suffix) { path.removeLast(suffix.count); break }
+            }
+            components.percentEncodedPath = path + "/audio/transcriptions"
         }
-        components.path = path + "/audio/transcriptions"
         components.fragment = nil
         guard let url = components.url else { throw DictationFailure.configuration }
         return url
+    }
+
+    private static func isAzure(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return [".openai.azure.com", ".cognitiveservices.azure.com", ".services.ai.azure.com"].contains { host.hasSuffix($0) }
+    }
+
+    private static func encodeComponent(_ value: String) -> String {
+        // Match encodeURIComponent in the retained Azure route builder, not URL path's slash allowance.
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed)!
     }
 
     private static func writeMultipart(audio: URL, body: URL, boundary: String, configuration: ASRConfiguration, options: TranscriptionOptions) throws {
