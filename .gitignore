@@ -82,3 +82,7 @@ Desktop.ini
 .windsurf/
 .zencoder/
 skills/
+
+# Native Swift build output
+native/.build/
+native/.swiftpm/
