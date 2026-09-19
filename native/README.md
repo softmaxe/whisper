@@ -70,8 +70,25 @@ preparation run off the main thread, and retained audio memory does not grow wit
 recording duration. Hardware is released before file finalization and ASR.
 
 The ASR client uploads a disk-backed multipart body to the configured base plus
-`/audio/transcriptions`, preserving explicit `/v1` and query parameters. It sends
-only the separately entered native ASR credential. It has no client inference
+`/audio/transcriptions`, preserving explicit `/v1`, encoded path segments and
+query parameters. Common endpoint suffixes, including `/responses`, are removed
+case-insensitively. Only their adjacent `/v1` segment is canonicalized; arbitrary
+path casing and custom paths ending `/completions` remain intact.
+Recognized Azure resource hosts retain the existing deployment
+route: the model becomes an encoded deployment name, `api-version` is preserved
+or defaults to the reference's `2025-03-01-preview`, and a fully pinned audio URL
+is used unchanged. Host matching does not treat lookalike domains as Azure.
+
+Only the explicitly entered native ASR credential is sent: `api-key` for those
+Azure hosts, Bearer authorization elsewhere. Azure documents that distinction in
+its [audio REST API reference](https://learn.microsoft.com/en-us/azure/foundry/openai/reference).
+The retained legacy self-hosted route normally sends no key; native fresh settings
+add an explicit optional key rather than importing or borrowing provider/cleanup
+credentials. Empty native ASR credentials still produce no authentication header.
+Cleanup retains its separate OpenAI-compatible route and optional Bearer key;
+this does not add Azure cleanup, managed identity or provider selection.
+
+The ASR client has no client inference
 deadline, matching the existing self-hosted fetch contract, and supports explicit
 cancellation. Same-origin redirects support endpoint path normalization.
 Cross-origin redirects are rejected so credentials and audio stay with the
