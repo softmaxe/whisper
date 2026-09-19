@@ -2,6 +2,12 @@ import Foundation
 import Observation
 
 public enum AppCommand {
+    case navigate(MainPage), openSettings(SettingsSection), closeSettings, toggleSidebar
+    case openHistorySearch, closeHistorySearch, openHistorySearchResult(UUID)
+    case editASRDraft(ASRConfiguration), saveASRDraft(CredentialChange)
+    case editCleanupDraft(CleanupConfiguration), saveCleanupDraft(CredentialChange)
+    case editCleanupPromptDraft(String), saveCleanupPromptDraft, resetSettingsDrafts
+    case refreshPrivacy, requestPrivacyPermission(PrivacyPermission), openPrivacySettings(PrivacyPermission)
     case loadInsights
     case saveCleanup(CleanupConfiguration, credential: CredentialChange)
     case saveCleanupPrompt(String?)
@@ -43,6 +49,9 @@ public enum AppCommand {
 }
 
 public struct ApplicationState: Equatable, Sendable {
+    public var navigation = NavigationState()
+    public var settingsDraft: SettingsDraftState?
+    public var privacy = PrivacyState()
     public var isTerminating = false
     public var cleanupTest = CleanupTestState()
     public var cleanupCredentialConfigured: Bool { settings.cleanupCredentialAccount != nil }
@@ -78,6 +87,9 @@ public final class WhisperApplication {
     public let profileStore: ProfileStore
     @ObservationIgnored let credentials: any CredentialStore
     @ObservationIgnored var profileReadable = true
+    @ObservationIgnored let privacySystem: any PrivacySystem
+    @ObservationIgnored var privacyReadTask: Task<Void, Never>?
+    @ObservationIgnored var privacyReadGeneration = 0
     @ObservationIgnored let historyStore: HistoryStore
     @ObservationIgnored var historyReadTask: Task<Void, Never>?
     @ObservationIgnored var historySearchTask: Task<Void, Never>?
@@ -144,8 +156,9 @@ public final class WhisperApplication {
         correctionSystem: (any CorrectionMonitoringSystem)? = nil,
         desktopEffects: (any DesktopEffects)? = nil,
         audioSystem: (any HistoryAudioSystem)? = nil,
-        uploadConverter: any UploadMediaConverter = FFmpegUploadConverter()
+        uploadConverter: any UploadMediaConverter = FFmpegUploadConverter(), privacySystem: (any PrivacySystem)? = nil
     ) {
+        self.privacySystem = privacySystem ?? InertPrivacySystem()
         self.cleanup = cleanup
         self.uploadConverter = uploadConverter
         self.audioSystem = audioSystem ?? NativeHistoryAudioSystem()
@@ -177,6 +190,7 @@ public final class WhisperApplication {
     }
 
     isolated deinit {
+        privacyReadTask?.cancel()
         historyRetryOwnership?.cancel()
         historyRetryTask?.cancel()
         historyAudioTask?.cancel()
@@ -196,6 +210,35 @@ public final class WhisperApplication {
     public func send(_ command: AppCommand) {
         guard !state.isTerminating else { return }
         switch command {
+        case let .navigate(page): navigate(to: page)
+        case let .openSettings(section): openSettings(section)
+        case .closeSettings: closeSettings()
+        case .toggleSidebar: state.navigation.sidebarCollapsed.toggle()
+        case .openHistorySearch: openHistorySearch()
+        case .closeHistorySearch: closeHistorySearch()
+        case let .openHistorySearchResult(id):
+            state.navigation.page = .home
+            state.navigation.searchPresented = true
+            state.history.selectedEntry = historyEntry(id)
+        case let .editASRDraft(value):
+            if state.settingsDraft == nil { state.settingsDraft = SettingsDraftState(settings: state.settings) }
+            state.settingsDraft?.asr = value
+            state.settingsSaved = false; state.configurationError = nil
+        case let .saveASRDraft(credential): saveASRDraft(credential)
+        case let .editCleanupDraft(value):
+            if state.settingsDraft == nil { state.settingsDraft = SettingsDraftState(settings: state.settings) }
+            state.settingsDraft?.cleanup = value
+            state.settingsSaved = false; state.configurationError = nil
+        case let .saveCleanupDraft(credential): saveCleanupDraft(credential)
+        case let .editCleanupPromptDraft(value):
+            if state.settingsDraft == nil { state.settingsDraft = SettingsDraftState(settings: state.settings) }
+            state.settingsDraft?.cleanupPrompt = value
+            state.settingsSaved = false; state.configurationError = nil
+        case .saveCleanupPromptDraft: saveCleanupPromptDraft()
+        case .resetSettingsDrafts: state.settingsDraft = SettingsDraftState(settings: state.settings)
+        case .refreshPrivacy: refreshPrivacy()
+        case let .requestPrivacyPermission(permission): requestPrivacyPermission(permission)
+        case let .openPrivacySettings(permission): privacySystem.openSettings(permission)
         case .loadInsights: refreshInsights()
         case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
         case .undoLearnedCorrections: undoLearnedCorrections()
@@ -311,9 +354,14 @@ public final class WhisperApplication {
         case let .saveASR(configuration, credential):
             saveASR(configuration, credential: credential)
         case let .setLanguage(language):
+            let oldLanguage = state.settings.language
             var settings = state.settings
             settings.language = language
             persist(settings)
+            if state.settings.language == language, state.settingsDraft?.cleanup.customPrompt == nil,
+               state.settingsDraft?.cleanupPrompt == CleanupPrompts.defaultText(in: oldLanguage) {
+                state.settingsDraft?.cleanupPrompt = CleanupPrompts.defaultText(in: language)
+            }
         case .dismissMessage:
             state.configurationError = nil
             state.settingsSaved = false

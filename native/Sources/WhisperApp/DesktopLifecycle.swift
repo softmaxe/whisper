@@ -16,6 +16,7 @@ import WhisperCore
     private var previousPill: RecordingPillPresentation?
     private var previousWindowVisible: Bool?
     private var terminating = false
+    private var syntheticPreview = false
     private var previousShortcuts: [String]?
     private var previousCaptureMode: Bool?
     private var previousDictationPhase: DictationPhase?
@@ -32,15 +33,23 @@ import WhisperCore
             if let index = arguments.firstIndex(of: "--profile"), arguments.indices.contains(index + 1) {
                 profile = NativeProfile(directory: URL(fileURLWithPath: arguments[index + 1], isDirectory: true))
             } else { profile = try NativeProfile.applicationDefault() }
-            let application = WhisperApplication(profile: profile, desktopEffects: NativeDesktopEffects())
+            syntheticPreview = arguments.contains("--synthetic-preview")
+            if syntheticPreview, !arguments.contains("--profile") { throw ConfigurationError.incompatibleProfile }
+            let previewLanguage: AppLanguage = arguments.contains("--preview-chinese") ? .simplifiedChinese : .english
+            let application = try syntheticPreview
+                ? SyntheticPreview.make(profile: profile, language: previewLanguage)
+                : WhisperApplication(profile: profile, desktopEffects: NativeDesktopEffects(), privacySystem: NativePrivacySystem())
+            if syntheticPreview {
+                Task { try? await SyntheticPreview.seed(application, populated: arguments.contains("--preview-populated")) }
+            }
             self.application = application
             let event = NSAppleEventManager.shared().currentAppleEvent
             let launchedAtLogin = event?.eventID == kAEOpenApplication
                 && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
             application.send(.bootstrapDesktop(launchedAtLogin: launchedAtLogin || arguments.contains("--hidden")))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 660),
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
-            window.title = "Whisper"
+            window.title = syntheticPreview ? "Whisper · Sample data" : "Whisper"
             window.identifier = NSUserInterfaceItemIdentifier("main")
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
@@ -50,9 +59,11 @@ import WhisperCore
             window.delegate = self
             window.center()
             mainWindow = window
-            pill = RecordingPillController(application: application)
-            shortcuts = NativeShortcutMonitor(application: application)
-            shortcuts?.start()
+            if !syntheticPreview {
+                pill = RecordingPillController(application: application)
+                shortcuts = NativeShortcutMonitor(application: application)
+                shortcuts?.start()
+            }
             synchronize()
             observe()
             NotificationCenter.default.addObserver(self, selector: #selector(requestShortcutPermission), name: .init("WhisperRequestShortcutPermission"), object: nil)
@@ -146,6 +157,8 @@ import WhisperCore
         let redo = NSMenuItem(title: language.text("Redo", "重做"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         edit.insertItem(redo, at: 1)
+        edit.addItem(.separator())
+        edit.addItem(item(language.text("Search Transcripts…", "搜索转录…"), #selector(showSearch), key: "k"))
         let editItem = NSMenuItem(title: edit.title, action: nil, keyEquivalent: "")
         editItem.submenu = edit
         menu.addItem(editItem)
@@ -199,7 +212,9 @@ import WhisperCore
         showMain()
         NotificationCenter.default.post(name: .init("WhisperOpenSettings"), object: nil)
     }
+    @objc private func showSearch() { application?.send(.openHistorySearch) }
     @objc private func showHelp() {
+        guard !syntheticPreview else { return }
         if let url = URL(string: "https://github.com/softmaxe/whisper#quick-start") { NSWorkspace.shared.open(url) }
     }
     @objc private func requestShortcutPermission() { shortcuts?.start(requestPermission: true) }
@@ -221,6 +236,7 @@ import WhisperCore
         ])
     }
     @objc private func showLicenses() {
+        guard !syntheticPreview else { return }
         guard let resources = Bundle.main.resourceURL else { return }
         NSWorkspace.shared.open(resources.appendingPathComponent("licenses", isDirectory: true))
     }

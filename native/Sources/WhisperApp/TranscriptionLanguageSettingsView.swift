@@ -3,6 +3,7 @@ import WhisperCore
 
 struct TranscriptionLanguageSettingsView: View {
     let application: WhisperApplication
+    var embedded = false
     @State private var search = ""
     private var language: AppLanguage { application.state.settings.language }
     private var preferences: TranscriptionPreferences { application.state.settings.transcription }
@@ -53,8 +54,8 @@ struct TranscriptionLanguageSettingsView: View {
                 }
             }
         }
-        .padding(16).background(.primary.opacity(0.025))
+        .padding(embedded ? 0 : 16).background(.primary.opacity(embedded ? 0 : 0.025))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(embedded ? 0 : 0.12)))
     }
 }
