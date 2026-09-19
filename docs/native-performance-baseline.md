@@ -24,10 +24,17 @@ archive; it does not establish identical compiled helper binaries or a measured
 startup time. The prepared package is the normal build output at
 `dist/mac-arm64/Whisper.app`.
 
-The completion probes described below were added after this reference package.
-Rebuild the instrumented baseline and record its exact revision and archive hash
-before collecting completion intervals. Keep the reference package identity
-separate; the additional diagnostics do not change its existing archive.
+The instrumented legacy baseline was subsequently packaged from
+`fac2cd364ca598c69e641c6522589170a205ebd3`, after the completion probes passed
+`quality-check` with 1,044 tests and no skips. `npm run pack:release` and deep
+strict signature verification passed with the original identity, and no temporary
+signing directories remained. This build now occupies the output path above.
+Its source archive SHA-256 is
+`5e79a7ebf5acbcda93f3c2eb1f74e6f9b39c93fea136923d7e7f63bb3f41270c`.
+The complete bundle archive, `dist/whisper-legacy-baseline-fac2cd3.zip`, has SHA-256
+`62a138c64d2b62012316a31d10007d8ac1b914df870e5380ca3a36185dcd64ca`.
+Use this instrumented revision for completion timing and record probe overhead
+with the comparison. Packaging establishes its identity, not a latency result.
 
 Read-only hardware inspection on September 20, 2026 confirmed an Apple M2 Pro,
 32 GB memory, and macOS 27.0 build `26A428`. The Mac was on battery and concurrent
