@@ -55,7 +55,7 @@ import WhisperCore
     let transport = ControlledHTTPTransport()
     let paste = ControlledPasteSystem()
     let clipboard = ControlledClipboard()
-    let app: WhisperApplication
+    var app: WhisperApplication
     init(transport customTransport: (any FileHTTPTransport)? = nil) throws {
         profile = try ProfileFixture()
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials,

@@ -9,6 +9,9 @@ public enum AppCommand {
     case setClipboardPreferences(autoPaste: Bool, keepResult: Bool)
     case setShortcutAvailable(Bool)
     case resetShortcutInput(Set<UInt16>)
+    case saveShortcuts([String])
+    case beginShortcutCapture(index: Int?), endShortcutCapture
+    case setShortcutWarning(ShortcutConfigurationError?)
     case dismissMessage
 }
 
@@ -18,6 +21,9 @@ public struct ApplicationState: Equatable, Sendable {
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
     public var shortcutAvailable = false
+    public var shortcutError: ShortcutConfigurationError?
+    public var shortcutWarning: ShortcutConfigurationError?
+    public var shortcutCapture = ShortcutCaptureState()
     public var credentialConfigured: Bool { settings.asrCredentialAccount != nil }
 
     public init(settings: AppSettings = .init(), configurationError: ConfigurationError? = nil) {
@@ -53,6 +59,10 @@ public final class WhisperApplication {
     @ObservationIgnored var gesturePressedAt: TimeInterval = 0
     @ObservationIgnored var firstTapReleasedAt: TimeInterval = 0
     @ObservationIgnored var provisionalFailure: DictationFailure?
+    @ObservationIgnored var activeShortcut: ShortcutBinding?
+    @ObservationIgnored var activeShortcutKey: UInt16?
+    @ObservationIgnored var shortcutPressActive = false
+    @ObservationIgnored var captureModifierPeak = Set<UInt16>()
 
     public init(
         profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore(),
@@ -91,6 +101,16 @@ public final class WhisperApplication {
         case let .resetShortcutInput(keys):
             cancelDictation()
             pressedKeys = keys
+            shortcutPressActive = false
+            activeShortcut = nil
+        case let .saveShortcuts(values): saveShortcuts(values)
+        case let .beginShortcutCapture(index):
+            cancelDictation()
+            state.shortcutCapture = ShortcutCaptureState(isActive: true, editingIndex: index)
+            captureModifierPeak = []
+            state.shortcutError = nil
+        case .endShortcutCapture: state.shortcutCapture.isActive = false
+        case let .setShortcutWarning(warning): state.shortcutWarning = warning
         case let .setClipboardPreferences(autoPaste, keepResult):
             var settings = state.settings
             settings.autoPasteEnabled = autoPaste

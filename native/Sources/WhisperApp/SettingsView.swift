@@ -64,6 +64,7 @@ struct SettingsRootView: View {
                         switch section {
                         case .home: DictationHomeView(application: application)
                         case .general: generalSettings
+                        case .hotkeys: ShortcutSettingsView(application: application) { shortcuts?.start(requestPermission: true) }
                         case .speechToText: speechSettings
                         }
                     }
@@ -89,7 +90,10 @@ struct SettingsRootView: View {
             pill?.update()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in shortcuts?.start() }
-        .onChange(of: application.state.dictation.phase) { pill?.update() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in application.send(.endShortcutCapture) }
+        .onChange(of: application.state.settings.shortcuts) { shortcuts?.updateConfiguration() }
+        .onChange(of: application.state.shortcutCapture.isActive) { shortcuts?.updateConfiguration() }
+        .onChange(of: application.state.dictation.phase) { pill?.update(); shortcuts?.updateConfiguration() }
         .onChange(of: application.state.dictation.delivery) { pill?.update() }
     }
 
@@ -115,15 +119,7 @@ struct SettingsRootView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
             VStack(alignment: .leading, spacing: 12) {
-                Text(language.text("Dictation shortcut", "听写快捷键")).font(.headline)
-                Text(language.text("Hold Right Command and release to submit. Double-tap for Hands-free Dictation, then tap to finish. Esc cancels.", "按住右 Command 说话，松开提交。双击开始免按键听写，再轻按一次结束。按 Esc 取消。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                if !application.state.shortcutAvailable {
-                    Button(language.text("Enable Accessibility for global shortcuts", "启用辅助功能以使用全局快捷键")) {
-                        shortcuts?.start(requestPermission: true)
-                    }
-                    .accessibilityIdentifier("enable-shortcut-access")
-                }
+                Text(language.text("Clipboard", "剪贴板")).font(.headline)
                 Toggle(language.text("Automatic paste", "自动粘贴"), isOn: Binding(
                     get: { application.state.settings.autoPasteEnabled },
                     set: { application.send(.setClipboardPreferences(autoPaste: $0, keepResult: application.state.settings.keepTranscriptionInClipboard)) }
@@ -231,10 +227,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, general, speechToText
+    case home, general, hotkeys, speechToText
     var id: Self { self }
-    var icon: String { self == .home ? "house" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .home ? "house" : self == .general ? "slider.horizontal.3" : self == .hotkeys ? "keyboard" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .home ? language.text("Home", "首页") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .home ? language.text("Home", "首页") : self == .general ? language.text("General", "通用") : self == .hotkeys ? language.text("Hotkeys", "快捷键") : language.text("Speech-to-Text", "语音转文字")
     }
 }

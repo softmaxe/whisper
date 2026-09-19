@@ -43,23 +43,26 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var asrCredentialAccount: String?
     public var autoPasteEnabled: Bool
     public var keepTranscriptionInClipboard: Bool
+    public var shortcuts: [String]
 
     public init(
         language: AppLanguage = .english,
         asr: ASRConfiguration = .init(),
         asrCredentialAccount: String? = nil,
         autoPasteEnabled: Bool = true,
-        keepTranscriptionInClipboard: Bool = false
+        keepTranscriptionInClipboard: Bool = false,
+        shortcuts: [String] = ["RightCommand"]
     ) {
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
         self.autoPasteEnabled = autoPasteEnabled
         self.keepTranscriptionInClipboard = keepTranscriptionInClipboard
+        self.shortcuts = shortcuts
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, autoPasteEnabled, keepTranscriptionInClipboard
+        case language, asr, asrCredentialAccount, autoPasteEnabled, keepTranscriptionInClipboard, shortcuts
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -68,6 +71,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
         autoPasteEnabled = try values.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? true
         keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
+        shortcuts = try ShortcutBinding.validate(values.decodeIfPresent([String].self, forKey: .shortcuts) ?? ["RightCommand"])
     }
 }
 

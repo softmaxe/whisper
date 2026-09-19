@@ -11,10 +11,10 @@ struct DictationHomeView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(language.text("Dictation", "听写")).font(.title2).fontWeight(.semibold)
-                Text(language.text("Hold Right Command to speak, or double-tap for Hands-free Dictation.", "按住右 Command 说话，或双击开始免按键听写。"))
+                Text(language.text("Hold \(shortcutLabel) to speak, or double-tap for Hands-free Dictation.", "按住\(shortcutLabel)说话，或双击开始免按键听写。"))
                     .foregroundStyle(.secondary)
                 if !application.state.shortcutAvailable {
-                    Text(language.text("Enable Accessibility in General settings to use the global shortcut.", "请在通用设置中启用辅助功能，以使用全局快捷键。"))
+                    Text(language.text("Enable Accessibility in Hotkeys settings to use global shortcuts.", "请在快捷键设置中启用辅助功能，以使用全局快捷键。"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -55,6 +55,9 @@ struct DictationHomeView: View {
             .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.12)))
         }
     }
+    private var shortcutLabel: String {
+        (try? ShortcutBinding(application.state.settings.shortcuts.first ?? "RightCommand").label(in: language)) ?? "Right Command"
+    }
 }
 
 struct RecordingStatus: View {
@@ -80,7 +83,7 @@ struct RecordingStatus: View {
                 language.text("Preparing microphone…", "正在准备麦克风…")
             }
         case .recording: application.state.dictation.origin == .handsFree
-                ? language.text("Hands-free · Tap Right Command to finish", "免按键听写 · 轻按右 Command 结束")
+                ? language.text("Hands-free · Tap your shortcut to finish", "免按键听写 · 轻按快捷键结束")
                 : language.text("Listening", "正在聆听")
         case .processing: language.text("Transcribing…", "正在转录…")
         case .result: language.text("Transcription complete", "转录完成")
