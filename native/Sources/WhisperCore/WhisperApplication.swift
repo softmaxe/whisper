@@ -28,6 +28,8 @@ public enum AppCommand {
     case searchHistory(String), moveHistorySearchSelection(Int), selectHistoryEntry(UUID), dismissHistoryEntry
     case copyHistory(UUID, HistoryTextVersion)
     case selectUpload(URL), startUpload, cancelUpload, resetUpload, copyUploadResult
+    case chooseUploadFiles([URL]), addUploadBatchFiles([URL]), startUploadBatch, cancelUploadBatch, clearUploadBatch
+    case removeUploadBatchItem(UUID), copyUploadBatchItem(UUID)
     case dismissMessage
 }
 
@@ -41,6 +43,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var snippets = SnippetsState()
     public var history = HistoryState()
     public var upload = UploadState()
+    public var batchUpload = BatchUploadState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -133,6 +136,13 @@ public final class WhisperApplication {
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .chooseUploadFiles(sources): chooseUploadFiles(sources)
+        case let .addUploadBatchFiles(sources): addUploadBatchFiles(sources)
+        case .startUploadBatch: startUploadBatch()
+        case .cancelUploadBatch: cancelUploadBatch()
+        case .clearUploadBatch: clearUploadBatch()
+        case let .removeUploadBatchItem(id): removeUploadBatchItem(id)
+        case let .copyUploadBatchItem(id): copyUploadBatchItem(id)
         case let .selectUpload(source): selectUpload(source)
         case .startUpload: startUpload()
         case .cancelUpload: cancelUpload()

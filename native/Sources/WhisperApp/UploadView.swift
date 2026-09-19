@@ -8,9 +8,9 @@ struct UploadView: View {
     var onOpenSettings: () -> Void = {}
     var onOpenHistory: () -> Void = {}
     @State private var dragOver = false
-    @State private var dropNotice: String?
     private var language: AppLanguage { application.state.settings.language }
     private var upload: UploadState { application.state.upload }
+    private var batch: BatchUploadState { application.state.batchUpload }
     private var configured: Bool { !application.state.settings.asr.serverURL.isEmpty && !application.state.settings.asr.model.isEmpty }
 
     var body: some View {
@@ -20,10 +20,12 @@ struct UploadView: View {
                 Text(language.text("Transcribe audio or video files with your Speech-to-Text server.", "使用您的语音转文字服务器转录音频或视频文件。"))
                     .foregroundStyle(.secondary)
             }
-            if upload.phase == .idle {
+            if !batch.items.isEmpty {
+                BatchUploadView(application: application, onAddFiles: browse, onOpenHistory: onOpenHistory, onOpenSettings: onOpenSettings)
+            } else if upload.phase == .idle {
                 VStack(spacing: 16) {
                     Image(systemName: "arrow.up.doc").font(.system(size: 34)).foregroundStyle(.secondary)
-                    Text(language.text("Drop an audio or video file here", "将音频或视频文件拖到此处"))
+                    Text(language.text("Drop audio or video files here", "将音频或视频文件拖到此处"))
                     Button(language.text("Browse files", "浏览文件"), action: browse)
                         .buttonStyle(.borderedProminent).accessibilityIdentifier("upload-browse")
                     Text(language.text("MP3, WAV, M4A, MP4, MOV and other supported formats", "支持 MP3、WAV、M4A、MP4、MOV 等格式"))
@@ -36,13 +38,8 @@ struct UploadView: View {
                 .background(dragOver ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(dragOver ? Color.accentColor : Color.primary.opacity(0.15), style: StrokeStyle(lineWidth: 1, dash: [5])))
                 .dropDestination(for: URL.self) { urls, _ in
-                    guard urls.count == 1, let source = urls.first else {
-                        dropNotice = language.text("Choose one file at a time.", "请一次选择一个文件。")
-                        return false
-                    }
-                    dropNotice = nil
-                    application.send(.selectUpload(source))
-                    return true
+                    application.send(.chooseUploadFiles(urls))
+                    return !urls.isEmpty
                 } isTargeted: { dragOver = $0 }
             } else {
                 VStack(alignment: .leading, spacing: 16) {
@@ -87,8 +84,11 @@ struct UploadView: View {
                 .padding(20).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.12)))
             }
-            if let dropNotice { Text(dropNotice).font(.caption).foregroundStyle(.secondary) }
-            if !upload.text.isEmpty {
+            if !batch.skippedNames.isEmpty {
+                Text(language.text("Unsupported files were skipped: ", "已跳过不支持的文件：") + batch.skippedNames.joined(separator: ", "))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !upload.text.isEmpty && batch.items.isEmpty {
                 VStack(alignment: .leading, spacing: 14) {
                     Label(language.text("Transcription complete", "转录完成"), systemImage: "checkmark.circle")
                         .font(.headline)
@@ -123,11 +123,11 @@ struct UploadView: View {
     private func browse() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
+        panel.allowsMultipleSelection = true
         panel.allowedContentTypes = UploadFormats.extensions.compactMap { UTType(filenameExtension: $0) }
         panel.begin { result in
-            guard result == .OK, let file = panel.url else { return }
-            application.send(.selectUpload(file))
+            guard result == .OK else { return }
+            application.send(.chooseUploadFiles(panel.urls))
         }
     }
 }

@@ -41,9 +41,23 @@ public struct UploadState: Equatable, Sendable {
     public init() {}
 }
 
+struct UploadRunConfiguration: Sendable {
+    let asr: ASRConfiguration
+    let credential: String?
+    let options: TranscriptionOptions
+}
+
 extension WhisperApplication {
+    func uploadRunConfiguration() throws -> UploadRunConfiguration {
+        let configuration = try state.settings.asr.validated()
+        let credential = try asrCredential()
+        let language = state.settings.transcription.preferredLanguage
+        return UploadRunConfiguration(asr: configuration, credential: credential,
+            options: TranscriptionOptions(language: language == "auto" ? nil : language.split(separator: "-").first.map(String.init), expectedStatus: 200))
+    }
+
     func selectUpload(_ source: URL) {
-        guard !uploadShutdown, !state.upload.phase.isActive else { return }
+        guard !uploadShutdown, !state.upload.phase.isActive, state.batchUpload.items.isEmpty else { return }
         state.upload = UploadState()
         state.upload.source = source
         guard UploadFormats.accepts(source) else {
@@ -55,20 +69,17 @@ extension WhisperApplication {
     }
 
     func startUpload() {
-        guard !uploadShutdown, !state.upload.phase.isActive, let source = state.upload.source else { return }
-        let configuration: ASRConfiguration
-        let credential: String?
-        do { configuration = try state.settings.asr.validated(); credential = try asrCredential() }
+        guard !uploadShutdown, !state.upload.phase.isActive, !state.batchUpload.isProcessing, let source = state.upload.source else { return }
+        let snapshot: UploadRunConfiguration
+        do { snapshot = try uploadRunConfiguration() }
         catch {
             state.upload.phase = .failed
             state.upload.failure = error as? ConfigurationError == .credentialUnavailable ? .credentialUnavailable : .configuration
             return
         }
         let id = UUID()
-        let language = state.settings.transcription.preferredLanguage
-        let options = TranscriptionOptions(language: language == "auto" ? nil : language.split(separator: "-").first.map(String.init), expectedStatus: 200)
         state.upload.requestID = id
-        state.upload.model = configuration.model
+        state.upload.model = snapshot.asr.model
         state.upload.phase = .preparing
         state.upload.text = ""
         state.upload.failure = nil
@@ -81,16 +92,13 @@ extension WhisperApplication {
         let transcriber = self.transcriber
         let task = Task { [weak self] in
             defer { self?.uploadTasks.removeValue(forKey: id) }
-            let access = source.startAccessingSecurityScopedResource()
-            defer { if access { source.stopAccessingSecurityScopedResource() } }
             do {
-                let directory = try PrivateUploadDirectory(prefix: "whisper-upload-")
-                defer { directory.remove() }
-                let prepared = try await PreparedUpload.prepare(source, directory: directory.url, converter: converter)
-                guard self?.isCurrentUpload(id) == true, !Task.isCancelled else { return }
-                self?.state.upload.sourceSize = prepared.sourceSize
-                self?.state.upload.phase = .transcribing
-                let text = try await transcriber.transcribe(file: prepared.file, configuration: configuration, credential: credential, options: options)
+                let text = try await UploadFileProcessing.transcribe(source, configuration: snapshot, converter: converter, transcriber: transcriber) { [weak self] size in
+                    guard self?.isCurrentUpload(id) == true else { return false }
+                    self?.state.upload.sourceSize = size
+                    self?.state.upload.phase = .transcribing
+                    return true
+                }
                 try Task.checkCancellation()
                 guard self?.isCurrentUpload(id) == true else { return }
                 self?.state.upload.text = text
@@ -98,7 +106,7 @@ extension WhisperApplication {
                 self?.state.upload.isSavingHistory = true
                 let completedAt = self?.clock.wallDate ?? Date()
                 let entry = HistoryEntry(id: id, text: text, rawText: text, occurredAt: completedAt,
-                    createdAt: completedAt, source: .upload, model: configuration.model)
+                    createdAt: completedAt, source: .upload, model: snapshot.asr.model)
                 do {
                     let saved = try await self?.recordHistory(entry) ?? false
                     guard self?.state.upload.requestID == id else { return }
@@ -110,7 +118,10 @@ extension WhisperApplication {
                 guard self?.state.upload.requestID == id else { return }
                 self?.state.upload.isSavingHistory = false
             } catch is CancellationError {
-                // The command already reset the visible state; late work owns only its private files.
+                if self?.isCurrentUpload(id) == true, !Task.isCancelled {
+                    self?.state.upload.phase = .failed
+                    self?.state.upload.failure = .transcription(.network)
+                }
             } catch {
                 guard self?.isCurrentUpload(id) == true else { return }
                 self?.state.upload.phase = .failed
@@ -138,6 +149,7 @@ extension WhisperApplication {
         uploadShutdown = true
         let pending = Array(uploadTasks.values)
         cancelUpload()
+        cancelUploadBatch()
         for task in pending { task.cancel() }
         for task in pending { await task.value }
         await flushHistoryWrites()

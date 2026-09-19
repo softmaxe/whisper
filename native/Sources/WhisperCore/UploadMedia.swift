@@ -112,3 +112,22 @@ struct PreparedUpload: Sendable {
         return Self(file: destination, sourceSize: Int64(size))
     }
 }
+
+enum UploadFileProcessing {
+    @concurrent static func transcribe(
+        _ source: URL, configuration: UploadRunConfiguration,
+        converter: any UploadMediaConverter, transcriber: any TranscriptionService,
+        prepared: @MainActor @Sendable (Int64) -> Bool
+    ) async throws -> String {
+        let access = source.startAccessingSecurityScopedResource()
+        defer { if access { source.stopAccessingSecurityScopedResource() } }
+        let directory = try PrivateUploadDirectory(prefix: "whisper-upload-")
+        defer { directory.remove() }
+        let upload = try await PreparedUpload.prepare(source, directory: directory.url, converter: converter)
+        try Task.checkCancellation()
+        guard await prepared(upload.sourceSize) else { throw CancellationError() }
+        try Task.checkCancellation()
+        return try await transcriber.transcribe(file: upload.file, configuration: configuration.asr,
+            credential: configuration.credential, options: configuration.options)
+    }
+}
