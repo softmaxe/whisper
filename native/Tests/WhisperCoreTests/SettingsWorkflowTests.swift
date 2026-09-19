@@ -152,7 +152,7 @@ struct SettingsWorkflowTests {
 }
 
 @MainActor
-private final class ProfileFixture {
+final class ProfileFixture {
     let root: URL
     let profile: NativeProfile
     let credentials: any CredentialStore

@@ -3,7 +3,8 @@ import WhisperCore
 
 struct SettingsRootView: View {
     let application: WhisperApplication
-    @State private var section = SettingsSection.speechToText
+    @State private var pill: RecordingPillController?
+    @State private var section = SettingsSection.home
     @State private var serverURL = ""
     @State private var model = ""
     @State private var apiKey = ""
@@ -49,8 +50,8 @@ struct SettingsRootView: View {
 
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
-                    Image(systemName: "gearshape")
-                    Text(language.text("Settings", "设置")).fontWeight(.semibold)
+                    Image(systemName: section.icon)
+                    Text(section == .home ? "Whisper" : language.text("Settings", "设置")).fontWeight(.semibold)
                     Text("/").foregroundStyle(.tertiary)
                     Text(section.title(language))
                     Spacer()
@@ -60,6 +61,7 @@ struct SettingsRootView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 24) {
                         switch section {
+                        case .home: DictationHomeView(application: application)
                         case .general: generalSettings
                         case .speechToText: speechSettings
                         }
@@ -78,7 +80,12 @@ struct SettingsRootView: View {
         .font(.custom("JetBrainsMono-Regular", size: 13))
         .tint(accent)
         .frame(minWidth: 780, minHeight: 530)
-        .onAppear(perform: restoreDraft)
+        .onAppear {
+            restoreDraft()
+            if pill == nil { pill = RecordingPillController(application: application) }
+            pill?.update()
+        }
+        .onChange(of: application.state.dictation.phase) { pill?.update() }
     }
 
     private var generalSettings: some View {
@@ -197,10 +204,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case general, speechToText
+    case home, general, speechToText
     var id: Self { self }
-    var icon: String { self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .home ? "house" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .home ? language.text("Home", "首页") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }
