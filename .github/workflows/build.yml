@@ -98,6 +98,9 @@ jobs:
       - name: Check Whisper
         run: npm run quality-check
 
+      - name: Build packaged decoder for native format tests
+        run: node scripts/build-native-ffmpeg.js
+
       - name: Test native workflows
         run: npm run native:test
 

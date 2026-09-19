@@ -67,6 +67,9 @@ jobs:
           test "$(sw_vers -productVersion | cut -d. -f1)" -ge 27
           test "$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)" -ge 27
 
+      - name: Build packaged decoder for native format tests
+        run: node scripts/build-native-ffmpeg.js
+
       - name: Test native workflows
         run: npm run native:test
 
