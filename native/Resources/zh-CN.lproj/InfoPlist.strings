@@ -1,0 +1,3 @@
+"NSMicrophoneUsageDescription" = "Whisper 需要访问麦克风，以将语音转为文字。";
+"NSAccessibilityUsageDescription" = "Whisper 需要辅助功能权限，以将转录文字粘贴到其他应用。";
+"NSLocalNetworkUsageDescription" = "Whisper 会连接您配置的语音识别和文本整理服务器。";

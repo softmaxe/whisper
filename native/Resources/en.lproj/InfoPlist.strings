@@ -1,0 +1,3 @@
+"NSMicrophoneUsageDescription" = "Whisper needs microphone access to transcribe your speech into text.";
+"NSAccessibilityUsageDescription" = "Whisper needs Accessibility permissions to paste transcribed text into other applications.";
+"NSLocalNetworkUsageDescription" = "Whisper connects to the speech recognition and text cleanup servers you configure.";

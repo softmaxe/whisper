@@ -8,6 +8,8 @@ The regression suite follows the supported features in the root README. Keep inh
 npm ci
 npm test
 npm run quality-check
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run native:test
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer npm run pack
 ```
 
 Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite inside Electron's Node runtime, matching the SQLite binding built by `npm ci`. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the CI and Build workflows.
@@ -27,7 +29,13 @@ On macOS, run `npm run test:signing` with the original [release signing credenti
 
 OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistant, bundled model servers, Linux, and Windows are outside this suite. Shared test doubles may still name upstream interfaces imported by the retained implementation; those names do not add product requirements.
 
-The CI workflow runs checks for pull requests targeting `main` and pushes to `main`, without packaging or uploading the app. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag. It runs the same checks, packages the macOS ARM64 app, and verifies its bundle name, version, architecture, signature, archive, and checksum. Manual builds use ad-hoc signing without release credentials and retain the package as an Actions artifact for seven days. Release builds require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
+CI runs retained legacy checks, native workflow tests and credential-free native
+packaging for pull requests targeting `main` and pushes to `main`. The supported
+arm64 runner label is `xcode-27`; each job records the actual OS, Xcode and Swift
+versions and requires the macOS 27 SDK. No release secrets reach this job. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag. It runs the same checks, packages the native macOS ARM64 app, and verifies bundle
+identity, version, macOS 27 minimum, architecture, runtime dependencies, signatures,
+the extracted archive and checksum. Manual builds use ad-hoc signing without release credentials; their archive names
+end in `-development.zip` and Actions retains them for seven days. Release builds require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
 
 ## Recording startup measurements
 

@@ -31,12 +31,14 @@ concurrency:
 
 jobs:
   build:
-    name: Test and package macOS arm64
-    runs-on: macos-15
-    timeout-minutes: 45
+    name: Test and package native macOS arm64
+    runs-on: xcode-27
+    timeout-minutes: 60
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       archive: ${{ steps.metadata.outputs.archive }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     defaults:
       run:
         shell: bash
@@ -59,6 +61,15 @@ jobs:
         run: |
           set -euo pipefail
           test "$(uname -m)" = "arm64"
+          sw_vers
+          xcodebuild -version
+          xcrun swift --version
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 27
+          test "$(xcrun --sdk macosx --show-sdk-version | cut -d. -f1)" -ge 27
+          if [[ -n "$RELEASE_TAG" && ( "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ) ]]; then
+            echo "::error::Release credentials are restricted to a matching pushed release tag."
+            exit 1
+          fi
           node <<'NODE'
           const assert = require("node:assert/strict");
           const fs = require("node:fs");
@@ -73,9 +84,13 @@ jobs:
           }
           fs.appendFileSync(
             process.env.GITHUB_OUTPUT,
-            "version=" + pkg.version + "\narchive=whisper-" + pkg.version + "-macos-arm64.zip\n"
+            "version=" + pkg.version + "\narchive=whisper-" + pkg.version +
+              "-macos-arm64" + (process.env.RELEASE_TAG ? "" : "-development") + ".zip\n"
           );
           NODE
+
+      - name: Install native codec build dependency
+        run: command -v pkg-config >/dev/null || brew install pkgconf
 
       - name: Install dependencies
         run: npm ci
@@ -83,15 +98,15 @@ jobs:
       - name: Check Whisper
         run: npm run quality-check
 
+      - name: Test native workflows
+        run: npm run native:test
+
       - name: Package development application
         if: inputs.release-tag == ''
-        env:
-          # Manual builds do not receive the release signing identity.
-          CSC_FOR_PULL_REQUEST: "true"
         run: npm run pack
 
       - name: Package release application with the persistent signing identity
-        if: inputs.release-tag != ''
+        if: inputs.release-tag != '' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
           WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
@@ -110,13 +125,15 @@ jobs:
           RELEASE_TAG: ${{ inputs.release-tag }}
         run: |
           set -euo pipefail
-          app="dist/mac-arm64/Whisper.app"
+          app="dist/native-development-arm64/Whisper.app"
+          if [[ -n "$RELEASE_TAG" ]]; then app="dist/native-arm64/Whisper.app"; fi
           plist="$app/Contents/Info.plist"
           test -d "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$plist")" = "Whisper"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")" = "Whisper"
           codesign --verify --deep --strict "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "local.whisper.desktop"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")" = "27.0"
           if [[ -n "$RELEASE_TAG" ]]; then
             node scripts/sign-macos-release.js --verify "$app"
           fi
@@ -125,17 +142,14 @@ jobs:
           executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
           test "$(lipo -archs "$app/Contents/MacOS/$executable")" = "arm64"
 
-      - name: Archive application and calculate checksum
+      - name: Verify packaged archive and checksum
         env:
           ARCHIVE: ${{ steps.metadata.outputs.archive }}
         run: |
           set -euo pipefail
-          mkdir -p release
-          ditto -c -k --keepParent dist/mac-arm64/Whisper.app "release/$ARCHIVE"
           unzip -t "release/$ARCHIVE"
           (
             cd release
-            shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
             shasum -a 256 -c "$ARCHIVE.sha256"
           )
 

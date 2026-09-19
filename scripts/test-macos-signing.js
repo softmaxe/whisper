@@ -27,6 +27,15 @@ function cdhash(target) {
 
 async function main() {
   assert.equal(process.platform, "darwin", "Signing integration tests require macOS.");
+  const searchList = () =>
+    spawnSync("/usr/bin/security", ["list-keychains", "-d", "user"], { encoding: "utf8" }).stdout;
+  const signingDirectories = () =>
+    fs
+      .readdirSync(os.tmpdir())
+      .filter((name) => /^whisper-signing-[A-Za-z0-9]{6}$/.test(name))
+      .sort();
+  const previousSearchList = searchList();
+  const previousDirectories = signingDirectories();
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "whisper-signing-upgrade-"));
   try {
     const apps = [];
@@ -107,8 +116,38 @@ async function main() {
       0,
       "A different certificate must not satisfy the requirement."
     );
+    const originalCertificate = process.env.WHISPER_SIGNING_CERTIFICATE;
+    const originalPassword = process.env.WHISPER_SIGNING_PASSWORD;
+    try {
+      // Exercise failure after creating/importing into a temporary keychain, without new identities.
+      process.env.WHISPER_SIGNING_CERTIFICATE =
+        Buffer.from("invalid PKCS12 fixture").toString("base64");
+      process.env.WHISPER_SIGNING_PASSWORD = "invalid-password-placeholder";
+      await assert.rejects(
+        signRelease({ app: apps[0], platform: "darwin", type: "distribution" }),
+        /Importing signing identity failed/
+      );
+    } finally {
+      if (originalCertificate === undefined) delete process.env.WHISPER_SIGNING_CERTIFICATE;
+      else process.env.WHISPER_SIGNING_CERTIFICATE = originalCertificate;
+      if (originalPassword === undefined) delete process.env.WHISPER_SIGNING_PASSWORD;
+      else process.env.WHISPER_SIGNING_PASSWORD = originalPassword;
+    }
+    assert.deepEqual(
+      signingDirectories(),
+      previousDirectories,
+      "Temporary private signing files survived."
+    );
+    assert.equal(
+      searchList(),
+      previousSearchList,
+      "Temporary signing keychains survived in the search list."
+    );
     console.log(
       "Two changed app versions and native helpers retain the same certificate-bound identity."
+    );
+    console.log(
+      "Temporary signing files and keychain entries are cleaned after success and import failure."
     );
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });

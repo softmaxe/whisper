@@ -86,3 +86,4 @@ skills/
 # Native Swift build output
 native/.build/
 native/.swiftpm/
+native/.development-profile/
