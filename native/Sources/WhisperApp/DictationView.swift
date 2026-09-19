@@ -35,6 +35,13 @@ struct DictationHomeView: View {
                         .foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("dictation-error")
                 }
+                if dictation.chineseConversionFailed {
+                    Label(language.text(
+                        "Chinese conversion was unavailable. Your transcription is still ready to copy.",
+                        "中文转换暂不可用。仍可复制转录结果。"
+                    ), systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
                 if !dictation.text.isEmpty {
                     Divider()
                     Text(dictation.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)

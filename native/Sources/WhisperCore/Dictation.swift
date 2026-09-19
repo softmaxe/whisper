@@ -31,6 +31,7 @@ public struct DictationState: Equatable, Sendable {
     public var rawText = ""
     public var text = ""
     public var resultCopied = false
+    public var chineseConversionFailed = false
     public var failure: DictationFailure?
     public var level: Float = 0
     public var duration: TimeInterval = 0
@@ -131,6 +132,7 @@ extension WhisperApplication {
         let credential = dictationCredential
         let transcriber = self.transcriber
         let options = dictationTranscriptionOptions()
+        let transcriptionPreferences = state.settings.transcription
         processingTask = Task { [weak self] in
             do {
                 let file = try await capture.finish()
@@ -143,7 +145,7 @@ extension WhisperApplication {
                     options: options
                 )
                 try Task.checkCancellation()
-                self?.completeDictation(rawText: text, text: text, requestID: id)
+                await self?.finishDictationText(rawText: text, text: text, requestID: id, preferences: transcriptionPreferences)
             } catch is CancellationError {
                 capture.removeFiles()
             } catch {
@@ -153,7 +155,9 @@ extension WhisperApplication {
         }
     }
 
-    func dictationTranscriptionOptions() -> TranscriptionOptions { TranscriptionOptions() }
+    func dictationTranscriptionOptions() -> TranscriptionOptions {
+        state.settings.transcription.requestOptions()
+    }
 
     func markDictationStage(_ stage: String, requestID: UUID) {
         guard isCurrentDictation(requestID) else { return }

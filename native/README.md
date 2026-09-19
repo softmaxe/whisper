@@ -81,3 +81,35 @@ isolated profile. `WorkflowSupport.swift` contains shared fixtures for subsequen
 workflow tests. Real loopback HTTP tests exercise URLSession uploads and redirect
 handling without opening hardware or using real speech. Native UI uses a
 nonactivating AppKit Recording pill with the current 98 × 40 compact footprint.
+
+## Transcription language and Chinese text
+
+General settings keep transcription language separate from the interface language.
+The native UI uses the existing language registry, with Simplified/Traditional
+Chinese and auto-detection choices. Both settings persist in the native profile;
+earlier native profiles default to auto-detection and keeping the transcript's
+original script.
+
+ASR receives the base language code, including `zh` for both Chinese choices, and
+omits the language field for auto-detection. Explicit Chinese choices prepend the
+existing script prompt bias; an auto-detection script preference never biases ASR.
+The active request snapshots these choices when recording is submitted.
+
+After ASR or optional cleanup, the native converter applies the exact
+`opencc-js` 1.4.1 `twp -> cn` or `cn -> twp` pipeline before result publication.
+It preserves raw ASR text. Auto-detection only converts text with the existing
+Chinese-specific signals and no Kana or Hangul. Upload remains outside this
+conversion path. Later Snippet expansion belongs after conversion.
+
+The Swift converter loads and caches its tries on a separate actor when first
+needed. It uses twelve pinned, unmodified OpenCC dictionary files, compatibility
+normalization, fixed phrase segmentation, priority within dictionary groups, and
+Unicode scalar matching. Identity phrases and ideographic-description sequences
+retain the existing behavior. Cancellation checks suppress ended requests; a
+resource failure preserves usable transcription with a visible warning.
+
+Dictionary hashes, upstream revisions, and MIT/Apache-2.0 notices are bundled in
+`Sources/WhisperCore/Resources/OpenCC`. The application has no JavaScript runtime.
+`test/native/chineseConversionOracle.test.js` checks source-data and fixture parity
+against the existing development dependency; the Swift workflow tests replay
+those fixtures through actual ASR requests, publication, and Copy commands.

@@ -4,6 +4,8 @@ import Observation
 public enum AppCommand {
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
+    case setTranscriptionLanguage(String)
+    case setChineseScriptPreference(ChineseScriptPreference)
     case startDictation, stopDictation, cancelDictation, copyDictationResult
     case dismissMessage
 }
@@ -68,6 +70,8 @@ public final class WhisperApplication {
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .setTranscriptionLanguage(code): setTranscriptionLanguage(code)
+        case let .setChineseScriptPreference(preference): setChineseScriptPreference(preference)
         case .startDictation: startDictation()
         case .stopDictation: stopDictation()
         case .cancelDictation: cancelDictation()
