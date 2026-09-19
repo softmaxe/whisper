@@ -5,11 +5,16 @@ public enum AppCommand {
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
     case startDictation, stopDictation, cancelDictation, copyDictationResult
+    case setHistoryEnabled(Bool), loadHistory, loadMoreHistory, showDiscardedHistory(Bool)
+    case saveHistory(HistoryEntry), deleteHistory(UUID), clearHistory
+    case searchHistory(String), moveHistorySearchSelection(Int), selectHistoryEntry(UUID), dismissHistoryEntry
+    case copyHistory(UUID, HistoryTextVersion)
     case dismissMessage
 }
 
 public struct ApplicationState: Equatable, Sendable {
     public var dictation = DictationState()
+    public var history = HistoryState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -27,7 +32,13 @@ public final class WhisperApplication {
     public internal(set) var state: ApplicationState
     public let profileStore: ProfileStore
     @ObservationIgnored let credentials: any CredentialStore
-    @ObservationIgnored private var profileReadable = true
+    @ObservationIgnored var profileReadable = true
+    @ObservationIgnored let historyStore: HistoryStore
+    @ObservationIgnored var historyReadTask: Task<Void, Never>?
+    @ObservationIgnored var historySearchTask: Task<Void, Never>?
+    @ObservationIgnored var historyWriteTask: Task<Result<Bool, HistoryFailure>, Never>?
+    @ObservationIgnored var historyReadGeneration = 0
+    @ObservationIgnored var historySearchGeneration = 0
 
     @ObservationIgnored let microphones: any MicrophoneProvider
     @ObservationIgnored let transcriber: any TranscriptionService
@@ -52,6 +63,7 @@ public final class WhisperApplication {
         self.clock = clock ?? SystemWorkflowClock()
         self.clipboard = clipboard ?? SystemTextClipboard()
         self.profileStore = ProfileStore(profile: profile)
+        self.historyStore = HistoryStore(profile: profile)
         self.credentials = credentials
         do {
             self.state = ApplicationState(settings: try profileStore.loadSettings())
@@ -64,6 +76,8 @@ public final class WhisperApplication {
     deinit {
         dictationCapture?.cancel()
         processingTask?.cancel()
+        historyReadTask?.cancel()
+        historySearchTask?.cancel()
     }
 
     public func send(_ command: AppCommand) {
@@ -75,6 +89,22 @@ public final class WhisperApplication {
             guard !state.dictation.text.isEmpty else { return }
             clipboard.write(state.dictation.text)
             state.dictation.resultCopied = true
+        case let .setHistoryEnabled(enabled): setHistoryEnabled(enabled)
+        case .loadHistory: refreshHistory()
+        case .loadMoreHistory: refreshHistory(more: true)
+        case let .showDiscardedHistory(included):
+            state.history.includeDiscarded = included
+            refreshHistory()
+            searchHistory(state.history.searchQuery)
+        case let .saveHistory(entry): enqueueHistory(.save(entry))
+        case let .deleteHistory(id): enqueueHistory(.delete(id))
+        case .clearHistory: enqueueHistory(.clear(clock.wallDate))
+        case let .searchHistory(query): searchHistory(query)
+        case let .moveHistorySearchSelection(offset):
+            state.history.searchSelection = max(0, min(state.history.searchResults.count - 1, state.history.searchSelection + offset))
+        case let .selectHistoryEntry(id): state.history.selectedEntry = historyEntry(id)
+        case .dismissHistoryEntry: state.history.selectedEntry = nil
+        case let .copyHistory(id, version): copyHistory(id, version: version)
         case let .saveASR(configuration, credential):
             saveASR(configuration, credential: credential)
         case let .setLanguage(language):

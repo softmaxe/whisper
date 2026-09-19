@@ -71,8 +71,8 @@ deadline, matching the existing self-hosted fetch contract, and supports explici
 cancellation. Same-origin redirects support endpoint path normalization.
 Cross-origin redirects are rejected so credentials and audio stay with the
 configured server. Temporary capture and upload files are deleted
-after success, failure, or cancellation. No History or Automatic paste is added
-by this slice.
+after success, failure, or cancellation. Successful Dictation results are saved
+through the History workflow below. Automatic paste follows in its own ticket.
 
 `MicrophoneProvider`, `MicrophoneSession`, `WorkflowClock`, `FileHTTPTransport`,
 and `TextClipboard` are external adapter boundaries. Application tests use the
@@ -81,3 +81,43 @@ isolated profile. `WorkflowSupport.swift` contains shared fixtures for subsequen
 workflow tests. Real loopback HTTP tests exercise URLSession uploads and redirect
 handling without opening hardware or using real speech. Native UI uses a
 nonactivating AppKit Recording pill with the current 98 × 40 compact footprint.
+
+## History
+
+Home displays date-grouped History with processed and original text, separate copy
+commands, individual deletion and clear-all confirmation. Command-K searches at
+most five matches, supports arrow-key selection and Return, and opens the full
+entry. History and search query real SQLite storage in the isolated native
+profile; they return bounded pages rather than decoding the entire archive on
+the UI thread. Search includes original and final text, uses Unicode lowercase
+normalization, and treats wildcard characters literally.
+
+The History setting defaults to enabled and lives in Privacy & Data. Turning it
+off does not erase existing entries or prevent copying the current Dictation.
+Saving failure leaves the successful current result usable and reports a separate
+History error. The single final Dictation completion point schedules persistence
+after all text transforms. It captures the recording's original wall-clock time,
+local date, stable request identity, input duration and ASR model snapshot. Raw
+ASR text remains separate from the final pipeline text. Cancelled requests do not
+save late output.
+
+`HistoryStore` owns a system SQLite connection on an actor. It stores one row per
+request, updates content idempotently, and preserves original occurrence and
+source on update. Dates use Foundation reference intervals to preserve `Date`
+precision through SQLite. The profile directory and database use owner-only
+permissions. Unknown database versions, malformed databases and unreadable
+settings fail without replacing their saved files. The native app does not read
+or migrate the legacy History database.
+
+Later Upload and retention workflows can use the shared `recordHistory` operation
+and store methods. Individual deletion does not advance the device clear cutoff;
+clear-all persists a cutoff for later Insights to reject old in-flight events.
+This slice does not implement audio retention, retry or Insights accounting.
+The application termination path can await `flushHistoryWrites` before quitting.
+`HistoryView` and `HistoryPrivacyView` are reusable content views; the temporary
+flat Settings shell is not the final navigation design.
+
+Workflow tests write and reopen actual isolated databases, exercise 1,000 entries,
+page and search results, English/Chinese date labels, copy, deletion, disabled
+History, corrupted storage and cancelled server responses. UI compilation is
+verified separately from the remaining physical and English/Chinese visual review.

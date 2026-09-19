@@ -63,6 +63,7 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
 
 @MainActor final class ControlledClock: WorkflowClock {
     var now: TimeInterval = 0
+    var wallDate = Date(timeIntervalSince1970: 1_789_920_000)
     private var scheduled: [Action] = []
     func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void) -> any ScheduledAction {
         let item = Action(deadline: now + seconds, action: action)
@@ -71,6 +72,7 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
     }
     func advance(_ seconds: TimeInterval) {
         now += seconds
+        wallDate.addTimeInterval(seconds)
         let ready = scheduled.filter { $0.deadline <= now }
         scheduled.removeAll { $0.deadline <= now }
         ready.filter { !$0.cancelled }.forEach { $0.action() }

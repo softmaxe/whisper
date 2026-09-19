@@ -64,6 +64,7 @@ struct SettingsRootView: View {
                         case .home: DictationHomeView(application: application)
                         case .general: generalSettings
                         case .speechToText: speechSettings
+                        case .privacyAndData: HistoryPrivacyView(application: application)
                         }
                     }
                     .frame(maxWidth: 720, alignment: .leading)
@@ -204,10 +205,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, general, speechToText
+    case home, general, speechToText, privacyAndData
     var id: Self { self }
-    var icon: String { self == .home ? "house" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .home ? "house" : self == .general ? "slider.horizontal.3" : self == .privacyAndData ? "lock.shield" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .home ? language.text("Home", "首页") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .home ? language.text("Home", "首页") : self == .general ? language.text("General", "通用") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : language.text("Speech-to-Text", "语音转文字")
     }
 }

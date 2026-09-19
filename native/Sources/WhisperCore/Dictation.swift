@@ -28,6 +28,8 @@ public enum DictationFailure: Error, Equatable, Sendable {
 public struct DictationState: Equatable, Sendable {
     public var phase: DictationPhase = .idle
     public var requestID: UUID?
+    public var occurredAt: Date?
+    public var localDate: String?
     public var rawText = ""
     public var text = ""
     public var resultCopied = false
@@ -42,8 +44,11 @@ public struct DictationState: Equatable, Sendable {
 @MainActor public protocol ScheduledAction { func cancel() }
 @MainActor public protocol WorkflowClock {
     var now: TimeInterval { get }
+    var wallDate: Date { get }
     func schedule(after seconds: TimeInterval, _ action: @escaping @MainActor @Sendable () -> Void) -> any ScheduledAction
 }
+
+public extension WorkflowClock { var wallDate: Date { Date() } }
 
 @MainActor public final class SystemWorkflowClock: WorkflowClock {
     public init() {}
@@ -69,6 +74,9 @@ extension WhisperApplication {
         let id = UUID()
         state.dictation = DictationState()
         state.dictation.requestID = id
+        let occurredAt = clock.wallDate
+        state.dictation.occurredAt = occurredAt
+        state.dictation.localDate = HistoryDateGroup.localDate(for: occurredAt)
         state.dictation.phase = .preparing
         state.dictation.timing["accepted"] = 0
         dictationStartedAt = clock.now
@@ -166,6 +174,7 @@ extension WhisperApplication {
         state.dictation.rawText = rawText
         state.dictation.text = text
         state.dictation.phase = .result
+        saveCompletedDictationToHistory(rawText: rawText, text: text, requestID: requestID)
         dictationCapture = nil
         dictationCredential = nil
         processingTask = nil
