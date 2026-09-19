@@ -201,6 +201,22 @@ import WhisperCore
         #expect(fixture.f.app.state.dictionary.words.isEmpty)
     }
 
+    @Test func changesDuringAPendingFieldReadAreObservedWithoutWaitingForThePoll() async throws {
+        let fixture = try LearningFixture(); defer { fixture.remove() }
+        let original = "Hey Shunade how are you"
+        await fixture.pasteAndStart(original)
+        fixture.field.suspendRead = true
+        fixture.field.observation?.changed()
+        await settle { fixture.field.pendingRead != nil }
+        fixture.field.setRegion("Hey Sinead how are you")
+        fixture.field.observation?.changed()
+        for _ in 0..<10 { await Task.yield() }
+        fixture.field.finishRead(snapshot: .init(text: original, selection: original.utf16.count..<original.utf16.count))
+        await settle { fixture.f.clock.scheduledDelays.contains { abs($0 - 1.5) < 0.000001 } }
+        fixture.f.clock.advance(1.5)
+        await settle { fixture.f.app.state.dictionary.words == ["Sinead"] }
+    }
+
     @Test func existingVocabularyIsNotLearnedOrReannounced() async throws {
         let fixture = try LearningFixture(); defer { fixture.remove() }
         fixture.f.app.send(.importDictionary("sinead"))
@@ -247,7 +263,7 @@ import WhisperCore
         if suspendRead { return await withCheckedContinuation { pendingRead = $0 } }
         return focused ? current : nil
     }
-    func finishRead() { suspendRead = false; pendingRead?.resume(returning: focused ? current : nil); pendingRead = nil }
+    func finishRead(snapshot: CorrectionSnapshot? = nil) { suspendRead = false; pendingRead?.resume(returning: focused ? snapshot ?? current : nil); pendingRead = nil }
     func observe(_ changed: @escaping @Sendable () -> Void) -> any CorrectionObservation {
         let observation = ControlledCorrectionObservation(changed: changed)
         self.observation = observation
