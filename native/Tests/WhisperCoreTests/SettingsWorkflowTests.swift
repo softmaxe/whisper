@@ -64,7 +64,7 @@ struct SettingsWorkflowTests {
     @Test(arguments: [
         "http://example.com", "http://127.example.com", "http://10.example.com", "http://192.168.example.com",
         "http://172.32.0.1", "http://100.128.0.1", "http://[fec0::1]", "http://[2001:db8::1]",
-        "http://127.00.0.1", "http://2130706433", "ftp://localhost", "not a url", "https://",
+        "ftp://localhost", "not a url", "https://",
         "http://localhost:99999", "https://user:placeholder@example.com"
     ])
     func invalidEndpointsDoNotReplaceSavedConfiguration(url: String) throws {
@@ -77,6 +77,67 @@ struct SettingsWorkflowTests {
         #expect(!app.state.settingsSaved)
         #expect(app.state.configurationError != nil)
         #expect(fixture.open().state.settings.asr == original)
+    }
+
+    @Test(arguments: [
+        ("127.1", "127.0.0.1"), ("127.0.1", "127.0.0.1"),
+        ("127.00.0.1", "127.0.0.1"), ("2130706433", "127.0.0.1"),
+        ("0177.1", "127.0.0.1"), ("0x7f000001", "127.0.0.1"),
+        ("0X7F.0.0.1", "127.0.0.1"), ("127.1.", "127.0.0.1"),
+        ("0", "0.0.0.0"), ("0x", "0.0.0.0"), ("10.1", "10.0.0.1"),
+        ("0300.0250.1", "192.168.0.1"), ("0xac100001", "172.16.0.1"),
+        ("100.4194304", "100.64.0.0"), ("169.16646145", "169.254.0.1")
+    ])
+    func privateIPv4FormsPersistTheirCanonicalDestination(input: String, canonical: String) throws {
+        let fixture = try ProfileFixture(keychain: false)
+        defer { fixture.remove() }
+        let app = fixture.open()
+        let suffix = ":8178/custom%20path/v1?api-version=preview&name=a%2Fb"
+        app.send(.saveASR(.init(serverURL: "http://" + input + suffix, model: "whisper-1"), credential: .unchanged))
+        #expect(app.state.settingsSaved)
+        #expect(app.state.configurationError == nil)
+        #expect(fixture.open().state.settings.asr.serverURL == "http://" + canonical + suffix)
+    }
+
+    @Test(arguments: [
+        ("134744072", "8.8.8.8"), ("0x08080808", "8.8.8.8"),
+        ("010.010.010.010", "8.8.8.8"), ("4294967295", "255.255.255.255"),
+        ("127.example.com", "127.example.com"), ("10.example.com", "10.example.com"),
+        ("127.0.0.1.nip.io", "127.0.0.1.nip.io"),
+        ("0x7f000001.example.com", "0x7f000001.example.com"), ("0xgg", "0xgg"),
+        ("127.1..", "127.1..")
+    ])
+    func publicNumericAndLookalikeHostsStillRequireHTTPS(input: String, canonical: String) throws {
+        let fixture = try ProfileFixture(keychain: false)
+        defer { fixture.remove() }
+        let app = fixture.open()
+        app.send(.saveASR(.init(serverURL: "https://" + input + "/v1", model: "whisper-1"), credential: .unchanged))
+        #expect(app.state.settingsSaved)
+        let saved = ASRConfiguration(serverURL: "https://" + canonical + "/v1", model: "whisper-1")
+        #expect(fixture.open().state.settings.asr == saved)
+        app.send(.saveASR(.init(serverURL: "http://" + input + "/v1", model: "new-model"), credential: .unchanged))
+        #expect(!app.state.settingsSaved)
+        #expect(app.state.configurationError == .insecureURL)
+        #expect(fixture.open().state.settings.asr == saved)
+    }
+
+    @Test(arguments: [
+        "4294967296", "0x100000000", "999999999999999999999999999999999999",
+        "0xffffffffffffffffffffffffffffffff", "127.16777216", "256.1", "1.2.3.256",
+        "127..1", "1.2.3.4.5", "09.0.0.1", "example.1", "127.0xgg.1"
+    ])
+    func malformedIPv4CannotReplaceSavedConfiguration(host: String) throws {
+        let fixture = try ProfileFixture(keychain: false)
+        defer { fixture.remove() }
+        let app = fixture.open()
+        let original = ASRConfiguration(serverURL: "https://asr.example.com", model: "whisper-1")
+        app.send(.saveASR(original, credential: .unchanged))
+        for scheme in ["http", "https"] {
+            app.send(.saveASR(.init(serverURL: scheme + "://" + host + "/v1", model: "new-model"), credential: .unchanged))
+            #expect(!app.state.settingsSaved)
+            #expect(app.state.configurationError == .invalidURL)
+            #expect(fixture.open().state.settings.asr == original)
+        }
     }
 
     @Test func legacySiblingIsNeverImportedOrModified() throws {

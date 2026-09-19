@@ -26,11 +26,11 @@ public struct ASRConfiguration: Codable, Equatable, Sendable {
     }
 
     public func validated() throws -> Self {
-        let result = Self(
+        var result = Self(
             serverURL: serverURL.trimmingCharacters(in: .whitespacesAndNewlines),
             model: model.trimmingCharacters(in: .whitespacesAndNewlines)
         )
-        try EndpointPolicy.validate(result.serverURL)
+        result.serverURL = try EndpointPolicy.normalizedURL(result.serverURL)
         guard !result.model.isEmpty else { throw ConfigurationError.modelRequired }
         return result
     }
@@ -91,7 +91,11 @@ public enum ConfigurationError: Error, Equatable, Sendable {
 public enum EndpointPolicy {
     // Ported from OpenWhispr src/utils/urlUtils.ts at 6d56d75 and this fork.
     public static func validate(_ value: String) throws {
-        guard let parts = URLComponents(string: value),
+        _ = try normalizedURL(value)
+    }
+
+    static func normalizedURL(_ value: String) throws -> String {
+        guard var parts = URLComponents(string: value),
               let scheme = parts.scheme?.lowercased(),
               ["http", "https"].contains(scheme),
               let host = parts.host?.lowercased(), !host.isEmpty,
@@ -102,9 +106,66 @@ public enum EndpointPolicy {
         guard parts.user == nil, parts.password == nil else {
             throw ConfigurationError.embeddedCredential
         }
-        guard scheme == "https" || isPrivateHost(host) else {
+        let address = try ipv4Address(host)
+        let canonicalHost = address.map { address in
+            [24, 16, 8, 0].map { String((address >> $0) & 255) }.joined(separator: ".")
+        } ?? host
+        guard scheme == "https" || isPrivateHost(canonicalHost) else {
             throw ConfigurationError.insecureURL
         }
+        // Save the checked numeric destination so URLSession need not interpret legacy literal forms.
+        if address != nil, canonicalHost != host {
+            parts.host = canonicalHost
+            guard let normalized = parts.string else { throw ConfigurationError.invalidURL }
+            return normalized
+        }
+        return value
+    }
+
+    // WHATWG host parsing recognizes decimal, octal, hexadecimal and one-to-four-part IPv4.
+    // A numeric final label must parse as IPv4; malformed literals cannot fall through as DNS.
+    // https://url.spec.whatwg.org/#concept-ipv4-parser
+    private static func ipv4Address(_ host: String) throws -> UInt64? {
+        guard !host.contains(":") else { return nil }
+        var parts = host.split(separator: ".", omittingEmptySubsequences: false)
+        if parts.count > 1, parts.last?.isEmpty == true { parts.removeLast() }
+        guard let last = parts.last else { return nil }
+        let endsInDecimal = !last.isEmpty && last.utf8.allSatisfy { (48...57).contains($0) }
+        let endsInHex = last.hasPrefix("0x") && last.dropFirst(2).utf8.allSatisfy {
+            (48...57).contains($0) || (97...102).contains($0)
+        }
+        guard endsInDecimal || endsInHex else { return nil }
+        guard parts.count <= 4 else { throw ConfigurationError.invalidURL }
+        let numbers = parts.compactMap(ipv4Number)
+        guard numbers.count == parts.count,
+              numbers.dropLast().allSatisfy({ $0 <= 255 }),
+              let final = numbers.last,
+              final < UInt64(1) << (8 * (5 - numbers.count)) else {
+            throw ConfigurationError.invalidURL
+        }
+        return numbers.dropLast().enumerated().reduce(final) { value, part in
+            value + (part.element << (8 * (3 - part.offset)))
+        }
+    }
+
+    private static func ipv4Number(_ part: Substring) -> UInt64? {
+        guard !part.isEmpty else { return nil }
+        var digits = part
+        var radix = 10
+        if digits.hasPrefix("0x") {
+            digits = digits.dropFirst(2)
+            radix = 16
+        } else if digits.count > 1, digits.first == "0" {
+            digits = digits.dropFirst()
+            radix = 8
+        }
+        if digits.isEmpty { return 0 }
+        guard digits.utf8.allSatisfy({ byte in
+            let digit = (48...57).contains(byte) ? Int(byte - 48)
+                : (97...102).contains(byte) ? Int(byte - 97) + 10 : radix
+            return digit < radix
+        }) else { return nil }
+        return UInt64(digits, radix: radix)
     }
 
     private static func isPrivateHost(_ host: String) -> Bool {
