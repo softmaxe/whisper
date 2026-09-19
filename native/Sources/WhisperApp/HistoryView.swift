@@ -40,6 +40,18 @@ struct HistoryView: View {
                 Label(failure.message(in: language), systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.red).accessibilityIdentifier("history-error")
             }
+            if let failure = history.audioFailure ?? history.retry.failure {
+                Text(failure.message(in: language)).font(.caption).foregroundStyle(.red)
+                    .accessibilityIdentifier("history-audio-error")
+            }
+            if let failure = history.retry.cleanupFailure {
+                Text(failure.message(in: language) + " " + language.text("The retry used the original transcript.", "重试已使用原始转录。"))
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if history.retry.chineseConversionFailed {
+                Text(language.text("Chinese conversion was unavailable. The retry text has been preserved.", "中文转换暂不可用。已保留重试文本。"))
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if history.isLoading && history.entries.isEmpty {
                 HStack { ProgressView().controlSize(.small); Text(language.text("Loading history…", "正在加载历史记录…")) }
                     .frame(maxWidth: .infinity).padding(32)
@@ -127,6 +139,22 @@ private struct HistoryEntryView: View {
             }
             HStack(spacing: 12) {
                 if !entry.text.isEmpty { copyButton(.processed) }
+                if entry.hasAudio {
+                    Button(application.state.history.playingID == entry.id ? language.text("Stop", "停止") : language.text("Play", "播放")) {
+                        application.send(application.state.history.playingID == entry.id ? .stopHistoryPlayback : .playHistory(entry.id))
+                    }
+                    .accessibilityIdentifier("history-play-" + entry.id.uuidString)
+                    if application.state.history.retry.isRunning && application.state.history.retry.entryID == entry.id {
+                        Button(language.text("Cancel retry", "取消重试")) { application.send(.cancelHistoryRetry) }
+                    } else {
+                        Button(entry.status == .completed ? language.text("Retry", "重试") : language.text("Recover", "恢复")) {
+                            application.send(.retryHistory(entry.id))
+                        }
+                        .accessibilityIdentifier("history-retry-" + entry.id.uuidString)
+                    }
+                    Button { application.send(.revealHistoryAudio(entry.id)) } label: { Image(systemName: "folder") }
+                        .accessibilityLabel(language.text("Show audio in Finder", "在 Finder 中显示音频"))
+                }
                 if !detail {
                     Button(language.text("Open", "打开")) { application.send(.selectHistoryEntry(entry.id)) }
                 }
@@ -224,6 +252,7 @@ private struct HistorySearchView: View {
 
 struct HistoryPrivacyView: View {
     let application: WhisperApplication
+    @State private var confirmClearAudio = false
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -235,11 +264,47 @@ struct HistoryPrivacyView: View {
             .accessibilityIdentifier("history-enabled")
             Text(language.text("Keep transcripts on this Mac. Turning this off leaves existing history intact and keeps new results available to copy.", "将转录保存在此 Mac 上。关闭后会保留已有历史记录，新结果仍可复制。"))
                 .font(.caption).foregroundStyle(.secondary)
+            retentionPicker(audio: false)
+            retentionPicker(audio: true)
+            Toggle(language.text("Save cancelled recordings", "保存已取消的录音"), isOn: Binding(
+                get: { application.state.settings.history.saveDiscarded },
+                set: { value in
+                    var preferences = application.state.settings.history
+                    preferences.saveDiscarded = value
+                    application.send(.setHistoryRetention(preferences))
+                }
+            ))
+            Text(language.text("Cancelled recordings need at least one second of audio and audio retention enabled. Accidental shortcut taps are never saved.", "已取消的录音至少需要一秒音频，并启用音频保留。误触快捷键产生的录音不会保存。"))
+                .font(.caption).foregroundStyle(.secondary)
+            Button(language.text("Delete saved audio", "删除保存的音频"), role: .destructive) { confirmClearAudio = true }
             if let failure = application.state.configurationError {
                 Text(failure.message(in: language)).font(.caption).foregroundStyle(.red)
             }
         }
         .padding(18).background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary.opacity(0.12)))
+        .alert(language.text("Delete all saved audio?", "删除全部保存的音频？"), isPresented: $confirmClearAudio) {
+            Button(language.text("Cancel", "取消"), role: .cancel) {}
+            Button(language.text("Delete audio", "删除音频"), role: .destructive) { application.send(.clearHistoryAudio) }
+        } message: { Text(language.text("Transcripts stay in History. Deleted audio cannot be played or retried.", "转录文本会保留在历史记录中。删除音频后将无法播放或重试。")) }
+    }
+
+    private func retentionPicker(audio: Bool) -> some View {
+        let preferences = application.state.settings.history
+        let days = audio ? preferences.audioRetentionDays : preferences.transcriptRetentionDays
+        let choices = [0, 1, 7, 14, 30, 60, 90]
+        return Picker(audio ? language.text("Keep audio", "保留音频") : language.text("Keep transcripts", "保留转录"), selection: Binding(
+            get: { days },
+            set: { value in
+                var changed = application.state.settings.history
+                if audio { changed.audioRetentionDays = value } else { changed.transcriptRetentionDays = value }
+                application.send(.setHistoryRetention(changed))
+            }
+        )) {
+            ForEach(choices.contains(days) ? choices : choices + [days], id: \.self) { value in
+                Text(value == 0 ? (audio ? language.text("Do not retain new audio", "不保留新音频") : language.text("Forever", "永久"))
+                    : language.text("\(value) days", "\(value) 天")).tag(value)
+            }
+        }.accessibilityIdentifier(audio ? "audio-retention" : "transcript-retention")
     }
 }

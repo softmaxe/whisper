@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SQLite3
 
 struct HistoryCursor: Equatable, Sendable {
@@ -48,8 +49,10 @@ public actor HistoryStore {
         return HistoryPage(entries: entries, cursor: next, totalCount: Int(count.number(0)), clearedThrough: try clearedThrough())
     }
 
-    @discardableResult public func save(_ entry: HistoryEntry) throws -> HistoryEntry {
+    @discardableResult public func save(_ input: HistoryEntry) throws -> HistoryEntry {
         try Task.checkCancellation()
+        var entry = input
+        if entry.source == .upload { entry.audioFileName = nil }
         guard entry.occurredAt.timeIntervalSinceReferenceDate.isFinite, entry.createdAt.timeIntervalSinceReferenceDate.isFinite,
               entry.status != .completed || !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               entry.audioDuration.map({ $0.isFinite && $0 >= 0 }) ?? true,
@@ -84,6 +87,7 @@ public actor HistoryStore {
     }
 
     public func delete(_ id: UUID) throws {
+        if let entry = try entry(id) { try removeAudio(entry.audioFileName) }
         let statement = try open().statement("DELETE FROM history WHERE id = ?", [.text(id.uuidString)])
         try statement.finish()
         // Individual deletion deliberately does not advance the device-wide Insights clear cutoff.
@@ -92,6 +96,7 @@ public actor HistoryStore {
     public func clear(through date: Date) throws {
         guard date.timeIntervalSinceReferenceDate.isFinite else { throw HistoryDatabaseError.invalidEntry }
         let db = try open()
+        try removeAllAudio()
         try db.execute("BEGIN IMMEDIATE")
         do {
             try db.execute("DELETE FROM history")
@@ -113,13 +118,153 @@ public actor HistoryStore {
         return try statement.next() ? Date(timeIntervalSinceReferenceDate: statement.number(0)) : nil
     }
 
+    func saveRecording(_ input: HistoryEntry, audio: CapturedAudio, retain: Bool) throws -> HistoryRecordingSave {
+        var entry = input
+        entry.audioDuration = audio.duration
+        var audioFailed = false
+        if retain {
+            do {
+                try ensureAudioDirectory()
+                let name = "Whisper-" + entry.localDate + "-" + entry.id.uuidString + ".m4a"
+                let destination = audioDirectory.appendingPathComponent(name)
+                let staging = audioDirectory.appendingPathComponent(".partial-" + UUID().uuidString)
+                defer { try? FileManager.default.removeItem(at: staging) }
+                try FileManager.default.copyItem(at: audio.url, to: staging)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600, .modificationDate: entry.createdAt], ofItemAtPath: staging.path)
+                guard rename(staging.path, destination.path) == 0 else { throw HistoryAudioFailure.save }
+                entry.audioFileName = name
+            } catch { audioFailed = true }
+        }
+        // A discarded row has no useful text and must not outlive an unsuccessful audio write.
+        if entry.status == .discarded && entry.audioFileName == nil {
+            return HistoryRecordingSave(entry: nil, audioFailed: audioFailed)
+        }
+        do { return try HistoryRecordingSave(entry: save(entry), audioFailed: audioFailed) }
+        catch { try? removeAudio(entry.audioFileName); throw error }
+    }
+
+    public func retainedAudioURL(for id: UUID) throws -> URL? {
+        guard let entry = try entry(id), entry.source == .dictation else { return nil }
+        return availableAudio(entry.audioFileName)
+    }
+
+    func prepareRetry(_ id: UUID) throws -> HistoryRetryInput {
+        try Task.checkCancellation()
+        guard let entry = try entry(id), entry.source == .dictation,
+              let file = availableAudio(entry.audioFileName) else { throw HistoryAudioFailure.missing }
+        let temporary = profile.directory.appendingPathComponent("Temporary", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: temporary.path) {
+            try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+        let directory = temporary.appendingPathComponent("retry-" + UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        do {
+            let destination = directory.appendingPathComponent("audio.m4a")
+            try FileManager.default.copyItem(at: file, to: destination)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
+            return HistoryRetryInput(entry: entry, audio: CapturedAudio(url: destination, duration: entry.audioDuration ?? 0))
+        } catch { try? FileManager.default.removeItem(at: directory); throw error }
+    }
+
+    /// Update only an existing, still-retained recording. Late retries cannot resurrect deleted or expired rows.
+    func updateRetry(_ entry: HistoryEntry, expectedAudio: String, ownership: HistoryRetryOwnership) throws -> HistoryEntry? {
+        guard ownership.isActive, !Task.isCancelled,
+              let existing = try self.entry(entry.id), existing.audioFileName == expectedAudio,
+              availableAudio(expectedAudio) != nil else { return nil }
+        let db = try open()
+        try db.execute("BEGIN IMMEDIATE")
+        do {
+            let statement = try db.statement("""
+                UPDATE history SET text = ?, raw_text = ?, status = 'completed', provider = ?, model = ?,
+                    error_code = NULL, error_message = NULL, search_text = ? WHERE id = ? AND audio_file = ?
+                """, [.text(entry.text), .text(entry.rawText), .text(entry.provider), .text(entry.model),
+                       .text((entry.text + "\n" + entry.rawText).precomposedStringWithCanonicalMapping.lowercased()),
+                       .text(entry.id.uuidString), .text(expectedAudio)])
+            try statement.finish()
+            guard ownership.isActive, !Task.isCancelled else {
+                try db.execute("ROLLBACK")
+                return nil
+            }
+            try db.execute("COMMIT")
+            return try self.entry(entry.id)
+        } catch { try? db.execute("ROLLBACK"); throw error }
+    }
+
+    public func expireTranscripts(before cutoff: Date) throws -> [UUID] {
+        let db = try open()
+        let query = try db.statement("SELECT id, audio_file FROM history WHERE created_at < ?", [.number(cutoff.timeIntervalSinceReferenceDate)])
+        var ids: [UUID] = []
+        while try query.next() {
+            if let value = query.text(0).flatMap(UUID.init(uuidString:)) { ids.append(value) }
+            try removeAudio(query.text(1))
+        }
+        try db.execute("BEGIN IMMEDIATE")
+        do {
+            let remove = try db.statement("DELETE FROM history WHERE created_at < ?", [.number(cutoff.timeIntervalSinceReferenceDate)])
+            try remove.finish()
+            // Integrate Insights expiry at the same cutoff inside this transaction.
+            try db.execute("COMMIT")
+        } catch { try? db.execute("ROLLBACK"); throw error }
+        return ids
+    }
+
+    public func expire(preferences: HistoryPreferences, now: Date) throws -> HistoryRetentionResult {
+        let cutoff = preferences.transcriptRetentionDays > 0 ? now.addingTimeInterval(-Double(preferences.transcriptRetentionDays) * 86400) : nil
+        let ids = try cutoff.map { try expireTranscripts(before: $0) } ?? []
+        var audioIDs: [UUID] = []
+        let db = try open()
+        let query = try db.statement("SELECT id, audio_file FROM history WHERE audio_file IS NOT NULL")
+        while try query.next() {
+            let name = query.text(1)
+            let file = availableAudio(name)
+            let modified = file.flatMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
+            let expired = preferences.audioRetentionDays > 0 && modified.map { $0 < now.addingTimeInterval(-Double(preferences.audioRetentionDays) * 86400) } == true
+            if file == nil || expired {
+                try removeAudio(name)
+                let update = try db.statement("UPDATE history SET audio_file = NULL WHERE id = ?", [.text(query.text(0) ?? "")])
+                try update.finish()
+                if let id = query.text(0).flatMap(UUID.init(uuidString:)) { audioIDs.append(id) }
+            }
+        }
+        return HistoryRetentionResult(transcriptIDs: ids, transcriptCutoff: cutoff, audioIDs: audioIDs)
+    }
+
+    public func clearAudio() throws {
+        try removeAllAudio()
+        try open().execute("UPDATE history SET audio_file = NULL")
+    }
+
+    private var audioDirectory: URL { profile.directory.appendingPathComponent("Audio", isDirectory: true) }
+    private func ensureAudioDirectory() throws {
+        _ = try open()
+        if !FileManager.default.fileExists(atPath: audioDirectory.path) {
+            try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        }
+    }
+    private func availableAudio(_ name: String?) -> URL? {
+        guard let name, !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\\") else { return nil }
+        let url = audioDirectory.appendingPathComponent(name)
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+        return url
+    }
+    private func removeAudio(_ name: String?) throws {
+        if let file = availableAudio(name) { try FileManager.default.removeItem(at: file) }
+    }
+    private func removeAllAudio() throws {
+        guard FileManager.default.fileExists(atPath: audioDirectory.path) else { return }
+        for file in try FileManager.default.contentsOfDirectory(at: audioDirectory, includingPropertiesForKeys: nil) {
+            try FileManager.default.removeItem(at: file)
+        }
+    }
+
     private static let columns = "id, text, raw_text, occurred_at, created_at, local_date, source, status, provider, model, audio_duration, audio_file, error_code, error_message"
 
     private func read(_ statement: HistoryStatement) throws -> HistoryEntry {
         guard let id = UUID(uuidString: statement.text(0) ?? ""),
               let source = HistorySource(rawValue: statement.text(6) ?? ""),
               let status = HistoryStatus(rawValue: statement.text(7) ?? "") else { throw HistoryDatabaseError.unavailable }
-        return HistoryEntry(
+        var entry = HistoryEntry(
             id: id, text: statement.text(1) ?? "", rawText: statement.text(2) ?? "",
             occurredAt: Date(timeIntervalSinceReferenceDate: statement.number(3)), createdAt: Date(timeIntervalSinceReferenceDate: statement.number(4)),
             localDate: statement.text(5), source: source, status: status,
@@ -127,6 +272,8 @@ public actor HistoryStore {
             audioDuration: statement.isNull(10) ? nil : statement.number(10), audioFileName: statement.text(11),
             errorCode: statement.text(12), errorMessage: statement.text(13)
         )
+        if entry.source != .dictation || availableAudio(entry.audioFileName) == nil { entry.audioFileName = nil }
+        return entry
     }
 
     private func open() throws -> HistoryDatabase {

@@ -62,6 +62,8 @@ struct WhisperMacApp: App {
         guard let application else { return .terminateNow }
         application.send(.cancelDictation)
         application.send(.cancelCleanupPromptTest)
+        application.send(.cancelHistoryRetry)
+        application.send(.stopHistoryPlayback)
         Task {
             await application.flushHistoryWrites()
             sender.reply(toApplicationShouldTerminate: true)

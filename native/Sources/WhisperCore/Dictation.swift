@@ -155,13 +155,14 @@ extension WhisperApplication {
         let cleanupContext = cleanupContext(language: transcriptionPreferences.preferredLanguage)
         processingTask = Task { [weak self] in
             do {
-                let file = try await capture.finish()
-                defer { capture.removeFiles() }
+                let audio = try await capture.finish()
+                defer { withExtendedLifetime(audio) {} }
                 try Task.checkCancellation()
                 guard self?.isCurrentDictation(id) == true, let configuration else { return }
+                self?.state.dictation.duration = audio.duration
                 self?.markDictationStage("asrDispatch", requestID: id)
                 let text = try await transcriber.transcribe(
-                    file: file, configuration: configuration, credential: credential,
+                    file: audio.url, configuration: configuration, credential: credential,
                     options: options
                 )
                 try Task.checkCancellation()
@@ -172,10 +173,9 @@ extension WhisperApplication {
                 let complete = self?.cleanDictation(rawText: text, requestID: id, context: cleanupContext, preferences: transcriptionPreferences)
                 await complete?()
             } catch is CancellationError {
-                capture.removeFiles()
+                return
             } catch {
                 self?.failDictation(error as? DictationFailure ?? .network, requestID: id)
-                capture.removeFiles()
             }
         }
     }
@@ -228,6 +228,7 @@ extension WhisperApplication {
 
     func cancelDictation(kind: DictationCancellation = .user) {
         guard state.dictation.phase.isActive else { return }
+        preserveEndedRecording(.discarded, rejected: kind == .rejectedGesture || state.dictation.gesture.isProvisional)
         holdDeadline?.cancel()
         holdDeadline = nil
         doubleTapDeadline?.cancel()
@@ -263,6 +264,9 @@ extension WhisperApplication {
             return
         }
         provisionalFailure = nil
+        if failure != .noAudio && failure != .configuration && failure != .permissionDenied {
+            preserveEndedRecording(.failed, failure: failure)
+        }
         processingTask?.cancel()
         holdDeadline?.cancel()
         holdDeadline = nil

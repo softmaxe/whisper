@@ -49,12 +49,22 @@ enum RecordingEvent: Sendable {
     case failed(DictationFailure)
 }
 
+/// Shared by processing and persistence so cancellation never removes a file still being consumed.
+final class CapturedAudio: @unchecked Sendable {
+    let url: URL
+    let duration: TimeInterval
+    init(url: URL, duration: TimeInterval) { self.url = url; self.duration = duration }
+    deinit { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+}
+
 /// The source callback writes incrementally, before notifying UI readiness. No duration-sized array is retained.
 final class RecordingCapture: @unchecked Sendable {
     private let lock = NSLock()
     private let writerQueue = DispatchQueue(label: "local.whisper.writer." + UUID().uuidString)
     private var ended = false
     private var session: (any MicrophoneSession)?
+    private var finishTask: Task<CapturedAudio, any Error>?
+    private var recordedDuration: TimeInterval = 0
     // File state belongs exclusively to writerQueue. The terminal lock never covers disk I/O.
     private var file: AVAudioFile?
     private var sampleRate: Double = 0
@@ -70,6 +80,7 @@ final class RecordingCapture: @unchecked Sendable {
 
     func attach(_ session: any MicrophoneSession) { lock.withLock { self.session = session } }
     private var isEnded: Bool { lock.withLock { ended } }
+    var duration: TimeInterval { lock.withLock { recordedDuration } }
 
     func receive(_ event: CaptureEvent) {
         guard !isEnded else { return }
@@ -106,6 +117,7 @@ final class RecordingCapture: @unchecked Sendable {
             try file.write(from: buffer)
             frames += Int64(frame.samples.count)
             let duration = Double(frames) / sampleRate
+            lock.withLock { recordedDuration = duration }
             let now = ProcessInfo.processInfo.systemUptime
             guard !isEnded, now - lastFeedback >= 0.08 else { return }
             lastFeedback = now
@@ -116,34 +128,39 @@ final class RecordingCapture: @unchecked Sendable {
         }
     }
 
-    func finish() async throws -> URL {
-        let session = lock.withLock { ended = true; return self.session }
-        return try await withCheckedThrowingContinuation { continuation in
-            let complete: @Sendable () -> Void = { [self] in
-                writerQueue.async { [self] in
-                    file?.close()
-                    file = nil
-                    lock.withLock { self.session = nil }
-                    if frames > 0 { continuation.resume(returning: directory.appendingPathComponent("audio.m4a")) }
-                    else { continuation.resume(throwing: DictationFailure.noAudio) }
+    func finish() async throws -> CapturedAudio { try await finishOperation().value }
+
+    /// Invalidates capture synchronously; all callers share one physical release and file finalization.
+    func finishOperation() -> Task<CapturedAudio, any Error> {
+        lock.withLock {
+            if let finishTask { return finishTask }
+            ended = true
+            let session = self.session
+            let stream = AsyncThrowingStream<CapturedAudio, any Error> { continuation in
+                let complete: @Sendable () -> Void = { [self] in
+                    writerQueue.async { [self] in
+                        file?.close()
+                        file = nil
+                        lock.withLock { self.session = nil }
+                        if frames > 0 {
+                            continuation.yield(CapturedAudio(url: directory.appendingPathComponent("audio.m4a"), duration: Double(frames) / sampleRate))
+                            continuation.finish()
+                        } else {
+                            try? FileManager.default.removeItem(at: directory)
+                            continuation.finish(throwing: DictationFailure.noAudio)
+                        }
+                    }
                 }
+                if let session { session.stop(completion: complete) } else { complete() }
             }
-            if let session { session.stop(completion: complete) } else { complete() }
+            let task = Task {
+                for try await audio in stream { return audio }
+                throw DictationFailure.noAudio
+            }
+            finishTask = task
+            return task
         }
     }
 
-    func cancel() {
-        let session = lock.withLock { ended = true; return self.session }
-        let complete: @Sendable () -> Void = { [self] in
-            writerQueue.async { [self] in
-                file?.close()
-                file = nil
-                lock.withLock { self.session = nil }
-                removeFiles()
-            }
-        }
-        if let session { session.stop(completion: complete) } else { complete() }
-    }
-
-    func removeFiles() { try? FileManager.default.removeItem(at: directory) }
+    func cancel() { _ = finishOperation() }
 }

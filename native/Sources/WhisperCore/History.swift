@@ -2,7 +2,22 @@ import Foundation
 
 public struct HistoryPreferences: Codable, Equatable, Sendable {
     public var enabled: Bool
-    public init(enabled: Bool = true) { self.enabled = enabled }
+    public var audioRetentionDays: Int
+    public var transcriptRetentionDays: Int
+    public var saveDiscarded: Bool
+    public init(enabled: Bool = true, audioRetentionDays: Int = 30, transcriptRetentionDays: Int = 0, saveDiscarded: Bool = false) {
+        self.enabled = enabled
+        self.audioRetentionDays = audioRetentionDays >= 0 ? audioRetentionDays : 30
+        self.transcriptRetentionDays = transcriptRetentionDays >= 0 ? transcriptRetentionDays : 0
+        self.saveDiscarded = saveDiscarded
+    }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(enabled: try values.decodeIfPresent(Bool.self, forKey: .enabled) ?? true,
+                  audioRetentionDays: try values.decodeIfPresent(Int.self, forKey: .audioRetentionDays) ?? 30,
+                  transcriptRetentionDays: try values.decodeIfPresent(Int.self, forKey: .transcriptRetentionDays) ?? 0,
+                  saveDiscarded: try values.decodeIfPresent(Bool.self, forKey: .saveDiscarded) ?? false)
+    }
 }
 
 public enum HistorySource: String, Codable, Sendable { case dictation, upload }
@@ -86,6 +101,10 @@ public struct HistoryCopyFeedback: Equatable, Sendable {
 }
 
 public struct HistoryState: Equatable, Sendable {
+    public var retry = HistoryRetryState()
+    public var playingID: UUID?
+    public var audioFailure: HistoryAudioFailure?
+    public var retentionCutoff: Date?
     public var entries: [HistoryEntry] = []
     public var isLoading = false
     public var isLoaded = false
@@ -117,8 +136,12 @@ public struct HistoryState: Equatable, Sendable {
 }
 
 enum HistoryChange: Sendable {
-    case save(HistoryEntry), delete(UUID), clear(Date)
-    var failure: HistoryFailure { if case .save = self { .save } else { .delete } }
+    case save(HistoryEntry), recording(HistoryEntry, Task<CapturedAudio, any Error>, Bool)
+    case retry(HistoryEntry, String, HistoryRetryOwnership)
+    case delete(UUID), clear(Date), clearAudio, expire(HistoryPreferences, Date)
+    var failure: HistoryFailure {
+        switch self { case .save, .recording, .retry: .save; default: .delete }
+    }
 }
 
 extension WhisperApplication {
@@ -207,7 +230,11 @@ extension WhisperApplication {
             state.history.failure = change.failure
             return Task { .failure(change.failure) }
         }
-        if case .save = change, !state.settings.history.enabled { return Task { .success(false) } }
+        switch change {
+        case .save, .recording:
+            if !state.settings.history.enabled { return Task { .success(false) } }
+        default: break
+        }
         let previous = historyWriteTask
         state.history.pendingChanges += 1
         state.history.failure = nil
@@ -215,27 +242,49 @@ extension WhisperApplication {
             _ = await previous?.value
             let result: Result<Bool, HistoryFailure>
             var savedEntry: HistoryEntry?
+            var audioFailed = false
+            var retention: HistoryRetentionResult?
             do {
                 switch change {
                 case let .save(entry): savedEntry = try await historyStore.save(entry)
+                case let .recording(entry, operation, retain):
+                    let audio = try await operation.value
+                    let saved = try await historyStore.saveRecording(entry, audio: audio, retain: retain)
+                    savedEntry = saved.entry
+                    audioFailed = saved.audioFailed
+                case let .retry(entry, expectedAudio, ownership):
+                    savedEntry = try await historyStore.updateRetry(entry, expectedAudio: expectedAudio, ownership: ownership)
                 case let .delete(id): try await historyStore.delete(id)
                 case let .clear(date): try await historyStore.clear(through: date)
+                case .clearAudio: try await historyStore.clearAudio()
+                case let .expire(preferences, date): retention = try await historyStore.expire(preferences: preferences, now: date)
                 }
-                result = .success(true)
+                if case .retry = change { result = .success(savedEntry != nil) }
+                else { result = .success(true) }
             } catch { result = .failure(change.failure) }
             guard let self else { return result }
             self.state.history.pendingChanges -= 1
+            if case .recording = change { self.state.history.audioFailure = audioFailed ? .save : nil }
+            if case .clearAudio = change, case .success = result { self.state.history.audioFailure = nil }
+            if let retention {
+                self.state.history.retentionCutoff = retention.transcriptCutoff
+                if let playing = self.historyAudioEntryID,
+                   retention.audioIDs.contains(playing) || retention.transcriptIDs.contains(playing) { self.stopHistoryPlayback() }
+            }
             switch result {
             case .success:
                 switch change {
-                case let .save(entry):
-                    self.state.history.lastSavedID = entry.id
-                    if self.state.history.selectedEntry?.id == entry.id { self.state.history.selectedEntry = savedEntry }
+                case .save, .recording, .retry:
+                    if let savedEntry {
+                        self.state.history.lastSavedID = savedEntry.id
+                        if self.state.history.selectedEntry?.id == savedEntry.id { self.state.history.selectedEntry = savedEntry }
+                    }
                 case let .delete(id):
                     if self.state.history.selectedEntry?.id == id { self.state.history.selectedEntry = nil }
                 case .clear:
                     self.state.history.selectedEntry = nil
                     self.state.history.lastSavedID = nil
+                case .clearAudio, .expire: self.state.history.selectedEntry = nil
                 }
             case let .failure(failure): self.state.history.failure = failure
             }
@@ -251,10 +300,13 @@ extension WhisperApplication {
 
     func saveCompletedDictationToHistory(rawText: String, text: String, requestID: UUID) {
         guard let occurredAt = state.dictation.occurredAt else { return }
-        enqueueHistory(.save(HistoryEntry(
+        let entry = HistoryEntry(
             id: requestID, text: text, rawText: rawText, occurredAt: occurredAt,
             createdAt: clock.wallDate, localDate: state.dictation.localDate,
             model: dictationConfiguration?.model ?? "", audioDuration: state.dictation.duration
-        )))
+        )
+        if let capture = dictationCapture {
+            enqueueHistory(.recording(entry, capture.finishOperation(), state.settings.history.audioRetentionDays > 0))
+        } else { enqueueHistory(.save(entry)) }
     }
 }

@@ -27,6 +27,8 @@ public enum AppCommand {
     case saveHistory(HistoryEntry), deleteHistory(UUID), clearHistory
     case searchHistory(String), moveHistorySearchSelection(Int), selectHistoryEntry(UUID), dismissHistoryEntry
     case copyHistory(UUID, HistoryTextVersion)
+    case setHistoryRetention(HistoryPreferences), runHistoryRetention, clearHistoryAudio
+    case retryHistory(UUID), cancelHistoryRetry, playHistory(UUID), stopHistoryPlayback, revealHistoryAudio(UUID)
     case dismissMessage
 }
 
@@ -64,6 +66,13 @@ public final class WhisperApplication {
     @ObservationIgnored var historyWriteTask: Task<Result<Bool, HistoryFailure>, Never>?
     @ObservationIgnored var historyReadGeneration = 0
     @ObservationIgnored var historySearchGeneration = 0
+    @ObservationIgnored let audioSystem: any HistoryAudioSystem
+    @ObservationIgnored var historyAudioTask: Task<Void, Never>?
+    @ObservationIgnored var historyAudioGeneration = 0
+    @ObservationIgnored var historyAudioEntryID: UUID?
+    @ObservationIgnored var historyRetryTask: Task<Void, Never>?
+    @ObservationIgnored var historyRetryOwnership: HistoryRetryOwnership?
+    @ObservationIgnored var retentionTimer: (any ScheduledAction)?
 
     @ObservationIgnored let cleanup: any CleanupService
     @ObservationIgnored var cleanupTestTask: Task<Void, Never>?
@@ -95,9 +104,11 @@ public final class WhisperApplication {
         clock: (any WorkflowClock)? = nil,
         clipboard: (any TextClipboard)? = nil,
         pasteSystem: (any AutomaticPasteSystem)? = nil,
-        cleanup: any CleanupService = SelfHostedCleanup()
+        cleanup: any CleanupService = SelfHostedCleanup(),
+        audioSystem: (any HistoryAudioSystem)? = nil
     ) {
         self.cleanup = cleanup
+        self.audioSystem = audioSystem ?? NativeHistoryAudioSystem()
         self.microphones = microphones ?? NativeMicrophoneProvider()
         self.transcriber = transcriber
         self.clock = clock ?? SystemWorkflowClock()
@@ -116,9 +127,15 @@ public final class WhisperApplication {
         }
         loadDictionary()
         loadSnippets()
+        startHistoryRetention()
     }
 
-    deinit {
+    isolated deinit {
+        historyRetryOwnership?.cancel()
+        historyRetryTask?.cancel()
+        historyAudioTask?.cancel()
+        retentionTimer?.cancel()
+        audioSystem.stop()
         cleanupTestTask?.cancel()
         dictationCapture?.cancel()
         processingTask?.cancel()
@@ -181,14 +198,29 @@ public final class WhisperApplication {
             refreshHistory()
             searchHistory(state.history.searchQuery)
         case let .saveHistory(entry): enqueueHistory(.save(entry))
-        case let .deleteHistory(id): enqueueHistory(.delete(id))
-        case .clearHistory: enqueueHistory(.clear(clock.wallDate))
+        case let .deleteHistory(id):
+            if state.history.retry.entryID == id { cancelHistoryRetry() }
+            if historyAudioEntryID == id { stopHistoryPlayback() }
+            enqueueHistory(.delete(id))
+        case .clearHistory:
+            cancelHistoryRetry(); stopHistoryPlayback()
+            enqueueHistory(.clear(clock.wallDate))
         case let .searchHistory(query): searchHistory(query)
         case let .moveHistorySearchSelection(offset):
             state.history.searchSelection = max(0, min(state.history.searchResults.count - 1, state.history.searchSelection + offset))
         case let .selectHistoryEntry(id): state.history.selectedEntry = historyEntry(id)
         case .dismissHistoryEntry: state.history.selectedEntry = nil
         case let .copyHistory(id, version): copyHistory(id, version: version)
+        case let .setHistoryRetention(preferences): setHistoryRetention(preferences)
+        case .runHistoryRetention: runHistoryRetention()
+        case .clearHistoryAudio:
+            cancelHistoryRetry(); stopHistoryPlayback()
+            enqueueHistory(.clearAudio)
+        case let .retryHistory(id): retryHistory(id)
+        case .cancelHistoryRetry: cancelHistoryRetry()
+        case let .playHistory(id): useHistoryAudio(id, reveal: false)
+        case .stopHistoryPlayback: stopHistoryPlayback()
+        case let .revealHistoryAudio(id): useHistoryAudio(id, reveal: true)
         case let .saveASR(configuration, credential):
             saveASR(configuration, credential: credential)
         case let .setLanguage(language):
