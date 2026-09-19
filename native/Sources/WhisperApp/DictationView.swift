@@ -11,8 +11,12 @@ struct DictationHomeView: View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(language.text("Dictation", "听写")).font(.title2).fontWeight(.semibold)
-                Text(language.text("Speak and turn your words into text.", "开口说话，将语音转为文字。"))
+                Text(language.text("Hold Right Command to speak, then release to transcribe and paste.", "按住右 Command 说话，松开后转录并粘贴。"))
                     .foregroundStyle(.secondary)
+                if !application.state.shortcutAvailable {
+                    Text(language.text("Enable Accessibility in General settings to use the global shortcut.", "请在通用设置中启用辅助功能，以使用全局快捷键。"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
@@ -37,6 +41,7 @@ struct DictationHomeView: View {
                 }
                 if !dictation.text.isEmpty {
                     Divider()
+                    if let message = dictation.delivery.message(in: language) { Text(message).font(.caption).foregroundStyle(.secondary) }
                     Text(dictation.text).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                         .accessibilityIdentifier("dictation-result")
                     Button(language.text(dictation.resultCopied ? "Copied" : "Copy text", dictation.resultCopied ? "已复制" : "复制文字")) {
@@ -66,7 +71,9 @@ struct RecordingStatus: View {
     private var title: String {
         switch phase {
         case .idle: language.text("Ready to record", "等待录音")
-        case .preparing: language.text("Preparing microphone…", "正在准备麦克风…")
+        case .preparing: application.state.dictation.gesture == .candidate
+                ? language.text("Hold to speak…", "继续按住以说话…")
+                : language.text("Preparing microphone…", "正在准备麦克风…")
         case .recording: language.text("Listening", "正在聆听")
         case .processing: language.text("Transcribing…", "正在转录…")
         case .result: language.text("Transcription complete", "转录完成")
@@ -92,7 +99,11 @@ struct RecordingStatus: View {
     func update() {
         guard application.state.dictation.phase != .idle else { panel.orderOut(nil); return }
         if let screen = NSScreen.main {
-            panel.setFrameOrigin(NSPoint(x: screen.visibleFrame.midX - 85, y: screen.visibleFrame.minY + 18))
+            let recovery: Bool
+            if case .recovery = application.state.dictation.delivery { recovery = true } else { recovery = false }
+            let width: CGFloat = recovery ? 390 : 170
+            panel.setFrame(NSRect(x: screen.visibleFrame.midX - width / 2, y: screen.visibleFrame.minY + 18,
+                width: width, height: recovery ? 220 : 64), display: true)
         }
         panel.orderFrontRegardless()
     }
@@ -109,6 +120,23 @@ private struct RecordingPill: View {
     private var dictation: DictationState { application.state.dictation }
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
+        if case .recovery = dictation.delivery {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(dictation.delivery.message(in: language) ?? "").font(.system(size: 12))
+                ScrollView { Text(dictation.text).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading) }
+                    .frame(maxHeight: 100)
+                Button(language.text(dictation.resultCopied ? "Copied" : "Copy text", dictation.resultCopied ? "已复制" : "复制文字")) {
+                    application.send(.copyDictationResult)
+                }
+                .accessibilityIdentifier("recovery-copy")
+            }
+            .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
+        } else {
+            compactPill
+        }
+    }
+
+    private var compactPill: some View {
         HStack(spacing: 6) {
             Button {
                 if dictation.phase == .recording { application.send(.stopDictation) }

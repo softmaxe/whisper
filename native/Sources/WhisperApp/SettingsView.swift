@@ -4,6 +4,7 @@ import WhisperCore
 struct SettingsRootView: View {
     let application: WhisperApplication
     @State private var pill: RecordingPillController?
+    @State private var shortcuts: NativeShortcutMonitor?
     @State private var section = SettingsSection.home
     @State private var serverURL = ""
     @State private var model = ""
@@ -83,9 +84,13 @@ struct SettingsRootView: View {
         .onAppear {
             restoreDraft()
             if pill == nil { pill = RecordingPillController(application: application) }
+            if shortcuts == nil { shortcuts = NativeShortcutMonitor(application: application) }
+            shortcuts?.start()
             pill?.update()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in shortcuts?.start() }
         .onChange(of: application.state.dictation.phase) { pill?.update() }
+        .onChange(of: application.state.dictation.delivery) { pill?.update() }
     }
 
     private var generalSettings: some View {
@@ -105,6 +110,28 @@ struct SettingsRootView: View {
                     ForEach(AppLanguage.allCases, id: \.self) { item in Text(item.displayName).tag(item) }
                 }
                 .labelsHidden().frame(width: 150)
+            }
+            .padding(16).background(.primary.opacity(0.025))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+            VStack(alignment: .leading, spacing: 12) {
+                Text(language.text("Dictation shortcut", "听写快捷键")).font(.headline)
+                Text(language.text("Hold Right Command to speak, then release to transcribe. Esc cancels.", "按住右 Command 说话，松开后转录。按 Esc 取消。"))
+                    .font(.caption).foregroundStyle(.secondary)
+                if !application.state.shortcutAvailable {
+                    Button(language.text("Enable Accessibility for global shortcuts", "启用辅助功能以使用全局快捷键")) {
+                        shortcuts?.start(requestPermission: true)
+                    }
+                    .accessibilityIdentifier("enable-shortcut-access")
+                }
+                Toggle(language.text("Automatic paste", "自动粘贴"), isOn: Binding(
+                    get: { application.state.settings.autoPasteEnabled },
+                    set: { application.send(.setClipboardPreferences(autoPaste: $0, keepResult: application.state.settings.keepTranscriptionInClipboard)) }
+                )).accessibilityIdentifier("automatic-paste")
+                Toggle(language.text("Keep transcription in clipboard", "在剪贴板中保留转录文字"), isOn: Binding(
+                    get: { application.state.settings.keepTranscriptionInClipboard },
+                    set: { application.send(.setClipboardPreferences(autoPaste: application.state.settings.autoPasteEnabled, keepResult: $0)) }
+                )).accessibilityIdentifier("keep-transcription-clipboard")
             }
             .padding(16).background(.primary.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 8))

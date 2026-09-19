@@ -5,6 +5,10 @@ public enum AppCommand {
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
     case startDictation, stopDictation, cancelDictation, copyDictationResult
+    case shortcut(ShortcutInput)
+    case setClipboardPreferences(autoPaste: Bool, keepResult: Bool)
+    case setShortcutAvailable(Bool)
+    case resetShortcutInput(Set<UInt16>)
     case dismissMessage
 }
 
@@ -13,6 +17,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
+    public var shortcutAvailable = false
     public var credentialConfigured: Bool { settings.asrCredentialAccount != nil }
 
     public init(settings: AppSettings = .init(), configurationError: ConfigurationError? = nil) {
@@ -39,18 +44,28 @@ public final class WhisperApplication {
     @ObservationIgnored var dictationStartedAt: TimeInterval = 0
     @ObservationIgnored var dictationConfiguration: ASRConfiguration?
     @ObservationIgnored var dictationCredential: String?
+    @ObservationIgnored let pasteSystem: any AutomaticPasteSystem
+    @ObservationIgnored let automaticPaste: AutomaticPaste
+    @ObservationIgnored var dictationTarget: PasteTarget?
+    @ObservationIgnored var pressedKeys = Set<UInt16>()
+    @ObservationIgnored var holdDeadline: (any ScheduledAction)?
+    @ObservationIgnored var provisionalFailure: DictationFailure?
 
     public init(
         profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore(),
         microphones: (any MicrophoneProvider)? = nil,
         transcriber: any TranscriptionService = SelfHostedTranscriber(),
         clock: (any WorkflowClock)? = nil,
-        clipboard: (any TextClipboard)? = nil
+        clipboard: (any TextClipboard)? = nil,
+        pasteSystem: (any AutomaticPasteSystem)? = nil
     ) {
         self.microphones = microphones ?? NativeMicrophoneProvider()
         self.transcriber = transcriber
         self.clock = clock ?? SystemWorkflowClock()
         self.clipboard = clipboard ?? SystemTextClipboard()
+        let pasteSystem = pasteSystem ?? NativeAutomaticPasteSystem()
+        self.pasteSystem = pasteSystem
+        self.automaticPaste = AutomaticPaste(system: pasteSystem, clock: self.clock)
         self.profileStore = ProfileStore(profile: profile)
         self.credentials = credentials
         do {
@@ -68,13 +83,23 @@ public final class WhisperApplication {
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .shortcut(input): receiveShortcut(input)
+        case let .setShortcutAvailable(available): state.shortcutAvailable = available
+        case let .resetShortcutInput(keys):
+            cancelDictation()
+            pressedKeys = keys
+        case let .setClipboardPreferences(autoPaste, keepResult):
+            var settings = state.settings
+            settings.autoPasteEnabled = autoPaste
+            settings.keepTranscriptionInClipboard = keepResult
+            persist(settings)
         case .startDictation: startDictation()
         case .stopDictation: stopDictation()
         case .cancelDictation: cancelDictation()
         case .copyDictationResult:
             guard !state.dictation.text.isEmpty else { return }
-            clipboard.write(state.dictation.text)
-            state.dictation.resultCopied = true
+            state.dictation.resultCopied = clipboard.writeResult(state.dictation.text)
+            if !state.dictation.resultCopied { state.dictation.delivery = .recovery(copied: false) }
         case let .saveASR(configuration, credential):
             saveASR(configuration, credential: credential)
         case let .setLanguage(language):

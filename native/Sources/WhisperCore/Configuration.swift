@@ -41,15 +41,33 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var asr: ASRConfiguration
     // The opaque account is persisted; the credential itself exists only in Keychain.
     public var asrCredentialAccount: String?
+    public var autoPasteEnabled: Bool
+    public var keepTranscriptionInClipboard: Bool
 
     public init(
         language: AppLanguage = .english,
         asr: ASRConfiguration = .init(),
-        asrCredentialAccount: String? = nil
+        asrCredentialAccount: String? = nil,
+        autoPasteEnabled: Bool = true,
+        keepTranscriptionInClipboard: Bool = false
     ) {
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
+        self.autoPasteEnabled = autoPasteEnabled
+        self.keepTranscriptionInClipboard = keepTranscriptionInClipboard
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case language, asr, asrCredentialAccount, autoPasteEnabled, keepTranscriptionInClipboard
+    }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        language = try values.decode(AppLanguage.self, forKey: .language)
+        asr = try values.decode(ASRConfiguration.self, forKey: .asr)
+        asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
+        autoPasteEnabled = try values.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? true
+        keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
     }
 }
 
