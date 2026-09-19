@@ -156,7 +156,7 @@ extension WhisperApplication {
         let options = dictationTranscriptionOptions()
         let transcriptionPreferences = state.settings.transcription
         let cleanupContext = cleanupContext(language: transcriptionPreferences.preferredLanguage)
-        processingTask = Task { [weak self] in
+        processingTask = workflowTasks.start { [weak self] in
             do {
                 let audio = try await capture.finish()
                 defer { withExtendedLifetime(audio) {} }
@@ -216,7 +216,7 @@ extension WhisperApplication {
         let settings = state.settings
         let delivery = automaticPaste
         let learning = correctionLearning!
-        processingTask = Task { [weak self] in
+        processingTask = workflowTasks.start { [weak self] in
             let result = await delivery.deliver(text, target: target, enabled: settings.autoPasteEnabled,
                 keepClipboard: settings.keepTranscriptionInClipboard, willPaste: { [weak self] target in
                     if self?.state.settings.autoLearnCorrections == true { await learning.prepare(target, text: text) }
@@ -250,8 +250,7 @@ extension WhisperApplication {
         firstAudioDeadline = nil
         processingTask?.cancel()
         processingTask = nil
-        dictationCapture?.cancel()
-        dictationCapture = nil
+        releaseDictationCapture()
         dictationCredential = nil
         state.dictation.isCleaning = false
         state.dictation.phase = .idle
@@ -273,8 +272,7 @@ extension WhisperApplication {
             // A normal Command combination must not leave a microphone/configuration error pill.
             firstAudioDeadline?.cancel()
             firstAudioDeadline = nil
-            dictationCapture?.cancel()
-            dictationCapture = nil
+            releaseDictationCapture()
             dictationCredential = nil
             provisionalFailure = failure
             return
@@ -293,8 +291,7 @@ extension WhisperApplication {
         processingTask = nil
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil
-        dictationCapture?.cancel()
-        dictationCapture = nil
+        releaseDictationCapture()
         dictationCredential = nil
         state.dictation.isCleaning = false
         state.dictation.phase = .failed

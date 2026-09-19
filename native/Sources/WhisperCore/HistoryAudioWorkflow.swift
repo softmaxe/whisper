@@ -59,7 +59,7 @@ extension WhisperApplication {
         state.history.audioFailure = nil
         historyAudioEntryID = id
         let generation = historyAudioGeneration
-        historyAudioTask = Task { [weak self, historyStore] in
+        historyAudioTask = workflowTasks.start { [weak self, historyStore] in
             do {
                 guard let url = try await historyStore.retainedAudioURL(for: id) else { throw HistoryAudioFailure.missing }
                 guard !Task.isCancelled, let self, self.historyAudioGeneration == generation else { return }
@@ -108,10 +108,11 @@ extension WhisperApplication {
         let transcriber = transcriber
         let cleanup = cleanup
         let clock = clock
+        let tasks = workflowTasks
         let current: @MainActor @Sendable () -> Bool = { [weak self] in
             self?.historyRetryOwnership === ownership && ownership.isActive
         }
-        historyRetryTask = Task { [weak self, historyStore] in
+        historyRetryTask = workflowTasks.start { [weak self, historyStore] in
             do {
                 let input = try await historyStore.prepareRetry(id)
                 defer { withExtendedLifetime(input.audio) {} }
@@ -125,7 +126,7 @@ extension WhisperApplication {
                     do {
                         guard case let .success(secret) = cleanupCredential else { throw CleanupFailure.configuration }
                         text = try await Self.runCleanup(raw, configuration: cleanupConfiguration, credential: secret,
-                                                       context: context, service: cleanup, clock: clock)
+                                                       context: context, service: cleanup, clock: clock, tasks: tasks)
                     } catch is CancellationError { return }
                     catch {
                         guard current() else { return }

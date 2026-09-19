@@ -39,15 +39,18 @@ public enum DeliveryResult: Equatable, Sendable {
 @MainActor final class AutomaticPaste {
     let system: any AutomaticPasteSystem
     let clock: any WorkflowClock
+    private let tasks: WorkflowTasks
     private var tail: Task<Void, Never>?
-    init(system: any AutomaticPasteSystem, clock: any WorkflowClock) { self.system = system; self.clock = clock }
+    init(system: any AutomaticPasteSystem, clock: any WorkflowClock, tasks: WorkflowTasks) {
+        self.system = system; self.clock = clock; self.tasks = tasks
+    }
 
     func deliver(_ text: String, target: PasteTarget?, enabled: Bool, keepClipboard: Bool,
                  willPaste: (@MainActor @Sendable (PasteTarget) async -> Void)? = nil,
                  isCurrent: @escaping @MainActor @Sendable () -> Bool) async -> DeliveryResult {
         let previous = tail
         return await withCheckedContinuation { continuation in
-            tail = Task { [system, clock] in
+            tail = tasks.start { [system, clock] in
                 await previous?.value
                 guard isCurrent() else { continuation.resume(returning: .none); return }
                 guard enabled || keepClipboard else { continuation.resume(returning: .none); return }

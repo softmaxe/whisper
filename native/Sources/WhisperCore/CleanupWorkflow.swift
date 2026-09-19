@@ -64,26 +64,27 @@ extension WhisperApplication {
         let credential: String?
         do { credential = try cleanupCredential() } catch { throw CleanupFailure.configuration }
         return try await Self.runCleanup(text, configuration: configuration, credential: credential,
-                                         context: context, service: cleanup, clock: clock)
+                                         context: context, service: cleanup, clock: clock, tasks: workflowTasks)
     }
 
     static func runCleanup(_ text: String, configuration: CleanupConfiguration, credential: String?,
-                                   context: CleanupContext, service: any CleanupService, clock: any WorkflowClock) async throws -> String {
+                                   context: CleanupContext, service: any CleanupService, clock: any WorkflowClock,
+                                   tasks: WorkflowTasks) async throws -> String {
         for attempt in 0...3 {
             do {
-                let deadline = CleanupDeadline(clock: clock, seconds: 30)
+                let deadline = CleanupDeadline(clock: clock, seconds: 30, tasks: tasks)
                 return try await deadline.run {
                     try await service.clean(text: text, configuration: configuration, credential: credential, context: context)
                 }
             } catch let failure as CleanupFailure where failure.mayRetry && attempt < 3 {
-                try await waitForRetry(pow(2, Double(attempt)), clock: clock)
+                try await waitForRetry(pow(2, Double(attempt)), clock: clock, tasks: tasks)
             }
         }
         throw CleanupFailure.network
     }
 
-    private static func waitForRetry(_ seconds: TimeInterval, clock: any WorkflowClock) async throws {
-        let wait = CleanupDeadline(clock: clock, seconds: seconds, deadlineResult: .success(""))
+    private static func waitForRetry(_ seconds: TimeInterval, clock: any WorkflowClock, tasks: WorkflowTasks) async throws {
+        let wait = CleanupDeadline(clock: clock, seconds: seconds, tasks: tasks, deadlineResult: .success(""))
         _ = try await wait.run(operation: nil)
     }
 
@@ -96,6 +97,7 @@ extension WhisperApplication {
         let preferences = suppliedPreferences ?? state.settings.transcription
         let service = cleanup
         let clock = clock
+        let tasks = workflowTasks
         let shouldClean = configuration.enabled && !configuration.serverURL.isEmpty
         let credential: Result<String?, any Error> = shouldClean ? Result { try cleanupCredential() } : .success(nil)
         if shouldClean {
@@ -109,7 +111,7 @@ extension WhisperApplication {
                 do {
                     guard case let .success(secret) = credential else { throw CleanupFailure.configuration }
                     text = try await Self.runCleanup(rawText, configuration: configuration, credential: secret,
-                                                     context: context, service: service, clock: clock)
+                                                     context: context, service: service, clock: clock, tasks: tasks)
                 } catch is CancellationError { return }
                 catch {
                     guard self?.isCurrentDictation(requestID) == true else { return }
@@ -144,12 +146,13 @@ extension WhisperApplication {
         let testConfiguration = configuration
         let service = cleanup
         let clock = clock
+        let tasks = workflowTasks
         let credential = Result { try cleanupCredential() }
-        cleanupTestTask = Task { [weak self] in
+        cleanupTestTask = workflowTasks.start { [weak self] in
             do {
                 guard case let .success(secret) = credential else { throw CleanupFailure.configuration }
                 let result = try await Self.runCleanup(CleanupPrompts.wrap(text), configuration: testConfiguration,
-                                                       credential: secret, context: testContext, service: service, clock: clock)
+                                                       credential: secret, context: testContext, service: service, clock: clock, tasks: tasks)
                 guard !Task.isCancelled, self?.state.cleanupTest.requestID == id else { return }
                 self?.state.cleanupTest.text = result
             } catch is CancellationError { return }
@@ -174,13 +177,15 @@ extension WhisperApplication {
 @MainActor private final class CleanupDeadline {
     let clock: any WorkflowClock
     let seconds: TimeInterval
+    let tasks: WorkflowTasks
     let deadlineResult: Result<String, any Error>
     var continuation: CheckedContinuation<String, any Error>?
     var task: Task<Void, Never>?
     var timer: (any ScheduledAction)?
-    init(clock: any WorkflowClock, seconds: TimeInterval, deadlineResult: Result<String, any Error> = .failure(CleanupFailure.timeout)) {
+    init(clock: any WorkflowClock, seconds: TimeInterval, tasks: WorkflowTasks, deadlineResult: Result<String, any Error> = .failure(CleanupFailure.timeout)) {
         self.clock = clock
         self.seconds = seconds
+        self.tasks = tasks
         self.deadlineResult = deadlineResult
     }
     func run(operation: (@Sendable () async throws -> String)?) async throws -> String {
@@ -193,7 +198,7 @@ extension WhisperApplication {
                     finish(deadlineResult)
                 }
                 if let operation {
-                    task = Task { [weak self] in
+                    task = tasks.start { [weak self] in
                         do { let value = try await operation(); self?.finish(.success(value)) }
                         catch { self?.finish(.failure(error)) }
                     }

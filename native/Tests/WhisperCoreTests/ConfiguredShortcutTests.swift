@@ -76,6 +76,7 @@ struct ConfiguredShortcutTests {
         #expect(f.microphones.sessions.count == 1)
         #expect(!capture.physicallyOpen)
         #expect(f.desktop.cues == [.ready, .stopped])
+        f.clock.advance(0.45)
         await f.app.prepareForTermination()
         #expect(f.desktop.mediaEvents == ["pause", "resume"])
         let reopened = f.profile.open()
