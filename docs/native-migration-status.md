@@ -12,16 +12,16 @@ hardware performance, visual parity, or permission retention.
 | ------ | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
 | #36    | Packaged performance baseline and budgets          | None                                        | Tools ready; measurements pending              |
 | #37    | Native launch and fresh protected ASR settings     | None                                        | Settings, persistence, UI and package verified |
-| #38    | Button-started Dictation and capture ownership     | #37                                         | In progress                                    |
-| #39    | Right Command hold and Automatic paste             | #38                                         | Pending                                        |
+| #38    | Button-started Dictation and capture ownership     | #37                                         | Core and built-in smoke verified               |
+| #39    | Right Command hold and Automatic paste             | #38                                         | In progress                                    |
 | #40    | Double-tap Hands-free Dictation                    | #39                                         | Pending                                        |
 | #41    | Configurable keyboard and mouse shortcuts          | #40                                         | Pending                                        |
-| #42    | Selected and Auto microphones                      | #38                                         | Pending                                        |
-| #43    | Configurable text cleanup                          | #38                                         | Pending                                        |
-| #44    | Language and Chinese conversion                    | #38                                         | Pending                                        |
-| #45    | Searchable History, copy and delete                | #38                                         | Pending                                        |
+| #42    | Selected and Auto microphones                      | #38                                         | In progress                                    |
+| #43    | Configurable text cleanup                          | #38                                         | In progress                                    |
+| #44    | Language and Chinese conversion                    | #38                                         | In progress                                    |
+| #45    | Searchable History, copy and delete                | #38                                         | In progress                                    |
 | #46    | Retained audio and History retry                   | #45                                         | Pending                                        |
-| #47    | Dictionary editing, import and persistence         | #38                                         | Pending                                        |
+| #47    | Dictionary editing, import and persistence         | #38                                         | In progress                                    |
 | #48    | Correction learning                                | #39, #47                                    | Pending                                        |
 | #49    | Snippets                                           | #47                                         | Pending                                        |
 | #50    | Single-file Upload                                 | #45                                         | Pending                                        |
