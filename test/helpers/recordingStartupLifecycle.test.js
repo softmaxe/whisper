@@ -354,6 +354,60 @@ test("cancelling during visual waiting leaves acquisition and ready stages absen
   assert.equal(h.hook().isRecording, false);
 });
 
+test("stop during acquisition releases late capture without changing a completed retry trace", async (t) => {
+  const h = await setup(t);
+  const old = deferred();
+  const next = deferred();
+  let opens = 0;
+  h.media.mediaDevices.getUserMedia = () => (++opens === 1 ? old.promise : next.promise);
+  await React.act(async () => h.events.StartDictation({ startupRequest: h.request }));
+  await h.paint();
+  await React.act(async () => h.target.resolve());
+  await React.act(async () => h.events.StopDictation());
+  assert.equal(h.hook().isPreparing, false);
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(h.timing().at(-1).outcome, "incomplete");
+
+  const nextRequest = { ...h.request, requestId: "00000000-0000-4000-8000-000000000025" };
+  await React.act(async () => h.events.StartDictation({ startupRequest: nextRequest }));
+  await h.paint();
+  assert.equal(opens, 2);
+  await React.act(async () => next.resolve(h.media.stream));
+  await h.deliver();
+  const completed = h.timing().at(-1);
+  assert.equal(completed.requestId, nextRequest.requestId);
+  assert.equal(completed.outcome, "completed");
+
+  let stopped = false;
+  const track = {
+    ...h.media.track,
+    stop: () => {
+      stopped = true;
+    },
+  };
+  await React.act(async () =>
+    old.resolve({ getAudioTracks: () => [track], getTracks: () => [track] })
+  );
+  assert.equal(stopped, true);
+  assert.equal(h.hook().isRecording, true);
+  assert.equal(h.recorders.length, 1);
+  assert.equal(h.lifecycle.at(-1), "recording");
+  const late = h
+    .timing()
+    .filter((entry) => entry.requestId === h.request.requestId)
+    .at(-1);
+  assert.equal(late.outcome, "incomplete");
+  assert.equal(late.lateStage, "acquisitionCompleted");
+  assert.equal(late.stages.firstAudio, undefined);
+  assert.deepEqual(
+    h
+      .timing()
+      .filter((entry) => entry.requestId === nextRequest.requestId)
+      .at(-1),
+    completed
+  );
+});
+
 test("an observation timeout is incomplete and does not stop or reclassify an ongoing recording", async (t) => {
   const h = await setup(t);
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));

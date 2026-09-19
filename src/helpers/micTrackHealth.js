@@ -3,10 +3,10 @@ const TRACK_READY_TIMEOUT_MS = 600;
 // Waits until a capture track is actually delivering audio (wake-after-idle re-acquire).
 // After the OS suspends the input during idle, getUserMedia can hand back a track that
 // stays muted/ended and yields silence; callers use this to detect that and re-acquire.
-export const waitForTrackReady = (track, timeoutMs) =>
+export const waitForTrackReady = (track, timeoutMs, signal) =>
   new Promise((resolve) => {
     // Dead track will never deliver audio — fail fast so the caller re-acquires.
-    if (!track || track.readyState === "ended") {
+    if (signal?.aborted || !track || track.readyState === "ended") {
       resolve(false);
       return;
     }
@@ -28,6 +28,7 @@ export const waitForTrackReady = (track, timeoutMs) =>
       }
       track.removeEventListener("unmute", onUnmute);
       track.removeEventListener("ended", onEnded);
+      signal?.removeEventListener("abort", onEnded);
     };
 
     const settle = (value) => {
@@ -47,6 +48,7 @@ export const waitForTrackReady = (track, timeoutMs) =>
 
     track.addEventListener("unmute", onUnmute);
     track.addEventListener("ended", onEnded);
+    signal?.addEventListener("abort", onEnded, { once: true });
 
     // Fallback: if neither event fires, treat a still-live unmuted track as ready.
     timer = setTimeout(() => {
@@ -59,21 +61,29 @@ export const waitForTrackReady = (track, timeoutMs) =>
 // Returns a live stream — the original when it was healthy or the retry failed.
 // Optional fallback = { getConstraints, onDeviceRejected, onFallbackUnusable } adds a second
 // hop to the system default when the retry reopens the same device and it is still silent.
-export const reacquireIfDead = async (stream, getFreshConstraints, logger, fallback = null) => {
+export const reacquireIfDead = async (
+  stream,
+  getFreshConstraints,
+  logger,
+  fallback = null,
+  { signal, acquire = (constraints) => navigator.mediaDevices.getUserMedia(constraints) } = {}
+) => {
   const track = stream.getAudioTracks()[0];
-  if (!track || (await waitForTrackReady(track, TRACK_READY_TIMEOUT_MS))) {
+  if (!track || (await waitForTrackReady(track, TRACK_READY_TIMEOUT_MS, signal))) {
     return stream;
   }
+  signal?.throwIfAborted();
 
   // The stream we still own and must stop if a later hop replaces it.
   let current = stream;
   let retryStream = null;
   try {
-    retryStream = await navigator.mediaDevices.getUserMedia(await getFreshConstraints());
+    retryStream = await acquire(await getFreshConstraints());
     stream.getTracks().forEach((t) => t.stop());
     logger.info("Re-acquired microphone after dead/muted track", {}, "audio");
     current = retryStream;
   } catch (error) {
+    signal?.throwIfAborted();
     logger.warn(
       fallback
         ? "Microphone re-acquire failed, trying the default mic"
@@ -90,17 +100,19 @@ export const reacquireIfDead = async (stream, getFreshConstraints, logger, fallb
   // The retry usually resolves back to the same device; a healthy track means it just woke up.
   if (retryStream) {
     const retryTrack = retryStream.getAudioTracks()[0];
-    if (retryTrack && (await waitForTrackReady(retryTrack, TRACK_READY_TIMEOUT_MS))) {
+    if (retryTrack && (await waitForTrackReady(retryTrack, TRACK_READY_TIMEOUT_MS, signal))) {
       return retryStream;
     }
   }
+  signal?.throwIfAborted();
 
   fallback.onDeviceRejected();
 
   let fallbackStream;
   try {
-    fallbackStream = await navigator.mediaDevices.getUserMedia(await fallback.getConstraints());
+    fallbackStream = await acquire(await fallback.getConstraints());
   } catch (error) {
+    signal?.throwIfAborted();
     logger.warn("Microphone fallback failed, no usable input", { error: error.message }, "audio");
     fallback.onFallbackUnusable();
     return current;
@@ -110,7 +122,8 @@ export const reacquireIfDead = async (stream, getFreshConstraints, logger, fallb
   logger.info("Fell back to the default microphone after a silent device", {}, "audio");
 
   const fallbackTrack = fallbackStream.getAudioTracks()[0];
-  if (!fallbackTrack || !(await waitForTrackReady(fallbackTrack, TRACK_READY_TIMEOUT_MS))) {
+  if (!fallbackTrack || !(await waitForTrackReady(fallbackTrack, TRACK_READY_TIMEOUT_MS, signal))) {
+    signal?.throwIfAborted();
     fallback.onFallbackUnusable();
   }
   return fallbackStream;

@@ -1,10 +1,12 @@
 # Recording startup baseline
 
 Issue [#23](https://github.com/softmaxe/whisper/issues/23) instruments existing
-Dictation startup. It does not change the visual-frame wait, track-health checks,
-device fallback, pre-roll, ready condition, or idle-hold preference. Measure this
-revision before making the behavior changes described in
-[#22](https://github.com/softmaxe/whisper/issues/22).
+Dictation startup. Its baseline preserves the visual-frame wait, track-health
+checks, device fallback, pre-roll, ready condition, and idle-hold preference.
+Compare that baseline with later behavior changes described in
+[#22](https://github.com/softmaxe/whisper/issues/22). Builds including
+[#24](https://github.com/softmaxe/whisper/issues/24) release capture immediately
+and no longer offer idle hold.
 
 ## Reference and current evidence
 
@@ -12,8 +14,8 @@ The behavior reference is `b10d49a6d628cc6b715e3ddc2af468cab0f5c4da`.
 The upstream review used OpenWhispr
 `6d56d75e7e13ec47009e573e9ff4cded0d0ccc61`; its prepared capture and recorder
 handoff are already present in this fork. No additional upstream startup fix was
-found. Reuse the instrumentation commit as the measured baseline and record its
-exact SHA with `git rev-parse HEAD`. The uninstrumented reference's old
+found. The instrumented baseline is `043d6bea0cb5a34f45cbfc38dee38760c0de1e9a`.
+Record each measured checkout's exact SHA with `git rev-parse HEAD`. The uninstrumented reference's old
 `Recording start timing` begins inside AudioManager and cannot supply a complete
 shortcut-to-audio baseline.
 
@@ -34,7 +36,8 @@ Use `sequence` to order renderer records if asynchronous logging delivers them
 out of order. The main-process acceptance record has sequence 0.
 
 `captureAttempt` identifies the capture currently observed within the request.
-`captureSource` is `device`, `held`, or `prepared`. If preparation expires and
+`captureSource` is `device` or `prepared`; the baseline also supports `held`.
+If preparation expires and
 recording acquires another stream, its capture stages start afresh under the
 next attempt. Earlier attempts remain in earlier log records. Only the selected
 attempt's frames can complete the trace. Reusing another request's prepared
@@ -100,9 +103,10 @@ same-device hardware comparison and report them separately.
    method for both revisions. Record USB versus wireless iPhone connection and
    any other application using the microphone. Do not mix development and
    packaged runs or reset permissions between revisions.
-3. In microphone settings set **Keep Microphone Warm** to **Off**
-   (`micWarmHoldSeconds = 0`). Verify it stays off after relaunch. Do not change
-   History or audio-retention preferences to enable diagnostics.
+3. On the baseline, set **Keep Microphone Warm** to **Off** in microphone settings
+   (`micWarmHoldSeconds = 0`) and verify it stays off after relaunch. Candidates
+   including #24 remove this setting and always release capture when recording
+   ends. Do not change History or audio-retention preferences to enable diagnostics.
 4. Start the selected revision with the same debug logging configuration for
    each run. For an already installed matching build, quit first, then run
    `open -a Whisper --args --log-level=debug`. A source checkout does not update
