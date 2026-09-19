@@ -25,7 +25,6 @@ import {
   buildLiveTranscriptionPreview,
   shouldShowByokStreamingPreview,
 } from "../utils/transcriptionPreview";
-import { waitForVisualFrames } from "../utils/visualFrame";
 
 // Maps a failed selection-replacement code to its `selectionEditing.*` toast
 // detail key; unlisted codes fall back to the generic "unavailable" message.
@@ -173,12 +172,14 @@ export const useAudioRecording = (toast, options = {}) => {
         // Preserve the requested identity while Windows is still opening the
         // microphone; AudioManager confirms the same value once recording.
         setIsAssistantVoice(voiceAgentRequested);
-        await waitForVisualFrames();
-        if (preparationGeneration !== preparationGenerationRef.current) return false;
-
-        // Start acquisition only after the compact thinking frame has reached
-        // the compositor. startRecording() joins this prepared capture, so the
-        // device still opens exactly once.
+        // Publish feedback while acquisition and target capture are pending.
+        // The manager's flags still describe the preceding recording here.
+        reportLifecycle(
+          "preparing",
+          resolveLifecycleInputKind({ voiceAgentRequested, translationRequested })
+        );
+        // Acquire alongside preparation feedback, even when the window cannot
+        // draw. startRecording() joins this capture and retains its pre-roll.
         void audioManagerRef.current.prepareMicCapture?.(startupTrace);
 
         // The floating dictation panel is non-focusable, so the foreground app is
@@ -196,10 +197,6 @@ export const useAudioRecording = (toast, options = {}) => {
         audioManagerRef.current.setVoiceAgentRequested(voiceAgentRequested);
         audioManagerRef.current.setAssistantSelectionContext(assistantSelectionContext);
         audioManagerRef.current.setTranslationRequested(translationRequested);
-        // Covers the toggle path with freshly-set flags; the signature dedup
-        // makes this a no-op when the prepare handler already reported the
-        // same kind ahead of the flags being set.
-        reportLifecycle("preparing");
         if (voiceAgentRequested) {
           logger.info(
             "Voice agent recording start",
@@ -792,11 +789,9 @@ export const useAudioRecording = (toast, options = {}) => {
 
       // A start still awaiting the mic open leaves isRecording false, so without
       // the lock check this toggle-off would take the start branch and be lost.
-      if (
-        startLockRef.current ||
-        currentState.isRecording ||
-        reportedLifecycleRef.current?.startsWith("preparing:")
-      ) {
+      // A prepare event alone is only a hint: the main process sends it before
+      // the first toggle, which must adopt that capture rather than stop it.
+      if (startLockRef.current || currentState.isRecording) {
         await performStopRecording();
       } else if (canStartDictation(currentState)) {
         await performStartRecording({ voiceAgentRequested, translationRequested, startupRequest });
@@ -831,20 +826,18 @@ export const useAudioRecording = (toast, options = {}) => {
       onToggle?.();
     });
 
-    const disposePrepare = window.electronAPI.onPrepareDictation?.(async (options) => {
+    const disposePrepare = window.electronAPI.onPrepareDictation?.((options) => {
       if (!audioManagerRef.current || startLockRef.current) return;
       if (!canStartDictation(audioManagerRef.current.getState())) return;
       const startupTrace = getStartupTrace(options?.startupRequest);
       startupTrace.mark("preparationEntered");
-      const generation = ++preparationGenerationRef.current;
+      preparationGenerationRef.current += 1;
       setIsAssistantVoice(false);
       setIsPreparing(true);
       // The prepare event precedes the flag-setting start, so the kind must come
       // from the payload — the audioManager flags still describe the PREVIOUS
       // recording at this point.
       reportLifecycle("preparing", options?.inputKind);
-      await waitForVisualFrames();
-      if (generation !== preparationGenerationRef.current || startLockRef.current) return;
       void audioManagerRef.current.prepareMicCapture?.(startupTrace);
     });
 

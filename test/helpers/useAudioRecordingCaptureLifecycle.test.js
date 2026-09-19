@@ -21,7 +21,14 @@ function deferred() {
 
 async function mountCapture(
   t,
-  { warmHold = "900", captureTarget, failRecorder = false, initialStorage = {} } = {}
+  {
+    warmHold = "900",
+    captureTarget,
+    failRecorder = false,
+    initialStorage = {},
+    input = "external",
+    holdFrames = false,
+  } = {}
 ) {
   t.mock.timers.enable({ apis: ["setInterval"] });
   let root;
@@ -35,6 +42,8 @@ async function mountCapture(
   const saved = [];
   const savedAudio = [];
   const targetCaptures = [];
+  const pasteTargets = [];
+  let targetApp = "previous-editor";
   const requests = [];
   const recorders = [];
   const streams = [];
@@ -48,8 +57,8 @@ async function mountCapture(
       remoteTranscriptionUrl: "http://localhost:8178/v1",
       remoteTranscriptionModel: "test-model",
       microphoneSelectionMode: "specific",
-      selectedMicDeviceId: "external",
-      selectedMicDeviceLabel: "External microphone",
+      selectedMicDeviceId: input,
+      selectedMicDeviceLabel: input === "external" ? "External microphone" : "Built-in microphone",
       micWarmHoldSeconds: warmHold,
       autoPasteEnabled: "true",
       audioCuesEnabled: "false",
@@ -61,8 +70,10 @@ async function mountCapture(
     },
   });
   const container = installHookDom(t);
+  const frames = [];
   globalThis.requestAnimationFrame = (callback) => {
-    callback();
+    if (holdFrames) frames.push(callback);
+    else callback();
     return 1;
   };
   installMicCaptureGlobals(t);
@@ -81,6 +92,7 @@ async function mountCapture(
   };
   navigator.mediaDevices.enumerateDevices = async () => [
     { kind: "audioinput", deviceId: "external", label: "External microphone" },
+    { kind: "audioinput", deviceId: "built-in", label: "Built-in microphone" },
   ];
   navigator.mediaDevices.getUserMedia = (constraints) => {
     const request = deferred();
@@ -125,11 +137,12 @@ async function mountCapture(
   Object.assign(window.electronAPI, {
     captureDictationTarget: async () => {
       targetCaptures.push("editor");
-      return captureTarget?.();
+      targetApp = (await captureTarget?.()) ?? "editor";
     },
     dictationLifecycleStateChanged: (state) => lifecycle.push(state),
     pasteText: async (text) => {
       pastes.push(text);
+      pasteTargets.push(targetApp);
       return { success: true, pasted: true };
     },
     saveTranscription: async (...args) => {
@@ -179,6 +192,7 @@ async function mountCapture(
     lifecycle,
     toasts,
     pastes,
+    pasteTargets,
     saved,
     savedAudio,
     targetCaptures,
@@ -200,12 +214,18 @@ async function mountCapture(
       await React.act(async () => root.unmount());
       root = null;
     },
+    async paint() {
+      await React.act(async () => {
+        while (frames.length) frames.shift()();
+      });
+    },
     resolveMic(index, { muted = false } = {}) {
+      const deviceId = requests[index].constraints.audio.deviceId?.exact ?? input;
       const track = Object.assign(new EventTarget(), {
-        label: "External microphone",
+        label: deviceId === "external" ? "External microphone" : "Built-in microphone",
         readyState: "live",
         muted,
-        getSettings: () => ({ deviceId: "external" }),
+        getSettings: () => ({ deviceId }),
         stop() {
           this.readyState = "ended";
         },
@@ -269,7 +289,7 @@ test("normal stop releases capture before recorder delivery or transcription wit
 });
 
 test("push-to-talk release during acquisition disposes the late stream without recording or output", async (t) => {
-  const h = await mountCapture(t);
+  const h = await mountCapture(t, { holdFrames: true });
   await h.act(() => h.events.onStartDictation());
   assert.equal(h.requests.length, 1);
   await h.act(() => h.events.onStopDictation());
@@ -284,6 +304,83 @@ test("push-to-talk release during acquisition disposes the late stream without r
   assert.deepEqual(h.pastes, []);
 });
 
+for (const input of ["built-in", "external"]) {
+  for (const mode of ["push-to-talk", "toggle", "panel"]) {
+    test(`${input} ${mode} Dictation retains opening audio and the Target app without visual frames`, async (t) => {
+      const target = deferred();
+      const h = await mountCapture(t, {
+        input,
+        holdFrames: true,
+        captureTarget: () => target.promise,
+      });
+      const request = {
+        startupRequest: {
+          requestId: "00000000-0000-4000-8000-000000000026",
+          acceptedAt: performance.timeOrigin + performance.now(),
+        },
+      };
+      await h.act(() => {
+        if (mode === "push-to-talk") {
+          h.events.onPrepareDictation(request);
+          h.events.onPrepareDictation(request);
+          h.events.onStartDictation(request);
+          h.events.onStartDictation(request);
+          h.events.onPrepareDictation(request);
+        } else if (mode === "toggle") {
+          h.events.onPrepareDictation(request);
+          h.events.onToggleDictation(request);
+        } else void h.api().startRecording();
+      });
+      assert.equal(h.requests.length, 1);
+      assert.equal(h.requests[0].constraints.audio.deviceId.exact, input);
+      assert.equal(h.api().isPreparing, true);
+      assert.equal(h.lifecycle.at(-1), "preparing");
+      assert.deepEqual(h.targetCaptures, ["editor"]);
+      await h.act(() => h.resolveMic(0));
+      assert.equal(h.api().isRecording, false, "target capture still gates recording handoff");
+      const recorder = h.recorders[0];
+      const opening = "opening speech ".repeat(200);
+      await h.act(() => recorder.data(opening));
+      await h.act(() => target.resolve("current-editor"));
+      assert.equal(h.api().isRecording, true);
+      assert.equal(h.lifecycle.at(-1), "recording");
+      assert.deepEqual(h.recorders, [recorder]);
+      assert.equal(recorder.stream, h.streams[0]);
+      assert.equal(h.requests.length, 1);
+      await h.act(() => recorder.data("after handoff "));
+      await h.act(() => {
+        if (mode === "push-to-talk") h.events.onStopDictation();
+        else if (mode === "toggle") h.events.onToggleDictation();
+        else void h.api().stopRecording();
+      });
+      let finished;
+      await h.act(() => {
+        finished = recorder.finish();
+      });
+      assert.equal(h.audioPayloads.length, 1);
+      const submittedAudio = await h.audioPayloads[0].get("file").text();
+      assert.equal(submittedAudio, opening + "after handoff " + "speech".repeat(500));
+      await h.act(() =>
+        h.transcription.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => "application/json" },
+          text: async () => JSON.stringify({ text: "Opening speech retained." }),
+        })
+      );
+      await finished;
+      await h.flush();
+      assert.deepEqual(h.pastes, ["Opening speech retained."]);
+      assert.deepEqual(h.pasteTargets, ["current-editor"]);
+      assert.equal(h.streams[0].getTracks()[0].readyState, "ended");
+      await h.paint();
+      assert.equal(h.api().isRecording, false);
+      assert.equal(h.requests.length, 1);
+      assert.equal(h.pastes.length, 1);
+    });
+  }
+}
+
 test("retired idle-hold preferences are removed without changing microphone selection", async (t) => {
   const h = await mountCapture(t);
   assert.equal(h.storage.getItem("micWarmHoldSeconds"), null);
@@ -293,7 +390,7 @@ test("retired idle-hold preferences are removed without changing microphone sele
 });
 
 test("a retry records independently while the cancelled device open is still pending", async (t) => {
-  const h = await mountCapture(t);
+  const h = await mountCapture(t, { holdFrames: true });
   let first;
   let second;
   await h.act(() => {
@@ -335,20 +432,34 @@ test("teardown after stop ignores queued recorder completion", async (t) => {
   assert.ok(h.contexts.every((context) => context.state === "closed"));
 });
 
-test("toggle stop releases prepared capture while target capture is pending", async (t) => {
-  const target = deferred();
-  const h = await mountCapture(t, { captureTarget: () => target.promise });
-  await h.act(() => h.events.onToggleDictation());
-  await h.act(() => h.resolveMic(0));
-  assert.equal(h.recorders[0].state, "recording");
-  assert.equal(h.api().isRecording, false);
-  await h.act(() => h.events.onToggleDictation());
-  assert.equal(h.streams[0].getTracks()[0].readyState, "ended");
-  assert.equal(h.recorders[0].state, "inactive");
-  await h.act(() => target.resolve());
-  assert.equal(h.lifecycle.includes("recording"), false);
-  assert.equal(h.audioPayloads.length, 0);
-});
+for (const waiting of ["device", "target"]) {
+  test(`toggle stop releases capture while ${waiting} capture is pending without visual frames`, async (t) => {
+    const target = deferred();
+    const h = await mountCapture(t, { captureTarget: () => target.promise, holdFrames: true });
+    const toggle = () => {
+      h.events.onPrepareDictation();
+      h.events.onToggleDictation();
+    };
+    await h.act(toggle);
+    assert.equal(h.requests.length, 1);
+    if (waiting === "target") {
+      await h.act(() => h.resolveMic(0));
+      assert.equal(h.recorders[0].state, "recording");
+    } else await h.act(() => target.resolve());
+    assert.equal(h.api().isRecording, false);
+    await h.act(toggle);
+    if (waiting === "device") await h.act(() => h.resolveMic(0));
+    assert.equal(h.streams[0].getTracks()[0].readyState, "ended");
+    assert.ok(h.recorders.every((recorder) => recorder.state === "inactive"));
+    await h.act(() => target.resolve());
+    await h.paint();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.lifecycle.includes("recording"), false);
+    assert.equal(h.lifecycle.at(-1), "idle");
+    assert.equal(h.audioPayloads.length, 0);
+    assert.deepEqual(h.pastes, []);
+  });
+}
 
 test("cancellation releases acquired capture even while track preparation is pending", async (t) => {
   const h = await mountCapture(t);
@@ -494,19 +605,18 @@ test("a cancelled acquisition cannot consume a retry's prepared but unadopted st
   assert.equal(h.api().isRecording, true);
 });
 
-test("cancelling preparation before visual frames arrive never opens the microphone", async (t) => {
-  const h = await mountCapture(t);
-  const frames = [];
-  globalThis.requestAnimationFrame = (callback) => {
-    frames.push(callback);
-    return frames.length;
-  };
+test("cancelling preparation before visual frames arrive releases the late microphone", async (t) => {
+  const h = await mountCapture(t, { holdFrames: true });
   await h.act(() => h.events.onPrepareDictation());
+  assert.equal(h.requests.length, 1);
   await h.act(() => h.events.onCancelDictationPreparation());
-  await h.act(() => {
-    while (frames.length) frames.shift()();
-  });
-  assert.equal(h.requests.length, 0);
+  await h.act(() => h.resolveMic(0));
+  await h.paint();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.streams[0].getTracks()[0].readyState, "ended");
+  assert.equal(h.recorders.length, 0);
+  assert.equal(h.audioPayloads.length, 0);
+  assert.deepEqual(h.pastes, []);
   assert.equal(h.api().isPreparing, false);
   assert.equal(h.lifecycle.at(-1), "idle");
 });

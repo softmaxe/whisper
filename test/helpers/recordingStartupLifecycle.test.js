@@ -163,7 +163,7 @@ async function setup(t) {
   };
 }
 
-test("Dictation timing includes IPC and visual waiting before capture and overlapping target capture", async (t) => {
+test("Dictation acquisition overlaps pending visual frames and target capture", async (t) => {
   const h = await setup(t);
   const acquisition = deferred();
   const opens = [];
@@ -173,12 +173,12 @@ test("Dictation timing includes IPC and visual waiting before capture and overla
   };
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));
   assert.equal(h.hook().isPreparing, true);
-  assert.equal(opens.length, 0);
+  assert.equal(h.lifecycle.at(-1), "preparing");
+  assert.equal(opens.length, 1);
   assert.equal(h.timing().at(-1)?.stages.preparationEntered, 20);
   h.advance(40);
-  await h.paint();
   assert.equal(opens.length, 1);
-  assert.equal(h.timing().at(-1).stages.acquisitionRequested, 60);
+  assert.equal(h.timing().at(-1).stages.acquisitionRequested, 20);
   h.advance(100);
   await React.act(async () => acquisition.resolve(h.media.stream));
   assert.equal(h.hook().isRecording, false);
@@ -191,6 +191,8 @@ test("Dictation timing includes IPC and visual waiting before capture and overla
   assert.equal(trace.stages.readyFeedback, 190);
   assert.equal(trace.stages.firstAudio, undefined);
   assert.equal(trace.outcome, "pending");
+  await h.deliver();
+  assert.equal(h.timing().at(-1).outcome, "completed");
   await React.act(async () => h.hook().cancelRecording());
 });
 
@@ -340,18 +342,28 @@ test("cancelling preparation preserves the old identity when its acquisition res
   assert.equal(opens, 2);
 });
 
-test("cancelling during visual waiting leaves acquisition and ready stages absent", async (t) => {
+test("cancelling before visual frames arrive releases late acquisition without ready feedback", async (t) => {
   const h = await setup(t);
+  h.media.track.stop = () => {
+    h.media.track.readyState = "ended";
+  };
+  const acquisition = deferred();
+  h.media.mediaDevices.getUserMedia = () => acquisition.promise;
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));
   await React.act(async () => h.hook().cancelRecording());
+  await React.act(async () => acquisition.resolve(h.media.stream));
+  await React.act(async () => h.target.resolve());
   await h.paint();
   const trace = h.timing().at(-1);
   assert.equal(trace.outcome, "cancelled");
   assert.equal(trace.totalMs, null);
-  assert.equal(trace.stages.acquisitionRequested, undefined);
+  assert.equal(trace.stages.acquisitionRequested, 20);
+  assert.equal(trace.stages.acquisitionCompleted, undefined);
   assert.equal(trace.stages.readyFeedback, undefined);
   assert.equal(h.hook().isPreparing, false);
   assert.equal(h.hook().isRecording, false);
+  assert.equal(h.media.track.readyState, "ended");
+  assert.equal(h.recorders.length, 0);
 });
 
 test("stop during acquisition releases late capture without changing a completed retry trace", async (t) => {

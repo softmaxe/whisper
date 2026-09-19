@@ -7,6 +7,9 @@ Compare that baseline with later behavior changes described in
 [#22](https://github.com/softmaxe/whisper/issues/22). Builds including
 [#24](https://github.com/softmaxe/whisper/issues/24) release capture immediately
 and no longer offer idle hold.
+Builds including [#26](https://github.com/softmaxe/whisper/issues/26) begin
+prepared capture alongside preparation feedback, without waiting for visual
+frames. Target app capture still completes before recording adopts that capture.
 
 ## Reference and current evidence
 
@@ -49,7 +52,7 @@ different attempts. Late callbacks also identify `lateCaptureAttempt` when neede
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `requestAccepted`                         | Main-process shortcut accepted before target capture and panel work, or a renderer recording request accepted by the Hook. |
 | `rendererReceived`                        | The Hook receives the request. The difference from acceptance includes IPC delivery and renderer scheduling.               |
-| `preparationEntered`                      | The Hook enters preparation, before the existing visual-frame wait.                                                        |
+| `preparationEntered`                      | The Hook enters preparation, before acquisition. The #23 baseline then waits for visual frames; #26 removes that wait.     |
 | `deviceResolved`                          | Settings/cache/device resolution supplies acquisition constraints.                                                         |
 | `acquisitionRequested`                    | Acquisition begins, including reuse of an optional held stream.                                                            |
 | `acquisitionCompleted`                    | The first successful platform open resolves, or a held clone is available.                                                 |
@@ -92,6 +95,44 @@ Existing recovery can retry acquisition or select another device. The capture
 timestamps describe the current attempt; track health can include internal
 health-check retries. Exclude trials with recovery or cross-request reuse from a
 same-device hardware comparison and report them separately.
+
+## Acquisition scheduling evidence for #26
+
+The pre-change checkout is `cf08c19`, which includes #23 diagnostics and #24
+capture release. Upstream was rechecked at
+`6d56d75e7e13ec47009e573e9ff4cded0d0ccc61`; it still waits for visual frames
+before prepared capture. This change retains its prepared-capture handoff and
+pre-roll, with the fork's existing capture cancellation.
+
+The deterministic renderer test `Dictation acquisition overlaps pending visual
+frames and target capture` controls IPC arrival, device delivery, target capture,
+audio frames, and the clock. These timestamps come from the correlated startup
+trace, in milliseconds after request acceptance:
+
+| Stage                  | Before #26                        | With #26                             |
+| ---------------------- | --------------------------------- | ------------------------------------ |
+| `preparationEntered`   | 20                                | 20                                   |
+| `acquisitionRequested` | 60, after releasing visual frames | 20, with visual frames still pending |
+| `acquisitionCompleted` | 160                               | 160                                  |
+| `readyFeedback`        | 190                               | 190                                  |
+
+Holding visual frames pending makes the new acquisition assertion fail on the
+pre-change code. With #26, delivering a silent audio frame completes the startup
+trace even if no visual frame callback has run. The controlled 40 ms scheduling
+gap is removed; this is not a measured hardware or end-to-end speedup. The
+candidate still waits 140 ms for the test's device delivery and another 30 ms
+for target capture. The fixture deliberately keeps those delivery timestamps
+unchanged so that acquisition scheduling can be examined separately.
+
+The capture lifecycle suite also completes Dictation through transcription and
+Automatic paste with visual frames held, for built-in and external inputs via
+push-to-talk, toggle, and panel start. It checks one device open, reuse of the
+same recorder and stream, opening audio in the submitted payload, and the
+refreshed Target app. Cancellation, stop, and retry cases verify that late
+capture cannot resume an ended request. Toggle tests send the main process's
+prepare-then-toggle sequence: preparation alone must allow the first toggle to
+start; another toggle during the accepted start must stop it. These are simulated boundary events;
+physical display presentation and built-in/iPhone latency trials remain pending.
 
 ## Collect comparable trials
 
