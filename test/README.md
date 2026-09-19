@@ -35,6 +35,9 @@ For recording startup measurements, use the
 [baseline procedure](../docs/recording-startup-baseline.md). Its renderer tests
 drive the real Dictation Hook and AudioManager with controlled device delivery,
 IPC, visual frames, and time. Hardware latency samples remain a separate check.
+The [combined verification report](../docs/recording-startup-verification.md)
+maps the integrated lifecycle coverage to #28 and records outstanding hardware
+checks.
 
 ## Release smoke check
 
