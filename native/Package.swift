@@ -9,7 +9,8 @@ let package = Package(
         .executable(name: "Whisper", targets: ["WhisperApp"])
     ],
     targets: [
-        .target(name: "WhisperCore", resources: [.copy("Resources")]),
+        .target(name: "WhisperICU", linkerSettings: [.linkedLibrary("icucore")]),
+        .target(name: "WhisperCore", dependencies: ["WhisperICU"], resources: [.copy("Resources")]),
         .executableTarget(name: "WhisperApp", dependencies: ["WhisperCore"], resources: [.copy("Resources")]),
         .testTarget(name: "WhisperCoreTests", dependencies: ["WhisperCore"], resources: [.copy("Resources")])
     ]

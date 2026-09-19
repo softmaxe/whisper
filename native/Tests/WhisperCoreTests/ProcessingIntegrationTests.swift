@@ -176,7 +176,7 @@ struct ProcessingIntegrationTests {
     }
 }
 
-@MainActor private final class ProcessingFixture {
+@MainActor final class ProcessingFixture {
     let profile: ProfileFixture
     let microphones = ControlledMicrophones()
     let clock = ControlledClock()

@@ -200,6 +200,7 @@ extension WhisperApplication {
     /// The application lifecycle can await accepted writes before terminating the process.
     public func flushHistoryWrites() async {
         _ = await historyWriteTask?.value
+        await flushInsightsWrites()
     }
 
     @discardableResult func enqueueHistory(_ change: HistoryChange) -> Task<Result<Bool, HistoryFailure>, Never> {
@@ -236,6 +237,7 @@ extension WhisperApplication {
                 case .clear:
                     self.state.history.selectedEntry = nil
                     self.state.history.lastSavedID = nil
+                    self.refreshInsights()
                 }
             case let .failure(failure): self.state.history.failure = failure
             }

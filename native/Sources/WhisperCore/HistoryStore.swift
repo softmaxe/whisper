@@ -92,8 +92,10 @@ public actor HistoryStore {
     public func clear(through date: Date) throws {
         guard date.timeIntervalSinceReferenceDate.isFinite else { throw HistoryDatabaseError.invalidEntry }
         let db = try open()
+        try ensureInsightsSchema(db)
         try db.execute("BEGIN IMMEDIATE")
         do {
+            try db.execute("DELETE FROM insights_events")
             try db.execute("DELETE FROM history")
             let cutoff = try db.statement("""
                 INSERT INTO history_clear_state (id, cleared_through) VALUES (1, ?)
@@ -129,7 +131,7 @@ public actor HistoryStore {
         )
     }
 
-    private func open() throws -> HistoryDatabase {
+    func open() throws -> HistoryDatabase {
         if let database { return database }
         guard !unreadable else { throw HistoryDatabaseError.unavailable }
         do {
@@ -175,11 +177,11 @@ public actor HistoryStore {
     }
 }
 
-private enum HistoryDatabaseError: Error { case unavailable, invalidEntry }
-private enum HistorySQLValue { case text(String), number(Double), null }
+enum HistoryDatabaseError: Error { case unavailable, invalidEntry }
+enum HistorySQLValue { case text(String), number(Double), null }
 
 // The actor is the only caller. This wrapper allows connection cleanup from deinit.
-private final class HistoryDatabase: @unchecked Sendable {
+final class HistoryDatabase: @unchecked Sendable {
     let handle: OpaquePointer
     init(url: URL) throws {
         var handle: OpaquePointer?
@@ -199,7 +201,7 @@ private final class HistoryDatabase: @unchecked Sendable {
     }
 }
 
-private final class HistoryStatement {
+final class HistoryStatement {
     private let database: HistoryDatabase
     let handle: OpaquePointer
     init(database: HistoryDatabase, sql: String, values: [HistorySQLValue]) throws {

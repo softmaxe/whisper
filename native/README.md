@@ -294,3 +294,30 @@ workflow tests drive actual shortcut capture, AAC/ASR requests, automatic paste,
 controlled field observations, Dictionary persistence and the next ASR prompt.
 Actual Accessibility compatibility and the learned-word notification still need
 coordinated physical and English/Chinese visual acceptance.
+
+## Local Insights
+
+Insights retains the four existing metrics: raw words spoken, weighted words per
+minute, Dictations and current streak with longest streak. Its activity grid
+covers the current calendar month and previous five months. Stored occurrence
+and local-date keys come from recording start, independently of server latency.
+English uses whitespace-delimited words; CJK text uses ICU word-like segments,
+matching the existing `Intl.Segmenter("und")` behavior. A small static C bridge
+uses the system `libicucore` API without adding a helper or bundled runtime.
+Apple's higher-level tokenizers produce different counts for mixed text, so the
+workflow suite compares ICU output against retained JavaScript examples. See the
+[ICU word-boundary API](https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/ubrk_8h.html).
+
+`insights_events` holds only IDs, timestamps, local day, word count and optional
+spoken duration in the same SQLite store as History. Live accounting happens
+independently before the History write; failure in either table leaves the other
+outcome and current text usable. Reconciliation fills missing eligible completed
+native History events without replacing an already-counted event. Upload, failed,
+discarded, zero-word and new History-disabled Dictations are excluded. A recovered
+existing Dictation keeps its original event identity and date.
+
+Individual History deletion preserves counts. Clear History removes both tables
+in one transaction and keeps its persisted occurrence cutoff, so late old results
+cannot revive statistics. The retention integration deletes counter rows by the
+same creation-time cutoff, including counters whose History rows were individually
+deleted, and rejects late writes older than that persisted retention cutoff.

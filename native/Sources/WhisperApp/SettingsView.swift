@@ -64,6 +64,7 @@ struct SettingsRootView: View {
                         switch section {
                         case .home: DictationHomeView(application: application)
                         case .dictionary: DictionaryPage(application: application)
+                        case .insights: InsightsView(application: application)
                         case .general: generalSettings
                         case .speechToText: speechSettings
                         case .textCleanup: CleanupSettingsView(application: application)
@@ -238,10 +239,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, dictionary, general, speechToText, textCleanup, privacyAndData
+    case home, insights, dictionary, general, speechToText, textCleanup, privacyAndData
     var id: Self { self }
-    var icon: String { self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .insights ? "chart.bar" : self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .insights ? language.text("Insights", "统计") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }

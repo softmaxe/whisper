@@ -2,6 +2,7 @@ import Foundation
 import Observation
 
 public enum AppCommand {
+    case loadInsights
     case saveCleanup(CleanupConfiguration, credential: CredentialChange)
     case saveCleanupPrompt(String?)
     case testCleanupPrompt(text: String, prompt: String?), cancelCleanupPromptTest, resetCleanupPrompt
@@ -41,6 +42,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var dictionary = DictionaryState()
     public var snippets = SnippetsState()
     public var history = HistoryState()
+    public var insights = InsightsState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -79,6 +81,9 @@ public final class WhisperApplication {
     @ObservationIgnored var dictationStartedAt: TimeInterval = 0
     @ObservationIgnored var dictationConfiguration: ASRConfiguration?
     @ObservationIgnored var dictationCredential: String?
+    @ObservationIgnored var insightsReadTask: Task<Void, Never>?
+    @ObservationIgnored var insightsWriteTask: Task<Void, Never>?
+    @ObservationIgnored var insightsGeneration = 0
     @ObservationIgnored var correctionLearning: CorrectionLearning!
     @ObservationIgnored let pasteSystem: any AutomaticPasteSystem
     @ObservationIgnored let automaticPaste: AutomaticPaste
@@ -129,12 +134,14 @@ public final class WhisperApplication {
         cleanupTestTask?.cancel()
         dictationCapture?.cancel()
         processingTask?.cancel()
+        insightsReadTask?.cancel()
         historyReadTask?.cancel()
         historySearchTask?.cancel()
     }
 
     public func send(_ command: AppCommand) {
         switch command {
+        case .loadInsights: refreshInsights()
         case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
         case .undoLearnedCorrections: undoLearnedCorrections()
         case .dismissLearnedCorrections: state.corrections = CorrectionLearningState()
