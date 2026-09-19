@@ -10,11 +10,13 @@ final class LocalHTTPServer: @unchecked Sendable {
     private var connections: [NWConnection] = []
     let response: String
     let redirectPath: String?
+    let holdResponses: Bool
     var requests: [Data] { lock.withLock { storedRequests } }
     var port: UInt16 { listener.port!.rawValue }
 
-    init(status: Int = 200, headers: String = "", redirectPath: String? = nil, body: String = "{\"text\":\"Loopback HTTP transcript\"}") throws {
+    init(status: Int = 200, headers: String = "", redirectPath: String? = nil, body: String = "{\"text\":\"Loopback HTTP transcript\"}", holdResponses: Bool = false) throws {
         self.redirectPath = redirectPath
+        self.holdResponses = holdResponses
         listener = try NWListener(using: .tcp, on: .any)
         response = "HTTP/1.1 \(status) Test\r\nContent-Type: application/json\r\nContent-Length: \(body.utf8.count)\r\n\(headers)Connection: close\r\n\r\n\(body)"
     }
@@ -56,6 +58,7 @@ final class LocalHTTPServer: @unchecked Sendable {
                         return self.storedRequests.count
                     }
                     let response: String
+                    if self.holdResponses { return }
                     if count == 1, let path = self.redirectPath {
                         response = "HTTP/1.1 307 Temporary Redirect\r\nLocation: \(path)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                     } else { response = self.response }

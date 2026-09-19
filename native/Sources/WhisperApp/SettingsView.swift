@@ -63,6 +63,7 @@ struct SettingsRootView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         switch section {
                         case .home: DictationHomeView(application: application)
+                        case .upload: UploadView(application: application, onOpenSettings: { section = .speechToText }, onOpenHistory: { section = .home })
                         case .dictionary: DictionaryPage(application: application)
                         case .general: generalSettings
                         case .speechToText: speechSettings
@@ -236,10 +237,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, dictionary, general, speechToText, textCleanup, privacyAndData
+    case home, upload, dictionary, general, speechToText, textCleanup, privacyAndData
     var id: Self { self }
-    var icon: String { self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .upload ? "arrow.up.doc" : self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .upload ? language.text("Upload", "上传") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }

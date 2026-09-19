@@ -27,6 +27,7 @@ public enum AppCommand {
     case saveHistory(HistoryEntry), deleteHistory(UUID), clearHistory
     case searchHistory(String), moveHistorySearchSelection(Int), selectHistoryEntry(UUID), dismissHistoryEntry
     case copyHistory(UUID, HistoryTextVersion)
+    case selectUpload(URL), startUpload, cancelUpload, resetUpload, copyUploadResult
     case dismissMessage
 }
 
@@ -39,6 +40,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var dictionary = DictionaryState()
     public var snippets = SnippetsState()
     public var history = HistoryState()
+    public var upload = UploadState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -64,6 +66,9 @@ public final class WhisperApplication {
     @ObservationIgnored var historyWriteTask: Task<Result<Bool, HistoryFailure>, Never>?
     @ObservationIgnored var historyReadGeneration = 0
     @ObservationIgnored var historySearchGeneration = 0
+    @ObservationIgnored let uploadConverter: any UploadMediaConverter
+    @ObservationIgnored var uploadTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored var uploadShutdown = false
 
     @ObservationIgnored let cleanup: any CleanupService
     @ObservationIgnored var cleanupTestTask: Task<Void, Never>?
@@ -92,9 +97,11 @@ public final class WhisperApplication {
         clock: (any WorkflowClock)? = nil,
         clipboard: (any TextClipboard)? = nil,
         pasteSystem: (any AutomaticPasteSystem)? = nil,
-        cleanup: any CleanupService = SelfHostedCleanup()
+        cleanup: any CleanupService = SelfHostedCleanup(),
+        uploadConverter: any UploadMediaConverter = FFmpegUploadConverter()
     ) {
         self.cleanup = cleanup
+        self.uploadConverter = uploadConverter
         self.microphones = microphones ?? NativeMicrophoneProvider()
         self.transcriber = transcriber
         self.clock = clock ?? SystemWorkflowClock()
@@ -121,10 +128,19 @@ public final class WhisperApplication {
         processingTask?.cancel()
         historyReadTask?.cancel()
         historySearchTask?.cancel()
+        for task in uploadTasks.values { task.cancel() }
     }
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .selectUpload(source): selectUpload(source)
+        case .startUpload: startUpload()
+        case .cancelUpload: cancelUpload()
+        case .resetUpload: resetUpload()
+        case .copyUploadResult:
+            guard !state.upload.text.isEmpty else { return }
+            state.upload.resultCopied = clipboard.writeResult(state.upload.text)
+            state.upload.copyFailed = !state.upload.resultCopied
         case let .setMicrophone(preference): setMicrophone(preference)
         case .refreshMicrophones: refreshMicrophones()
         case let .saveSnippet(trigger, replacement, editingID): saveSnippet(trigger: trigger, replacement: replacement, editingID: editingID)
