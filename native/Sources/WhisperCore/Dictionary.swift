@@ -153,8 +153,8 @@ extension WhisperApplication {
         } catch { state.dictionary.failure = .exportFailed }
     }
 
-    /// Snippet triggers join the same vocabulary here when the Snippets workflow is installed.
-    func dictionaryHintWords() -> [String] { state.dictionary.words }
+    /// Preserve dictionary order, then append whole triggers for both ASR and cleanup.
+    func dictionaryHintWords() -> [String] { state.dictionary.words + state.snippets.entries.map(\.trigger) }
 
     private static func normalizedDictionaryWords(_ words: [String]) -> [String] {
         var seen = Set<String>()

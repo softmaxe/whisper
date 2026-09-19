@@ -145,7 +145,7 @@ extension WhisperApplication {
                 )
                 try Task.checkCancellation()
                 guard !DictionaryPrompt.isEcho(text, prompt: options.prompt) else { throw DictationFailure.dictionaryEcho }
-                self?.completeDictation(rawText: text, text: text, requestID: id)
+                self?.completeDictationWithSnippets(rawText: text, text: text, requestID: id)
             } catch is CancellationError {
                 capture.removeFiles()
             } catch {

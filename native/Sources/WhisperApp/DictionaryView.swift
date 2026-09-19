@@ -5,6 +5,29 @@ import WhisperCore
 
 struct DictionaryPage: View {
     let application: WhisperApplication
+    @State private var tab = DictionaryTab.words
+    private var language: AppLanguage { application.state.settings.language }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Picker(language.text("Dictionary sections", "词典栏目"), selection: $tab) {
+                Text(language.text("Dictionary", "词典")).tag(DictionaryTab.words)
+                Text(language.text("Snippets", "片段")).tag(DictionaryTab.snippets)
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 230)
+            .accessibilityIdentifier("dictionary-tabs")
+            switch tab {
+            case .words: DictionaryWordsPage(application: application)
+            case .snippets: SnippetsPage(application: application)
+            }
+        }
+    }
+}
+
+private enum DictionaryTab { case words, snippets }
+
+private struct DictionaryWordsPage: View {
+    let application: WhisperApplication
     @State private var newWord = ""
     @State private var bulkText = ""
     @State private var showingImport = false
@@ -15,6 +38,9 @@ struct DictionaryPage: View {
     @FocusState private var addFocused: Bool
     private var language: AppLanguage { application.state.settings.language }
     private var dictionary: DictionaryState { application.state.dictionary }
+    private var promptCharacters: Int {
+        (dictionary.words + application.state.snippets.entries.map(\.trigger)).joined(separator: ", ").utf16.count
+    }
     private var visibleEntries: [DictionaryEntry] {
         let search = newWord.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return dictionary.entries.filter { search.isEmpty || $0.word.lowercased().contains(search) }
@@ -27,13 +53,6 @@ struct DictionaryPage: View {
     var body: some View {
         let visible = visibleEntries
         VStack(alignment: .leading, spacing: 14) {
-            // Snippets adds its adjacent tab here when that workflow is available.
-            HStack {
-                Text(language.text("Dictionary", "词典"))
-                    .fontWeight(.semibold).padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(.primary.opacity(0.07)).clipShape(RoundedRectangle(cornerRadius: 6))
-                Spacer()
-            }
             HStack(spacing: 8) {
                 TextField(language.text("Add words separated by commas", "用逗号分隔添加多个词"), text: $newWord)
                     .textFieldStyle(.roundedBorder).focused($addFocused)
@@ -88,10 +107,10 @@ struct DictionaryPage: View {
             .padding(16).background(.primary.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
-            if dictionary.promptCharacters > 550 {
+            if promptCharacters > 550 {
                 Text(language.text(
-                    "Your dictionary uses \(dictionary.promptCharacters) prompt characters. Whisper models may only use part of a long list; other models can support larger dictionaries.",
-                    "词典提示包含 \(dictionary.promptCharacters) 个字符。Whisper 模型可能仅使用较长列表的一部分；其他模型可能支持更大的词典。"
+                    "Your dictionary uses \(promptCharacters) prompt characters. Whisper models may only use part of a long list; other models can support larger dictionaries.",
+                    "词典提示包含 \(promptCharacters) 个字符。Whisper 模型可能仅使用较长列表的一部分；其他模型可能支持更大的词典。"
                 )).font(.caption).foregroundStyle(.secondary)
             }
         }

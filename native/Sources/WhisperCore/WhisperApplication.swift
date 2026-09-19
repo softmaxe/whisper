@@ -10,12 +10,15 @@ public enum AppCommand {
     case editDictionaryWord(String, replacement: String)
     case refreshDictionary, dismissDictionaryMessage
     case exportDictionary(URL)
+    case saveSnippet(trigger: String, replacement: String, editingID: UUID? = nil)
+    case setSnippets([Snippet]), deleteSnippet(UUID), refreshSnippets, dismissSnippetsMessage
     case dismissMessage
 }
 
 public struct ApplicationState: Equatable, Sendable {
     public var dictation = DictationState()
     public var dictionary = DictionaryState()
+    public var snippets = SnippetsState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -45,6 +48,7 @@ public final class WhisperApplication {
     @ObservationIgnored var dictationStartedAt: TimeInterval = 0
     @ObservationIgnored var dictationConfiguration: ASRConfiguration?
     @ObservationIgnored var dictationCredential: String?
+    @ObservationIgnored var snippetExpansion = SnippetExpansion(snippets: [])
 
     public init(
         profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore(),
@@ -66,6 +70,7 @@ public final class WhisperApplication {
             self.profileReadable = false
         }
         loadDictionary()
+        loadSnippets()
     }
 
     deinit {
@@ -75,6 +80,13 @@ public final class WhisperApplication {
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .saveSnippet(trigger, replacement, editingID): saveSnippet(trigger: trigger, replacement: replacement, editingID: editingID)
+        case let .setSnippets(snippets): setSnippets(snippets)
+        case let .deleteSnippet(id): deleteSnippet(id)
+        case .refreshSnippets: loadSnippets()
+        case .dismissSnippetsMessage:
+            state.snippets.failure = nil
+            state.snippets.saved = false
         case let .importDictionary(text): importDictionary(text)
         case let .changeDictionary(add, remove, source): changeDictionary(add: add, remove: remove, source: source)
         case let .editDictionaryWord(original, replacement): editDictionaryWord(original, replacement: replacement)

@@ -166,14 +166,15 @@ struct DictionaryWorkflowTests {
     }
 
     @Test(arguments: [
-        ("testing", false), ("testing, ", true), ("data, data, data, data,", true),
-        ("OpenWhispr, OpenWhispr", false), ("OpenWhispr, OpenWhispr, OpenWhispr", true),
+        ("testing", false), ("testing, ", false), ("data, data, data, data,", false),
+        ("OpenWhispr, OpenWhispr", false), ("OpenWhispr, OpenWhispr, OpenWhispr", false),
         ("Electron, renderer", false), ("On my way.", false), ("Let me know", false),
-        ("TypeScript, Electron, testing, data, benchmark", true),
+        ("TypeScript, Electron, testing, data, benchmark", false),
         ("benchmark, TypeScript, data, Electron, testing", false),
-        ("yes, no, maybe, dunno,", false), ("OpenWhispr Parakeet Alcahest Chromium", false)
+        ("yes, no, maybe, dunno,", false), ("OpenWhispr Parakeet Alcahest Chromium", false),
+        ("OpenWhispr Parakeet Alcahest Chromium TypeScript Electron testing data benchmark inference transcription dictionary microphone renderer latency pipeline the", true)
     ])
-    func echoFragmentsDoNotRejectOrdinaryShortDictation(text: String, isEcho: Bool) async throws {
+    func selfHostedEchoRequiresBothVocabularyThresholds(text: String, isEcho: Bool) async throws {
         let fixture = try DictationFixture()
         defer { fixture.remove() }
         fixture.app.send(.importDictionary("OpenWhispr, Parakeet, Alcahest, Chromium, TypeScript, Electron, testing, data, benchmark, inference, transcription, dictionary, microphone, renderer, latency, pipeline, on my way, let me know"))
