@@ -4,10 +4,12 @@ import Observation
 public enum AppCommand {
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
+    case startDictation, stopDictation, cancelDictation, copyDictationResult
     case dismissMessage
 }
 
 public struct ApplicationState: Equatable, Sendable {
+    public var dictation = DictationState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -27,7 +29,28 @@ public final class WhisperApplication {
     @ObservationIgnored let credentials: any CredentialStore
     @ObservationIgnored private var profileReadable = true
 
-    public init(profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore()) {
+    @ObservationIgnored let microphones: any MicrophoneProvider
+    @ObservationIgnored let transcriber: any TranscriptionService
+    @ObservationIgnored let clock: any WorkflowClock
+    @ObservationIgnored let clipboard: any TextClipboard
+    @ObservationIgnored var dictationCapture: RecordingCapture?
+    @ObservationIgnored var firstAudioDeadline: (any ScheduledAction)?
+    @ObservationIgnored var processingTask: Task<Void, Never>?
+    @ObservationIgnored var dictationStartedAt: TimeInterval = 0
+    @ObservationIgnored var dictationConfiguration: ASRConfiguration?
+    @ObservationIgnored var dictationCredential: String?
+
+    public init(
+        profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore(),
+        microphones: (any MicrophoneProvider)? = nil,
+        transcriber: any TranscriptionService = SelfHostedTranscriber(),
+        clock: (any WorkflowClock)? = nil,
+        clipboard: (any TextClipboard)? = nil
+    ) {
+        self.microphones = microphones ?? NativeMicrophoneProvider()
+        self.transcriber = transcriber
+        self.clock = clock ?? SystemWorkflowClock()
+        self.clipboard = clipboard ?? SystemTextClipboard()
         self.profileStore = ProfileStore(profile: profile)
         self.credentials = credentials
         do {
@@ -38,8 +61,20 @@ public final class WhisperApplication {
         }
     }
 
+    deinit {
+        dictationCapture?.cancel()
+        processingTask?.cancel()
+    }
+
     public func send(_ command: AppCommand) {
         switch command {
+        case .startDictation: startDictation()
+        case .stopDictation: stopDictation()
+        case .cancelDictation: cancelDictation()
+        case .copyDictationResult:
+            guard !state.dictation.text.isEmpty else { return }
+            clipboard.write(state.dictation.text)
+            state.dictation.resultCopied = true
         case let .saveASR(configuration, credential):
             saveASR(configuration, credential: credential)
         case let .setLanguage(language):
@@ -100,7 +135,7 @@ public final class WhisperApplication {
         }
     }
 
-    private func persist(_ settings: AppSettings) {
+    func persist(_ settings: AppSettings) {
         guard profileReadable else { state.configurationError = .incompatibleProfile; return }
         do {
             try profileStore.saveSettings(settings)
