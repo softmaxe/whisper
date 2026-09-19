@@ -239,7 +239,7 @@ or migrate the legacy History database.
 Later Upload and retention workflows can use the shared `recordHistory` operation
 and store methods. Individual deletion does not advance the device clear cutoff;
 clear-all persists a cutoff for later Insights to reject old in-flight events.
-This slice does not implement audio retention, retry or Insights accounting.
+Audio retention and retry are described below; Insights accounting remains a separate workflow.
 The application termination path awaits `flushHistoryWrites` before quitting.
 `HistoryView` and `HistoryPrivacyView` are reusable content views; the temporary
 flat Settings shell is not the final navigation design.
@@ -442,3 +442,38 @@ monitor while waiting for cleanup. A request snapshots all candidate bindings, s
 later saved chords cannot adopt its provisional modifier capture. Repeated native
 configuration refresh also preserves a newer user Globe choice when the action
 was already disabled before Whisper started using it.
+
+## Retained audio and History retry
+
+Privacy & Data keeps the existing retention defaults: History enabled, audio for
+30 days, transcripts forever, and cancelled recordings off. Zero audio days
+stops retaining new audio without deleting existing files; Delete saved audio
+removes those files while preserving transcripts. Transcript expiry uses entry
+creation time and removes associated audio. Audio expiry uses file modification
+time and keeps the text. Saved preferences load before startup cleanup, followed
+by a six-hour sweep and cleanup when retention preferences change.
+
+The capture owner releases the physical input before finalizing AAC. Processing
+and persistence share the finalized temporary file's lifetime, then History saves
+audio in the native profile's private `Audio` directory. A failed audio copy keeps
+successful transcript text. Failed Dictation can retain its audio for recovery.
+Ordinary cancellation requires History, audio retention, the cancelled-recording
+preference, and at least one second of valid audio. Rejected shortcut gestures
+always leave neither audio nor a History row. An unrecoverable empty discarded
+row is never saved after an audio-copy failure.
+
+History exposes playback, Show in Finder, and retry only for available retained
+Dictation audio. Retry snapshots the current ASR model, credential and language,
+then optional cleanup and Chinese conversion. The legacy self-hosted retry request
+sends no Dictionary or Chinese prompt bias; cleanup still receives the current
+Dictionary and Snippet triggers as vocabulary. Retry never expands Snippets or
+automatically pastes. It updates the same entry while preserving original
+occurrence, creation time, source and audio. Failure and cancellation keep the
+prior entry. The storage actor uses an existing-row update, never an upsert, so
+late retry output cannot revive a deleted or expired recording.
+
+Playback and Finder are external adapters in workflow tests. The tests use real
+temporary AAC, retained files and SQLite profiles, including save/reopen/retry,
+expiry, missing files, copy failure, cancellation and late responses. No test
+plays audio or opens Finder. Actual playback and bilingual visual acceptance
+remain separate checks with the user present.

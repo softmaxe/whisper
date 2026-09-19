@@ -112,7 +112,7 @@ extension ApplicationState {
         let needsFeedback = dictation.phase.isActive || recovery || learning || feedback == .failed
             || desktop.transientFeedback != nil
         return RecordingPillPresentation(
-            visible: needsFeedback || (settings.desktop.pillVisible && !settings.desktop.floatingIconAutoHide),
+            visible: !isTerminating && (needsFeedback || (settings.desktop.pillVisible && !settings.desktop.floatingIconAutoHide)),
             feedback: feedback, placement: settings.desktop.panelStartPosition, theme: settings.desktop.theme
         )
     }
@@ -192,7 +192,12 @@ extension WhisperApplication {
     }
 
     public func prepareForTermination() async {
+        state.isTerminating = true
+        retentionTimer?.cancel()
+        retentionTimer = nil
         cancelDictation()
+        cancelHistoryRetry()
+        stopHistoryPlayback()
         cancelCleanupTest()
         correctionLearning.stop()
         pillFeedbackDeadline?.cancel()

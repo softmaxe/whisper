@@ -67,7 +67,7 @@ extension WhisperApplication {
                                          context: context, service: cleanup, clock: clock)
     }
 
-    private static func runCleanup(_ text: String, configuration: CleanupConfiguration, credential: String?,
+    static func runCleanup(_ text: String, configuration: CleanupConfiguration, credential: String?,
                                    context: CleanupContext, service: any CleanupService, clock: any WorkflowClock) async throws -> String {
         for attempt in 0...3 {
             do {

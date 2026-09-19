@@ -105,9 +105,10 @@ struct DesktopIntegrationTests {
         #expect(f.app.state.recordingPill.visible)
         #expect(f.app.state.recordingPill.feedback == .learned)
         #expect(!f.app.state.settings.desktop.pillVisible)
+        f.app.send(.dismissLearnedCorrections)
+        #expect(!f.app.state.recordingPill.visible)
         await f.app.prepareForTermination()
         #expect(field.observation?.cancelled == true)
-        f.app.send(.dismissLearnedCorrections)
         #expect(!f.app.state.recordingPill.visible)
         #expect(f.profile.open().state.dictionary.words == ["Sinead"])
     }

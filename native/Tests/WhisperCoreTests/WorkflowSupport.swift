@@ -24,6 +24,7 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
     private let lock = NSLock()
     private var ended = false
     private var opened = false
+    private var releaseHeld = false
     private var callbacks: [@Sendable () -> Void] = []
     private(set) var physicallyOpen = false
     private(set) var releases = 0
@@ -50,8 +51,11 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
         }
         if opened { release() }
     }
+    func holdRelease() { lock.withLock { releaseHeld = true } }
+    func finishRelease() { lock.withLock { releaseHeld = false }; release() }
     private func release() {
-        let callbacks = lock.withLock {
+        let callbacks: [@Sendable () -> Void] = lock.withLock {
+            guard !releaseHeld else { return [] }
             if physicallyOpen { physicallyOpen = false; releases += 1 }
             let callbacks = self.callbacks
             self.callbacks.removeAll()

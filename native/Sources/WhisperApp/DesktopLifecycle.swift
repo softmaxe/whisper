@@ -246,7 +246,7 @@ import WhisperCore
         shortcuts?.stop()
         Task { @MainActor in
             await application?.prepareForTermination()
-            // prepareForTermination cancels work, releases owned media, and flushes History.
+            // prepareForTermination stops new commands and flushes accepted audio and History writes.
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

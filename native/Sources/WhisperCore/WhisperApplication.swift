@@ -35,10 +35,13 @@ public enum AppCommand {
     case saveShortcuts([String])
     case beginShortcutCapture(index: Int?), endShortcutCapture
     case setShortcutWarning(ShortcutConfigurationError?)
+    case setHistoryRetention(HistoryPreferences), runHistoryRetention, clearHistoryAudio
+    case retryHistory(UUID), cancelHistoryRetry, playHistory(UUID), stopHistoryPlayback, revealHistoryAudio(UUID)
     case dismissMessage
 }
 
 public struct ApplicationState: Equatable, Sendable {
+    public var isTerminating = false
     public var cleanupTest = CleanupTestState()
     public var cleanupCredentialConfigured: Bool { settings.cleanupCredentialAccount != nil }
     public var dictation = DictationState()
@@ -77,6 +80,13 @@ public final class WhisperApplication {
     @ObservationIgnored var historyWriteTask: Task<Result<Bool, HistoryFailure>, Never>?
     @ObservationIgnored var historyReadGeneration = 0
     @ObservationIgnored var historySearchGeneration = 0
+    @ObservationIgnored let audioSystem: any HistoryAudioSystem
+    @ObservationIgnored var historyAudioTask: Task<Void, Never>?
+    @ObservationIgnored var historyAudioGeneration = 0
+    @ObservationIgnored var historyAudioEntryID: UUID?
+    @ObservationIgnored var historyRetryTask: Task<Void, Never>?
+    @ObservationIgnored var historyRetryOwnership: HistoryRetryOwnership?
+    @ObservationIgnored var retentionTimer: (any ScheduledAction)?
 
     @ObservationIgnored let cleanup: any CleanupService
     @ObservationIgnored var cleanupTestTask: Task<Void, Never>?
@@ -122,9 +132,11 @@ public final class WhisperApplication {
         pasteSystem: (any AutomaticPasteSystem)? = nil,
         cleanup: any CleanupService = SelfHostedCleanup(),
         correctionSystem: (any CorrectionMonitoringSystem)? = nil,
-        desktopEffects: (any DesktopEffects)? = nil
+        desktopEffects: (any DesktopEffects)? = nil,
+        audioSystem: (any HistoryAudioSystem)? = nil
     ) {
         self.cleanup = cleanup
+        self.audioSystem = audioSystem ?? NativeHistoryAudioSystem()
         let effects = desktopEffects ?? InertDesktopEffects()
         self.desktopEffects = effects
         self.mediaOwnership = MediaOwnership(effects: effects)
@@ -149,9 +161,15 @@ public final class WhisperApplication {
         correctionLearning = CorrectionLearning(system: correctionSystem ?? NativeCorrectionMonitoringSystem(), clock: self.clock) { [weak self] words in
             self?.saveLearnedCorrections(words)
         }
+        startHistoryRetention()
     }
 
     isolated deinit {
+        historyRetryOwnership?.cancel()
+        historyRetryTask?.cancel()
+        historyAudioTask?.cancel()
+        retentionTimer?.cancel()
+        audioSystem.stop()
         cleanupTestTask?.cancel()
         mediaOwnership.releaseAll()
         pillFeedbackDeadline?.cancel()
@@ -162,6 +180,7 @@ public final class WhisperApplication {
     }
 
     public func send(_ command: AppCommand) {
+        guard !state.isTerminating else { return }
         switch command {
         case let .setAutoLearnCorrections(enabled): setAutoLearnCorrections(enabled)
         case .undoLearnedCorrections: undoLearnedCorrections()
@@ -243,14 +262,29 @@ public final class WhisperApplication {
             refreshHistory()
             searchHistory(state.history.searchQuery)
         case let .saveHistory(entry): enqueueHistory(.save(entry))
-        case let .deleteHistory(id): enqueueHistory(.delete(id))
-        case .clearHistory: enqueueHistory(.clear(clock.wallDate))
+        case let .deleteHistory(id):
+            if state.history.retry.entryID == id { cancelHistoryRetry() }
+            if historyAudioEntryID == id { stopHistoryPlayback() }
+            enqueueHistory(.delete(id))
+        case .clearHistory:
+            cancelHistoryRetry(); stopHistoryPlayback()
+            enqueueHistory(.clear(clock.wallDate))
         case let .searchHistory(query): searchHistory(query)
         case let .moveHistorySearchSelection(offset):
             state.history.searchSelection = max(0, min(state.history.searchResults.count - 1, state.history.searchSelection + offset))
         case let .selectHistoryEntry(id): state.history.selectedEntry = historyEntry(id)
         case .dismissHistoryEntry: state.history.selectedEntry = nil
         case let .copyHistory(id, version): copyHistory(id, version: version)
+        case let .setHistoryRetention(preferences): setHistoryRetention(preferences)
+        case .runHistoryRetention: runHistoryRetention()
+        case .clearHistoryAudio:
+            cancelHistoryRetry(); stopHistoryPlayback()
+            enqueueHistory(.clearAudio)
+        case let .retryHistory(id): retryHistory(id)
+        case .cancelHistoryRetry: cancelHistoryRetry()
+        case let .playHistory(id): useHistoryAudio(id, reveal: false)
+        case .stopHistoryPlayback: stopHistoryPlayback()
+        case let .revealHistoryAudio(id): useHistoryAudio(id, reveal: true)
         case let .saveASR(configuration, credential):
             saveASR(configuration, credential: credential)
         case let .setLanguage(language):
