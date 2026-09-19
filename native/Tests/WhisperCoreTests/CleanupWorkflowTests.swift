@@ -413,7 +413,7 @@ import WhisperCore
     private func messages(_ body: [String: Any]) -> [[String: String]] { body["messages"] as? [[String: String]] ?? [] }
 }
 
-private actor ControlledCleanupHTTP: JSONHTTPTransport {
+actor ControlledCleanupHTTP: JSONHTTPTransport {
     private(set) var requests: [URLRequest] = []
     private var replies: [Int: CheckedContinuation<HTTPResponse, any Error>] = [:]
     private(set) var returned = 0

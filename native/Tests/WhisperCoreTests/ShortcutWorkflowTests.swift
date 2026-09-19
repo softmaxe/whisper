@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import WhisperCore
 
-@MainActor private final class ControlledPasteSystem: AutomaticPasteSystem {
+@MainActor final class ControlledPasteSystem: AutomaticPasteSystem {
     var frontmost = PasteTarget(processID: 101)
     var modifiersHeld = false
     var clipboard = ClipboardSnapshot(items: [["public.utf8-plain-text": Data("original".utf8), "public.rtf": Data("rich fixture".utf8)]])

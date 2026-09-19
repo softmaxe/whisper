@@ -131,7 +131,7 @@ extension WhisperApplication {
                 self?.state.dictation.chineseConversionFailed = true
             }
             guard self?.isCurrentDictation(requestID) == true, !Task.isCancelled else { return }
-            self?.completeDictation(rawText: rawText, text: result, requestID: requestID)
+            self?.completeDictationWithSnippets(rawText: rawText, text: result, requestID: requestID)
         }
     }
 }
