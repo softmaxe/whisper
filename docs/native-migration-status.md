@@ -8,30 +8,30 @@ hardware performance, visual parity, or permission retention.
 
 ## Delivery graph
 
-| Ticket | Workflow                                           | Dependencies                                | Evidence |
-| ------ | -------------------------------------------------- | ------------------------------------------- | -------- |
-| #36    | Packaged performance baseline and budgets          | None                                        | Pending  |
-| #37    | Native launch and fresh protected ASR settings     | None                                        | Pending  |
-| #38    | Button-started Dictation and capture ownership     | #37                                         | Pending  |
-| #39    | Right Command hold and Automatic paste             | #38                                         | Pending  |
-| #40    | Double-tap Hands-free Dictation                    | #39                                         | Pending  |
-| #41    | Configurable keyboard and mouse shortcuts          | #40                                         | Pending  |
-| #42    | Selected and Auto microphones                      | #38                                         | Pending  |
-| #43    | Configurable text cleanup                          | #38                                         | Pending  |
-| #44    | Language and Chinese conversion                    | #38                                         | Pending  |
-| #45    | Searchable History, copy and delete                | #38                                         | Pending  |
-| #46    | Retained audio and History retry                   | #45                                         | Pending  |
-| #47    | Dictionary editing, import and persistence         | #38                                         | Pending  |
-| #48    | Correction learning                                | #39, #47                                    | Pending  |
-| #49    | Snippets                                           | #47                                         | Pending  |
-| #50    | Single-file Upload                                 | #45                                         | Pending  |
-| #51    | Batch Upload and cancellation                      | #50                                         | Pending  |
-| #52    | Local Dictation Insights                           | #45                                         | Pending  |
-| #53    | Recording pill and desktop preferences             | #40                                         | Pending  |
-| #54    | Core hardware and performance acceptance           | #36, #40, #42, #43                          | Pending  |
-| #55    | Full feature, interface and performance acceptance | #41, #44, #46, #48, #49, #51, #52, #53, #54 | Pending  |
-| #56    | Signed native artifacts                            | #39                                         | Pending  |
-| #57    | Signed upgrades and daily-use transition           | #55, #56                                    | Pending  |
+| Ticket | Workflow                                           | Dependencies                                | Evidence                                       |
+| ------ | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
+| #36    | Packaged performance baseline and budgets          | None                                        | Tools ready; measurements pending              |
+| #37    | Native launch and fresh protected ASR settings     | None                                        | Settings, persistence, UI and package verified |
+| #38    | Button-started Dictation and capture ownership     | #37                                         | In progress                                    |
+| #39    | Right Command hold and Automatic paste             | #38                                         | Pending                                        |
+| #40    | Double-tap Hands-free Dictation                    | #39                                         | Pending                                        |
+| #41    | Configurable keyboard and mouse shortcuts          | #40                                         | Pending                                        |
+| #42    | Selected and Auto microphones                      | #38                                         | Pending                                        |
+| #43    | Configurable text cleanup                          | #38                                         | Pending                                        |
+| #44    | Language and Chinese conversion                    | #38                                         | Pending                                        |
+| #45    | Searchable History, copy and delete                | #38                                         | Pending                                        |
+| #46    | Retained audio and History retry                   | #45                                         | Pending                                        |
+| #47    | Dictionary editing, import and persistence         | #38                                         | Pending                                        |
+| #48    | Correction learning                                | #39, #47                                    | Pending                                        |
+| #49    | Snippets                                           | #47                                         | Pending                                        |
+| #50    | Single-file Upload                                 | #45                                         | Pending                                        |
+| #51    | Batch Upload and cancellation                      | #50                                         | Pending                                        |
+| #52    | Local Dictation Insights                           | #45                                         | Pending                                        |
+| #53    | Recording pill and desktop preferences             | #40                                         | Pending                                        |
+| #54    | Core hardware and performance acceptance           | #36, #40, #42, #43                          | Pending                                        |
+| #55    | Full feature, interface and performance acceptance | #41, #44, #46, #48, #49, #51, #52, #53, #54 | Pending                                        |
+| #56    | Signed native artifacts                            | #39                                         | Pending                                        |
+| #57    | Signed upgrades and daily-use transition           | #55, #56                                    | Pending                                        |
 
 ## Acceptance gates
 
@@ -44,6 +44,10 @@ application logs in evidence.
 The installed legacy application and its profile remain available throughout
 development. Daily use changes only after full acceptance and signed upgrade
 checks pass. Remote release publication requires a separate request.
+
+Once the migration is complete, remove the maintenance requirement to inspect
+upstream OpenWhispr before every fix or feature. Subsequent development follows
+the native macOS implementation and its supported workflows.
 
 See the [capture lifecycle decision](adr/0001-release-dictation-capture.md),
 [baseline procedure](recording-startup-baseline.md),
