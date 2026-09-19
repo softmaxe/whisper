@@ -39,6 +39,11 @@ The [combined verification report](../docs/recording-startup-verification.md)
 maps the integrated lifecycle coverage to #28 and records outstanding hardware
 checks.
 
+For the native migration, use the
+[packaged performance protocol](../docs/native-performance-baseline.md) and
+[acceptance map](../docs/native-acceptance-map.md). Numeric report tooling does not
+replace controlled hardware samples or establish performance budgets by itself.
+
 ## Release smoke check
 
 Automated checks do not establish microphone, Accessibility, or server compatibility on a user's Mac. Before calling a release ready, check the packaged app on macOS:
