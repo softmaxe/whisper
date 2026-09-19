@@ -29,6 +29,7 @@ async function mountCapture(
     initialStorage = {},
     input = "external",
     holdFrames = false,
+    paste,
   } = {}
 ) {
   t.mock.timers.enable({ apis: ["setInterval"] });
@@ -39,7 +40,9 @@ async function mountCapture(
   const events = {};
   const lifecycle = [];
   const toasts = [];
+  const logs = [];
   const pastes = [];
+  const pasteOptions = [];
   const saved = [];
   const savedAudio = [];
   const targetCaptures = [];
@@ -149,14 +152,18 @@ async function mountCapture(
     };
   }
   Object.assign(window.electronAPI, {
+    getLogLevel: async () => "info",
+    log: async (entry) => logs.push(entry),
     captureDictationTarget: async () => {
       targetCaptures.push("editor");
       targetApp = (await captureTarget?.()) ?? "editor";
     },
     dictationLifecycleStateChanged: (state) => lifecycle.push(state),
-    pasteText: async (text) => {
+    pasteText: async (text, options) => {
       pastes.push(text);
+      pasteOptions.push(options);
       pasteTargets.push(targetApp);
+      if (paste) return paste(text);
       return { success: true, pasted: true };
     },
     saveTranscription: async (...args) => {
@@ -205,7 +212,9 @@ async function mountCapture(
     events,
     lifecycle,
     toasts,
+    logs,
     pastes,
+    pasteOptions,
     pasteTargets,
     saved,
     savedAudio,
@@ -699,4 +708,123 @@ test("prepared audio and speech immediately after readiness reach transcription 
   assert.equal(h.recorders.length, 1);
   assert.equal(h.audioPayloads.length, 1);
   assert.match(await h.audioPayloads[0].get("file").text(), /^opening after ready speech/);
+});
+
+for (const pasted of [true, false]) {
+  test(`Dictation completion diagnostics correlate stop, request, final text and paste with pasted=${pasted}`, async (t) => {
+    let now = 1000;
+    t.mock.method(performance, "now", () => now);
+    const paste = deferred();
+    const h = await mountCapture(t, { paste: () => paste.promise });
+    let start;
+    await h.act(() => {
+      start = h.api().startRecording();
+    });
+    now = 1100;
+    await h.act(() => h.resolveMic(0));
+    assert.equal(await start, true);
+    now = 1500;
+    await h.act(() => h.api().stopRecording());
+    now = 1700;
+    let finished;
+    await h.act(() => {
+      finished = h.recorders[0].finish();
+    });
+    assert.equal(h.audioPayloads.length, 1);
+    now = 1900;
+    await h.act(() =>
+      h.transcription.resolve({
+        ok: true,
+        status: 200,
+        headers: { get: () => "application/json" },
+        text: async () => JSON.stringify({ text: "Synthetic timing fixture." }),
+      })
+    );
+    await finished;
+    const records = () =>
+      h.logs.filter((entry) => entry.message === "Dictation completion").map((entry) => entry.meta);
+    const beforePaste = records().at(-1);
+    assert.equal(beforePaste.outcome, "pending");
+    assert.equal(beforePaste.stages.pasteSettled, undefined);
+    now = 2000;
+    await h.act(() => paste.resolve({ success: true, pasted }));
+    await h.flush();
+    const complete = records().at(-1);
+    assert.equal(complete.outcome, pasted ? "completed" : "failed");
+    assert.equal(complete.stages.asrRequestDispatched - complete.stages.stopAccepted, 200);
+    assert.equal(complete.stages.asrResponseCompleted - complete.stages.asrRequestDispatched, 200);
+    assert.equal(complete.stages.pasteSettled - complete.stages.processingComplete, 100);
+    assert.equal(complete.stages.pasteDispatched - complete.stages.processingComplete, 0);
+    const startup = h.logs.find((entry) => entry.message === "Recording startup").meta;
+    assert.equal(complete.requestId, startup.requestId);
+    assert.deepEqual(h.pastes, ["Synthetic timing fixture."]);
+    assert.equal(Object.hasOwn(h.pasteOptions[0], "completionTrace"), false);
+    assert.equal(h.saved[0][0], "Synthetic timing fixture.");
+    assert.doesNotMatch(JSON.stringify(records()), /Synthetic|microphone|localhost|test-model/);
+  });
+}
+
+test("cancelled completion diagnostics remain frozen after a late response and a new Dictation", async (t) => {
+  const h = await mountCapture(t);
+  let start;
+  await h.act(() => {
+    start = h.api().startRecording();
+  });
+  await h.act(() => h.resolveMic(0));
+  assert.equal(await start, true);
+  await h.act(() => h.api().stopRecording());
+  let finished;
+  await h.act(() => {
+    finished = h.recorders[0].finish();
+  });
+  await h.act(() => h.api().cancelProcessing());
+  const cancelled = h.logs.filter((entry) => entry.message === "Dictation completion").at(-1).meta;
+  assert.equal(cancelled.outcome, "cancelled");
+  let next;
+  await h.act(() => {
+    next = h.api().startRecording();
+  });
+  await h.act(() => h.resolveMic(1));
+  assert.equal(await next, true);
+  await h.act(() =>
+    h.transcription.resolve({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      text: async () => JSON.stringify({ text: "Late synthetic response." }),
+    })
+  );
+  await finished;
+  await h.flush();
+  const late = h.logs.filter((entry) => entry.message === "Dictation completion").at(-1).meta;
+  assert.equal(late.requestId, cancelled.requestId);
+  assert.equal(late.outcome, "cancelled");
+  assert.deepEqual(late.stages, cancelled.stages);
+  assert.equal(late.lateStage, "asrResponseCompleted");
+  assert.deepEqual(h.pastes, []);
+  assert.deepEqual(h.saved, []);
+  assert.equal(h.api().isRecording, true);
+});
+
+test("completion diagnostics record cancellation while final recorder data is still pending", async (t) => {
+  const h = await mountCapture(t);
+  let start;
+  await h.act(() => {
+    start = h.api().startRecording();
+  });
+  await h.act(() => h.resolveMic(0));
+  assert.equal(await start, true);
+  await h.act(() => h.api().stopRecording());
+  await h.act(() => h.api().cancelProcessing());
+  const cancelled = h.logs.filter((entry) => entry.message === "Dictation completion").at(-1).meta;
+  assert.equal(cancelled.outcome, "cancelled");
+  assert.equal(cancelled.stages.asrRequestDispatched, undefined);
+  await h.unmount();
+  await h.recorders[0].finish();
+  assert.deepEqual(h.audioPayloads, []);
+  assert.deepEqual(h.pastes, []);
+  assert.equal(
+    h.logs.filter((entry) => entry.message === "Dictation completion").at(-1).meta.outcome,
+    "cancelled"
+  );
 });

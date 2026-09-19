@@ -599,6 +599,7 @@ class AudioManager {
     this.pendingCleanupFailure = null;
     this._processingCancellationGeneration = 0;
     this._activeProcessingPipeline = null;
+    this._recordingCompletionTrace = null;
     this.assistantSelectionContext = null;
     this.screenContextPromise = null;
     this.selectionCapturePromise = null;
@@ -763,6 +764,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   failMicrophoneCapture() {
+    this._recordingCompletionTrace?.finish("failed");
     // Use the existing cancellation retention policy for interrupted recordings.
     this.cancelRecording();
     this.onError?.(MICROPHONE_CAPTURE_ERROR);
@@ -1284,6 +1286,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
       session = this._getCaptureSession();
       this._startInProgress = true;
+      this._recordingCompletionTrace = startupTrace?.completionTrace ?? null;
 
       prepared = await this.preparedMicCapture.take();
       this._assertCaptureSession(session);
@@ -1534,7 +1537,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   async finalizeBatchRecording(finalSegment) {
-    const processingPipeline = this._startProcessingPipeline();
+    const processingPipeline = this._startProcessingPipeline(this._recordingCompletionTrace);
+    this._recordingCompletionTrace = null;
     const wasCancelled = () => this._shouldAbandonProcessingPipeline(processingPipeline);
     this.micRecovery.stop();
     this.teardownSpeechGate();
@@ -1605,6 +1609,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         "audio"
       );
       if (!this._settleProcessingPipeline(processingPipeline)) return;
+      processingPipeline.completionTrace?.finish("incomplete");
       this._localSpeechGateState = null;
       this.onTranscriptionComplete?.({ success: true, text: "" });
       return;
@@ -1731,6 +1736,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   cancelRecording() {
+    this._recordingCompletionTrace?.finish("cancelled");
+    this._recordingCompletionTrace = null;
     const hadCapture = !!this._captureSession || this.preparedMicCapture?.active;
     this._endCaptureSession();
     if (
@@ -1845,9 +1852,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     }
   }
 
-  _startProcessingPipeline() {
+  _startProcessingPipeline(completionTrace = null) {
     const pipeline = {
       cancellationGeneration: this._processingCancellationGeneration ?? 0,
+      completionTrace,
     };
     this._activeProcessingPipeline = pipeline;
     return pipeline;
@@ -1872,6 +1880,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
   cancelProcessing() {
     if (this.isProcessing) {
+      // Final recorder data can still be pending before a pipeline exists.
+      this._recordingCompletionTrace?.finish("cancelled");
+      this._activeProcessingPipeline?.completionTrace?.finish("cancelled");
       this._processingCancellationGeneration = (this._processingCancellationGeneration ?? 0) + 1;
       this._requestStreamingCancellation();
       // Streaming finalization can be inside a provider or model await that
@@ -1927,6 +1938,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         "audio"
       );
       if (!this._settleProcessingPipeline(pipeline)) return;
+      pipeline.completionTrace?.finish("incomplete");
       this.onTranscriptionComplete?.({ success: true, text: "" });
       return;
     }
@@ -1958,7 +1970,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       if (managedTranscription) {
         activeModel =
           managedTranscription.kind === "managed" ? managedTranscription.deployment : null;
-        result = await this.processWithOpenAIAPI(audioBlob, metadata, wasCancelled);
+        result = await this.processWithOpenAIAPI(
+          audioBlob,
+          metadata,
+          wasCancelled,
+          pipeline.completionTrace
+        );
       } else if (useLocalWhisper) {
         if (isSherpaLocalProvider(localProvider)) {
           activeModel = localProvider === "cohere" ? settings.cohereModel : parakeetModel;
@@ -1990,7 +2007,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         result = await this.processWithOpenWhisprCloud(audioBlob, metadata, wasCancelled);
       } else {
         activeModel = this.getTranscriptionModel();
-        result = await this.processWithOpenAIAPI(audioBlob, metadata, wasCancelled);
+        result = await this.processWithOpenAIAPI(
+          audioBlob,
+          metadata,
+          wasCancelled,
+          pipeline.completionTrace
+        );
       }
 
       if (wasCancelled() || !this.isProcessing) {
@@ -2016,7 +2038,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           : {}),
         ...this._takePendingResultExtras(),
       };
-      this.onTranscriptionComplete?.(result);
+      this.onTranscriptionComplete?.(result, pipeline.completionTrace);
 
       if (result?.source === "openwhispr") {
         window.dispatchEvent(new Event("usage-changed"));
@@ -2046,6 +2068,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       logger.info("Pipeline timing", timingData, "performance");
     } catch (error) {
       const errorAtMs = Math.round(performance.now() - pipelineStart);
+      pipeline.completionTrace?.finish(wasCancelled() ? "cancelled" : "failed");
 
       if (wasCancelled()) {
         // The user cancelled mid-pipeline; the aborted request's rejection is
@@ -3472,7 +3495,12 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return this.getCustomDictionaryArray();
   }
 
-  async processWithOpenAIAPI(audioBlob, metadata = {}, wasCancelled = neverCancelled) {
+  async processWithOpenAIAPI(
+    audioBlob,
+    metadata = {},
+    wasCancelled = neverCancelled,
+    completionTrace = null
+  ) {
     const timings = {};
     let requestController = null;
     const apiSettings = getSettings();
@@ -3668,6 +3696,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
       requestController = new AbortController();
       this._activeTranscriptionAbortController = requestController;
+      completionTrace?.mark("asrRequestDispatched");
       const response = await fetch(endpoint, {
         method: "POST",
         headers,
@@ -3759,6 +3788,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           "transcription"
         );
       }
+
+      completionTrace?.mark("asrResponseCompleted");
 
       // Check for text - handle both empty string and missing field
       if (result.text && result.text.trim().length > 0) {
@@ -3928,11 +3959,15 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   async safePaste(text, options = {}) {
-    const { suppressError = false, ...pasteOptions } = options;
+    const { suppressError = false, completionTrace = null, ...pasteOptions } = options;
     try {
+      completionTrace?.mark("pasteDispatched");
       const result = await window.electronAPI.pasteText(text, pasteOptions);
+      completionTrace?.mark("pasteSettled");
+      completionTrace?.finish(result?.pasted === true ? "completed" : "failed");
       return result?.pasted === true;
     } catch (error) {
+      completionTrace?.finish("failed");
       const message =
         error?.message ??
         (typeof error?.toString === "function" ? error.toString() : String(error));
@@ -5425,6 +5460,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   }
 
   cleanup() {
+    this._recordingCompletionTrace?.finish("incomplete");
+    this._activeProcessingPipeline?.completionTrace?.finish("incomplete");
     this.cancelRecording();
     this.cancelProcessing();
     if (this.mediaRecorder) {

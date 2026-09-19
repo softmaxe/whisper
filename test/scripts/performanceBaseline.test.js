@@ -4,6 +4,7 @@ const {
   distribution,
   summarizeObservations,
   summarizeStartup,
+  summarizeCompletion,
   resourceObservation,
 } = require("../../scripts/lib/performance-baseline");
 
@@ -138,4 +139,46 @@ test("process sampling sums RSS and interval CPU and flags process churn", () =>
   assert.ok(Math.abs(result[1].value - 5) < 0.00001);
   assert.equal(resourceObservation(previous, current.slice(0, 1), 2)[1].outcome, "missing");
   assert.equal(resourceObservation(previous, current, 0)[1].outcome, "missing");
+});
+
+test("completion reports separate client dispatch, server round trip and paste bridge timing", () => {
+  const complete = {
+    requestId: "synthetic-completion",
+    sequence: 8,
+    outcome: "completed",
+    stages: {
+      stopAccepted: 100,
+      asrRequestDispatched: 125,
+      asrResponseCompleted: 325,
+      processingComplete: 400,
+      pasteDispatched: 410,
+      pasteSettled: 475,
+    },
+  };
+  const write = (record) =>
+    logRecord(record).replace(
+      "[audio] Recording startup",
+      "[performance][renderer] Dictation completion"
+    );
+  const result = summarizeCompletion(
+    [
+      write(complete),
+      write({ ...complete, sequence: 9, lateStage: "pasteSettled", elapsedMs: 900 }),
+      write({ ...complete, requestId: "cancelled", outcome: "cancelled" }),
+      write({
+        ...complete,
+        requestId: "clipboard-only",
+        stages: { stopAccepted: 100, asrRequestDispatched: 125 },
+      }),
+    ].join("")
+  );
+  assert.equal(result.requestCount, 3);
+  assert.equal(result.lateEvents, 1);
+  assert.equal(result.metrics.stopToRequestDispatch.median, 25);
+  assert.equal(result.metrics.serverRoundTrip.median, 200);
+  assert.equal(result.metrics.processingCompleteToPasteDispatch.median, 10);
+  assert.equal(result.metrics.processingCompleteToPaste.median, 75);
+  assert.equal(result.metrics.processingCompleteToPaste.outcomes.cancelled, 1);
+  assert.equal(result.metrics.processingCompleteToPaste.outcomes.missing, 1);
+  assert.doesNotMatch(JSON.stringify(result), /synthetic-completion|clipboard-only/);
 });

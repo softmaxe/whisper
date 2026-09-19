@@ -22,10 +22,54 @@ const REQUIRED_STAGES = [
 ];
 const OBSERVATION_TIMEOUT_MS = 30000;
 
+class DictationCompletionTrace {
+  constructor({ requestId, acceptedAt }) {
+    this.requestId = requestId;
+    this.acceptedAt = acceptedAt;
+    this.sequence = 0;
+    this.stages = {};
+    this.outcome = "pending";
+  }
+
+  mark(stage) {
+    const elapsedMs = Math.round((startupTimestamp() - this.acceptedAt) * 100) / 100;
+    if (this.outcome !== "pending") {
+      this.emit({ lateStage: stage, elapsedMs });
+      return;
+    }
+    if (this.stages[stage] !== undefined) return;
+    this.stages[stage] = elapsedMs;
+    this.emit();
+  }
+
+  finish(outcome) {
+    if (this.outcome !== "pending") return;
+    this.outcome = outcome;
+    // Requests cancelled before submission have only a startup trace.
+    if (Object.keys(this.stages).length) this.emit();
+  }
+
+  emit(extra = {}) {
+    void logger.info(
+      "Dictation completion",
+      {
+        requestId: this.requestId,
+        sequence: ++this.sequence,
+        acceptedAt: this.acceptedAt,
+        stages: { ...this.stages },
+        outcome: this.outcome,
+        ...extra,
+      },
+      "performance"
+    );
+  }
+}
+
 export class RecordingStartupTrace {
   constructor(request) {
     this.requestId = request?.requestId ?? crypto.randomUUID();
     this.acceptedAt = request?.acceptedAt ?? startupTimestamp();
+    this.completionTrace = new DictationCompletionTrace(this);
     this.stages = { requestAccepted: 0 };
     this.outcome = "pending";
     this.started = false;
