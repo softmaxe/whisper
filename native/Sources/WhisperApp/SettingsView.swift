@@ -1,236 +1,192 @@
 import SwiftUI
+import Observation
 import WhisperCore
 
+@MainActor @Observable final class SettingsSecretDrafts {
+    var asrKey = ""
+    var removeASRKey = false
+    var cleanupKey = ""
+    var removeCleanupKey = false
+}
+
+/// The main app and Settings share workflow state, while secure input drafts remain view-owned.
 struct SettingsRootView: View {
     let application: WhisperApplication
-    @State private var section = SettingsSection.home
-    @State private var serverURL = ""
-    @State private var model = ""
-    @State private var apiKey = ""
-    @State private var removeCredential = false
+    @State private var secrets = SettingsSecretDrafts()
     @Environment(\.colorScheme) private var colorScheme
-
     private var language: AppLanguage { application.state.settings.language }
-    private var canvas: Color {
-        colorScheme == .dark ? Color(red: 0.094, green: 0.102, blue: 0.106) : .white
-    }
-    private var sidebar: Color {
-        colorScheme == .dark ? Color(red: 0.065, green: 0.073, blue: 0.078) : Color(white: 0.97)
-    }
-    private var accent: Color { Color(red: 0.27, green: 0.47, blue: 0.91) }
+    private var navigation: NavigationState { application.state.navigation }
+    private var palette: WhisperPalette { WhisperPalette(scheme: colorScheme) }
 
     var body: some View {
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Whisper").font(.custom("JetBrainsMono-SemiBold", size: 17))
-                    .padding(.horizontal, 14).padding(.top, 28).padding(.bottom, 22)
-                Text(language.text("Settings", "设置"))
-                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.bottom, 5)
-                ForEach(SettingsSection.allCases) { item in
-                    Button {
-                        section = item
-                    } label: {
-                        Label(item.title(language), systemImage: item.icon)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12).padding(.vertical, 9)
-                            .background(section == item ? accent.opacity(0.13) : Color.clear)
-                            .clipShape(RoundedRectangle(cornerRadius: 6))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(section == item ? accent : .primary)
-                    .accessibilityAddTraits(section == item ? .isSelected : [])
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .frame(width: 178)
-            .background(sidebar)
-
+            if !navigation.sidebarCollapsed { sidebar }
             VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    Image(systemName: section.icon)
-                    Text(section == .home ? "Whisper" : language.text("Settings", "设置")).fontWeight(.semibold)
-                    Text("/").foregroundStyle(.tertiary)
-                    Text(section.title(language))
-                    Spacer()
-                }
-                .padding(.horizontal, 26).frame(height: 58)
+                topBar
                 Divider()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        switch section {
-                        case .home: DictationHomeView(application: application)
-                        case .upload: UploadView(application: application, onOpenSettings: { section = .speechToText }, onOpenHistory: { section = .home })
-                        case .dictionary: DictionaryPage(application: application)
+                    Group {
+                        switch navigation.page {
+                        case .home: HomePage(application: application)
                         case .insights: InsightsView(application: application)
-                        case .general: generalSettings
-                        case .hotkeys: ShortcutSettingsView(application: application) {
-                            NotificationCenter.default.post(name: .init("WhisperRequestShortcutPermission"), object: nil)
-                        }
-                        case .speechToText: speechSettings
-                        case .textCleanup: CleanupSettingsView(application: application)
-                        case .privacyAndData:
-                            HistoryPrivacyView(application: application)
-                            PerformanceDiagnosticsView(application: application)
+                        case .upload: UploadView(application: application,
+                            onOpenSettings: { application.send(.openSettings(.speechToText)) },
+                            onOpenHistory: { application.send(.navigate(.home)) })
+                        case .dictionary: DictionaryPage(application: application)
                         }
                     }
-                    .frame(maxWidth: 720, alignment: .leading)
-                    .padding(28)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(24)
                 }
             }
-            .background(canvas)
+            .background(palette.canvas)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.primary.opacity(0.12)))
-            .padding([.trailing, .top, .bottom], 8)
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.border))
+            .padding([.top, .trailing, .bottom], 8)
+            .padding(.leading, navigation.sidebarCollapsed ? 8 : 0)
         }
-        .background(sidebar)
+        .background(palette.window)
         .font(.custom("JetBrainsMono-Regular", size: 13))
-        .tint(accent)
+        .tint(palette.accent)
         .frame(minWidth: 780, minHeight: 530)
-        .onAppear(perform: restoreDraft)
-        .onReceive(NotificationCenter.default.publisher(for: .init("WhisperOpenSettings"))) { _ in section = .general }
-    }
-
-    private var generalSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(language.text("Language", "语言")).font(.headline)
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(language.text("Interface language", "界面语言"))
-                    Text(language.text("Choose the language used in Whisper.", "选择 Whisper 的界面语言。"))
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Picker(language.text("Interface language", "界面语言"), selection: Binding(
-                    get: { language },
-                    set: { application.send(.setLanguage($0)) }
-                )) {
-                    ForEach(AppLanguage.allCases, id: \.self) { item in Text(item.displayName).tag(item) }
-                }
-                .labelsHidden().frame(width: 150)
+        .accessibilityIdentifier("main-shell")
+        .sheet(item: Binding(get: {
+            navigation.settingsPresented ? ShellModal.settings : navigation.searchPresented ? .search : nil
+        }, set: { item in
+            if item == nil {
+                if navigation.settingsPresented { application.send(.closeSettings) }
+                else { application.send(.closeHistorySearch) }
             }
-            .padding(16).background(.primary.opacity(0.025))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
-            CorrectionLearningSetting(application: application)
-            MicrophoneSettingsView(application: application)
-            VStack(alignment: .leading, spacing: 12) {
-                Text(language.text("Clipboard", "剪贴板")).font(.headline)
-                Toggle(language.text("Automatic paste", "自动粘贴"), isOn: Binding(
-                    get: { application.state.settings.autoPasteEnabled },
-                    set: { application.send(.setClipboardPreferences(autoPaste: $0, keepResult: application.state.settings.keepTranscriptionInClipboard)) }
-                )).accessibilityIdentifier("automatic-paste")
-                Toggle(language.text("Keep transcription in clipboard", "在剪贴板中保留转录文字"), isOn: Binding(
-                    get: { application.state.settings.keepTranscriptionInClipboard },
-                    set: { application.send(.setClipboardPreferences(autoPaste: application.state.settings.autoPasteEnabled, keepResult: $0)) }
-                )).accessibilityIdentifier("keep-transcription-clipboard")
-            }
-            .padding(16).background(.primary.opacity(0.025))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
-            TranscriptionLanguageSettingsView(application: application)
-            DesktopSettingsView(application: application)
-            feedback
-        }
-    }
-
-    private var speechSettings: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(language.text("Speech-to-Text", "语音转文字")).font(.headline)
-                Text(language.text("Dictation and file transcription share these settings.", "听写和文件转录共用这些设置。"))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            VStack(alignment: .leading, spacing: 16) {
-                field(language.text("Server URL", "服务器地址")) {
-                    TextField("http://localhost:8178/v1", text: $serverURL)
-                        .accessibilityIdentifier("asr-server-url")
-                }
-                field(language.text("Model", "模型")) {
-                    TextField("Whisper-Large-v3-Turbo", text: $model)
-                        .accessibilityIdentifier("asr-model")
-                }
-                field(language.text("API Key (Optional)", "API Key（可选）")) {
-                    SecureField(
-                        application.state.credentialConfigured
-                            ? language.text("Saved in Keychain", "已保存到钥匙串")
-                            : language.text("Enter API key", "输入 API Key"),
-                        text: $apiKey
-                    )
-                    .accessibilityIdentifier("asr-api-key")
-                }
-                Text(language.text(
-                    "Sent as a Bearer token. Leave blank to keep the saved key.",
-                    "以 Bearer token 发送。留空可保留已保存的密钥。"
-                ))
-                .font(.caption).foregroundStyle(.secondary)
-                if application.state.credentialConfigured {
-                    Toggle(language.text("Remove saved API key", "移除已保存的 API Key"), isOn: $removeCredential)
-                        .toggleStyle(.checkbox)
-                }
-            }
-            .textFieldStyle(.roundedBorder)
-            .padding(16).background(.primary.opacity(0.025))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
-
-            Text(language.text(
-                "Public servers require HTTPS. Local and private-network hosts can use HTTP. Include /v1 if your server requires it.",
-                "公网服务器必须使用 HTTPS。本机和私有网络可以使用 HTTP。如果服务器需要，请在地址中包含 /v1。"
-            ))
-            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                feedback
-                Spacer()
-                Button(language.text("Save", "保存"), action: save)
-                    .buttonStyle(.borderedProminent).keyboardShortcut("s")
-                    .accessibilityIdentifier("save-asr")
+        })) { modal in
+            switch modal {
+            case .settings: SettingsModalView(application: application, secrets: secrets)
+            case .search: HistorySearchView(application: application)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .init("WhisperOpenSettings"))) { _ in application.send(.openSettings(.general)) }
+        .onReceive(NotificationCenter.default.publisher(for: .init("WhisperOpenHistorySearch"))) { _ in application.send(.openHistorySearch) }
     }
 
-    @ViewBuilder private var feedback: some View {
-        if let error = application.state.configurationError {
-            Label(error.message(in: language), systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.red).font(.caption).fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("settings-error")
-        } else if application.state.settingsSaved {
-            Label(language.text("Settings saved", "设置已保存"), systemImage: "checkmark.circle")
-                .foregroundStyle(.secondary).font(.caption)
-                .accessibilityIdentifier("settings-saved")
+    private var sidebar: some View {
+        VStack(spacing: 2) {
+            Color.clear.frame(height: 40).accessibilityHidden(true)
+            ForEach(MainPage.allCases, id: \.self) { page in
+                Button { application.send(.navigate(page)) } label: {
+                    Label(page.title(in: language), systemImage: page.icon)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10).frame(height: 32)
+                        .foregroundStyle(page == navigation.page ? palette.accent : .primary)
+                        .background(page == navigation.page ? palette.accent.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).accessibilityIdentifier("navigation-" + page.rawValue)
+                .accessibilityAddTraits(page == navigation.page ? .isSelected : [])
+            }
+            Spacer()
+            Button { application.send(.openSettings(.general)) } label: {
+                Label(language.text("Settings", "设置"), systemImage: "gearshape")
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 10).frame(height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityIdentifier("open-settings")
         }
+        .padding(.horizontal, 8).padding(.bottom, 8).frame(width: 192)
     }
 
-    private func field<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(label).font(.custom("JetBrainsMono-SemiBold", size: 12))
-            content().accessibilityLabel(label)
+    private var topBar: some View {
+        HStack(spacing: 16) {
+            HStack(spacing: 10) {
+                Button { application.send(.toggleSidebar) } label: { Image(systemName: "sidebar.left") }
+                    .buttonStyle(.plain).frame(width: 28, height: 28)
+                    .accessibilityLabel(language.text(navigation.sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", navigation.sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"))
+                Text(navigation.page.title(in: language)).fontWeight(.medium)
+                Spacer(minLength: 0)
+            }.frame(maxWidth: .infinity)
+            Button { application.send(.openHistorySearch) } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                    Text(language.text("Transcripts", "转录")).lineLimit(1)
+                    Spacer()
+                    Text("⌘ K").font(.system(size: 10)).padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(.primary.opacity(0.06), in: Capsule())
+                }.foregroundStyle(.secondary).padding(.horizontal, 14).frame(height: 32)
+                    .background(.primary.opacity(0.04), in: Capsule())
+                    .overlay(Capsule().strokeBorder(palette.border))
+            }
+            .buttonStyle(.plain).frame(maxWidth: 340)
+            .accessibilityIdentifier("open-history-search")
+            Spacer(minLength: 0).frame(maxWidth: .infinity)
         }
-    }
-
-    private func save() {
-        let change: CredentialChange = removeCredential ? .remove : apiKey.isEmpty ? .unchanged : .replace(apiKey)
-        application.send(.saveASR(.init(serverURL: serverURL, model: model), credential: change))
-        if application.state.settingsSaved {
-            restoreDraft()
-        }
-    }
-
-    private func restoreDraft() {
-        serverURL = application.state.settings.asr.serverURL
-        model = application.state.settings.asr.model
-        apiKey = ""
-        removeCredential = false
+        .padding(.horizontal, 14).padding(.leading, navigation.sidebarCollapsed ? 64 : 0).frame(height: 48)
     }
 }
 
-private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, insights, upload, dictionary, general, hotkeys, speechToText, textCleanup, privacyAndData
-    var id: Self { self }
-    var icon: String { self == .upload ? "arrow.up.doc" : self == .insights ? "chart.bar" : self == .hotkeys ? "keyboard" : self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
-    func title(_ language: AppLanguage) -> String {
-        self == .upload ? language.text("Upload", "上传") : self == .insights ? language.text("Insights", "统计") : self == .hotkeys ? language.text("Hotkeys", "快捷键") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+struct SettingsModalView: View {
+    let application: WhisperApplication
+    let secrets: SettingsSecretDrafts
+    @Environment(\.colorScheme) private var colorScheme
+    private var language: AppLanguage { application.state.settings.language }
+    private var section: SettingsSection { application.state.navigation.settingsSection }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(language.text("Settings", "设置")).font(.headline).padding(.horizontal, 12).padding(.vertical, 20)
+                ForEach(SettingsSection.allCases, id: \.self) { item in
+                    if item == .general || item == .speechToText || item == .privacy {
+                        Text(item == .general ? language.text("App", "应用") : item == .speechToText ? language.text("AI Models", "AI 模型") : language.text("System", "系统"))
+                            .font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.top, 14)
+                    }
+                    Button { application.send(.openSettings(item)) } label: {
+                        Label(item.title(in: language), systemImage: item.icon)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 10)
+                            .background(item == section ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("settings-" + item.rawValue)
+                        .accessibilityAddTraits(item == section ? .isSelected : [])
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 10).frame(width: 190)
+            .background(WhisperPalette(scheme: colorScheme).window)
+            Divider()
+            VStack(spacing: 0) {
+                HStack {
+                    Text(section.title(in: language)).fontWeight(.semibold)
+                    Spacer()
+                    Button { application.send(.closeSettings) } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain).frame(width: 28, height: 28)
+                        .accessibilityLabel(language.text("Close Settings", "关闭设置"))
+                }.padding(16)
+                Divider()
+                ScrollView {
+                    Group {
+                        switch section {
+                        case .general: GeneralSettingsView(application: application)
+                        case .hotkeys: ShortcutSettingsView(application: application) {
+                            NotificationCenter.default.post(name: .init("WhisperRequestShortcutPermission"), object: nil)
+                        }
+                        case .speechToText: SpeechSettingsView(application: application, secrets: secrets)
+                        case .textCleanup: CleanupSettingsView(application: application, secrets: secrets)
+                        case .privacy: PrivacySettingsView(application: application)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
+                }
+            }.background(WhisperPalette(scheme: colorScheme).canvas)
+        }
+        .frame(width: 860, height: 630)
+        .font(.custom("JetBrainsMono-Regular", size: 12))
+        .tint(WhisperPalette(scheme: colorScheme).accent)
+        .onExitCommand {
+            if application.state.dictation.phase.isActive { application.send(.cancelDictation) }
+            else if application.state.shortcutCapture.isActive { application.send(.endShortcutCapture) }
+            else { application.send(.closeSettings) }
+        }
+        .onDisappear { application.send(.endShortcutCapture) }
+        .accessibilityIdentifier("settings-modal")
     }
+}
+
+private enum ShellModal: String, Identifiable {
+    case settings, search
+    var id: String { rawValue }
 }

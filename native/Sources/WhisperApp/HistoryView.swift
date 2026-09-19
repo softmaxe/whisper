@@ -3,7 +3,6 @@ import WhisperCore
 
 struct HistoryView: View {
     let application: WhisperApplication
-    @State private var searchPresented = false
     @State private var confirmClear = false
     private var language: AppLanguage { application.state.settings.language }
     private var history: HistoryState { application.state.history }
@@ -11,14 +10,13 @@ struct HistoryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                Text(language.text("History", "历史记录")).font(.headline)
                 Spacer()
                 Button {
                     application.send(.dismissHistoryEntry)
                     application.send(.searchHistory(""))
-                    searchPresented = true
+                    application.send(.openHistorySearch)
                 } label: { Label(language.text("Search", "搜索"), systemImage: "magnifyingglass") }
-                .keyboardShortcut("k").accessibilityIdentifier("history-search")
+                .accessibilityIdentifier("history-search")
                 Menu {
                     Toggle(language.text("Show discarded recordings", "显示已丢弃的录音"), isOn: Binding(
                         get: { history.includeDiscarded }, set: { application.send(.showDiscardedHistory($0)) }
@@ -70,11 +68,14 @@ struct HistoryView: View {
                     ForEach(history.groups()) { group in
                         Text(group.title(in: language)).font(.caption).foregroundStyle(.secondary)
                             .padding(.top, 14).padding(.bottom, 9)
-                        ForEach(group.entries) { entry in
-                            HistoryEntryView(application: application, entry: entry)
-                                .padding(16).background(.primary.opacity(0.025))
-                                .overlay(Rectangle().strokeBorder(.primary.opacity(0.09)))
+                        VStack(spacing: 0) {
+                            ForEach(group.entries) { entry in
+                                HistoryEntryView(application: application, entry: entry).padding(16)
+                                if entry.id != group.entries.last?.id { Divider() }
+                            }
                         }
+                        .background(.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 16))
+                        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(.primary.opacity(0.12)))
                     }
                 }
                 if history.hasMore {
@@ -87,17 +88,11 @@ struct HistoryView: View {
             }
         }
         .onAppear { application.send(.loadHistory) }
-        .onChange(of: history.selectedEntry?.id) {
-            if history.selectedEntry != nil { searchPresented = true }
-        }
         .alert(language.text("Clear all history?", "清空全部历史记录？"), isPresented: $confirmClear) {
             Button(language.text("Cancel", "取消"), role: .cancel) {}
             Button(language.text("Clear all", "清空全部"), role: .destructive) { application.send(.clearHistory) }
         } message: {
             Text(language.text("All history on this device will be permanently deleted. This cannot be undone.", "将永久删除此设备上的全部历史记录。此操作无法撤销。"))
-        }
-        .sheet(isPresented: $searchPresented, onDismiss: { application.send(.dismissHistoryEntry) }) {
-            HistorySearchView(application: application)
         }
     }
 }
@@ -156,7 +151,7 @@ private struct HistoryEntryView: View {
                         .accessibilityLabel(language.text("Show audio in Finder", "在 Finder 中显示音频"))
                 }
                 if !detail {
-                    Button(language.text("Open", "打开")) { application.send(.selectHistoryEntry(entry.id)) }
+                    Button(language.text("Open", "打开")) { application.send(.openHistorySearchResult(entry.id)) }
                 }
                 if !detail && entry.text.count > 180 {
                     Button(language.text(expanded ? "Show less" : "Show more", expanded ? "收起" : "展开")) { expanded.toggle() }
@@ -185,7 +180,7 @@ private struct HistoryEntryView: View {
     }
 }
 
-private struct HistorySearchView: View {
+struct HistorySearchView: View {
     let application: WhisperApplication
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focused: Bool
@@ -201,7 +196,7 @@ private struct HistorySearchView: View {
                 }
                 Text(language.text("Search history", "搜索历史记录")).font(.headline)
                 Spacer()
-                Button(language.text("Done", "完成")) { dismiss() }.keyboardShortcut(.escape, modifiers: [])
+                Button(language.text("Done", "完成")) { application.send(.closeHistorySearch); dismiss() }.keyboardShortcut(.escape, modifiers: [])
             }
             if let entry = history.selectedEntry {
                 ScrollView { HistoryEntryView(application: application, entry: entry, detail: true) }
@@ -217,7 +212,7 @@ private struct HistorySearchView: View {
                 }
                 VStack(spacing: 4) {
                     ForEach(Array(history.searchResults.enumerated()), id: \.element.id) { index, entry in
-                        Button { application.send(.selectHistoryEntry(entry.id)) } label: {
+                        Button { application.send(.openHistorySearchResult(entry.id)) } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 Text(entry.text.isEmpty ? entry.rawText : entry.text).lineLimit(2)
                                 Text(entry.occurredAt.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: Locale(identifier: language.rawValue)))).font(.caption).foregroundStyle(.secondary)
@@ -246,7 +241,7 @@ private struct HistorySearchView: View {
 
     private func openSelection() {
         guard !history.isSearching, history.searchResults.indices.contains(history.searchSelection) else { return }
-        application.send(.selectHistoryEntry(history.searchResults[history.searchSelection].id))
+        application.send(.openHistorySearchResult(history.searchResults[history.searchSelection].id))
     }
 }
 
@@ -256,7 +251,7 @@ struct HistoryPrivacyView: View {
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(language.text("Privacy & Data", "隐私与数据")).font(.headline)
+            Text(language.text("Local History and audio", "本地历史记录与音频")).font(.headline)
             Toggle(language.text("Save history", "保存历史记录"), isOn: Binding(
                 get: { application.state.settings.history.enabled },
                 set: { application.send(.setHistoryEnabled($0)) }
@@ -274,9 +269,29 @@ struct HistoryPrivacyView: View {
                     application.send(.setHistoryRetention(preferences))
                 }
             ))
+            .disabled(!application.state.settings.history.enabled || application.state.settings.history.audioRetentionDays == 0)
             Text(language.text("Cancelled recordings need at least one second of audio and audio retention enabled. Accidental shortcut taps are never saved.", "已取消的录音至少需要一秒音频，并启用音频保留。误触快捷键产生的录音不会保存。"))
                 .font(.caption).foregroundStyle(.secondary)
-            Button(language.text("Delete saved audio", "删除保存的音频"), role: .destructive) { confirmClearAudio = true }
+            Divider()
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(language.text("Storage Usage", "存储用量")).fontWeight(.medium)
+                    if application.state.privacy.isLoadingStorage {
+                        Text(language.text("Calculating…", "正在计算…")).font(.caption).foregroundStyle(.secondary)
+                    } else if let usage = application.state.privacy.audioUsage {
+                        Text(language.text("\(usage.files) files, \(ByteCountFormatter.string(fromByteCount: usage.bytes, countStyle: .file))", "\(usage.files) 个文件，\(ByteCountFormatter.string(fromByteCount: usage.bytes, countStyle: .file))"))
+                            .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("audio-storage-usage")
+                    }
+                }
+                Spacer()
+                Button(language.text("Delete saved audio", "删除保存的音频"), role: .destructive) { confirmClearAudio = true }
+                    .disabled(application.state.privacy.audioUsage?.files == nil || application.state.privacy.audioUsage?.files == 0 || application.state.history.pendingChanges > 0)
+            }
+            if application.state.privacy.storageFailed {
+                Text(language.text("Storage usage could not be read. Saved files have been preserved.", "无法读取存储用量。已保留保存的文件。"))
+                    .font(.caption).foregroundStyle(.red)
+                Button(language.text("Retry", "重试")) { application.send(.refreshPrivacy) }
+            }
             if let failure = application.state.configurationError {
                 Text(failure.message(in: language)).font(.caption).foregroundStyle(.red)
             }
@@ -305,6 +320,7 @@ struct HistoryPrivacyView: View {
                 Text(value == 0 ? (audio ? language.text("Do not retain new audio", "不保留新音频") : language.text("Forever", "永久"))
                     : language.text("\(value) days", "\(value) 天")).tag(value)
             }
-        }.accessibilityIdentifier(audio ? "audio-retention" : "transcript-retention")
+        }.disabled(!audio && !application.state.settings.history.enabled)
+        .accessibilityIdentifier(audio ? "audio-retention" : "transcript-retention")
     }
 }

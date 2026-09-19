@@ -204,6 +204,10 @@ extension WhisperApplication {
 
     public func prepareForTermination() async {
         state.isTerminating = true
+        privacyReadTask?.cancel()
+        privacyReadTask = nil
+        privacyReadGeneration += 1
+        state.privacy.isLoadingStorage = false
         let insightsRead = insightsReadTask
         insightsRead?.cancel()
         insightsReadTask = nil

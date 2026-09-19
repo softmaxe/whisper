@@ -22,6 +22,26 @@ public actor HistoryStore {
     private var unreadable = false
     public init(profile: NativeProfile) { self.profile = profile }
 
+    public func audioStorageUsage() throws -> AudioStorageUsage {
+        try Task.checkCancellation()
+        guard FileManager.default.fileExists(atPath: audioDirectory.path) else { return .init() }
+        guard try audioDirectory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
+            throw HistoryDatabaseError.unavailable
+        }
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        let files = try FileManager.default.contentsOfDirectory(at: audioDirectory, includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles)
+        var count = 0
+        var bytes: Int64 = 0
+        for file in files {
+            try Task.checkCancellation()
+            let values = try file.resourceValues(forKeys: keys)
+            if values.isRegularFile == true, values.isSymbolicLink != true {
+                count += 1
+                bytes += Int64(values.fileSize ?? 0)
+            }
+        }
+        return AudioStorageUsage(files: count, bytes: bytes)
+    }
     func page(query: String = "", includeDiscarded: Bool = false, after cursor: HistoryCursor? = nil, limit: Int = 50) throws -> HistoryPage {
         try Task.checkCancellation()
         let db = try open()

@@ -171,6 +171,67 @@ insertion into target editors, or native English/Chinese visual acceptance.
 Those checks remain pending against a signed disposable-profile build, without
 replacing the installed daily-use app or resetting system permissions.
 
+## Main window and Settings
+
+The main sidebar contains Home, Insights, Upload, and Dictionary. Settings opens
+separately, preserving the current main page, with General, Hotkeys,
+Speech-to-Text, Text cleanup, and Privacy & Data sections. Upload's configuration
+link opens Speech-to-Text, and its History link returns to Home. The shell uses
+the existing palette, bundled typography, grouped History cards, and bilingual
+navigation. Command-K belongs to the focused app's Edit menu and opens transcript
+search; it does not register another system-wide shortcut.
+
+Navigation and nonsecret Settings drafts live behind the public application
+commands. Unsaved ASR, cleanup configuration, and prompt changes survive page and
+modal changes. Only explicit Save writes them to the profile. Credential drafts
+remain in view-owned secure fields, never in observable application state or the
+profile. Leaving Hotkeys ends shortcut capture. Closing search cancels its pending
+read and clears the selected detail while preserving History.
+
+Privacy reads permission status without prompting and counts actual regular audio
+files on the History storage actor. Permission requests and System Settings links
+require explicit actions. The core defaults to `InertPrivacySystem`; only the
+production executable injects `NativePrivacySystem`. Storage failure preserves the
+files and offers retry. Clearing saved audio still requires confirmation and
+preserves transcript text.
+Storage reads, including replaced reads, join the workflow task registry during
+termination. Explicit OS permission prompts remain outside that wait; a late
+permission response cannot change the terminated application's state. The Privacy
+page also includes the existing opt-in numeric diagnostics controls.
+
+For coordinated interface review, the executable accepts an explicit synthetic
+mode with a fresh temporary profile:
+
+```sh
+Whisper --synthetic-preview --profile /tmp/whisper-preview-en
+Whisper --synthetic-preview --profile /tmp/whisper-preview-zh --preview-chinese
+```
+
+The profile must be under the system temporary directory or `/tmp`; an existing
+nonempty directory without the preview marker is rejected. This mode supplies
+controlled microphone frames, transcription, cleanup, memory credentials and
+clipboard, paste, correction, audio playback, conversion, desktop effects, and
+permission adapters **before** constructing the application. It creates neither
+the global shortcut monitor nor the Recording pill controller. Help/license links
+do not open external apps. It cannot record hardware, send transcription requests,
+paste externally, play audio, control media, register login items, or query/request
+system permissions. A `--profile` override alone does not enable these protections.
+
+The mode writes generated sample text, Dictionary entries, Snippets, and silent
+WAV media only into its marked temporary profile. `--preview-populated` uses 1,000
+History entries, 100 Dictionary entries, and 100 Snippets. Fresh profiles avoid
+accumulating sample results across review runs. Quit the preview normally before
+removing its exact profile directory. Never use a tool that relaunches the app
+without preserving these arguments when inspecting a stopped preview.
+
+Workflow tests exercise navigation, draft save/reopen, search and copy, bounded
+populated History, storage usage, explicit controlled permission requests, and the
+synthetic composition. Interface review should also check English/Chinese,
+light/dark/system appearance, the 780 × 530 minimum window, keyboard focus and
+Escape, accessible control labels, and long content. Synthetic review is
+presentation evidence; hardware, permissions, production effects, performance,
+signed distribution, and upgrade retention require their separate acceptance.
+
 ## Transcription language and Chinese text
 
 General settings keep transcription language separate from the interface language.
