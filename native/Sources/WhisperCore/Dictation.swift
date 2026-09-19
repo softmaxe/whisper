@@ -7,7 +7,7 @@ public enum DictationPhase: String, Equatable, Sendable {
 
 public enum DictationFailure: Error, Equatable, Sendable {
     case configuration, permissionDenied, inputUnavailable, captureFailed, noAudio, storageFailed
-    case network, service(Int), invalidResponse, emptyTranscript
+    case network, service(Int), invalidResponse, emptyTranscript, dictionaryEcho
 
     public func message(in language: AppLanguage) -> String {
         switch self {
@@ -21,6 +21,7 @@ public enum DictationFailure: Error, Equatable, Sendable {
         case let .service(status): language.text("The transcription server returned HTTP \(status). Check its settings and try again.", "转录服务器返回 HTTP \(status)。请检查设置，然后重试。")
         case .invalidResponse: language.text("The server returned an invalid transcription response.", "服务器返回了无效的转录响应。")
         case .emptyTranscript: language.text("No text was transcribed. Try recording again.", "没有识别到文字。请重新录音。")
+        case .dictionaryEcho: language.text("The server returned dictionary hints instead of speech. Try recording again.", "服务器返回了词典提示而非语音内容。请重新录音。")
         }
     }
 }
@@ -143,6 +144,7 @@ extension WhisperApplication {
                     options: options
                 )
                 try Task.checkCancellation()
+                guard !DictionaryPrompt.isEcho(text, prompt: options.prompt) else { throw DictationFailure.dictionaryEcho }
                 self?.completeDictation(rawText: text, text: text, requestID: id)
             } catch is CancellationError {
                 capture.removeFiles()
@@ -153,7 +155,12 @@ extension WhisperApplication {
         }
     }
 
-    func dictationTranscriptionOptions() -> TranscriptionOptions { TranscriptionOptions() }
+    func dictationTranscriptionOptions() -> TranscriptionOptions {
+        TranscriptionOptions(prompt: DictionaryPrompt.capped(
+            dictionaryHintWords().joined(separator: ", "),
+            configuration: dictationConfiguration ?? state.settings.asr
+        ))
+    }
 
     func markDictationStage(_ stage: String, requestID: UUID) {
         guard isCurrentDictation(requestID) else { return }

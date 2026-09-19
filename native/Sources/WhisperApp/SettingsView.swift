@@ -62,6 +62,7 @@ struct SettingsRootView: View {
                     VStack(alignment: .leading, spacing: 24) {
                         switch section {
                         case .home: DictationHomeView(application: application)
+                        case .dictionary: DictionaryPage(application: application)
                         case .general: generalSettings
                         case .speechToText: speechSettings
                         }
@@ -205,10 +206,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, general, speechToText
+    case home, dictionary, general, speechToText
     var id: Self { self }
-    var icon: String { self == .home ? "house" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .home ? language.text("Home", "首页") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }

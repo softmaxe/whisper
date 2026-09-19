@@ -6,6 +6,11 @@ public enum AppCommand {
     case setLanguage(AppLanguage)
     case startDictation, stopDictation, cancelDictation, copyDictationResult
     case setMicrophone(MicrophonePreference), refreshMicrophones
+    case importDictionary(String)
+    case changeDictionary(add: [String], remove: [String], source: DictionarySource = .manual)
+    case editDictionaryWord(String, replacement: String)
+    case refreshDictionary, dismissDictionaryMessage
+    case exportDictionary(URL)
     case dismissMessage
 }
 
@@ -13,6 +18,7 @@ public struct ApplicationState: Equatable, Sendable {
     public var dictation = DictationState()
     public var microphoneInputs = MicrophoneSnapshot()
     public var microphoneFailure: DictationFailure?
+    public var dictionary = DictionaryState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -62,6 +68,7 @@ public final class WhisperApplication {
             self.state = ApplicationState(configurationError: .incompatibleProfile)
             self.profileReadable = false
         }
+        loadDictionary()
     }
 
     deinit {
@@ -73,6 +80,15 @@ public final class WhisperApplication {
         switch command {
         case let .setMicrophone(preference): setMicrophone(preference)
         case .refreshMicrophones: refreshMicrophones()
+        case let .importDictionary(text): importDictionary(text)
+        case let .changeDictionary(add, remove, source): changeDictionary(add: add, remove: remove, source: source)
+        case let .editDictionaryWord(original, replacement): editDictionaryWord(original, replacement: replacement)
+        case .refreshDictionary: loadDictionary()
+        case let .exportDictionary(destination): exportDictionary(to: destination)
+        case .dismissDictionaryMessage:
+            state.dictionary.failure = nil
+            state.dictionary.addedCount = nil
+            state.dictionary.exportCompleted = false
         case .startDictation: startDictation()
         case .stopDictation: stopDictation()
         case .cancelDictation: cancelDictation()
