@@ -1,8 +1,9 @@
 # Native macOS application
 
 This Swift application develops alongside the existing Electron application. It
-targets Apple Silicon and macOS 27. It implements Settings and button-started
-Dictation; the remaining workflows and pages follow through specification #35.
+targets Apple Silicon and macOS 27. It implements Settings, button-started
+Dictation, and Right Command Hold-to-talk with Automatic paste; the remaining
+workflows and pages follow through specification #35.
 
 Use Xcode 27 per command without changing the global Command Line Tools selection:
 
@@ -71,8 +72,8 @@ deadline, matching the existing self-hosted fetch contract, and supports explici
 cancellation. Same-origin redirects support endpoint path normalization.
 Cross-origin redirects are rejected so credentials and audio stay with the
 configured server. Temporary capture and upload files are deleted
-after success, failure, or cancellation. No History or Automatic paste is added
-by this slice.
+after success, failure, or cancellation. Button-started Dictation keeps its
+copyable result. History follows in a later slice.
 
 `MicrophoneProvider`, `MicrophoneSession`, `WorkflowClock`, `FileHTTPTransport`,
 and `TextClipboard` are external adapter boundaries. Application tests use the
@@ -106,3 +107,45 @@ acquisition and recording, external input failure, delayed frames, timeout,
 disconnection, reconnection, and full recording-to-copyable-result processing.
 These controlled cases do not replace built-in and wireless iPhone acceptance on
 the signed application.
+
+## Right Command Hold-to-talk
+
+The first physical Right Command press starts provisional capture. A standalone
+hold becomes Dictation; release submits the recording. A short tap or an
+intervening Command combination always discards provisional audio without ASR.
+The initial hold threshold is the legacy 150 ms value. It is provisional until
+physical keyboard acceptance measures it. Double-tap Hands-free and configurable
+bindings follow in #40 and #41.
+
+The session event tap reads each modifier's physical key state rather than the
+aggregate Command flag, so Left Command cannot masquerade as a Right Command
+release. It ignores key repeat and the app's tagged synthetic paste events.
+Ordinary Command combinations pass through. Global Esc cancels preparation,
+recording, ASR and pending delivery. Late device, server and Accessibility probe
+completions cannot revive the cancelled request. Enable Accessibility through
+General settings if the global shortcut is unavailable.
+
+Hold-to-talk captures its Target app during startup and retains that PID through
+processing, preserving the legacy startup target contract. A PID does not lock a
+particular text field. Delivery confirms the app is frontmost and the target is
+editable before posting a keyboard-layout-aware Command-V. It waits up to 500 ms
+for physically held modifiers to clear, then uses copy recovery if unsafe. It
+never releases the user's keys. The target probe and layout resolver adapt the
+existing `resources/macos-text-monitor.swift` and `macos-fast-paste.swift`.
+
+General settings persists Automatic paste and keep-in-clipboard independently.
+After successful paste, prior clipboard items and all available formats restore
+after 450 ms only if the app still owns that pasteboard revision. Subsequent
+delivery waits for that restoration. Failure keeps text available in a
+nonactivating copy-recovery panel; a failed clipboard write is not reported as a
+successful copy. `AutomaticPasteSystem` controls only external focus, key and
+pasteboard effects in tests; the real application owns the gesture and delivery
+sequence.
+
+Deterministic tests cover actual AAC and multipart output, startup Target app,
+left/right overlap, repeat, rejected short taps, Command combinations, Esc and
+late completion, clipboard preferences, recovery and restoration races. They do
+not establish physical key delivery, Accessibility permission behavior, actual
+insertion into target editors, or native English/Chinese visual acceptance.
+Those checks remain pending against a signed disposable-profile build, without
+replacing the installed daily-use app or resetting system permissions.

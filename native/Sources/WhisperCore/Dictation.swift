@@ -32,6 +32,10 @@ public struct DictationState: Equatable, Sendable {
     public var rawText = ""
     public var text = ""
     public var resultCopied = false
+    public var origin: DictationOrigin = .button
+    public var gesture: DictationGesture = .none
+    public var cancellation: DictationCancellation?
+    public var delivery: DeliveryResult = .none
     public var failure: DictationFailure?
     public var level: Float = 0
     public var duration: TimeInterval = 0
@@ -65,12 +69,16 @@ public struct DictationState: Equatable, Sendable {
 }
 
 extension WhisperApplication {
-    func startDictation() {
+    func startDictation(origin: DictationOrigin = .button) {
         guard !state.dictation.phase.isActive else { return }
         let id = UUID()
         state.dictation = DictationState()
         state.dictation.requestID = id
         state.dictation.phase = .preparing
+        state.dictation.origin = origin
+        state.dictation.gesture = origin == .hold ? .candidate : .none
+        provisionalFailure = nil
+        dictationTarget = origin == .hold ? pasteSystem.captureTarget() : nil
         state.dictation.timing["accepted"] = 0
         dictationStartedAt = clock.now
         do {
@@ -97,18 +105,17 @@ extension WhisperApplication {
         switch event {
         case let .opened(time):
             state.dictation.timing["acquisitionCompleted"] = (time ?? clock.now) - dictationStartedAt
-            guard state.dictation.phase == .preparing, firstAudioDeadline == nil else { return }
+            guard state.dictation.phase == .preparing, state.dictation.timing["firstAudio"] == nil, firstAudioDeadline == nil else { return }
             firstAudioDeadline = clock.schedule(after: max(0, 10 - (clock.now - (time ?? clock.now)))) { [weak self] in
                 self?.failDictation(.noAudio, requestID: requestID)
             }
         case let .audio(level, duration, capturedAt):
             guard state.dictation.phase == .preparing || state.dictation.phase == .recording else { return }
-            if state.dictation.phase == .preparing {
+            if state.dictation.timing["firstAudio"] == nil {
                 firstAudioDeadline?.cancel()
                 firstAudioDeadline = nil
-                state.dictation.phase = .recording
                 state.dictation.timing["firstAudio"] = (capturedAt ?? clock.now) - dictationStartedAt
-                state.dictation.timing["readyFeedback"] = clock.now - dictationStartedAt
+                publishRecordingReadiness()
             }
             state.dictation.level = level
             state.dictation.duration = duration
@@ -172,18 +179,36 @@ extension WhisperApplication {
         markDictationStage("result", requestID: requestID)
         state.dictation.rawText = rawText
         state.dictation.text = text
-        state.dictation.phase = .result
         dictationCapture = nil
         dictationCredential = nil
-        processingTask = nil
+        guard state.dictation.origin == .hold else {
+            state.dictation.phase = .result
+            processingTask = nil
+            return
+        }
+        let target = dictationTarget
+        let settings = state.settings
+        let delivery = automaticPaste
+        processingTask = Task { [weak self] in
+            let result = await delivery.deliver(text, target: target, enabled: settings.autoPasteEnabled,
+                keepClipboard: settings.keepTranscriptionInClipboard) { [weak self] in
+                    self?.isCurrentDictation(requestID) == true
+                }
+            guard self?.isCurrentDictation(requestID) == true else { return }
+            self?.state.dictation.delivery = result
+            self?.state.dictation.phase = .result
+            self?.processingTask = nil
+        }
     }
 
     func isCurrentDictation(_ id: UUID) -> Bool {
         state.dictation.requestID == id && state.dictation.phase.isActive
     }
 
-    func cancelDictation() {
+    func cancelDictation(kind: DictationCancellation = .user) {
         guard state.dictation.phase.isActive else { return }
+        holdDeadline?.cancel()
+        holdDeadline = nil
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil
         processingTask?.cancel()
@@ -192,13 +217,31 @@ extension WhisperApplication {
         dictationCapture = nil
         dictationCredential = nil
         state.dictation.phase = .idle
+        state.dictation.cancellation = kind
+        provisionalFailure = nil
+        state.dictation.gesture = .none
+        state.dictation.text = ""
+        state.dictation.rawText = ""
         state.dictation.level = 0
         state.dictation.timing["cancelled"] = clock.now - dictationStartedAt
     }
 
     func failDictation(_ failure: DictationFailure, requestID: UUID) {
         guard state.dictation.requestID == requestID, state.dictation.phase.isActive else { return }
+        if state.dictation.gesture == .candidate {
+            // A normal Command combination must not leave a microphone/configuration error pill.
+            firstAudioDeadline?.cancel()
+            firstAudioDeadline = nil
+            dictationCapture?.cancel()
+            dictationCapture = nil
+            dictationCredential = nil
+            provisionalFailure = failure
+            return
+        }
+        provisionalFailure = nil
         processingTask?.cancel()
+        holdDeadline?.cancel()
+        holdDeadline = nil
         processingTask = nil
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil
