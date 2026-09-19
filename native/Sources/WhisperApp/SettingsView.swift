@@ -63,6 +63,9 @@ struct SettingsRootView: View {
                         case .home: DictationHomeView(application: application)
                         case .dictionary: DictionaryPage(application: application)
                         case .general: generalSettings
+                        case .hotkeys: ShortcutSettingsView(application: application) {
+                            NotificationCenter.default.post(name: .init("WhisperRequestShortcutPermission"), object: nil)
+                        }
                         case .speechToText: speechSettings
                         case .textCleanup: CleanupSettingsView(application: application)
                         case .privacyAndData: HistoryPrivacyView(application: application)
@@ -110,15 +113,7 @@ struct SettingsRootView: View {
             CorrectionLearningSetting(application: application)
             MicrophoneSettingsView(application: application)
             VStack(alignment: .leading, spacing: 12) {
-                Text(language.text("Dictation shortcut", "听写快捷键")).font(.headline)
-                Text(language.text("Hold Right Command and release to submit. Double-tap for Hands-free Dictation, then tap to finish. Esc cancels.", "按住右 Command 说话，松开提交。双击开始免按键听写，再轻按一次结束。按 Esc 取消。"))
-                    .font(.caption).foregroundStyle(.secondary)
-                if !application.state.shortcutAvailable {
-                    Button(language.text("Enable Accessibility for global shortcuts", "启用辅助功能以使用全局快捷键")) {
-                        NotificationCenter.default.post(name: .init("WhisperRequestShortcutPermission"), object: nil)
-                    }
-                    .accessibilityIdentifier("enable-shortcut-access")
-                }
+                Text(language.text("Clipboard", "剪贴板")).font(.headline)
                 Toggle(language.text("Automatic paste", "自动粘贴"), isOn: Binding(
                     get: { application.state.settings.autoPasteEnabled },
                     set: { application.send(.setClipboardPreferences(autoPaste: $0, keepResult: application.state.settings.keepTranscriptionInClipboard)) }
@@ -228,10 +223,10 @@ struct SettingsRootView: View {
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
-    case home, dictionary, general, speechToText, textCleanup, privacyAndData
+    case home, dictionary, general, hotkeys, speechToText, textCleanup, privacyAndData
     var id: Self { self }
-    var icon: String { self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
+    var icon: String { self == .hotkeys ? "keyboard" : self == .privacyAndData ? "lock.shield" : self == .textCleanup ? "sparkles" : self == .home ? "house" : self == .dictionary ? "book" : self == .general ? "slider.horizontal.3" : "waveform" }
     func title(_ language: AppLanguage) -> String {
-        self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
+        self == .hotkeys ? language.text("Hotkeys", "快捷键") : self == .privacyAndData ? language.text("Privacy & Data", "隐私与数据") : self == .textCleanup ? language.text("Text cleanup", "文本整理") : self == .home ? language.text("Home", "首页") : self == .dictionary ? language.text("Dictionary", "词典") : self == .general ? language.text("General", "通用") : language.text("Speech-to-Text", "语音转文字")
     }
 }

@@ -16,6 +16,9 @@ import WhisperCore
     private var previousPill: RecordingPillPresentation?
     private var previousWindowVisible: Bool?
     private var terminating = false
+    private var previousShortcuts: [String]?
+    private var previousCaptureMode: Bool?
+    private var previousDictationPhase: DictationPhase?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         for name in ["JetBrainsMono-Regular", "JetBrainsMono-SemiBold"] {
@@ -70,6 +73,9 @@ import WhisperCore
             _ = application.state.settings.language
             _ = application.state.desktop
             _ = application.state.recordingPill
+            _ = application.state.settings.shortcuts
+            _ = application.state.shortcutCapture.isActive
+            _ = application.state.dictation.phase
         } onChange: { [weak self] in
             Task { @MainActor in self?.synchronize(); self?.observe() }
         }
@@ -77,6 +83,15 @@ import WhisperCore
 
     private func synchronize() {
         guard let application else { return }
+        let bindings = application.state.settings.shortcuts
+        let captureMode = application.state.shortcutCapture.isActive
+        let phase = application.state.dictation.phase
+        if bindings != previousShortcuts || captureMode != previousCaptureMode || phase != previousDictationPhase {
+            previousShortcuts = bindings
+            previousCaptureMode = captureMode
+            previousDictationPhase = phase
+            shortcuts?.updateConfiguration()
+        }
         let preferences = application.state.settings.desktop
         let language = application.state.settings.language
         if previousPreferences != preferences || previousLanguage != language {
@@ -216,8 +231,13 @@ import WhisperCore
         return false
     }
     func applicationDidBecomeActive(_ notification: Notification) {
+        guard !terminating else { return }
         application?.send(.refreshLoginItemStatus)
         shortcuts?.start()
+    }
+    func applicationDidResignActive(_ notification: Notification) {
+        application?.send(.endShortcutCapture)
+        shortcuts?.updateConfiguration()
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -6,11 +6,13 @@ public struct ShortcutInput: Equatable, Sendable {
     public var isDown: Bool
     public var isRepeat: Bool
     public var heldModifiers: Set<UInt16>?
-    public init(keyCode: UInt16, isDown: Bool, isRepeat: Bool = false, heldModifiers: Set<UInt16>? = nil) {
+    public var keyName: String?
+    public init(keyCode: UInt16, isDown: Bool, isRepeat: Bool = false, heldModifiers: Set<UInt16>? = nil, keyName: String? = nil) {
         self.keyCode = keyCode
         self.isDown = isDown
         self.isRepeat = isRepeat
         self.heldModifiers = heldModifiers
+        self.keyName = keyName
     }
     public static let rightCommand: UInt16 = 54
     public static let escape: UInt16 = 53
@@ -38,34 +40,40 @@ extension WhisperApplication {
         }
         if input.isDown { pressedKeys.insert(input.keyCode) }
         else { pressedKeys.remove(input.keyCode) }
-        if input.keyCode == ShortcutInput.escape, input.isDown, !input.isRepeat {
+        if state.shortcutCapture.isActive {
+            receiveShortcutCapture(input)
+            return
+        }
+        if input.keyCode == ShortcutInput.escape, input.isDown, !input.isRepeat,
+           state.dictation.phase.isActive,
+           !(activeShortcut?.key == "Esc" && activeShortcut?.matches(input, pressed: pressedKeys) == true && state.dictation.phase != .processing) {
             cancelDictation()
             return
         }
         if input.isDown, input.isRepeat || wasDown { return }
         guard state.dictation.phase != .processing else { return }
+        guard let trigger = resolveShortcutTrigger(input) else { return }
 
         if state.dictation.origin == .handsFree,
            state.dictation.phase == .preparing || state.dictation.phase == .recording {
-            receiveHandsFreeShortcut(input)
+            receiveHandsFreeShortcut(trigger)
             return
         }
 
-        if input.keyCode == ShortcutInput.rightCommand {
-            if input.isDown {
+        if trigger != .other {
+            if trigger == .down {
                 if state.dictation.gesture == .awaitingSecondTap,
                    state.dictation.phase == .preparing {
                     doubleTapDeadline?.cancel()
                     doubleTapDeadline = nil
-                    if clock.now - firstTapReleasedAt <= Self.doubleTapWindow,
-                       pressedKeys == [ShortcutInput.rightCommand] {
+                    if clock.now - firstTapReleasedAt <= Self.doubleTapWindow {
                         state.dictation.gesture = .secondTap
                         scheduleHoldRecognition()
                         return
                     }
                     cancelDictation(kind: .rejectedGesture)
                 }
-                guard !state.dictation.phase.isActive, pressedKeys == [ShortcutInput.rightCommand] else { return }
+                guard !state.dictation.phase.isActive else { return }
                 startDictation(origin: .hold)
                 scheduleHoldRecognition()
             } else {
@@ -98,7 +106,7 @@ extension WhisperApplication {
                     stopDictation()
                 }
             }
-        } else if input.isDown, state.dictation.origin == .hold,
+        } else if state.dictation.origin == .hold,
                   state.dictation.phase == .preparing || state.dictation.phase == .recording {
             // Pass the ordinary combination through; provisional speech never becomes History.
             cancelDictation(kind: .rejectedGesture)
@@ -123,19 +131,59 @@ extension WhisperApplication {
         } else { publishRecordingReadiness() }
     }
 
-    private func receiveHandsFreeShortcut(_ input: ShortcutInput) {
-        if input.keyCode == ShortcutInput.rightCommand {
-            if input.isDown {
-                state.dictation.gesture = pressedKeys == [ShortcutInput.rightCommand] ? .stopCandidate : .handsFree
-            } else if state.dictation.gesture == .stopCandidate, pressedKeys.isEmpty {
+    private func receiveHandsFreeShortcut(_ trigger: ShortcutTrigger) {
+        if trigger != .other {
+            if trigger == .down {
+                state.dictation.gesture = .stopCandidate
+            } else if state.dictation.gesture == .stopCandidate {
                 stopDictation()
             } else {
                 state.dictation.gesture = .handsFree
             }
-        } else if input.isDown {
+        } else {
             // Command shortcuts and typing keep Hands-free Dictation running.
             state.dictation.gesture = .handsFree
         }
+    }
+
+    private enum ShortcutTrigger { case down, up, other }
+    private func resolveShortcutTrigger(_ input: ShortcutInput) -> ShortcutTrigger? {
+        if !state.dictation.phase.isActive {
+            guard input.isDown else { return nil }
+            let bindings = state.settings.shortcuts.compactMap { try? ShortcutBinding($0) }
+            guard let binding = bindings.first(where: { $0.matches(input, pressed: pressedKeys) }) else { return nil }
+            activeShortcutCandidates = bindings
+            activeShortcut = binding
+            activeShortcutKey = input.keyCode
+            shortcutPressActive = true
+            return .down
+        }
+        guard state.dictation.origin != .button, let binding = activeShortcut else { return nil }
+        if input.isDown, state.dictation.gesture.isProvisional,
+           let longer = activeShortcutCandidates.first(where: { $0 != binding && $0.matches(input, pressed: pressedKeys) }) {
+            activeShortcut = longer
+            activeShortcutKey = input.keyCode
+            shortcutPressActive = true
+            holdDeadline?.cancel()
+            doubleTapDeadline?.cancel()
+            doubleTapDeadline = nil
+            state.dictation.gesture = .candidate
+            scheduleHoldRecognition()
+            return nil
+        }
+        if input.isDown, binding.matches(input, pressed: pressedKeys) {
+            guard !shortcutPressActive else { return nil }
+            activeShortcutKey = input.keyCode
+            shortcutPressActive = true
+            return .down
+        }
+        if !input.isDown, shortcutPressActive, let base = activeShortcutKey,
+           !binding.isDown(pressed: pressedKeys, baseCode: base) {
+            shortcutPressActive = false
+            return .up
+        }
+        if input.isDown, !binding.allowedCodes.contains(input.keyCode) { return .other }
+        return nil
     }
 
     func publishRecordingReadiness() {

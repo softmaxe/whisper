@@ -50,7 +50,7 @@ import WhisperCore
     func releaseProbe(_ result: Bool) { probeContinuation?.resume(returning: result); probeContinuation = nil }
 }
 
-@MainActor private struct InertCorrectionMonitoringFixture: CorrectionMonitoringSystem {
+@MainActor struct InertCorrectionMonitoringFixture: CorrectionMonitoringSystem {
     func capture(_ target: PasteTarget) async -> (any CorrectionField)? { nil }
 }
 
@@ -62,7 +62,7 @@ import WhisperCore
     let paste = ControlledPasteSystem()
     let clipboard = ControlledClipboard()
     let desktop = ControlledDesktopEffects()
-    let app: WhisperApplication
+    var app: WhisperApplication
     init(transport customTransport: (any FileHTTPTransport)? = nil, correctionSystem: (any CorrectionMonitoringSystem)? = nil) throws {
         profile = try ProfileFixture()
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials,

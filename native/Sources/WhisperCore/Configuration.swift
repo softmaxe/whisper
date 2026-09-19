@@ -50,6 +50,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var desktop: DesktopPreferences
     public var autoPasteEnabled: Bool
     public var keepTranscriptionInClipboard: Bool
+    public var shortcuts: [String]
 
     public init(
         language: AppLanguage = .english,
@@ -63,7 +64,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         cleanup: CleanupConfiguration = .init(),
         cleanupCredentialAccount: String? = nil,
         history: HistoryPreferences = .init(),
-        desktop: DesktopPreferences = .init()
+        desktop: DesktopPreferences = .init(),
+        shortcuts: [String] = ["RightCommand"]
     ) {
         self.history = history
         self.cleanup = cleanup
@@ -77,10 +79,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
         self.autoPasteEnabled = autoPasteEnabled
         self.keepTranscriptionInClipboard = keepTranscriptionInClipboard
         self.desktop = desktop
+        self.shortcuts = shortcuts
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount, history, autoLearnCorrections, desktop
+        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount, history, autoLearnCorrections, desktop, shortcuts
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -96,6 +99,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         cleanup = try values.decodeIfPresent(CleanupConfiguration.self, forKey: .cleanup) ?? .init()
         cleanupCredentialAccount = try values.decodeIfPresent(String.self, forKey: .cleanupCredentialAccount)
         history = try values.decodeIfPresent(HistoryPreferences.self, forKey: .history) ?? .init()
+        shortcuts = try ShortcutBinding.validate(values.decodeIfPresent([String].self, forKey: .shortcuts) ?? ["RightCommand"])
     }
 }
 

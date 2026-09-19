@@ -73,6 +73,8 @@ import ServiceManagement
                 modifierFlags: NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00),
                 timestamp: 0, windowNumber: 0, context: nil, subtype: 8,
                 data1: Int((16 << 16) | (state << 8)), data2: -1)?.cgEvent else { return false }
+            // The global shortcut listener must not interpret our own media fallback as user input.
+            event.setIntegerValueField(.eventSourceUserData, value: whisperPasteEventTag)
             event.post(tap: .cghidEventTap)
         }
         return true

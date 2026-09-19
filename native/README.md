@@ -118,7 +118,8 @@ The first physical Right Command press starts provisional capture. A standalone
 hold becomes Dictation; release submits the recording. A short tap or an
 intervening Command combination always discards provisional audio without ASR.
 The initial hold threshold is the legacy 150 ms value. It is provisional until
-physical keyboard acceptance measures it. Configurable bindings follow in #41.
+physical keyboard acceptance measures it. Hotkeys settings applies the same
+gestures to the supported keyboard and mouse choices.
 
 The session event tap reads each modifier's physical key state rather than the
 aggregate Command flag, so Left Command cannot masquerade as a Right Command
@@ -126,7 +127,7 @@ release. It ignores key repeat and the app's tagged synthetic paste events.
 Ordinary Command combinations pass through. Global Esc cancels preparation,
 recording, ASR and pending delivery. Late device, server and Accessibility probe
 completions cannot revive the cancelled request. Enable Accessibility through
-General settings if the global shortcut is unavailable.
+Hotkeys settings if the global shortcut is unavailable.
 
 Hold-to-talk captures its Target app during startup and retains that PID through
 processing, preserving the legacy startup target contract. A PID does not lock a
@@ -391,3 +392,53 @@ and hands-free requests, without playing sound or changing system media/login st
 The Third-party licenses action opens a directory containing FFmpeg/LAME sources
 and notices, MediaRemoteAdapter BSD 3-Clause, JetBrains Mono OFL, and OpenCC MIT/Apache-2.0
 notices. Their original resource locations remain intact.
+
+## Configured shortcuts
+
+Hotkeys settings supports multiple bindings, with Right Command as the fresh
+default. Right-side modifiers, modifier-plus-key combinations, Globe/Fn,
+supported special keys and Mouse Button 4/5 share the same hold, double-tap and
+standalone-stop workflow. The triggering binding remains fixed until its
+Dictation ends; changes apply to the next request. The native capture field
+pauses Dictation dispatch, validates each captured choice, and persists a valid
+list atomically. Failed choices keep the previous working configuration.
+
+Validation ports the existing macOS reserved list and alias normalization. It
+rejects bare letters/numbers, modifier-only chords, Fn combinations, keyboard
+and mouse combinations, conflicting left/right modifiers, duplicate/overlapping
+bindings and more than three keys. Standalone Esc is additionally reserved for
+the new global cancellation contract. A nonreserved modifier-plus-Esc binding
+remains supported; standalone Esc and Esc during another control's Dictation
+still cancel. The settings error explains the reserved key in English/Chinese.
+
+The event adapter consumes only configured base-key or side-mouse presses and
+their matching releases. It passes ordinary modifier events and unconfigured
+keys through, ignores repeat as a gesture, and reads physical left/right state.
+It also recognizes extended function-key characters and supported macOS media
+events. Actual availability still depends on the keyboard and system event
+delivery; deterministic fixtures do not establish hardware compatibility.
+
+Globe suppression adapts the existing helper's TIS compatibility entry points
+and durable recovery marker in the isolated native profile. It changes the
+system Globe action only while a binding, active request or capture field owns
+it. Normal quit, SIGTERM/SIGINT, configuration changes and the next launch after
+a crash restore the original explicit or default preference unless the user
+has chosen a newer value. Failure to write the marker or resolve the TIS entry
+points leaves the preference unchanged and shows feedback. Those dynamically
+resolved entry points are not a public Apple API guarantee.
+
+Tests reopen real temporary settings and run every input category through the
+actual recording/ASR/delivery workflow, including short-tap cleanup. Additional
+adapter tests cover event suppression and Globe ownership with controlled
+system preferences and real temporary journal files. They never change the
+user's Globe action, install an event tap, inject real keys, or request a
+permission prompt. Physical controls and the capture UI still need signed-build
+acceptance on the target Mac.
+
+The AppKit lifecycle retains the shortcut monitor independently of Settings views
+and updates its configuration when bindings, capture mode, or Dictation phase
+change. Leaving the application ends local capture; termination never rearms the
+monitor while waiting for cleanup. A request snapshots all candidate bindings, so
+later saved chords cannot adopt its provisional modifier capture. Repeated native
+configuration refresh also preserves a newer user Globe choice when the action
+was already disabled before Whisper started using it.

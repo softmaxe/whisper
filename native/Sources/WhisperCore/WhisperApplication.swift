@@ -32,6 +32,9 @@ public enum AppCommand {
     case bootstrapDesktop(launchedAtLogin: Bool)
     case showMainWindow, closeMainWindow, dismissPillFeedback
     case setLaunchAtLogin(Bool), refreshLoginItemStatus, openLoginItemsSettings
+    case saveShortcuts([String])
+    case beginShortcutCapture(index: Int?), endShortcutCapture
+    case setShortcutWarning(ShortcutConfigurationError?)
     case dismissMessage
 }
 
@@ -50,6 +53,9 @@ public struct ApplicationState: Equatable, Sendable {
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
     public var shortcutAvailable = false
+    public var shortcutError: ShortcutConfigurationError?
+    public var shortcutWarning: ShortcutConfigurationError?
+    public var shortcutCapture = ShortcutCaptureState()
     public var credentialConfigured: Bool { settings.asrCredentialAccount != nil }
 
     public init(settings: AppSettings = .init(), configurationError: ConfigurationError? = nil) {
@@ -101,6 +107,11 @@ public final class WhisperApplication {
     @ObservationIgnored var firstTapReleasedAt: TimeInterval = 0
     @ObservationIgnored var provisionalFailure: DictationFailure?
     @ObservationIgnored var snippetExpansion = SnippetExpansion(snippets: [])
+    @ObservationIgnored var activeShortcut: ShortcutBinding?
+    @ObservationIgnored var activeShortcutCandidates: [ShortcutBinding] = []
+    @ObservationIgnored var activeShortcutKey: UInt16?
+    @ObservationIgnored var shortcutPressActive = false
+    @ObservationIgnored var captureModifierPeak = Set<UInt16>()
 
     public init(
         profile: NativeProfile, credentials: any CredentialStore = KeychainCredentialStore(),
@@ -176,7 +187,9 @@ public final class WhisperApplication {
         case let .saveDesktopPreferences(preferences): saveDesktopPreferences(preferences)
         case let .bootstrapDesktop(launchedAtLogin): bootstrapDesktop(launchedAtLogin: launchedAtLogin)
         case .showMainWindow: state.desktop.mainWindowVisible = true
-        case .closeMainWindow: state.desktop.mainWindowVisible = false
+        case .closeMainWindow:
+            state.shortcutCapture.isActive = false
+            state.desktop.mainWindowVisible = false
         case .dismissPillFeedback:
             resetDesktopFeedback()
             state.desktop.dismissedRequestID = state.dictation.requestID
@@ -189,6 +202,17 @@ public final class WhisperApplication {
         case let .resetShortcutInput(keys):
             cancelDictation()
             pressedKeys = keys
+            shortcutPressActive = false
+            activeShortcut = nil
+            activeShortcutCandidates = []
+        case let .saveShortcuts(values): saveShortcuts(values)
+        case let .beginShortcutCapture(index):
+            cancelDictation()
+            state.shortcutCapture = ShortcutCaptureState(isActive: true, editingIndex: index)
+            captureModifierPeak = []
+            state.shortcutError = nil
+        case .endShortcutCapture: state.shortcutCapture.isActive = false
+        case let .setShortcutWarning(warning): state.shortcutWarning = warning
         case let .setClipboardPreferences(autoPaste, keepResult):
             var settings = state.settings
             settings.autoPasteEnabled = autoPaste
