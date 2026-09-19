@@ -38,6 +38,8 @@ public struct ASRConfiguration: Codable, Equatable, Sendable {
 
 public struct AppSettings: Codable, Equatable, Sendable {
     public var language: AppLanguage
+    public var cleanup: CleanupConfiguration
+    public var cleanupCredentialAccount: String?
     public var asr: ASRConfiguration
     // The opaque account is persisted; the credential itself exists only in Keychain.
     public var asrCredentialAccount: String?
@@ -45,11 +47,24 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public init(
         language: AppLanguage = .english,
         asr: ASRConfiguration = .init(),
-        asrCredentialAccount: String? = nil
+        asrCredentialAccount: String? = nil,
+        cleanup: CleanupConfiguration = .init(),
+        cleanupCredentialAccount: String? = nil
     ) {
+        self.cleanup = cleanup
+        self.cleanupCredentialAccount = cleanupCredentialAccount
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
+    }
+    private enum CodingKeys: String, CodingKey { case language, asr, asrCredentialAccount, cleanup, cleanupCredentialAccount }
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        language = try values.decodeIfPresent(AppLanguage.self, forKey: .language) ?? .english
+        asr = try values.decodeIfPresent(ASRConfiguration.self, forKey: .asr) ?? .init()
+        asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
+        cleanup = try values.decodeIfPresent(CleanupConfiguration.self, forKey: .cleanup) ?? .init()
+        cleanupCredentialAccount = try values.decodeIfPresent(String.self, forKey: .cleanupCredentialAccount)
     }
 }
 
@@ -60,6 +75,7 @@ public enum CredentialChange: Sendable {
 }
 
 public enum ConfigurationError: Error, Equatable, Sendable {
+    case invalidCleanupOptions
     case invalidURL
     case insecureURL
     case embeddedCredential
@@ -70,6 +86,8 @@ public enum ConfigurationError: Error, Equatable, Sendable {
 
     public func message(in language: AppLanguage) -> String {
         switch self {
+        case .invalidCleanupOptions:
+            language.text("Use a temperature between 0 and 2 and a positive token limit.", "温度应在 0 到 2 之间，token 上限必须为正整数。")
         case .invalidURL:
             language.text("Enter a valid HTTP or HTTPS server URL.", "请输入有效的 HTTP 或 HTTPS 服务器地址。")
         case .insecureURL:

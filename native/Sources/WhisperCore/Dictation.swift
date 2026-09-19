@@ -30,6 +30,8 @@ public struct DictationState: Equatable, Sendable {
     public var requestID: UUID?
     public var rawText = ""
     public var text = ""
+    public var isCleaning = false
+    public var cleanupFailure: CleanupFailure?
     public var resultCopied = false
     public var failure: DictationFailure?
     public var level: Float = 0
@@ -143,7 +145,8 @@ extension WhisperApplication {
                     options: options
                 )
                 try Task.checkCancellation()
-                self?.completeDictation(rawText: text, text: text, requestID: id)
+                let complete = self?.cleanDictation(rawText: text, requestID: id)
+                await complete?()
             } catch is CancellationError {
                 capture.removeFiles()
             } catch {
@@ -184,6 +187,7 @@ extension WhisperApplication {
         dictationCapture?.cancel()
         dictationCapture = nil
         dictationCredential = nil
+        state.dictation.isCleaning = false
         state.dictation.phase = .idle
         state.dictation.level = 0
         state.dictation.timing["cancelled"] = clock.now - dictationStartedAt
@@ -198,6 +202,7 @@ extension WhisperApplication {
         dictationCapture?.cancel()
         dictationCapture = nil
         dictationCredential = nil
+        state.dictation.isCleaning = false
         state.dictation.phase = .failed
         state.dictation.failure = failure
         state.dictation.level = 0
