@@ -190,3 +190,21 @@ test("manual phone selection stays fixed when the lid changes and remembers a di
   assert.equal(unavailable.props.children, `${iphone.label} (Unavailable)`);
   assert.equal(unavailable.props.disabled, true);
 });
+
+test("device refresh cannot replace a missing selection solely by matching its label", async (t) => {
+  const view = await mountSettings(t, {
+    props: {
+      microphoneSelectionMode: "specific",
+      selectedMicDeviceId: iphone.deviceId,
+      selectedMicDeviceLabel: iphone.label,
+    },
+  });
+  await view.devicesChanged([builtIn, { ...iphone, deviceId: "different-phone" }]);
+  assert.equal(view.input().props.value, "__unavailable__");
+  assert.deepEqual(view.changes, []);
+  view.input().props.onValueChange("different-phone");
+  assert.deepEqual(view.changes, [
+    ["device", "different-phone", iphone.label],
+    ["mode", "specific"],
+  ]);
+});

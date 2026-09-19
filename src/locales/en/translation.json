@@ -268,6 +268,7 @@
   "hooks": {
     "audioRecording": {
       "errorTitles": {
+        "microphoneUnavailable": "Microphone unavailable",
         "sessionExpired": "Session Expired",
         "offline": "You're Offline",
         "agentUnavailable": "Assistant Unavailable",
@@ -299,6 +300,7 @@
         "description": "Part of the recording couldn't be transcribed."
       },
       "errorDescriptions": {
+        "microphoneUnavailable": "The selected microphone could not capture audio. Reconnect it, check microphone access in System Settings, or choose another microphone in Settings before trying again.",
         "sessionExpired": "Your transcription service session is unavailable. Check your service configuration.",
         "offline": "Network unavailable. Check your connection to the transcription server.",
         "providerRateLimited": "Your transcription provider rate-limited the request. Wait a moment and try again.",

@@ -175,7 +175,10 @@ function installMicCaptureGlobals(t) {
   };
   const mediaDevices = {
     getUserMedia: async () => stream,
-    enumerateDevices: async () => [],
+    enumerateDevices: async () => [
+      { kind: "audioinput", deviceId: "default", label: "Default - Fake Mic", groupId: "fake" },
+      { kind: "audioinput", deviceId: "fake-mic", label: "Fake Mic", groupId: "fake" },
+    ],
     addEventListener() {},
     removeEventListener() {},
   };

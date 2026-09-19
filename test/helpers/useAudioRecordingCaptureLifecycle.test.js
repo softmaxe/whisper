@@ -554,7 +554,7 @@ test("stop preserves an active recording while startup device bookkeeping is sti
 });
 
 for (const ending of ["stop", "cancel", "teardown"]) {
-  test(`${ending} releases capture while a replacement microphone waits for recorder delivery`, async (t) => {
+  test(`${ending} keeps failed capture released while final recorder data is pending`, async (t) => {
     const h = await mountCapture(t);
     await h.act(() => h.api().startRecording());
     let track;
@@ -565,27 +565,23 @@ for (const ending of ["stop", "cancel", "teardown"]) {
       track.readyState = "ended";
       track.dispatchEvent(new Event("ended"));
     });
-    assert.equal(h.requests.length, 2);
-    let replacement;
-    await h.act(() => {
-      replacement = h.resolveMic(1);
-    });
+    assert.equal(h.requests.length, 1);
+    assert.equal(track.readyState, "ended");
+    assert.equal(h.api().isRecording, false);
     const oldRecorder = h.recorders[0];
     assert.equal(oldRecorder.state, "inactive");
     if (ending === "teardown") await h.unmount();
     else
       await h.act(() => (ending === "stop" ? h.api().stopRecording() : h.api().cancelRecording()));
-    assert.equal(replacement.readyState, "ended");
     if (ending === "cancel") {
       await h.act(() => h.api().startRecording());
-      await h.act(() => h.resolveMic(2));
+      await h.act(() => h.resolveMic(1));
     }
     await h.act(() => oldRecorder.finish());
-    if (ending === "stop") assert.equal(h.audioPayloads.length, 1);
-    else assert.equal(h.audioPayloads.length, 0);
+    assert.equal(h.audioPayloads.length, 0);
     if (ending === "cancel") {
       assert.equal(h.api().isRecording, true);
-      assert.equal(h.streams[2].getTracks()[0].readyState, "live");
+      assert.equal(h.streams[1].getTracks()[0].readyState, "live");
     }
   });
 }
@@ -635,7 +631,7 @@ test("cancelling preparation before visual frames arrive releases the late micro
   assert.equal(h.lifecycle.at(-1), "idle");
 });
 
-test("cancelling after a dead recorder delivered its data preserves discarded History", async (t) => {
+test("capture failure preserves discarded History under the existing retention setting", async (t) => {
   const h = await mountCapture(t, { initialStorage: { saveDiscardedTranscriptions: "true" } });
   const realNow = Date.now;
   let now = realNow();
@@ -652,18 +648,16 @@ test("cancelling after a dead recorder delivered its data preserves discarded Hi
     h.recorders[0].stop();
     void h.recorders[0].finish();
   });
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 1);
   await h.act(() => h.api().cancelRecording());
   assert.equal(h.saved.length, 1);
   assert.equal(h.saved[0][2].status, "discarded");
   assert.equal(h.savedAudio.length, 1);
-  await h.act(() => h.resolveMic(1));
-  assert.equal(h.streams[1].getTracks()[0].readyState, "ended");
   assert.equal(h.audioPayloads.length, 0);
   assert.deepEqual(h.pastes, []);
 });
 
-test("normal stop waits for final recorder data after the input track ends", async (t) => {
+test("stop after confirmed input failure never submits final recorder data", async (t) => {
   const h = await mountCapture(t);
   await h.act(() => h.api().startRecording());
   let track;
@@ -676,12 +670,13 @@ test("normal stop waits for final recorder data after the input track ends", asy
     h.recorders[0].stop();
   });
   await h.act(() => h.api().stopRecording());
-  assert.equal(h.api().isProcessing, true);
+  assert.equal(h.api().isProcessing, false);
   assert.equal(h.audioPayloads.length, 0);
   await h.act(() => h.recorders[0].finish());
-  assert.equal(h.audioPayloads.length, 1);
-  await h.act(() => h.resolveMic(1));
-  assert.equal(h.streams[1].getTracks()[0].readyState, "ended");
+  assert.equal(h.audioPayloads.length, 0);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.saved.length, 0);
+  assert.deepEqual(h.pastes, []);
 });
 
 test("prepared audio and speech immediately after readiness reach transcription in order", async (t) => {

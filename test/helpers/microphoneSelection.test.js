@@ -45,8 +45,8 @@ test("auto excludes aliases and uses the system default only when no preferred i
     null,
     true
   );
-  assert.equal(result.device, alias);
-  assert.equal(result.status, "chromium-default");
+  assert.equal(result.device, builtIn);
+  assert.equal(result.status, "chromium-physical");
 });
 
 test("auto with an unknown lid state prefers built-in over a custom-named external mic", async () => {

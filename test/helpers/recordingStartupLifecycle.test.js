@@ -40,6 +40,10 @@ async function setup(t, { cues = false } = {}) {
     getLogLevel: async () => "info",
     log: async (entry) => logs.push(entry),
     captureDictationTarget: () => target.promise,
+    onLaptopLidStateChanged: (callback) => {
+      events.LidChanged = callback;
+      return () => delete events.LidChanged;
+    },
     dictationLifecycleStateChanged: (state) => lifecycle.push(state),
   };
   for (const name of [
@@ -142,6 +146,7 @@ async function setup(t, { cues = false } = {}) {
     dataRetentionEnabled: false,
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
+  const toasts = errors;
   const toast = (error) => errors.push(error);
   function Harness() {
     hook = useAudioRecording(toast);
@@ -151,6 +156,9 @@ async function setup(t, { cues = false } = {}) {
   await React.act(async () => root.render(React.createElement(Harness)));
   return {
     events,
+    electronAPI,
+    toasts,
+    settings: useSettingsStore,
     errors,
     tones,
     unmount: () =>
@@ -179,6 +187,12 @@ async function setup(t, { cues = false } = {}) {
       }),
     timing: () =>
       logs.filter((entry) => entry.message === "Recording startup").map((entry) => entry.meta),
+    deliverAll: async () =>
+      React.act(async () => {
+        for (const reader of readers.values()) {
+          reader.pending.resolve({ done: false, value: { numberOfFrames: 480, close() {} } });
+        }
+      }),
     deliver: async (track = media.track) => {
       let closed = false;
       await React.act(async () =>
@@ -544,6 +558,369 @@ test("a new preparation request observes a reused capture without opening anothe
   );
 });
 
+const selectedPhone = { kind: "audioinput", deviceId: "phone", label: "iPhone Microphone" };
+const alternativeMic = { kind: "audioinput", deviceId: "builtin", label: "MacBook Microphone" };
+
+function selectPhone(h) {
+  h.settings.setState({
+    microphoneSelectionMode: "specific",
+    selectedMicDeviceId: selectedPhone.deviceId,
+    selectedMicDeviceLabel: selectedPhone.label,
+  });
+  h.media.mediaDevices.enumerateDevices = async () => [selectedPhone, alternativeMic];
+}
+
+test("a rejected selected microphone never opens the healthy alternative, including on retry", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const opens = [];
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    const id = constraints.audio.deviceId?.exact;
+    opens.push(id);
+    if (id === "phone")
+      throw Object.assign(new Error("Device unavailable"), { name: "OverconstrainedError" });
+    return h.media.stream;
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await React.act(async () => h.events.StartDictation());
+    await h.paint();
+    await h.deliverAll();
+    await React.act(async () => h.target.resolve());
+    assert.equal(h.hook().isRecording, false);
+    assert.equal(h.hook().isPreparing, false);
+    assert.ok(h.toasts.length > 0);
+  }
+  assert.ok(opens.length >= 2);
+  assert.ok(opens.every((id) => id === "phone"));
+});
+
+test("an ended selected input releases capture without acquiring a healthy alternative", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const opens = [];
+  let stopped = false;
+  h.media.track.readyState = "ended";
+  h.media.track.stop = () => {
+    stopped = true;
+  };
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    opens.push(constraints.audio.deviceId?.exact);
+    if (constraints.audio.deviceId?.exact === "phone") return h.media.stream;
+    return {
+      getAudioTracks: () => [{ readyState: "live", getSettings: () => ({}) }],
+      getTracks: () => [],
+    };
+  };
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(stopped, true);
+  assert.ok(opens.every((id) => id === "phone"));
+  assert.ok(h.toasts.length > 0);
+});
+
+test("preparation keeps its device when preferences change and the next Dictation uses the new choice", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const opens = [];
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    opens.push(constraints.audio.deviceId?.exact);
+    h.media.track.readyState = "live";
+    return h.media.stream;
+  };
+  await React.act(async () => {
+    void h.events.PrepareDictation();
+  });
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () =>
+    h.settings.setState({
+      selectedMicDeviceId: "builtin",
+      selectedMicDeviceLabel: alternativeMic.label,
+    })
+  );
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isRecording, true);
+  assert.deepEqual(opens, ["phone"]);
+  await React.act(async () => h.hook().cancelRecording());
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  assert.equal(h.hook().isRecording, true);
+  assert.deepEqual(opens, ["phone", "builtin"]);
+});
+
+test("a selected microphone disconnect ends Dictation and reports failure without replacement", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const target = new EventTarget();
+  h.media.track.addEventListener = target.addEventListener.bind(target);
+  h.media.track.removeEventListener = target.removeEventListener.bind(target);
+  let stopped = false;
+  h.media.track.stop = () => {
+    stopped = true;
+  };
+  const opens = [];
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    opens.push(constraints.audio.deviceId?.exact);
+    return h.media.stream;
+  };
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isRecording, true);
+  await React.act(async () => {
+    h.media.track.readyState = "ended";
+    target.dispatchEvent(new Event("ended"));
+  });
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(stopped, true);
+  assert.deepEqual(opens, ["phone"]);
+  assert.match(h.toasts.at(-1).description, /Reconnect it/);
+});
+
+test("a stale selected ID with only a label match fails instead of guessing physical identity", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  h.media.mediaDevices.enumerateDevices = async () => [
+    { ...selectedPhone, deviceId: "new-phone" },
+    alternativeMic,
+  ];
+  const opens = [];
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    opens.push(constraints.audio.deviceId?.exact);
+    return h.media.stream;
+  };
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isRecording, false);
+  assert.deepEqual(opens, []);
+  assert.equal(h.settings.getState().selectedMicDeviceId, "phone");
+});
+
+test("the microphone choice is fixed at request acceptance before visual preparation", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const opens = [];
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    opens.push(constraints.audio.deviceId.exact);
+    return h.media.stream;
+  };
+  await React.act(async () => h.events.StartDictation());
+  h.settings.setState({
+    selectedMicDeviceId: "builtin",
+    selectedMicDeviceLabel: alternativeMic.label,
+  });
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  assert.deepEqual(opens, ["phone"]);
+});
+
+function installSelectedInputs(h) {
+  let inputs = [selectedPhone, alternativeMic];
+  const devices = new EventTarget();
+  h.media.mediaDevices.addEventListener = devices.addEventListener.bind(devices);
+  h.media.mediaDevices.removeEventListener = devices.removeEventListener.bind(devices);
+  h.media.mediaDevices.enumerateDevices = async () => inputs;
+  const opens = [];
+  const tracks = [];
+  h.media.mediaDevices.getUserMedia = async (constraints) => {
+    const deviceId = constraints.audio.deviceId.exact;
+    opens.push(deviceId);
+    const track = Object.assign(new EventTarget(), {
+      readyState: "live",
+      muted: false,
+      getSettings: () => ({ deviceId }),
+      stop() {
+        this.readyState = "ended";
+      },
+    });
+    tracks.push(track);
+    return { getAudioTracks: () => [track], getTracks: () => [track] };
+  };
+  return {
+    opens,
+    tracks,
+    changeInputs: (next) => {
+      inputs = next;
+      devices.dispatchEvent(new Event("devicechange"));
+    },
+  };
+}
+
+for (const mode of ["auto", "system"]) {
+  test(`${mode} keeps its input through lid, default, and device changes until the next request`, async (t) => {
+    const h = await setup(t);
+    const input = installSelectedInputs(h);
+    let lidClosed = true;
+    let defaultDevice = selectedPhone;
+    h.electronAPI.getLaptopLidState = async () => lidClosed;
+    h.electronAPI.getSystemDefaultMicrophone = async () => ({ name: defaultDevice.label });
+    h.settings.setState({ microphoneSelectionMode: mode });
+    await React.act(async () => {
+      void h.events.PrepareDictation();
+    });
+    await h.paint();
+    await h.deliverAll();
+    await React.act(async () => {
+      lidClosed = false;
+      defaultDevice = alternativeMic;
+      h.events.LidChanged(false);
+      input.changeInputs([alternativeMic, selectedPhone]);
+      t.mock.timers.tick(250);
+    });
+    await React.act(async () => h.events.StartDictation());
+    await h.paint();
+    await h.deliverAll();
+    await React.act(async () => h.target.resolve());
+    assert.equal(h.hook().isRecording, true);
+    assert.deepEqual(input.opens, ["phone"]);
+    await React.act(async () => {
+      input.changeInputs([
+        alternativeMic,
+        selectedPhone,
+        { ...alternativeMic, deviceId: "usb", label: "USB Microphone" },
+      ]);
+      t.mock.timers.tick(250);
+    });
+    assert.equal(h.hook().isRecording, true);
+    assert.deepEqual(input.opens, ["phone"]);
+    await React.act(async () => h.hook().cancelRecording());
+    assert.equal(input.tracks[0].readyState, "ended");
+    await React.act(async () => h.events.StartDictation());
+    await h.paint();
+    await h.deliverAll();
+    assert.equal(h.hook().isRecording, true);
+    assert.deepEqual(input.opens, ["phone", "builtin"]);
+  });
+}
+
+for (const failure of ["mute", "missing", "recorder-error", "recorder-stop"]) {
+  test(`${failure} during recording ends capture with an actionable error and no replacement`, async (t) => {
+    const h = await setup(t);
+    selectPhone(h);
+    const input = installSelectedInputs(h);
+    await React.act(async () => h.events.StartDictation());
+    await h.paint();
+    await h.deliverAll();
+    await React.act(async () => h.target.resolve());
+    assert.equal(h.hook().isRecording, true);
+    await React.act(async () => {
+      if (failure === "mute") {
+        input.tracks[0].muted = true;
+        input.tracks[0].dispatchEvent(new Event("mute"));
+        t.mock.timers.tick(800);
+      } else if (failure === "missing") {
+        input.changeInputs([alternativeMic]);
+        t.mock.timers.tick(250);
+      } else if (failure === "recorder-error") {
+        h.recorders[0].onerror(new Event("error"));
+      } else {
+        h.recorders[0].stop();
+      }
+    });
+    assert.equal(h.hook().isRecording, false);
+    assert.equal(h.hook().isProcessing, false);
+    assert.equal(input.tracks[0].readyState, "ended");
+    assert.deepEqual(input.opens, ["phone"]);
+    assert.match(h.toasts.at(-1).description, /Reconnect it/);
+  });
+}
+
+for (const failure of ["muted", "missing", "ambiguous", "NotAllowedError", "NotReadableError"]) {
+  test(`${failure} selected input fails preparation without using the available alternative`, async (t) => {
+    const h = await setup(t);
+    selectPhone(h);
+    const opens = [];
+    let stopped = false;
+    h.media.track.stop = () => {
+      stopped = true;
+    };
+    if (failure === "muted") h.media.track.muted = true;
+    if (failure === "missing") h.media.mediaDevices.enumerateDevices = async () => [alternativeMic];
+    if (failure === "ambiguous")
+      h.media.mediaDevices.enumerateDevices = async () => [
+        { ...selectedPhone, deviceId: "phone-1" },
+        { ...selectedPhone, deviceId: "phone-2" },
+        alternativeMic,
+      ];
+    h.media.mediaDevices.getUserMedia = async (constraints) => {
+      opens.push(constraints.audio.deviceId?.exact);
+      if (failure.endsWith("Error"))
+        throw Object.assign(new Error("Unavailable"), { name: failure });
+      return h.media.stream;
+    };
+    await React.act(async () => {
+      void h.events.PrepareDictation();
+    });
+    await h.paint();
+    await h.deliverAll();
+    await React.act(async () => t.mock.timers.tick(600));
+    assert.equal(h.hook().isPreparing, false);
+    assert.equal(h.hook().isRecording, false);
+    assert.equal(h.lifecycle.at(-1), "idle");
+    assert.ok(opens.every((id) => id === "phone"));
+    if (failure === "muted") assert.equal(stopped, true);
+    assert.match(h.toasts.at(-1).description, /Reconnect it/);
+  });
+}
+
+test("a delayed selected input remains the only acquisition while a healthy alternative is available", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const pending = deferred();
+  const opens = [];
+  h.media.mediaDevices.getUserMedia = (constraints) => {
+    opens.push(constraints.audio.deviceId.exact);
+    return constraints.audio.deviceId.exact === "phone"
+      ? pending.promise
+      : Promise.resolve(h.media.stream);
+  };
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  await React.act(async () => t.mock.timers.tick(5000));
+  assert.equal(h.hook().isPreparing, true);
+  assert.equal(h.hook().isRecording, false);
+  assert.deepEqual(opens, ["phone"]);
+  await React.act(async () => pending.resolve(h.media.stream));
+  await h.deliverAll();
+  assert.equal(h.hook().isRecording, true);
+  assert.deepEqual(opens, ["phone"]);
+});
+
+test("a new request after preparation expiry applies the updated microphone selection", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  const input = installSelectedInputs(h);
+  await React.act(async () => {
+    void h.events.PrepareDictation();
+  });
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => t.mock.timers.tick(10001));
+  assert.equal(input.tracks[0].readyState, "ended");
+  h.settings.setState({
+    selectedMicDeviceId: "builtin",
+    selectedMicDeviceLabel: alternativeMic.label,
+  });
+  await React.act(async () => h.events.StartDictation());
+  await h.paint();
+  await h.deliverAll();
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isRecording, true);
+  assert.deepEqual(input.opens, ["phone", "builtin"]);
+});
 for (const action of ["stop", "cancel", "teardown"]) {
   test(
     action + " during first-audio waiting suppresses late readiness and releases capture",

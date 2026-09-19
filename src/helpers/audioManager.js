@@ -32,8 +32,7 @@ import {
   getLocalSpeechGateDecision,
   recordLocalSpeechWindow,
 } from "./localSpeechGate";
-import { followsSystemDefaultMic } from "./micSelectionRecovery";
-import { reacquireIfDead } from "./micTrackHealth";
+import { waitForTrackReady } from "./micTrackHealth";
 import { isMicWarm } from "./micWarmState";
 import {
   getMicrophoneSelectionMode,
@@ -47,7 +46,6 @@ import {
   PRE_ROLL_MAX_AGE_MS,
   PreparedMicCapture,
 } from "./preparedMicCapture";
-import { isStaleDeviceError } from "./staleMicDevice";
 
 import { detectAgentName, stripAgentAddress } from "../config/agentDetection";
 import { appendScreenContextSuffix, resolvePrompt } from "../config/prompts";
@@ -507,6 +505,12 @@ const PROXY_TRANSCRIPTION_PROVIDERS = {
   },
 };
 
+const MICROPHONE_CAPTURE_ERROR = Object.freeze({
+  code: "MIC_CAPTURE_FAILED",
+  title: "Microphone unavailable",
+  messageKey: "hooks.audioRecording.errorDescriptions.microphoneUnavailable",
+});
+
 class AudioManager {
   constructor() {
     this.mediaRecorder = null;
@@ -534,13 +538,7 @@ class AudioManager {
       if (deviceKey !== this._micDeviceKey) {
         this._micDeviceKey = deviceKey;
         this.cachedMicDeviceId = null;
-        this.rejectedMicDeviceId = null;
         this._micWarmedAt = 0;
-        this.cancelPreparedMicCapture();
-        if (this.micRecovery) this.micRecovery.followDefault = followsSystemDefaultMic(state);
-        if (getMicrophoneSelectionMode(state) === "auto") {
-          this.micRecovery?.scheduleEvaluation();
-        }
       }
     });
 
@@ -550,13 +548,10 @@ class AudioManager {
     };
     window.addEventListener("api-key-changed", this._onApiKeyChanged);
 
-    // Invalidate the pinned mic device when the OS adds/removes/suspends inputs.
-    // Otherwise wake-after-idle keeps requesting a stale deviceId that yields silence.
+    // Refresh next-session selection without changing the current capture.
     this._onDeviceChange = () => {
       this.cachedMicDeviceId = null;
       this._micWarmedAt = 0;
-      this.rejectedMicDeviceId = null;
-      this.cancelPreparedMicCapture();
       // The main process keeps the OS default mic until told it changed, so
       // re-resolve now rather than on the next hotkey press (~2s on Windows).
       window.electronAPI?.getSystemDefaultMicrophone?.({ refresh: true })?.catch(() => {});
@@ -565,10 +560,7 @@ class AudioManager {
     this._unsubscribeLidState = window.electronAPI?.onLaptopLidStateChanged?.(() => {
       if (getMicrophoneSelectionMode(getSettings()) !== "auto") return;
       this.cachedMicDeviceId = null;
-      this.rejectedMicDeviceId = null;
       this._micWarmedAt = 0;
-      this.cancelPreparedMicCapture();
-      this.micRecovery?.scheduleEvaluation();
     });
     this.recordingStartTime = null;
     this.reasoningAvailabilityCache = { value: false, expiresAt: 0 };
@@ -585,7 +577,6 @@ class AudioManager {
     this.streamingTextBump = null;
     this.streamingTextDebounce = null;
     this.cachedMicDeviceId = null;
-    this.rejectedMicDeviceId = null;
     this.persistentAudioContext = null;
     this.workletModuleLoaded = false;
     this.workletBlobUrl = null;
@@ -626,35 +617,7 @@ class AudioManager {
     this._streamingMicSwapPromise = null;
     this.micRecovery = new ActiveMicRecoveryController({
       mediaDevices: navigator.mediaDevices,
-      resolvePreferredDevice: async () => {
-        const settings = getSettings();
-        if (getMicrophoneSelectionMode(settings) !== "auto") return null;
-        const resolution = await resolvePreferredMicrophone({ settings });
-        if (getMicrophoneSelectionMode(getSettings()) !== "auto") return null;
-        return isCacheableMicrophoneResolution(resolution) ? resolution.device : null;
-      },
-      acquire: async (reason) => {
-        const session = this._getCaptureSession();
-        try {
-          const constraints = await this.getAudioConstraints(
-            false,
-            reason === "devicechange" ||
-              reason === "devicechange-ended" ||
-              reason === "preferred-change"
-          );
-          return await this._openCaptureStream(constraints, session);
-        } catch (error) {
-          this._assertCaptureSession(session);
-          logger.debug(
-            "Preferred mic unavailable during recovery, falling back to default",
-            { error: error.message },
-            "audio"
-          );
-          const fallback = await this.getAudioConstraints(true);
-          return this._openCaptureStream(fallback, session);
-        }
-      },
-      onRecovered: (replacement, previous) => this.replaceActiveMic(replacement, previous),
+      onFailure: () => this.failMicrophoneCapture(),
       onStatusChange: (status) => this.setMicCaptureStatus(status),
     });
   }
@@ -790,6 +753,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   setMicCaptureStatus(status) {
     if (this.micCaptureStatus === status) return;
     this.micCaptureStatus = status;
+    if (!this.isRecording && !this.isStreaming) return;
     this.onStateChange?.({
       isRecording: this.isRecording,
       isProcessing: this.isProcessing,
@@ -798,12 +762,18 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     });
   }
 
+  failMicrophoneCapture() {
+    // Use the existing cancellation retention policy for interrupted recordings.
+    this.cancelRecording();
+    this.onError?.(MICROPHONE_CAPTURE_ERROR);
+  }
+
   async beginMicRecovery(stream) {
     // A stop/cancel can land during the awaits between recorder start and this
     // call; never arm recovery for a recording that already ended.
     if (!this.isRecording) return;
     await this.micRecovery.start(stream, {
-      followDefault: followsSystemDefaultMic(getSettings()),
+      followDefault: false,
     });
   }
 
@@ -991,77 +961,53 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return STREAMING_PROVIDERS[name] ? name : defaultStreamingProviderName("dictation");
   }
 
-  async getAudioConstraints(forceDefaultMic = false, refreshSystemDefault = false) {
-    const settings = getSettings();
-
-    // All browser audio processing disabled to avoid OS-level side-effects.
-    // AGC off: Chromium's AGC on Windows mutates the system mic volume via WASAPI (#476).
-    // Echo cancellation and noise suppression off to avoid latency and speech distortion.
-    // Stereo recording required — mono WebM breaks silence detection on Linux/PipeWire (#472).
-    const noProcessing = {
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false,
-      channelCount: 2,
-    };
-
-    if (
-      !forceDefaultMic &&
-      !refreshSystemDefault &&
-      getMicrophoneSelectionMode(settings) !== "auto" &&
-      this.cachedMicDeviceId &&
-      this.cachedMicDeviceId !== this.rejectedMicDeviceId
-    ) {
-      return {
-        audio: { deviceId: { exact: this.cachedMicDeviceId }, ...noProcessing },
-      };
+  selectMicrophoneForSession() {
+    if (this._captureSession?.preparationExpired && !this.isRecording && !this._startInProgress) {
+      this._endCaptureSession();
     }
+    void this.getAudioConstraints(this._getCaptureSession()).catch(() => {});
+  }
 
-    try {
+  async getAudioConstraints(session = null) {
+    if (session?.constraints) return session.constraints;
+    const resolve = async () => {
       const resolution = await resolvePreferredMicrophone({
-        settings,
-        forceSystemDefault: forceDefaultMic,
-        refreshSystemDefault: forceDefaultMic || refreshSystemDefault,
+        settings: session?.settings ?? getSettings(),
+        refreshSystemDefault: true,
       });
       const deviceId = resolution.device?.deviceId;
-
-      if (deviceId && deviceId !== this.rejectedMicDeviceId) {
-        if (isCacheableMicrophoneResolution(resolution)) {
-          this.cachedMicDeviceId = deviceId;
-        }
-        logger.debug(
-          "Resolved microphone input",
-          {
-            mode: resolution.mode,
-            status: resolution.status,
-            label: resolution.device.label,
-          },
-          "audio"
-        );
-        return { audio: { deviceId: { exact: deviceId }, ...noProcessing } };
+      // A label alone cannot establish that a changed ID is the same physical input.
+      if (
+        !deviceId ||
+        ["default", "communications"].includes(deviceId) ||
+        resolution.status === "remapped"
+      ) {
+        const error = new Error("Selected microphone is unavailable");
+        error.name = "MicUnusableError";
+        throw error;
       }
-
-      logger.debug(
-        "Microphone selection could not be pinned; using browser fallback",
-        { mode: resolution.mode, status: resolution.status },
-        "audio"
-      );
-    } catch (error) {
-      logger.debug(
-        "Failed to resolve microphone selection; using browser fallback",
-        { error: error.message },
-        "audio"
-      );
-    }
-
-    return { audio: noProcessing };
+      return {
+        audio: {
+          deviceId: { exact: deviceId },
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 2,
+        },
+      };
+    };
+    const pending = resolve();
+    if (session) session.constraints = pending;
+    return pending;
   }
 
   async cacheMicrophoneDeviceId() {
     if (this.cachedMicDeviceId) return; // Already cached
 
     try {
-      const resolution = await resolvePreferredMicrophone({ settings: getSettings() });
+      const resolution = await resolvePreferredMicrophone({
+        settings: { ...getSettings(), setSelectedMicDevice: undefined },
+      });
       if (isCacheableMicrophoneResolution(resolution)) {
         this.cachedMicDeviceId = resolution.device.deviceId;
         logger.debug(
@@ -1106,10 +1052,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         const pcmTap = this._startPcmTap();
         if (pcmTap) session.taps.add(pcmTap);
         try {
-          const constraints = await this.getAudioConstraints();
+          const constraints = await this.getAudioConstraints(session);
           this._assertCaptureSession(session);
           const stream = await this._acquireCaptureStream(constraints, session, startupTrace);
           this._assertCaptureSession(session);
+          void this.micRecovery.start(stream, { followDefault: false });
           const value = {
             stream,
             constraints,
@@ -1133,7 +1080,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       }
       return prepared;
     } catch (e) {
-      logger.debug("Mic capture preparation failed (non-critical)", { error: e.message }, "audio");
+      if (this._captureSession === session) this.failMicrophoneCapture();
       return null;
     }
   }
@@ -1144,6 +1091,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
   _getCaptureSession() {
     return (this._captureSession ??= {
+      settings: { ...getSettings(), setSelectedMicDevice: undefined },
       controller: new AbortController(),
       streams: new Set(),
       observations: new Map(),
@@ -1217,6 +1165,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
 
   _disposePrepared(prepared) {
     if (!prepared) return;
+    if (this._captureSession?.streams.has(prepared.stream)) {
+      this._captureSession.preparationExpired = true;
+    }
+    if (this.micRecovery.stream === prepared.stream) this.micRecovery.stop();
     this._captureSession?.observations.get(prepared.stream)?.cancel();
     this._captureSession?.observations.delete(prepared.stream);
     disposePreparedCapture(prepared);
@@ -1229,6 +1181,10 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
   _startPreRollRecorder(prepared, pcmTap) {
     try {
       const recorder = new MediaRecorder(prepared.stream);
+      const session = this._captureSession;
+      recorder.onerror = () => {
+        if (this._captureSession === session) this.failMicrophoneCapture();
+      };
       recorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) prepared.chunks.push(event.data);
       };
@@ -1289,51 +1245,23 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     return stream;
   }
 
-  // Recovers a dead/muted capture: retries the same device, then hops to the OS default,
-  // remembering a silent pinned device for the session. Throws MicUnusableError when no
-  // input delivers audio. See #1152.
-  async acquireHealthyMicStream(rawStream, constraints, session = null) {
-    const pinnedMicDeviceId = constraints.audio?.deviceId?.exact ?? null;
-    let fallbackMicUnusable = false;
-    // Keep verifying after a rejection too, otherwise a muted default records silence unnoticed.
-    const verifyMic = pinnedMicDeviceId !== null || this.rejectedMicDeviceId !== null;
-    const stream = await reacquireIfDead(
-      rawStream,
-      () => {
-        this.cachedMicDeviceId = null;
-        return this.getAudioConstraints();
-      },
-      logger,
-      verifyMic
-        ? {
-            getConstraints: () => this.getAudioConstraints(true),
-            onDeviceRejected: () => {
-              if (pinnedMicDeviceId) this.rejectedMicDeviceId = pinnedMicDeviceId;
-            },
-            onFallbackUnusable: () => {
-              fallbackMicUnusable = true;
-            },
-          }
-        : null,
-      session
-        ? {
-            signal: session.controller.signal,
-            acquire: (next) => this._openCaptureStream(next, session),
-          }
-        : undefined
+  async acquireHealthyMicStream(rawStream, _constraints, session = null) {
+    const ready = await waitForTrackReady(
+      rawStream.getAudioTracks()[0],
+      600,
+      session?.controller.signal
     );
-
-    if (fallbackMicUnusable) {
-      stream.getTracks().forEach((track) => track.stop());
-      const micError = new Error("No microphone is delivering audio");
-      micError.name = "MicUnusableError";
-      throw micError;
+    if (session) this._assertCaptureSession(session);
+    if (!ready) {
+      rawStream.getTracks().forEach((track) => track.stop());
+      const error = new Error("Selected microphone is unavailable");
+      error.name = "MicUnusableError";
+      throw error;
     }
-
-    return stream;
+    return rawStream;
   }
 
-  async startRecording(forceDefaultMic = false, startupTrace = null) {
+  async startRecording(startupTrace = null) {
     let prepared = null;
     let preparedAdopted = false;
     let freshTap = null;
@@ -1357,11 +1285,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       session = this._getCaptureSession();
       this._startInProgress = true;
 
-      prepared = forceDefaultMic ? null : await this.preparedMicCapture.take();
+      prepared = await this.preparedMicCapture.take();
       this._assertCaptureSession(session);
       if (prepared) this.observePreparedCapture(prepared, startupTrace);
       const constraints =
-        prepared?.constraints ?? (await this.getAudioConstraints(forceDefaultMic));
+        prepared?.constraints ?? (await this.getAudioConstraints(this._getCaptureSession()));
       this._assertCaptureSession(session);
       // Without a prepared capture the tap starts here, before the mic opens.
       freshTap = prepared ? null : this._startPcmTap();
@@ -1370,6 +1298,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
         prepared?.stream ?? (await this._acquireCaptureStream(constraints, session, startupTrace));
       this._assertCaptureSession(session);
 
+      if (prepared) await this.acquireHealthyMicStream(micStream, constraints, session);
+      this._assertCaptureSession(session);
       const audioTrack = micStream.getAudioTracks()[0];
 
       if (audioTrack) {
@@ -1532,42 +1462,11 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this.isRecording = false;
       this._closeBatchPcmTap();
       void this.cleanupPreview({ dismiss: true });
-      if (isStaleDeviceError(error) && !forceDefaultMic) {
-        // Pinned mic is gone (Chromium rotates IDs / device unplugged). Retry once on the default mic. See #900.
-        logger.warn("Pinned microphone unavailable, retrying on default mic", {}, "audio");
-        this.cachedMicDeviceId = null;
-        return this.startRecording(true, startupTrace);
-      }
-
       if (error.name === "FirstAudioUnavailableError") {
         this.onNoAudio?.();
         return false;
       }
-
-      let errorTitle = "Recording Error";
-      let errorDescription = `Failed to access microphone: ${error.message}`;
-
-      if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
-        errorTitle = "Microphone Access Denied";
-        errorDescription =
-          "Please grant microphone permission in your system settings and try again.";
-      } else if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
-        errorTitle = "No Microphone Found";
-        errorDescription = "No microphone was detected. Please connect a microphone and try again.";
-      } else if (error.name === "NotReadableError" || error.name === "TrackStartError") {
-        errorTitle = "Microphone In Use";
-        errorDescription =
-          "The microphone is being used by another application. Please close other apps and try again.";
-      } else if (error.name === "MicUnusableError") {
-        errorTitle = "Microphone Muted";
-        errorDescription =
-          "Your microphones stayed muted and produced no audio. Please check your sound input settings and try again.";
-      }
-
-      this.onError?.({
-        title: errorTitle,
-        description: errorDescription,
-      });
+      this.onError?.(MICROPHONE_CAPTURE_ERROR);
       return false;
     } finally {
       if (this._captureSession === session) this._startInProgress = false;
@@ -1591,6 +1490,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     this.audioChunks = segmentChunks;
     this.recordingMimeType = recorder.mimeType || "audio/webm";
 
+    recorder.onerror = () => {
+      if (this.mediaRecorder === recorder) this.failMicrophoneCapture();
+    };
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) {
         if (this.mediaRecorder === recorder) this._receivedAudioData = true;
@@ -1606,9 +1508,9 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       segmentChunks.length = 0;
       const rotating = this._rotatingBatchRecorder === recorder;
       // The recorder also stops on its own when its mic track dies (the stream
-      // goes inactive). While recovery is armed, treat that like a rotation:
-      // bank the segment and keep the recording alive for the replacement mic.
-      if (rotating || this.micRecovery.started) {
+      // goes inactive). Preserve delivered audio under the existing discard
+      // policy and terminate capture instead of opening a replacement mic.
+      if (rotating || this._captureSession) {
         if (segment.size > 0) this._batchSegments.push(segment);
         micStream.getTracks().forEach((track) => track.stop());
         this._markCaptureStreamReleased();
@@ -1617,7 +1519,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
           this._rotationResolve?.();
           this._rotationResolve = null;
         } else {
-          void this.micRecovery.recover("recorder-stopped");
+          this.failMicrophoneCapture();
         }
         return;
       }
@@ -1764,8 +1666,8 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       this.mediaRecorder &&
       (this.mediaRecorder.state === "recording" || (this.isRecording && this.mediaRecorder.onstop))
     ) {
-      if (this.mediaRecorder.state === "recording") this.mediaRecorder.stop();
       this._endCaptureSession({ preserveRecording: true });
+      if (this.mediaRecorder.state === "recording") this.mediaRecorder.stop();
       this.mediaRecorder.stream?.getTracks().forEach((track) => track.stop());
       this.isRecording = false;
       this.isProcessing = true;
@@ -4463,7 +4365,7 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
     for (const resolve of this._streamingStartSettlementWaiters.splice(0)) resolve();
   }
 
-  async startStreamingRecording(forceDefaultMic = false) {
+  async startStreamingRecording() {
     let acquiredStream = null;
     let usedPreparedCapture = false;
     let sessionId = null;
@@ -4493,13 +4395,13 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       startWasCancelled = () => cancellationGeneration !== this._streamingCancellationGeneration;
 
       const t0 = performance.now();
-      const prepared = forceDefaultMic ? null : await this.preparedMicCapture.take();
+      const prepared = await this.preparedMicCapture.take();
       // Prepared while batch mode was expected; keep the stream, drop the pre-roll
       // (the streaming transcript comes from the PCM worklet, not these chunks).
       discardPreRoll(prepared);
       usedPreparedCapture = !!prepared;
       const constraints =
-        prepared?.constraints ?? (await this.getAudioConstraints(forceDefaultMic));
+        prepared?.constraints ?? (await this.getAudioConstraints(this._getCaptureSession()));
       const tConstraints = performance.now();
 
       // 1. Get mic stream (can take 10-15s on a cold driver — unless a prepared
@@ -4713,7 +4615,6 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       }
       return true;
     } catch (error) {
-      const stopRequested = this.stopRequestedDuringStreamingStart;
       this._settleStreamingStart();
       this.stopRequestedDuringStreamingStart = false;
 
@@ -4725,24 +4626,6 @@ registerProcessor("pcm-streaming-processor", PCMStreamingProcessor);
       }
 
       if (startWasCancelled()) return false;
-
-      if (isStaleDeviceError(error) && !forceDefaultMic && !stopRequested) {
-        // Pinned mic is gone (Chromium rotates IDs / device unplugged). Retry once on the default mic. See #900.
-        logger.warn(
-          "Pinned microphone unavailable, retrying streaming on default mic",
-          {},
-          "streaming"
-        );
-        this.cachedMicDeviceId = null;
-        await this.cleanupStreaming();
-        if (this._activeStreamingSessionId === sessionId) {
-          this._activeStreamingSessionId = null;
-        }
-        this.isRecording = false;
-        this.recordingStartTime = null;
-        this.onStateChange?.({ isRecording: false, isProcessing: false, isStreaming: false });
-        return this.startStreamingRecording(true);
-      }
 
       logger.error(
         "Failed to start streaming recording",
