@@ -70,6 +70,7 @@ public struct DictationState: Equatable, Sendable {
 extension WhisperApplication {
     func startDictation(origin: DictationOrigin = .button) {
         guard !state.dictation.phase.isActive else { return }
+        resetDesktopFeedback()
         let id = UUID()
         state.dictation = DictationState()
         state.dictation.requestID = id
@@ -131,6 +132,7 @@ extension WhisperApplication {
         }
         firstAudioDeadline?.cancel()
         firstAudioDeadline = nil
+        endRecordingFeedback(requestID: id, stopped: true)
         if state.dictation.origin == .handsFree { dictationTarget = pasteSystem.captureTarget() }
         state.dictation.phase = .processing
         state.dictation.level = 0
@@ -177,6 +179,7 @@ extension WhisperApplication {
         dictationCredential = nil
         guard state.dictation.origin != .button else {
             state.dictation.phase = .result
+            showPillFeedback(.completed, requestID: requestID)
             processingTask = nil
             return
         }
@@ -191,6 +194,7 @@ extension WhisperApplication {
             guard self?.isCurrentDictation(requestID) == true else { return }
             self?.state.dictation.delivery = result
             self?.state.dictation.phase = .result
+            self?.showPillFeedback(.completed, requestID: requestID)
             self?.processingTask = nil
         }
     }
@@ -201,6 +205,7 @@ extension WhisperApplication {
 
     func cancelDictation(kind: DictationCancellation = .user) {
         guard state.dictation.phase.isActive else { return }
+        if let id = state.dictation.requestID { endRecordingFeedback(requestID: id, stopped: false) }
         holdDeadline?.cancel()
         holdDeadline = nil
         doubleTapDeadline?.cancel()
@@ -220,6 +225,9 @@ extension WhisperApplication {
         state.dictation.rawText = ""
         state.dictation.level = 0
         state.dictation.timing["cancelled"] = clock.now - dictationStartedAt
+        if state.dictation.cancellation != .rejectedGesture, let id = state.dictation.requestID {
+            showPillFeedback(.cancelled, requestID: id)
+        }
     }
 
     func failDictation(_ failure: DictationFailure, requestID: UUID) {
@@ -235,6 +243,7 @@ extension WhisperApplication {
             return
         }
         provisionalFailure = nil
+        endRecordingFeedback(requestID: requestID, stopped: false)
         processingTask?.cancel()
         holdDeadline?.cancel()
         holdDeadline = nil

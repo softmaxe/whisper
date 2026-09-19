@@ -3,8 +3,6 @@ import WhisperCore
 
 struct SettingsRootView: View {
     let application: WhisperApplication
-    @State private var pill: RecordingPillController?
-    @State private var shortcuts: NativeShortcutMonitor?
     @State private var section = SettingsSection.home
     @State private var serverURL = ""
     @State private var model = ""
@@ -81,16 +79,8 @@ struct SettingsRootView: View {
         .font(.custom("JetBrainsMono-Regular", size: 13))
         .tint(accent)
         .frame(minWidth: 780, minHeight: 530)
-        .onAppear {
-            restoreDraft()
-            if pill == nil { pill = RecordingPillController(application: application) }
-            if shortcuts == nil { shortcuts = NativeShortcutMonitor(application: application) }
-            shortcuts?.start()
-            pill?.update()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in shortcuts?.start() }
-        .onChange(of: application.state.dictation.phase) { pill?.update() }
-        .onChange(of: application.state.dictation.delivery) { pill?.update() }
+        .onAppear(perform: restoreDraft)
+        .onReceive(NotificationCenter.default.publisher(for: .init("WhisperOpenSettings"))) { _ in section = .general }
     }
 
     private var generalSettings: some View {
@@ -120,7 +110,7 @@ struct SettingsRootView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 if !application.state.shortcutAvailable {
                     Button(language.text("Enable Accessibility for global shortcuts", "启用辅助功能以使用全局快捷键")) {
-                        shortcuts?.start(requestPermission: true)
+                        NotificationCenter.default.post(name: .init("WhisperRequestShortcutPermission"), object: nil)
                     }
                     .accessibilityIdentifier("enable-shortcut-access")
                 }
@@ -136,6 +126,7 @@ struct SettingsRootView: View {
             .padding(16).background(.primary.opacity(0.025))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.12)))
+            DesktopSettingsView(application: application)
             feedback
         }
     }

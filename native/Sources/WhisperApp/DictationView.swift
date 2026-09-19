@@ -104,13 +104,21 @@ struct RecordingStatus: View {
         panel.contentView = NSHostingView(rootView: RecordingPill(application: application))
     }
     func update() {
-        guard application.state.dictation.phase != .idle else { panel.orderOut(nil); return }
+        let presentation = application.state.recordingPill
+        guard presentation.visible else { panel.orderOut(nil); return }
         if let screen = NSScreen.main {
             let recovery: Bool
             if case .recovery = application.state.dictation.delivery { recovery = true } else { recovery = false }
-            let width: CGFloat = recovery ? 390 : 170
-            panel.setFrame(NSRect(x: screen.visibleFrame.midX - width / 2, y: screen.visibleFrame.minY + 18,
-                width: width, height: recovery ? 220 : 64), display: true)
+            let failure = presentation.feedback == .failed
+            let width: CGFloat = recovery || failure ? 390 : 170
+            let frame = screen.visibleFrame
+            let x: CGFloat = switch presentation.placement {
+            case .bottomLeft: frame.minX + 4
+            case .center: frame.midX - width / 2
+            case .bottomRight: frame.maxX - width - 4
+            }
+            panel.setFrame(NSRect(x: max(frame.minX, min(x, frame.maxX - width)), y: frame.minY + 4,
+                width: width, height: recovery ? 220 : failure ? 150 : 64), display: true)
         }
         panel.orderFrontRegardless()
     }
@@ -136,25 +144,48 @@ private struct RecordingPill: View {
                     application.send(.copyDictationResult)
                 }
                 .accessibilityIdentifier("recovery-copy")
+                Button(language.text("Dismiss", "关闭")) { application.send(.dismissPillFeedback) }
             }
             .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
+        } else if application.state.recordingPill.feedback == .failed {
+            VStack(alignment: .leading, spacing: 12) {
+                Label(dictation.failure?.message(in: language) ?? language.text("Try again", "请重试"), systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button(language.text("Retry", "重试")) { application.send(.startDictation) }
+                    Button(language.text("Dismiss", "关闭")) { application.send(.dismissPillFeedback) }
+                }
+            }
+            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
         } else {
             compactPill
+        }
+    }
+
+    private var symbolName: String {
+        switch application.state.recordingPill.feedback {
+        case .cancelled: "xmark"
+        case .completed: "checkmark"
+        case .failed: "exclamationmark"
+        case .handsFree: "lock.fill"
+        default: "waveform"
         }
     }
 
     private var compactPill: some View {
         HStack(spacing: 6) {
             Button {
-                if dictation.phase == .recording { application.send(.stopDictation) }
+                if application.state.recordingPill.feedback == .idle { application.send(.startDictation) }
+                else if dictation.phase == .recording { application.send(.stopDictation) }
                 else if dictation.phase == .result { application.send(.copyDictationResult) }
-                else if dictation.phase == .failed { application.send(.startDictation) }
+                else if dictation.phase == .failed || dictation.phase == .idle { application.send(.startDictation) }
             } label: {
                 HStack(spacing: 6) {
                     if dictation.phase == .preparing || dictation.phase == .processing {
                         ProgressView().controlSize(.small).frame(width: 22, height: 22)
                     } else {
-                        Image(systemName: dictation.phase == .result ? "checkmark" : dictation.phase == .failed ? "exclamationmark" : dictation.origin == .handsFree ? "lock.fill" : "waveform")
+                        Image(systemName: symbolName)
                             .font(.system(size: 20)).frame(width: 22, height: 22)
                     }
                     HStack(spacing: 3) {
@@ -168,9 +199,9 @@ private struct RecordingPill: View {
                 .overlay(Capsule().strokeBorder(.primary.opacity(0.18)))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(language.text("Dictation control", "听写控制"))
-            if dictation.phase.isActive {
-                Button { application.send(.cancelDictation) } label: {
+            .accessibilityLabel(application.state.recordingPill.feedback.title(in: language))
+            if dictation.phase.isActive || application.state.recordingPill.feedback == .failed {
+                Button { application.send(dictation.phase.isActive ? .cancelDictation : .dismissPillFeedback) } label: {
                     Image(systemName: "xmark").font(.system(size: 12, weight: .medium))
                         .frame(width: 30, height: 30).background(.regularMaterial, in: Circle())
                 }
@@ -178,7 +209,7 @@ private struct RecordingPill: View {
             }
         }
         .padding(10)
-        .help(dictation.failure?.message(in: language) ?? language.text("Stop recording or copy the completed text", "停止录音或复制已完成的文字"))
+        .help(dictation.failure?.message(in: language) ?? application.state.recordingPill.feedback.title(in: language))
         .onChange(of: dictation.duration) {
             levels.removeFirst()
             levels.append(dictation.level)

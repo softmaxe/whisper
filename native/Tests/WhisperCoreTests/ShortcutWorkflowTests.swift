@@ -55,12 +55,13 @@ import WhisperCore
     let transport = ControlledHTTPTransport()
     let paste = ControlledPasteSystem()
     let clipboard = ControlledClipboard()
+    let desktop = ControlledDesktopEffects()
     let app: WhisperApplication
     init(transport customTransport: (any FileHTTPTransport)? = nil) throws {
         profile = try ProfileFixture()
         app = WhisperApplication(profile: profile.profile, credentials: profile.credentials,
             microphones: microphones, transcriber: SelfHostedTranscriber(transport: customTransport ?? transport),
-            clock: clock, clipboard: clipboard, pasteSystem: paste)
+            clock: clock, clipboard: clipboard, pasteSystem: paste, desktopEffects: desktop)
         app.send(.saveASR(.init(serverURL: "http://localhost:8178/v1", model: "fixture"), credential: .unchanged))
     }
     func key(_ code: UInt16 = ShortcutInput.rightCommand, down: Bool = true, repeat repeated: Bool = false) {

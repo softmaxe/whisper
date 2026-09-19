@@ -9,11 +9,16 @@ public enum AppCommand {
     case setClipboardPreferences(autoPaste: Bool, keepResult: Bool)
     case setShortcutAvailable(Bool)
     case resetShortcutInput(Set<UInt16>)
+    case saveDesktopPreferences(DesktopPreferences)
+    case bootstrapDesktop(launchedAtLogin: Bool)
+    case showMainWindow, closeMainWindow, dismissPillFeedback
+    case setLaunchAtLogin(Bool), refreshLoginItemStatus, openLoginItemsSettings
     case dismissMessage
 }
 
 public struct ApplicationState: Equatable, Sendable {
     public var dictation = DictationState()
+    public var desktop = DesktopState()
     public var settings: AppSettings
     public var configurationError: ConfigurationError?
     public var settingsSaved = false
@@ -33,6 +38,12 @@ public final class WhisperApplication {
     public let profileStore: ProfileStore
     @ObservationIgnored let credentials: any CredentialStore
     @ObservationIgnored private var profileReadable = true
+
+    @ObservationIgnored let desktopEffects: any DesktopEffects
+    @ObservationIgnored let mediaOwnership: MediaOwnership
+    @ObservationIgnored var desktopBootstrapped = false
+    @ObservationIgnored var readinessFeedbackOwner: UUID?
+    @ObservationIgnored var pillFeedbackDeadline: (any ScheduledAction)?
 
     @ObservationIgnored let microphones: any MicrophoneProvider
     @ObservationIgnored let transcriber: any TranscriptionService
@@ -60,8 +71,11 @@ public final class WhisperApplication {
         transcriber: any TranscriptionService = SelfHostedTranscriber(),
         clock: (any WorkflowClock)? = nil,
         clipboard: (any TextClipboard)? = nil,
-        pasteSystem: (any AutomaticPasteSystem)? = nil
+        pasteSystem: (any AutomaticPasteSystem)? = nil, desktopEffects: (any DesktopEffects)? = nil
     ) {
+        let effects = desktopEffects ?? InertDesktopEffects()
+        self.desktopEffects = effects
+        self.mediaOwnership = MediaOwnership(effects: effects)
         self.microphones = microphones ?? NativeMicrophoneProvider()
         self.transcriber = transcriber
         self.clock = clock ?? SystemWorkflowClock()
@@ -79,13 +93,26 @@ public final class WhisperApplication {
         }
     }
 
-    deinit {
+    isolated deinit {
+        mediaOwnership.releaseAll()
+        pillFeedbackDeadline?.cancel()
         dictationCapture?.cancel()
         processingTask?.cancel()
     }
 
     public func send(_ command: AppCommand) {
         switch command {
+        case let .saveDesktopPreferences(preferences): saveDesktopPreferences(preferences)
+        case let .bootstrapDesktop(launchedAtLogin): bootstrapDesktop(launchedAtLogin: launchedAtLogin)
+        case .showMainWindow: state.desktop.mainWindowVisible = true
+        case .closeMainWindow: state.desktop.mainWindowVisible = false
+        case .dismissPillFeedback:
+            resetDesktopFeedback()
+            state.desktop.dismissedRequestID = state.dictation.requestID
+            if case .recovery = state.dictation.delivery { state.dictation.delivery = .none }
+        case let .setLaunchAtLogin(enabled): setLaunchAtLogin(enabled)
+        case .refreshLoginItemStatus: state.desktop.loginItemStatus = desktopEffects.loginItemStatus()
+        case .openLoginItemsSettings: desktopEffects.openLoginItemsSettings()
         case let .shortcut(input): receiveShortcut(input)
         case let .setShortcutAvailable(available): state.shortcutAvailable = available
         case let .resetShortcutInput(keys):

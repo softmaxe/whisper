@@ -41,6 +41,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var asr: ASRConfiguration
     // The opaque account is persisted; the credential itself exists only in Keychain.
     public var asrCredentialAccount: String?
+    public var desktop: DesktopPreferences
     public var autoPasteEnabled: Bool
     public var keepTranscriptionInClipboard: Bool
 
@@ -49,23 +50,25 @@ public struct AppSettings: Codable, Equatable, Sendable {
         asr: ASRConfiguration = .init(),
         asrCredentialAccount: String? = nil,
         autoPasteEnabled: Bool = true,
-        keepTranscriptionInClipboard: Bool = false
+        keepTranscriptionInClipboard: Bool = false, desktop: DesktopPreferences = .init()
     ) {
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
         self.autoPasteEnabled = autoPasteEnabled
         self.keepTranscriptionInClipboard = keepTranscriptionInClipboard
+        self.desktop = desktop
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, autoPasteEnabled, keepTranscriptionInClipboard
+        case language, asr, asrCredentialAccount, autoPasteEnabled, keepTranscriptionInClipboard, desktop
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         language = try values.decode(AppLanguage.self, forKey: .language)
         asr = try values.decode(ASRConfiguration.self, forKey: .asr)
         asrCredentialAccount = try values.decodeIfPresent(String.self, forKey: .asrCredentialAccount)
+        desktop = try values.decodeIfPresent(DesktopPreferences.self, forKey: .desktop) ?? .init()
         autoPasteEnabled = try values.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? true
         keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
     }
