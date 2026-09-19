@@ -46,6 +46,10 @@ struct DictationHomeView: View {
                     ), systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(.secondary)
                 }
+                if let failure = dictation.cleanupFailure {
+                    Text(failure.message(in: language) + " " + language.text("Using the original transcript.", "已使用原始转录。"))
+                        .foregroundStyle(.orange).font(.caption).accessibilityIdentifier("cleanup-fallback")
+                }
                 if !dictation.text.isEmpty {
                     Divider()
                     if let message = dictation.delivery.message(in: language) { Text(message).font(.caption).foregroundStyle(.secondary) }
@@ -55,6 +59,12 @@ struct DictationHomeView: View {
                         application.send(.copyDictationResult)
                     }
                     .accessibilityIdentifier("copy-dictation-result")
+                    if dictation.rawText != dictation.text {
+                        DisclosureGroup(language.text("Original transcript", "原始转录")) {
+                            Text(dictation.rawText).textSelection(.enabled)
+                            Button(language.text("Copy original", "复制原文")) { application.send(.copyRawDictationResult) }
+                        }
+                    }
                 }
             }
             .padding(20).background(.primary.opacity(0.025))
@@ -82,7 +92,7 @@ struct RecordingStatus: View {
                 ? language.text("Hold to speak…", "继续按住以说话…")
                 : language.text("Preparing microphone…", "正在准备麦克风…")
         case .recording: language.text("Listening", "正在聆听")
-        case .processing: language.text("Transcribing…", "正在转录…")
+        case .processing: application.state.dictation.isCleaning ? language.text("Cleaning up…", "正在整理…") : language.text("Transcribing…", "正在转录…")
         case .result: language.text("Transcription complete", "转录完成")
         case .failed: language.text("Try again", "请重试")
         }

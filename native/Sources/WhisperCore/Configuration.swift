@@ -38,6 +38,8 @@ public struct ASRConfiguration: Codable, Equatable, Sendable {
 
 public struct AppSettings: Codable, Equatable, Sendable {
     public var language: AppLanguage
+    public var cleanup: CleanupConfiguration
+    public var cleanupCredentialAccount: String?
     public var asr: ASRConfiguration
     public var microphone: MicrophonePreference
     public var transcription: TranscriptionPreferences
@@ -53,8 +55,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
         microphone: MicrophonePreference = .init(),
         autoPasteEnabled: Bool = true,
         keepTranscriptionInClipboard: Bool = false,
-        transcription: TranscriptionPreferences = .init()
+        transcription: TranscriptionPreferences = .init(),
+        cleanup: CleanupConfiguration = .init(),
+        cleanupCredentialAccount: String? = nil
     ) {
+        self.cleanup = cleanup
+        self.cleanupCredentialAccount = cleanupCredentialAccount
         self.language = language
         self.asr = asr
         self.asrCredentialAccount = asrCredentialAccount
@@ -65,7 +71,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription
+        case language, asr, asrCredentialAccount, microphone, autoPasteEnabled, keepTranscriptionInClipboard, transcription, cleanup, cleanupCredentialAccount
     }
     public init(from decoder: any Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -76,6 +82,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         transcription = try values.decodeIfPresent(TranscriptionPreferences.self, forKey: .transcription) ?? .init()
         autoPasteEnabled = try values.decodeIfPresent(Bool.self, forKey: .autoPasteEnabled) ?? true
         keepTranscriptionInClipboard = try values.decodeIfPresent(Bool.self, forKey: .keepTranscriptionInClipboard) ?? false
+        cleanup = try values.decodeIfPresent(CleanupConfiguration.self, forKey: .cleanup) ?? .init()
+        cleanupCredentialAccount = try values.decodeIfPresent(String.self, forKey: .cleanupCredentialAccount)
     }
 }
 
@@ -86,6 +94,7 @@ public enum CredentialChange: Sendable {
 }
 
 public enum ConfigurationError: Error, Equatable, Sendable {
+    case invalidCleanupOptions
     case invalidURL
     case insecureURL
     case embeddedCredential
@@ -96,6 +105,8 @@ public enum ConfigurationError: Error, Equatable, Sendable {
 
     public func message(in language: AppLanguage) -> String {
         switch self {
+        case .invalidCleanupOptions:
+            language.text("Use a temperature between 0 and 2 and a positive token limit.", "温度应在 0 到 2 之间，token 上限必须为正整数。")
         case .invalidURL:
             language.text("Enter a valid HTTP or HTTPS server URL.", "请输入有效的 HTTP 或 HTTPS 服务器地址。")
         case .insecureURL:

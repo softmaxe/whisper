@@ -2,8 +2,8 @@
 
 This Swift application develops alongside the existing Electron application. It
 targets Apple Silicon and macOS 27. It implements Settings, button-started
-Dictation, and Right Command Hold-to-talk with Automatic paste; the remaining
-workflows and pages follow through specification #35.
+Dictation, text cleanup, and Right Command Hold-to-talk with Automatic paste;
+the remaining workflows and pages follow through specification #35.
 
 Use Xcode 27 per command without changing the global Command Line Tools selection:
 
@@ -181,3 +181,26 @@ Dictionary hashes, upstream revisions, and MIT/Apache-2.0 notices are bundled in
 `test/native/chineseConversionOracle.test.js` checks source-data and fixture parity
 against the existing development dependency; the Swift workflow tests replay
 those fixtures through actual ASR requests, publication, and Copy commands.
+
+## Text cleanup
+
+Settings includes a separate Text cleanup server, model, optional Keychain API key,
+thinking toggle, temperature and token limit. The default prompt preserves the
+existing English and Chinese text; the prompt page previews, edits, resets, and
+tests a draft without saving it. Prompt tests use the saved server configuration.
+Neither credentials nor server replies are logged.
+
+Dictation runs cleanup after ASR and preserves the raw transcript separately from
+the final copyable text. Invalid, empty, truncated, failed, or timed-out cleanup
+keeps the raw result and displays a localized explanation. Cancellation and app
+teardown cancel processing immediately and suppress late responses. The cleanup
+request uses a 30-second deadline across parameter fallback attempts. Transient
+network, 408, 429, and 5xx failures may retry three times with 1, 2, and 4-second
+backoff; a deadline expiry never retries. Same-origin redirects preserve the
+explicit cleanup credential; cross-origin redirects are rejected.
+
+Cleanup workflow tests use the public application commands, isolated native
+profiles and temporary file Keychains, real serialized HTTP bodies, and controlled
+server/clock boundaries. Loopback tests also exercise the actual URLSession JSON
+transport and redirects. These checks do not establish production-server behavior,
+physical Dictation or paste behavior, or native visual acceptance.

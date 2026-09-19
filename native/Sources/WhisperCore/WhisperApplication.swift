@@ -2,6 +2,10 @@ import Foundation
 import Observation
 
 public enum AppCommand {
+    case saveCleanup(CleanupConfiguration, credential: CredentialChange)
+    case saveCleanupPrompt(String?)
+    case testCleanupPrompt(text: String, prompt: String?), cancelCleanupPromptTest, resetCleanupPrompt
+    case copyRawDictationResult
     case saveASR(ASRConfiguration, credential: CredentialChange)
     case setLanguage(AppLanguage)
     case setTranscriptionLanguage(String)
@@ -21,6 +25,8 @@ public enum AppCommand {
 }
 
 public struct ApplicationState: Equatable, Sendable {
+    public var cleanupTest = CleanupTestState()
+    public var cleanupCredentialConfigured: Bool { settings.cleanupCredentialAccount != nil }
     public var dictation = DictationState()
     public var microphoneInputs = MicrophoneSnapshot()
     public var microphoneFailure: DictationFailure?
@@ -43,8 +49,10 @@ public final class WhisperApplication {
     public internal(set) var state: ApplicationState
     public let profileStore: ProfileStore
     @ObservationIgnored let credentials: any CredentialStore
-    @ObservationIgnored private var profileReadable = true
+    @ObservationIgnored var profileReadable = true
 
+    @ObservationIgnored let cleanup: any CleanupService
+    @ObservationIgnored var cleanupTestTask: Task<Void, Never>?
     @ObservationIgnored let microphones: any MicrophoneProvider
     @ObservationIgnored let transcriber: any TranscriptionService
     @ObservationIgnored let clock: any WorkflowClock
@@ -68,8 +76,10 @@ public final class WhisperApplication {
         transcriber: any TranscriptionService = SelfHostedTranscriber(),
         clock: (any WorkflowClock)? = nil,
         clipboard: (any TextClipboard)? = nil,
-        pasteSystem: (any AutomaticPasteSystem)? = nil
+        pasteSystem: (any AutomaticPasteSystem)? = nil,
+        cleanup: any CleanupService = SelfHostedCleanup()
     ) {
+        self.cleanup = cleanup
         self.microphones = microphones ?? NativeMicrophoneProvider()
         self.transcriber = transcriber
         self.clock = clock ?? SystemWorkflowClock()
@@ -89,6 +99,7 @@ public final class WhisperApplication {
     }
 
     deinit {
+        cleanupTestTask?.cancel()
         dictationCapture?.cancel()
         processingTask?.cancel()
     }
@@ -118,6 +129,14 @@ public final class WhisperApplication {
             persist(settings)
         case let .setTranscriptionLanguage(code): setTranscriptionLanguage(code)
         case let .setChineseScriptPreference(preference): setChineseScriptPreference(preference)
+        case let .saveCleanup(configuration, credential): saveCleanup(configuration, credential: credential)
+        case let .testCleanupPrompt(text, prompt): testCleanupPrompt(text: text, prompt: prompt)
+        case .cancelCleanupPromptTest: cancelCleanupTest()
+        case let .saveCleanupPrompt(prompt): saveCleanupPrompt(prompt)
+        case .resetCleanupPrompt: saveCleanupPrompt(nil)
+        case .copyRawDictationResult:
+            guard !state.dictation.rawText.isEmpty else { return }
+            clipboard.write(state.dictation.rawText)
         case .startDictation: startDictation()
         case .stopDictation: stopDictation()
         case .cancelDictation: cancelDictation()

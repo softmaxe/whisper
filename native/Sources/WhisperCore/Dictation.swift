@@ -31,6 +31,8 @@ public struct DictationState: Equatable, Sendable {
     public var requestID: UUID?
     public var rawText = ""
     public var text = ""
+    public var isCleaning = false
+    public var cleanupFailure: CleanupFailure?
     public var resultCopied = false
     public var origin: DictationOrigin = .button
     public var gesture: DictationGesture = .none
@@ -141,6 +143,7 @@ extension WhisperApplication {
         let transcriber = self.transcriber
         let options = dictationTranscriptionOptions()
         let transcriptionPreferences = state.settings.transcription
+        let cleanupContext = cleanupContext(language: transcriptionPreferences.preferredLanguage)
         processingTask = Task { [weak self] in
             do {
                 let file = try await capture.finish()
@@ -157,7 +160,8 @@ extension WhisperApplication {
                       !DictionaryPrompt.isEcho(text, prompt: transcriptionPreferences.dictionaryPrompt(from: options.prompt)) else {
                     throw DictationFailure.dictionaryEcho
                 }
-                await self?.finishDictationText(rawText: text, text: text, requestID: id, preferences: transcriptionPreferences)
+                let complete = self?.cleanDictation(rawText: text, requestID: id, context: cleanupContext, preferences: transcriptionPreferences)
+                await complete?()
             } catch is CancellationError {
                 capture.removeFiles()
             } catch {
@@ -223,6 +227,7 @@ extension WhisperApplication {
         dictationCapture?.cancel()
         dictationCapture = nil
         dictationCredential = nil
+        state.dictation.isCleaning = false
         state.dictation.phase = .idle
         state.dictation.cancellation = kind
         provisionalFailure = nil
@@ -255,6 +260,7 @@ extension WhisperApplication {
         dictationCapture?.cancel()
         dictationCapture = nil
         dictationCredential = nil
+        state.dictation.isCleaning = false
         state.dictation.phase = .failed
         state.dictation.failure = failure
         state.dictation.level = 0

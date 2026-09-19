@@ -116,20 +116,22 @@ extension WhisperApplication {
         persist(settings)
     }
 
-    // Cleanup hands its completed or fallback text here. Snippets follow conversion at integration.
-    func finishDictationText(rawText: String, text: String, requestID: UUID, preferences: TranscriptionPreferences) async {
-        guard isCurrentDictation(requestID) else { return }
-        var result = text
-        markDictationStage("textConversion", requestID: requestID)
-        do {
-            result = try await ChineseScriptConverter.shared.convert(text, preferences: preferences)
-        } catch is CancellationError {
-            return
-        } catch {
-            guard isCurrentDictation(requestID) else { return }
-            state.dictation.chineseConversionFailed = true
+    // The conversion operation holds the application weakly while the actor processes text.
+    func finishDictationText(rawText: String, text: String, requestID: UUID, preferences: TranscriptionPreferences) -> @MainActor () async -> Void {
+        return { [weak self] in
+            guard self?.isCurrentDictation(requestID) == true else { return }
+            var result = text
+            self?.markDictationStage("textConversion", requestID: requestID)
+            do {
+                result = try await ChineseScriptConverter.shared.convert(text, preferences: preferences)
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self?.isCurrentDictation(requestID) == true else { return }
+                self?.state.dictation.chineseConversionFailed = true
+            }
+            guard self?.isCurrentDictation(requestID) == true, !Task.isCancelled else { return }
+            self?.completeDictation(rawText: rawText, text: result, requestID: requestID)
         }
-        guard isCurrentDictation(requestID), !Task.isCancelled else { return }
-        completeDictation(rawText: rawText, text: result, requestID: requestID)
     }
 }
