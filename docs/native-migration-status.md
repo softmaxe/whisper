@@ -36,12 +36,12 @@ hardware performance, visual parity, or permission retention.
 ## Acceptance gates
 
 At `8770993a460eba252dce91a77274327ee436799f`, all 325 integrated native workflow
-tests pass in 33 suites, plus the isolated long-recording memory case. The 1,057
-legacy/tooling quality checks pass at the same source tree; only native and
-documentation paths changed after that run. The native command runs ordinary
-workflows and the long-recording memory case in separate processes, so large
-Upload fixtures cannot contaminate the process-wide RSS measurement. It still runs
-every case without relaxing the memory limit.
+tests pass in 33 suites, plus the isolated long-recording memory case. The native
+command runs ordinary workflows and the long-recording memory case in separate
+processes, so large Upload fixtures cannot contaminate the process-wide RSS
+measurement. It still runs every case without relaxing the memory limit. The 1,057
+legacy/tooling quality checks pass on the pushed checkpoint that carries this
+documentation.
 
 Integration covers the complete cleanup → Chinese conversion → Snippets →
 History/Automatic paste workflow; correction learning; retained audio and retry;
@@ -50,12 +50,17 @@ with cancellation, current results and Upload exclusions. The separate
 [core verification report](native-core-verification.md) records the earlier
 built-in microphone smoke and its limits.
 
-[Remote CI](https://github.com/softmaxe/whisper/actions/runs/35470904060) passed for
-`be835b4d5e49cdef376ff8f7d34c52ea821ea698`, including native tests and
-credential-free packaging on macOS 27/Xcode 27 arm64. Later review rounds changed
-source after that run, so the exact-head CI result for the final revision still has
-to be recorded once the branch is pushed. The reviewed source rounds and the
-signed synthetic checks are recorded separately from physical acceptance.
+[Remote CI](https://github.com/softmaxe/whisper/actions/runs/35492185907) passed for
+`7c7f3f0f4127a785895c345958cd15f770f9c3be`, including native tests and
+credential-free packaging on macOS 27/Xcode 27 arm64. Its predecessor
+[run 35470904060](https://github.com/softmaxe/whisper/actions/runs/35470904060)
+covered the earlier revision `be835b4d5e49cdef376ff8f7d34c52ea821ea698`; review
+rounds changed the source in between, so the newer run is the exact-head record.
+`npm run test:signing` at the same revision confirms that two changed app versions
+and native helpers keep the same certificate-bound identity and that temporary
+signing material disappears after success and after a failed import. The reviewed
+source rounds and the signed synthetic checks are recorded separately from physical
+acceptance.
 
 Record deterministic workflow tests, packaged measurements, English/Chinese
 visual review, automated signature checks, and actual upgrade observations
