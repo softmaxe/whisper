@@ -113,7 +113,8 @@ evidence.
   The supported hardware acceptance set is built-in input and wireless iPhone.
 
 Human-dependent voice, physical shortcut, permission and signed upgrade checks
-remain open. Keep the PR in draft while acceptance is incomplete.
+remain open. The pull request was marked ready for review on request while those
+checks stay open, so a green review does not mean the migration has been accepted.
 
 See the [capture lifecycle decision](adr/0001-release-dictation-capture.md),
 [baseline procedure](recording-startup-baseline.md),

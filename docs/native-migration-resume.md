@@ -47,8 +47,9 @@ application and its profile were not touched.
    Accessibility and Keychain behavior; signature equality alone is insufficient.
 8. After full feature, interface, performance and upgrade acceptance, remove the
    AGENTS rule that requires inspecting upstream OpenWhispr for every change (the
-   user asked for this removal once the migration is complete), mark PR #58 ready,
-   and decide the daily-use transition. Publishing needs a separate request.
+   user asked for this removal once the migration is complete) and decide the
+   daily-use transition. PR #58 was marked ready for review on request on
+   September 20, 2026. Publishing needs a separate request.
 
 ## Open observations from the last synthetic pass
 
