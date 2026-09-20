@@ -1,11 +1,11 @@
 # Native migration acceptance map
 
 [Specification #35](https://github.com/softmaxe/whisper/issues/35) defines the
-behavior contract. The table covers all 65 user stories and points to existing
-observable regression evidence. It is a transfer checklist, not proof that the
-native app already implements the behavior. Native acceptance must drive the real
-application workflow with controlled external boundaries, then verify the
-physical and visual checks independently.
+behavior contract. The table covers all 65 user stories, the legacy behavior that
+the migration had to carry over, and the native ticket that owns it. The native
+implementations and their observable regression suites are integrated; the
+deterministic evidence still does not stand in for hardware, visual, performance or
+upgrade acceptance, which the story table below tracks per row.
 
 Legacy examples below are relative to `test/`. Existing tests of source text or
 private helpers are prior art only; port their observable behavior, not their

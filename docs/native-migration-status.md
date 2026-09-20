@@ -113,8 +113,7 @@ evidence.
   The supported hardware acceptance set is built-in input and wireless iPhone.
 
 Human-dependent voice, physical shortcut, permission and signed upgrade checks
-remain open. Complete the remaining implementation and automated verification
-before resuming those checks; keep the PR in draft while acceptance is incomplete.
+remain open. Keep the PR in draft while acceptance is incomplete.
 
 See the [capture lifecycle decision](adr/0001-release-dictation-capture.md),
 [baseline procedure](recording-startup-baseline.md),
