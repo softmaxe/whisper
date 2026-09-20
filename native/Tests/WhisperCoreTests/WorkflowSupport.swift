@@ -71,8 +71,9 @@ final class ControlledCapture: MicrophoneSession, @unchecked Sendable {
 @MainActor final class ControlledClock: WorkflowClock {
     let timeSource = ControlledTimestampSource()
     var timestampSource: any MonotonicTimeSource { timeSource }
+    var onRead: (() -> Void)?
     var now: TimeInterval {
-        get { timeSource.timestamp() }
+        get { onRead?(); return timeSource.timestamp() }
         set { timeSource.set(newValue) }
     }
     var wallDate = Date(timeIntervalSince1970: 1_789_920_000)

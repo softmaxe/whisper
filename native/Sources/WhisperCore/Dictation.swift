@@ -138,6 +138,9 @@ extension WhisperApplication {
                 firstAudioDeadline?.cancel()
                 firstAudioDeadline = nil
                 state.dictation.timing["firstAudio"] = (capturedAt ?? clock.now) - dictationStartedAt
+                // The first frame is recorded before queued release can submit it. Recheck
+                // its owner after input delivery, which can cancel and start another request.
+                guard drainInputAndCheckDictation(requestID) else { return }
                 publishRecordingReadiness()
             }
         case let .failed(failure): failDictation(failure, requestID: requestID)
@@ -204,7 +207,7 @@ extension WhisperApplication {
     }
 
     func markDictationStage(_ stage: String, requestID: UUID) {
-        guard drainInputAndCheckDictation(requestID) else { return }
+        guard ownsActiveDictation(requestID) else { return }
         state.dictation.timing[stage] = clock.now - dictationStartedAt
     }
 
@@ -252,6 +255,11 @@ extension WhisperApplication {
 
     func drainInputAndCheckDictation(_ id: UUID) -> Bool {
         shortcutInputDrain?()
+        return ownsActiveDictation(id)
+    }
+
+    /// Read-only guard for helpers inside an accepted operation; it never dispatches input.
+    func ownsActiveDictation(_ id: UUID) -> Bool {
         return state.dictation.requestID == id && state.dictation.phase.isActive
     }
 

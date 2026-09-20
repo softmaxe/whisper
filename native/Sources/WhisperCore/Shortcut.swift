@@ -205,7 +205,6 @@ extension WhisperApplication {
     }
 
     func publishRecordingReadiness() {
-        shortcutInputDrain?()
         guard state.dictation.phase == .preparing,
               state.dictation.timing["firstAudio"] != nil,
               !state.dictation.gesture.isProvisional else { return }
