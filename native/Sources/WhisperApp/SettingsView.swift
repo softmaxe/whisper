@@ -19,6 +19,14 @@ struct SettingsRootView: View {
     private var palette: WhisperPalette { WhisperPalette(scheme: colorScheme) }
 
     var body: some View {
+        GeometryReader { geometry in
+            shell(availableSize: geometry.size)
+        }
+        .frame(minWidth: 780, minHeight: 530)
+        .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func shell(availableSize: CGSize) -> some View {
         HStack(spacing: 0) {
             if !navigation.sidebarCollapsed { sidebar }
             VStack(spacing: 0) {
@@ -47,7 +55,6 @@ struct SettingsRootView: View {
         .background(palette.window)
         .font(.custom("JetBrainsMono-Regular", size: 13))
         .tint(palette.accent)
-        .frame(minWidth: 780, minHeight: 530)
         .accessibilityIdentifier("main-shell")
         .sheet(item: Binding(get: {
             navigation.settingsPresented ? ShellModal.settings : navigation.searchPresented ? .search : nil
@@ -58,7 +65,7 @@ struct SettingsRootView: View {
             }
         })) { modal in
             switch modal {
-            case .settings: SettingsModalView(application: application, secrets: secrets)
+            case .settings: SettingsModalView(application: application, secrets: secrets, availableSize: availableSize)
             case .search: HistorySearchView(application: application)
             }
         }
@@ -123,30 +130,41 @@ struct SettingsRootView: View {
 struct SettingsModalView: View {
     let application: WhisperApplication
     let secrets: SettingsSecretDrafts
+    let availableSize: CGSize
     @Environment(\.colorScheme) private var colorScheme
     private var language: AppLanguage { application.state.settings.language }
     private var section: SettingsSection { application.state.navigation.settingsSection }
+    private var width: CGFloat { min(896, availableSize.width * 0.9) }
+    private var height: CGFloat { availableSize.height * 0.85 }
+    private var compact: Bool { width < 800 }
 
     var body: some View {
         HStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(language.text("Settings", "设置")).font(.headline).padding(.horizontal, 12).padding(.vertical, 20)
+                if !compact {
+                    Text(language.text("Settings", "设置")).font(.headline).padding(.horizontal, 12).padding(.vertical, 20)
+                }
                 ForEach(SettingsSection.allCases, id: \.self) { item in
-                    if item == .general || item == .speechToText || item == .privacy {
+                    if !compact && (item == .general || item == .speechToText || item == .privacy) {
                         Text(item == .general ? language.text("App", "应用") : item == .speechToText ? language.text("AI Models", "AI 模型") : language.text("System", "系统"))
                             .font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.top, 14)
                     }
                     Button { application.send(.openSettings(item)) } label: {
-                        Label(item.title(in: language), systemImage: item.icon)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 10)
+                        HStack(spacing: 8) {
+                            Image(systemName: item.icon).frame(width: 16)
+                            if !compact { Text(item.title(in: language)) }
+                        }
+                            .frame(maxWidth: .infinity, alignment: compact ? .center : .leading)
+                            .padding(.horizontal, compact ? 0 : 12).padding(.vertical, 10)
                             .background(item == section ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
                             .contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("settings-" + item.rawValue)
+                        .accessibilityLabel(item.title(in: language)).help(item.title(in: language))
                         .accessibilityAddTraits(item == section ? .isSelected : [])
                 }
                 Spacer()
             }
-            .padding(.horizontal, 10).frame(width: 190)
+            .padding(.horizontal, compact ? 6 : 10).padding(.top, compact ? 16 : 0).frame(width: compact ? 48 : 190)
             .background(WhisperPalette(scheme: colorScheme).window)
             Divider()
             VStack(spacing: 0) {
@@ -169,11 +187,11 @@ struct SettingsModalView: View {
                         case .textCleanup: CleanupSettingsView(application: application, secrets: secrets)
                         case .privacy: PrivacySettingsView(application: application)
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(24)
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(compact ? 16 : 24)
                 }
             }.background(WhisperPalette(scheme: colorScheme).canvas)
         }
-        .frame(width: 860, height: 630)
+        .frame(width: width, height: height)
         .font(.custom("JetBrainsMono-Regular", size: 12))
         .tint(WhisperPalette(scheme: colorScheme).accent)
         .onExitCommand {
