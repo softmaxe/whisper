@@ -134,7 +134,10 @@ struct RecordingStatus: View {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: RecordingPill(application: application))
+        let content = NSHostingView(rootView: RecordingPill(application: application))
+        // The presentation owns panel bounds; SwiftUI must not publish competing window limits.
+        content.sizingOptions = []
+        panel.contentView = content
     }
     func update(refreshGeometry: Bool = false) {
         let presentation = application.state.recordingPill
@@ -197,7 +200,9 @@ private struct RecordingPill: View {
                 .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
         } else if case .recovery = dictation.delivery {
             let recoveryRevision = application.state.desktop.copyRecovery.revision
+            let panelSize = application.state.recordingPill.panelSize
             CopyRecoveryCard(application: application)
+            .frame(width: panelSize.width - 20, height: panelSize.height - 20)
             .id(recoveryRevision)
             .padding(10)
             .onHover { held in
@@ -329,12 +334,13 @@ private struct CopyRecoveryCard: View {
                     Text("Esc").font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
                 }
             }.padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+                .fixedSize(horizontal: false, vertical: true)
             Divider()
             ScrollView {
                 Text(dictation.text).textSelection(.enabled).font(.system(size: 15)).lineSpacing(6)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 12)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             .focusable().accessibilityIdentifier("recovery-text")
             .accessibilityLabel(language.text("Transcription text", "转写文字"))
             Divider()
@@ -360,6 +366,7 @@ private struct CopyRecoveryCard: View {
                 }
             }
             .font(.system(size: 12)).frame(minHeight: 32).padding(.horizontal, 16).padding(.vertical, 12)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .background(WhisperPalette(scheme: colorScheme).window, in: RoundedRectangle(cornerRadius: 24))
         .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(.primary.opacity(0.12)))
