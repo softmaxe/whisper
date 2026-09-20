@@ -19,6 +19,7 @@ import WhisperCore
     var writes: [String] = []
     var probes = 0
     var onPaste: ((String) -> Void)?
+    var onProbeReturn: (() -> Void)?
     func captureTarget() -> PasteTarget? { captures.append(frontmost); return frontmost }
     func snapshotClipboard() -> ClipboardSnapshot { clipboard }
     func replaceClipboard(with text: String) -> Int? {
@@ -38,8 +39,9 @@ import WhisperCore
     }
     func canPaste(_ target: PasteTarget) async -> Bool {
         probes += 1
-        if suspendProbe { return await withCheckedContinuation { probeContinuation = $0 } }
-        return allowProbe
+        let result = if suspendProbe { await withCheckedContinuation { probeContinuation = $0 } } else { allowProbe }
+        onProbeReturn?()
+        return result
     }
     func paste(_ target: PasteTarget) async -> Bool {
         guard allowPaste else { return false }
