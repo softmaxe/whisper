@@ -197,19 +197,9 @@ private struct RecordingPill: View {
                 .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
         } else if case .recovery = dictation.delivery {
             let recoveryRevision = application.state.desktop.copyRecovery.revision
-            VStack(alignment: .leading, spacing: 10) {
-                Text(dictation.delivery.message(in: language) ?? "").font(.system(size: 12))
-                ScrollView { Text(dictation.text).textSelection(.enabled).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading) }
-                    .frame(maxHeight: 100)
-                    .focusable().accessibilityIdentifier("recovery-text")
-                Button(language.text(dictation.resultCopied ? "Copied" : "Copy text", dictation.resultCopied ? "已复制" : "复制文字")) {
-                    application.send(.copyDictationResult)
-                }
-                .accessibilityIdentifier("recovery-copy")
-                Button(language.text("Dismiss", "关闭")) { application.send(.dismissPillFeedback) }
-                    .accessibilityIdentifier("recovery-dismiss")
-            }
-            .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
+            CopyRecoveryCard(application: application)
+            .id(recoveryRevision)
+            .padding(10)
             .onHover { held in
                 recoveryHovered = held
                 if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, held)) }
@@ -296,5 +286,85 @@ private struct RecordingPill: View {
         }
         .buttonStyle(.plain).accessibilityLabel(language.text("Cancel", "取消"))
         .accessibilityIdentifier("recording-pill-cancel")
+    }
+}
+
+private struct CopyRecoveryCard: View {
+    let application: WhisperApplication
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var copyAttempted = false
+    private var language: AppLanguage { application.state.settings.language }
+    private var dictation: DictationState { application.state.dictation }
+    private var readyToPaste: Bool {
+        if case let .recovery(copied) = dictation.delivery { return copied || dictation.resultCopied }
+        return dictation.resultCopied
+    }
+    private var copyFailed: Bool { copyAttempted && !readyToPaste }
+    private var notice: String {
+        if copyFailed { return language.text("Copy failed. Try again or select the text to copy it.", "复制失败，请重试或选中文字后复制。") }
+        return readyToPaste
+            ? language.text("Could not paste automatically. Text copied to clipboard.", "未能自动粘贴，文字已复制到剪贴板。")
+            : language.text("Could not paste automatically. Copy the text below.", "未能自动粘贴，请复制下方文字。")
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(language.text("Transcription ready", "转写已完成"))
+                        .font(.system(size: 14, weight: .semibold))
+                    Text(notice).font(.system(size: 12)).lineSpacing(4)
+                        .foregroundStyle(copyFailed ? Color.red : .secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("recovery-notice")
+                }.frame(maxWidth: .infinity, alignment: .leading)
+                VStack(spacing: 2) {
+                    Button { application.send(.dismissPillFeedback) } label: {
+                        Image(systemName: "xmark").font(.system(size: 14)).frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .accessibilityLabel(language.text("Close transcription", "关闭转写结果"))
+                    .accessibilityIdentifier("recovery-dismiss")
+                    .help(language.text("Close transcription (Esc)", "关闭转写结果（Esc）"))
+                    Text("Esc").font(.system(size: 10)).foregroundStyle(.secondary).accessibilityHidden(true)
+                }
+            }.padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
+            Divider()
+            ScrollView {
+                Text(dictation.text).textSelection(.enabled).font(.system(size: 15)).lineSpacing(6)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .focusable().accessibilityIdentifier("recovery-text")
+            .accessibilityLabel(language.text("Transcription text", "转写文字"))
+            Divider()
+            HStack(spacing: 12) {
+                if readyToPaste {
+                    Text(language.text("⌘V to paste", "按 ⌘V 粘贴")).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if readyToPaste {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark").foregroundStyle(.green).accessibilityHidden(true)
+                        Text(language.text("Copied", "已复制"))
+                    }.foregroundStyle(.secondary).accessibilityIdentifier("recovery-copied")
+                } else {
+                    Button {
+                        copyAttempted = true
+                        application.send(.copyDictationResult)
+                    } label: {
+                        Label(language.text("Copy text", "复制文字"), systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.bordered).disabled(dictation.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityIdentifier("recovery-copy")
+                }
+            }
+            .font(.system(size: 12)).frame(minHeight: 32).padding(.horizontal, 16).padding(.vertical, 12)
+        }
+        .background(WhisperPalette(scheme: colorScheme).window, in: RoundedRectangle(cornerRadius: 24))
+        .overlay(RoundedRectangle(cornerRadius: 24).strokeBorder(.primary.opacity(0.12)))
+        .clipShape(RoundedRectangle(cornerRadius: 24))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(language.text("Transcription ready", "转写已完成"))
     }
 }
