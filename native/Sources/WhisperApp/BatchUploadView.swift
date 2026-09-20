@@ -77,7 +77,7 @@ private struct BatchUploadRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 9) {
                 if item.status.isActive { ProgressView().controlSize(.small) }
-                else { Image(systemName: icon).foregroundStyle(item.status == .failed ? .red : .secondary) }
+                else { Image(systemName: icon).foregroundStyle(item.status == .failed ? .red : .secondary).accessibilityHidden(true) }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.name).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                     Text(status).font(.caption).foregroundStyle(.secondary)

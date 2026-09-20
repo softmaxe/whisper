@@ -25,6 +25,7 @@ struct UploadView: View {
             } else if upload.phase == .idle {
                 VStack(spacing: 16) {
                     Image(systemName: "arrow.up.doc").font(.system(size: 34)).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     Text(language.text("Drop audio or video files here", "将音频或视频文件拖到此处"))
                     Button(language.text("Browse files", "浏览文件"), action: browse)
                         .buttonStyle(.borderedProminent).accessibilityIdentifier("upload-browse")
@@ -45,6 +46,7 @@ struct UploadView: View {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack(spacing: 12) {
                         Image(systemName: "waveform").font(.title2).foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(upload.fileName).lineLimit(2).textSelection(.enabled)
                             if let size = upload.sourceSize { Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file)).font(.caption).foregroundStyle(.secondary) }

@@ -304,7 +304,7 @@ struct HistoryPrivacyView: View {
                     if application.state.privacy.isLoadingStorage {
                         Text(language.text("Calculating…", "正在计算…")).font(.caption).foregroundStyle(.secondary)
                     } else if let usage = application.state.privacy.audioUsage {
-                        Text(language.text("\(usage.files) files, \(ByteCountFormatter.string(fromByteCount: usage.bytes, countStyle: .file))", "\(usage.files) 个文件，\(ByteCountFormatter.string(fromByteCount: usage.bytes, countStyle: .file))"))
+                        Text(language.text("\(usage.files) files, \(storageSize(usage.bytes))", "\(usage.files) 个文件，\(storageSize(usage.bytes))"))
                             .font(.caption).foregroundStyle(.secondary).accessibilityIdentifier("audio-storage-usage")
                     }
                 }
@@ -327,6 +327,13 @@ struct HistoryPrivacyView: View {
             Button(language.text("Cancel", "取消"), role: .cancel) {}
             Button(language.text("Delete audio", "删除音频"), role: .destructive) { application.send(.clearHistoryAudio) }
         } message: { Text(language.text("Transcripts stay in History. Deleted audio cannot be played or retried.", "转录文本会保留在历史记录中。删除音频后将无法播放或重试。")) }
+    }
+
+    private func storageSize(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        return formatter.string(fromByteCount: bytes)
     }
 
     private func retentionPicker(audio: Bool) -> some View {
