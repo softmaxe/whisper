@@ -3,6 +3,75 @@ import Testing
 import WhisperCore
 
 @Suite(.serialized) @MainActor struct CorrectionLearningWorkflowTests {
+    @Test func earlyCorrectionLearnsAndKeepsObservingLaterEditsInTheCapturedRange() async throws {
+        let fixture = try LearningFixture(before: "Prefix old Suffix", range: 7..<10)
+        defer { fixture.remove() }
+        await fixture.paste("Hey Shunade and Jonathon today")
+        fixture.f.clock.advance(0.1)
+        fixture.field.setRegion("Hey Sinead and Jonathon today")
+        fixture.f.clock.advance(0.4)
+        await settle { fixture.field.reads == 1 }
+        await settle { fixture.f.clock.scheduledDelays.contains { abs($0 - 1.5) < 0.000001 } }
+        try #require(fixture.field.observation?.cancelled == false)
+        fixture.f.clock.advance(1.5)
+        await settle { fixture.f.app.state.dictionary.words == ["Sinead"] }
+        await fixture.edit("Hey Sinead and Jonathan today")
+        fixture.f.clock.advance(1.5)
+        await settle { fixture.f.app.state.dictionary.words == ["Sinead", "Jonathan"] }
+        #expect(fixture.field.current.text == "Prefix Hey Sinead and Jonathan today Suffix")
+        let reopened = WhisperApplication(profile: fixture.f.profile.profile, credentials: fixture.f.profile.credentials)
+        #expect(reopened.state.dictionary.words == ["Sinead", "Jonathan"])
+        fixture.f.app.send(.undoLearnedCorrections)
+        #expect(fixture.f.app.state.dictionary.words == ["Sinead"])
+    }
+
+    @Test(arguments: ["focus", "selection", "prefix", "suffix", "pre-paste"])
+    func earlySnapshotsCannotEscapeFieldAndInsertionOwnership(boundary: String) async throws {
+        let fixture = try LearningFixture(before: "Prefix old Suffix", range: 7..<10)
+        defer { fixture.remove() }
+        await fixture.paste("Hey Shunade how are you")
+        fixture.field.setRegion("Hey Sinead how are you")
+        switch boundary {
+        case "focus": fixture.field.focused = false
+        case "selection": fixture.field.current = .init(text: fixture.field.current.text, selection: 0..<0)
+        case "prefix": fixture.field.current = .init(text: "Other " + fixture.field.current.text, selection: 15..<15)
+        case "suffix": fixture.field.current = .init(text: fixture.field.current.text + " changed", selection: 15..<15)
+        default:
+            // The old field with a moved caret is still not evidence that the insertion landed.
+            fixture.field.current = .init(text: fixture.field.beforePaste.text, selection: 7..<7)
+        }
+        fixture.f.clock.advance(0.5)
+        await settle { fixture.field.reads == 1 }
+        if boundary == "pre-paste" {
+            for reads in 2...5 {
+                await settle { fixture.f.clock.scheduledDelays.contains { abs($0 - 0.3) < 0.000001 } }
+                fixture.f.clock.advance(0.301)
+                await settle { fixture.field.reads == reads }
+            }
+        }
+        await settle { fixture.field.observation?.cancelled == true }
+        fixture.field.focused = true
+        fixture.field.setRegion("Hey Sinead how are you")
+        fixture.field.observation?.changed()
+        fixture.f.clock.advance(2)
+        await Task.yield()
+        #expect(fixture.f.app.state.dictionary.words.isEmpty)
+    }
+
+    @Test func aNewRequestInvalidatesAnEarlyCorrectionBeforeDebounce() async throws {
+        let fixture = try LearningFixture(); defer { fixture.remove() }
+        await fixture.paste("Hey Shunade how are you")
+        fixture.field.setRegion("Hey Sinead how are you")
+        fixture.f.clock.advance(0.5)
+        await settle { fixture.f.clock.scheduledDelays.contains { abs($0 - 1.5) < 0.000001 } }
+        fixture.f.app.send(.startDictation)
+        fixture.f.microphones.sessions.last?.open()
+        fixture.f.clock.advance(2)
+        await Task.yield()
+        #expect(fixture.field.observation?.cancelled == true)
+        #expect(fixture.f.app.state.dictionary.words.isEmpty)
+    }
+
     @Test func confirmedPasteLearnsPersistsAndFeedsNextActualASRRequest() async throws {
         let fixture = try LearningFixture()
         defer { fixture.remove() }

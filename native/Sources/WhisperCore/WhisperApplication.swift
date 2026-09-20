@@ -151,6 +151,7 @@ public final class WhisperApplication {
     @ObservationIgnored let automaticPaste: AutomaticPaste
     @ObservationIgnored var dictationTarget: PasteTarget?
     @ObservationIgnored var pressedKeys = Set<UInt16>()
+    @ObservationIgnored var shortcutInputDrain: (@MainActor () -> Void)?
     @ObservationIgnored var holdDeadline: (any ScheduledAction)?
     @ObservationIgnored var doubleTapDeadline: (any ScheduledAction)?
     @ObservationIgnored var gesturePressedAt: TimeInterval = 0
@@ -424,41 +425,8 @@ public final class WhisperApplication {
     }
 
     private func saveASR(_ configuration: ASRConfiguration, credential: CredentialChange) {
-        state.settingsSaved = false
-        guard profileReadable else {
-            state.configurationError = .incompatibleProfile
-            return
-        }
-        var createdAccount: String?
-        do {
-            var settings = state.settings
-            settings.asr = try configuration.validated()
-            switch credential {
-            case .unchanged: break
-            case let .replace(value):
-                if value.isEmpty {
-                    settings.asrCredentialAccount = nil
-                } else {
-                    let account = "asr-" + UUID().uuidString
-                    try credentials.write(value, account: account)
-                    createdAccount = account
-                    settings.asrCredentialAccount = account
-                }
-            case .remove:
-                settings.asrCredentialAccount = nil
-            }
-            let previousAccount = state.settings.asrCredentialAccount
-            try profileStore.saveSettings(settings)
-            state.settings = settings
-            state.settingsSaved = true
-            state.configurationError = nil
-            if let previousAccount, previousAccount != settings.asrCredentialAccount {
-                // The new profile is committed before removing the old credential.
-                try credentials.delete(account: previousAccount)
-            }
-        } catch {
-            if !state.settingsSaved, let createdAccount { try? credentials.delete(account: createdAccount) }
-            state.configurationError = error as? ConfigurationError ?? .persistenceFailed
+        saveServiceSettings(credential: credential, account: \.asrCredentialAccount, accountPrefix: "asr-") {
+            $0.asr = try configuration.validated()
         }
     }
 

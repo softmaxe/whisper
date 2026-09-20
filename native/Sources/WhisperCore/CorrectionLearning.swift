@@ -118,17 +118,19 @@ public struct CorrectionLearningState: Equatable, Sendable {
             }
             guard let snapshot, let edited = region(snapshot) else { stop(); return }
             if !baselineConfirmed {
-                // Seeing the exact inserted text proves the paste landed in this captured scope.
-                if edited != original {
+                // The captured field and surrounding text own this range. Its first value may
+                // already include a correction made while the paste-settling delay elapsed.
+                if edited != original, snapshot.text == field.beforePaste.text || edited.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     baselineAttempts += 1
-                    guard baselineAttempts < 5, snapshot == field.beforePaste else { stop(); return }
+                    guard baselineAttempts < 5 else { stop(); return }
                     timer?.cancel()
                     timer = clock.schedule(after: 0.3) { [weak self] in self?.query(id) }
                     return
                 }
                 baselineConfirmed = true
-                lastRegion = edited
-            } else if edited != lastRegion {
+                lastRegion = original
+            }
+            if edited != lastRegion {
                 lastRegion = edited
                 debounce?.cancel()
                 commitTask?.cancel(); commitTask = nil
