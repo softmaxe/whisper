@@ -4,7 +4,9 @@ public struct CopyRecoveryState: Equatable, Sendable {
     public var revision: UUID?
     public var requestID: UUID?
     public var isPresented = false
-    public var isHeld = false
+    public var isHovered = false
+    public var isFocused = false
+    public var isHeld: Bool { isHovered || isFocused }
     public init() {}
 }
 
@@ -18,7 +20,7 @@ extension WhisperApplication {
     func recordingPillAction() {
         if state.recordingPill.feedback == .idle { startDictation(origin: .pill) }
         else if state.dictation.phase == .recording { stopDictation() }
-        else if state.dictation.phase == .result { send(.copyDictationResult) }
+        else if state.dictation.phase == .result { startDictation(origin: .pill) }
         else if state.dictation.phase == .failed || state.dictation.phase == .idle { startDictation(origin: .pill) }
     }
 
@@ -39,8 +41,15 @@ extension WhisperApplication {
 
     func setCopyRecoveryHeld(_ revision: UUID, _ held: Bool) {
         guard state.desktop.copyRecovery.revision == revision,
-              state.desktop.copyRecovery.isHeld != held else { return }
-        state.desktop.copyRecovery.isHeld = held
+              state.desktop.copyRecovery.isHovered != held else { return }
+        state.desktop.copyRecovery.isHovered = held
+        scheduleCopyRecoveryDismissal()
+    }
+
+    func setCopyRecoveryFocused(_ revision: UUID, _ focused: Bool) {
+        guard state.desktop.copyRecovery.revision == revision,
+              state.desktop.copyRecovery.isFocused != focused else { return }
+        state.desktop.copyRecovery.isFocused = focused
         scheduleCopyRecoveryDismissal()
     }
 

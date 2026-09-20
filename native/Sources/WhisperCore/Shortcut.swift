@@ -105,7 +105,7 @@ extension WhisperApplication {
                     state.dictation.gesture = .awaitingSecondTap
                     firstTapReleasedAt = eventTime
                     doubleTapDeadline = clock.schedule(after: max(0, Self.doubleTapWindow - (clock.now - eventTime))) { [weak self] in
-                        guard let self, self.isCurrentDictation(id), self.firstTapReleasedAt == eventTime,
+                        guard let self, self.drainInputAndCheckDictation(id), self.firstTapReleasedAt == eventTime,
                               self.state.dictation.gesture == .awaitingSecondTap else { return }
                         self.doubleTapDeadline = nil
                         self.cancelDictation(kind: .rejectedGesture)
@@ -134,7 +134,7 @@ extension WhisperApplication {
         guard state.dictation.phase == .preparing, let id = state.dictation.requestID else { return }
         gesturePressedAt = pressedAt
         holdDeadline = clock.schedule(after: max(0, Self.holdThreshold - (clock.now - pressedAt))) { [weak self] in
-            guard let self, self.isCurrentDictation(id), self.gesturePressedAt == pressedAt,
+            guard let self, self.drainInputAndCheckDictation(id), self.gesturePressedAt == pressedAt,
                   self.state.dictation.gesture == .candidate || self.state.dictation.gesture == .secondTap else { return }
             self.holdDeadline = nil
             self.recognizeHold()

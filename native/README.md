@@ -102,7 +102,8 @@ real owner, readiness, AAC writer, multipart builder, response parsing, and
 isolated profile. `WorkflowSupport.swift` contains shared fixtures for subsequent
 workflow tests. Real loopback HTTP tests exercise URLSession uploads and redirect
 handling without opening hardware or using real speech. Native UI uses a
-nonactivating AppKit Recording pill with the current 98 × 40 compact footprint.
+nonactivating AppKit Recording pill with a 40 × 40 idle/processing footprint and
+a 98 × 36 recording footprint.
 
 ## Microphone selection
 
@@ -214,17 +215,33 @@ mode with a fresh temporary profile:
 ```sh
 Whisper --synthetic-preview --profile /tmp/whisper-preview-en
 Whisper --synthetic-preview --profile /tmp/whisper-preview-zh --preview-chinese
+Whisper --synthetic-preview --profile /tmp/whisper-preview-compact --preview-compact
+Whisper --preview-pill --profile /tmp/whisper-preview-pill --hidden
+Whisper --preview-pill --preview-recovery --profile /tmp/whisper-preview-recovery --hidden
 ```
 
 The profile must be under the system temporary directory or `/tmp`; an existing
 nonempty directory without the preview marker is rejected. This mode supplies
 controlled microphone frames, transcription, cleanup, memory credentials and
 clipboard, paste, correction, audio playback, conversion, desktop effects, and
-permission adapters **before** constructing the application. It creates neither
-the global shortcut monitor nor the Recording pill controller. Help/license links
+permission adapters **before** constructing the application. Ordinary synthetic
+mode creates neither the global shortcut monitor nor the Recording pill
+controller. Help/license links
 do not open external apps. It cannot record hardware, send transcription requests,
 paste externally, play audio, control media, register login items, or query/request
 system permissions. A `--profile` override alone does not enable these protections.
+
+`--preview-pill` also selects synthetic composition by itself, so omitting
+`--synthetic-preview` cannot select production effects. It enables only the pill
+controller, with simulated successful paste by default; `--preview-recovery`
+selects simulated copy recovery. Display placement reads numeric NSScreen bounds
+and uses no other-app window list or Accessibility tree. The global shortcut
+monitor and Globe preference handling stay absent. `--hidden` keeps the main
+window closed; omit it to inspect the shell too. `--preview-compact` sets the
+initial synthetic window content to 780 × 530 while production keeps 1200 × 800.
+Use the explicit app Copy buttons for memory-only clipboard actions during
+review. Native text selection retains normal AppKit commands; avoid system
+Cmd-C and contextual Copy when the test must leave the system clipboard intact.
 
 The mode writes generated sample text, Dictionary entries, Snippets, and silent
 WAV media only into its marked temporary profile. `--preview-populated` uses 1,000
@@ -460,6 +477,8 @@ The pill follows its configured bottom-left/center/bottom-right placement; activ
 Dictation, errors and copy recovery remain visible even when idle auto-hide is on.
 Success/cancellation feedback lasts 500 ms before the idle visibility policy takes
 over. Pill updates never activate the main window or make the pill key/main.
+Only a visible copy-recovery card allows the user's click to give its panel
+keyboard focus; ordinary pill states cannot become key.
 
 `prepareForTermination()` cancels capture, processing and prompt tests, stops
 correction observation, awaits owned media cleanup, and flushes accepted History
@@ -720,6 +739,11 @@ The pill's Start and Retry controls send `recordingPillAction`. They use a separ
 the complete processing, History and Automatic paste pipeline. The ordinary
 `startDictation` button command retains its copyable-result behavior and does not
 probe the operating system for a paste target.
+Clicking the 500 ms completed feedback immediately starts another Dictation.
+Copying remains on explicit Copy controls. Idle, preparation and processing use
+the 40 × 40 compact circle; only Recording shows the waveform at 98 × 36. The
+cancel control stays inward of the right dock so growing the pill does not put
+Cancel under the former idle primary-button position.
 
 Copy recovery waits for the native panel to apply its bounds and become visible
 before starting its five-second dismissal timer. Hovering or focusing the card
@@ -727,6 +751,15 @@ pauses the timer; releasing that hold starts a fresh five seconds. Escape closes
 the visible recovery without deleting the current result or History. A revision
 ties presentation events and timer callbacks to one recovery, so stale callbacks
 cannot dismiss a replacement result or a newer recording.
+Hover and whole-window key focus have separate revision-scoped owners, including
+focus on Copy, Dismiss and selectable text. Replacing or hiding a focused recovery
+card releases its key status; showing ordinary feedback never requests focus.
+
+An app-local Escape monitor needs no Accessibility permission. While Whisper's
+own window or recovery card receives the event, active Dictation cancellation
+takes precedence over Settings or Search dismissal. The same `foregroundEscape`
+command handles view exit actions; global interception for another foreground
+app remains with the separately permissioned shortcut monitor.
 
 `PillDisplaySystem` supplies display metadata and the target's ordinary on-screen
 window bounds. The policy selects the display intersecting the largest target

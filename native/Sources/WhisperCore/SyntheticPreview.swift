@@ -2,7 +2,8 @@ import Foundation
 
 /// Explicit preview-only composition. A profile override alone must never select these effects.
 @MainActor public enum SyntheticPreview {
-    public static func make(profile: NativeProfile, language: AppLanguage = .english) throws -> WhisperApplication {
+    public static func make(profile: NativeProfile, language: AppLanguage = .english, pill: Bool = false,
+                            recovery: Bool = false, pillDisplays: any PillDisplaySystem = InertPillDisplaySystem()) throws -> WhisperApplication {
         let directory = profile.directory.resolvingSymlinksInPath().standardizedFileURL
         let roots = [FileManager.default.temporaryDirectory, URL(fileURLWithPath: "/tmp", isDirectory: true)]
             .map { $0.resolvingSymlinksInPath().standardizedFileURL.pathComponents }
@@ -19,12 +20,12 @@ import Foundation
         let clipboard = PreviewClipboard()
         let app = WhisperApplication(profile: profile, credentials: PreviewCredentials(),
             microphones: PreviewMicrophones(), transcriber: PreviewTranscriber(language: language),
-            clipboard: clipboard, pasteSystem: PreviewPaste(clipboard: clipboard), cleanup: PreviewCleanup(),
+            clipboard: clipboard, pasteSystem: PreviewPaste(clipboard: clipboard, succeeds: pill && !recovery), cleanup: PreviewCleanup(),
             correctionSystem: PreviewCorrections(), desktopEffects: InertDesktopEffects(),
-            audioSystem: PreviewHistoryAudio(), uploadConverter: PreviewUploadConverter(), privacySystem: PreviewPrivacy())
+            audioSystem: PreviewHistoryAudio(), uploadConverter: PreviewUploadConverter(), pillDisplays: pillDisplays, privacySystem: PreviewPrivacy())
         var preferences = app.state.settings.desktop
         preferences.audioCuesEnabled = false; preferences.pauseMediaOnDictation = false
-        preferences.showMenuBarIcon = false; preferences.pillVisible = false; preferences.floatingIconAutoHide = true
+        preferences.showMenuBarIcon = false; preferences.pillVisible = pill; preferences.floatingIconAutoHide = !pill
         preferences.startMinimized = false
         app.send(.saveDesktopPreferences(preferences))
         app.send(.setAutoLearnCorrections(false))
@@ -91,14 +92,15 @@ private final class PreviewCredentials: CredentialStore {
 }
 @MainActor private struct PreviewPaste: AutomaticPasteSystem {
     let clipboard: PreviewClipboard
+    let succeeds: Bool
     var modifiersHeld: Bool { false }
-    func captureTarget() -> PasteTarget? { nil }
+    func captureTarget() -> PasteTarget? { succeeds ? .init(processID: 42) : nil }
     func snapshotClipboard() -> ClipboardSnapshot { .init(items: []) }
     func replaceClipboard(with text: String) -> Int? { clipboard.write(text); return 1 }
     func restoreClipboard(_ snapshot: ClipboardSnapshot, ownedRevision: Int) {}
-    func activate(_ target: PasteTarget) async -> Bool { false }
-    func canPaste(_ target: PasteTarget) async -> Bool { false }
-    func paste(_ target: PasteTarget) async -> Bool { false }
+    func activate(_ target: PasteTarget) async -> Bool { succeeds }
+    func canPaste(_ target: PasteTarget) async -> Bool { succeeds }
+    func paste(_ target: PasteTarget) async -> Bool { succeeds }
 }
 @MainActor private struct PreviewMicrophones: MicrophoneProvider {
     func resolveDevice() throws -> MicrophoneDevice { try inputSnapshot().devices[0] }

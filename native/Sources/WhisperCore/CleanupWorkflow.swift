@@ -68,7 +68,7 @@ extension WhisperApplication {
     // Build the operation synchronously so no application instance spans the server await.
     func cleanDictation(rawText: String, requestID: UUID, context suppliedContext: CleanupContext? = nil,
                        preferences suppliedPreferences: TranscriptionPreferences? = nil) -> @MainActor () async -> Void {
-        guard isCurrentDictation(requestID) else { return {} }
+        guard drainInputAndCheckDictation(requestID) else { return {} }
         let configuration = state.settings.cleanup
         var context = suppliedContext ?? cleanupContext()
         context.diagnostics = dictationDiagnostics
@@ -85,7 +85,7 @@ extension WhisperApplication {
             state.dictation.isCleaning = true
         }
         return { [weak self] in
-            guard self?.isCurrentDictation(requestID) == true else { return }
+            guard self?.drainInputAndCheckDictation(requestID) == true else { return }
             var text = rawText
             if shouldClean {
                 do {
@@ -95,13 +95,13 @@ extension WhisperApplication {
                     context.diagnostics?.setCleanup(.completed)
                 } catch is CancellationError { return }
                 catch {
-                    guard self?.isCurrentDictation(requestID) == true else { return }
+                    guard self?.drainInputAndCheckDictation(requestID) == true else { return }
                     self?.state.dictation.cleanupFailure = error as? CleanupFailure ?? .network
                     context.diagnostics?.setCleanup(.failed)
                 }
                 context.diagnostics?.mark(.cleanupCompleted)
             }
-            guard self?.isCurrentDictation(requestID) == true, !Task.isCancelled else { return }
+            guard self?.drainInputAndCheckDictation(requestID) == true, !Task.isCancelled else { return }
             self?.state.dictation.isCleaning = false
             let finish = self?.finishDictationText(rawText: rawText, text: text, requestID: requestID, preferences: preferences)
             await finish?()

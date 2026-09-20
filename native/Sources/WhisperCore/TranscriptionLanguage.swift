@@ -119,7 +119,7 @@ extension WhisperApplication {
     // The conversion operation holds the application weakly while the actor processes text.
     func finishDictationText(rawText: String, text: String, requestID: UUID, preferences: TranscriptionPreferences) -> @MainActor () async -> Void {
         return { [weak self] in
-            guard self?.isCurrentDictation(requestID) == true else { return }
+            guard self?.drainInputAndCheckDictation(requestID) == true else { return }
             var result = text
             self?.markDictationStage("textConversion", requestID: requestID)
             do {
@@ -127,10 +127,10 @@ extension WhisperApplication {
             } catch is CancellationError {
                 return
             } catch {
-                guard self?.isCurrentDictation(requestID) == true else { return }
+                guard self?.drainInputAndCheckDictation(requestID) == true else { return }
                 self?.state.dictation.chineseConversionFailed = true
             }
-            guard self?.isCurrentDictation(requestID) == true, !Task.isCancelled else { return }
+            guard self?.drainInputAndCheckDictation(requestID) == true, !Task.isCancelled else { return }
             self?.completeDictationWithSnippets(rawText: rawText, text: result, requestID: requestID)
         }
     }

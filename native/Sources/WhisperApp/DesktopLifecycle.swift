@@ -17,6 +17,8 @@ import WhisperCore
     private var previousWindowVisible: Bool?
     private var terminating = false
     private var syntheticPreview = false
+    private var previewPill = false
+    private var foregroundEscapeMonitor: Any?
     private var previousShortcuts: [String]?
     private var previousCaptureMode: Bool?
     private var previousDictationPhase: DictationPhase?
@@ -33,16 +35,27 @@ import WhisperCore
             if let index = arguments.firstIndex(of: "--profile"), arguments.indices.contains(index + 1) {
                 profile = NativeProfile(directory: URL(fileURLWithPath: arguments[index + 1], isDirectory: true))
             } else { profile = try NativeProfile.applicationDefault() }
-            syntheticPreview = arguments.contains("--synthetic-preview")
+            previewPill = arguments.contains("--preview-pill")
+            syntheticPreview = arguments.contains("--synthetic-preview") || previewPill
             if syntheticPreview, !arguments.contains("--profile") { throw ConfigurationError.incompatibleProfile }
             let previewLanguage: AppLanguage = arguments.contains("--preview-chinese") ? .simplifiedChinese : .english
             let application = try syntheticPreview
-                ? SyntheticPreview.make(profile: profile, language: previewLanguage)
+                ? SyntheticPreview.make(profile: profile, language: previewLanguage, pill: previewPill,
+                    recovery: arguments.contains("--preview-recovery"), pillDisplays: PreviewPillDisplaySystem())
                 : WhisperApplication(profile: profile, desktopEffects: NativeDesktopEffects(), pillDisplays: NativePillDisplaySystem(), privacySystem: NativePrivacySystem())
             if syntheticPreview {
                 Task { try? await SyntheticPreview.seed(application, populated: arguments.contains("--preview-populated")) }
             }
             self.application = application
+            foregroundEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak application] event in
+                let consumed = MainActor.assumeIsolated {
+                    guard event.keyCode == 53, !event.isARepeat, let application,
+                          application.state.dictation.phase.isActive || application.state.canDismissCopyRecovery else { return false }
+                    application.send(.foregroundEscape)
+                    return true
+                }
+                return consumed ? nil : event
+            }
             if let index = arguments.firstIndex(of: "--diagnostics") {
                 guard arguments.indices.contains(index + 1), arguments[index + 1].hasPrefix("/") else {
                     throw CocoaError(.fileWriteInvalidFileName)
@@ -53,7 +66,8 @@ import WhisperCore
             let launchedAtLogin = event?.eventID == kAEOpenApplication
                 && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
             application.send(.bootstrapDesktop(launchedAtLogin: launchedAtLogin || arguments.contains("--hidden")))
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+            let compactPreview = syntheticPreview && arguments.contains("--preview-compact")
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: compactPreview ? 780 : 1200, height: compactPreview ? 530 : 800),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
             window.title = syntheticPreview ? "Whisper · Sample data" : "Whisper"
             window.identifier = NSUserInterfaceItemIdentifier("main")
@@ -65,8 +79,10 @@ import WhisperCore
             window.delegate = self
             window.center()
             mainWindow = window
-            if !syntheticPreview {
+            if !syntheticPreview || previewPill {
                 pill = RecordingPillController(application: application)
+            }
+            if !syntheticPreview {
                 shortcuts = NativeShortcutMonitor(application: application)
                 shortcuts?.start()
             }
@@ -265,6 +281,8 @@ import WhisperCore
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !terminating else { return .terminateLater }
         terminating = true
+        if let foregroundEscapeMonitor { NSEvent.removeMonitor(foregroundEscapeMonitor) }
+        foregroundEscapeMonitor = nil
         shortcuts?.stop()
         Task { @MainActor in
             await application?.prepareForTermination()

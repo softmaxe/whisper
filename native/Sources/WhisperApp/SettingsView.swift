@@ -195,9 +195,7 @@ struct SettingsModalView: View {
         .font(.custom("JetBrainsMono-Regular", size: 12))
         .tint(WhisperPalette(scheme: colorScheme).accent)
         .onExitCommand {
-            if application.state.dictation.phase.isActive { application.send(.cancelDictation) }
-            else if application.state.shortcutCapture.isActive { application.send(.endShortcutCapture) }
-            else { application.send(.closeSettings) }
+            application.send(.foregroundEscape)
         }
         .onDisappear { application.send(.endShortcutCapture) }
         .accessibilityIdentifier("settings-modal")

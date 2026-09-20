@@ -4,6 +4,63 @@ import WhisperCore
 
 @Suite(.serialized) @MainActor
 struct ShellWorkflowTests {
+    @Test func promptResetCommitsAndSynchronizesBothDraftsWithoutSavingOtherEdits() throws {
+        let fixture = try ShellFixture(); defer { fixture.remove() }
+        fixture.app.send(.saveCleanupPrompt("Saved custom prompt"))
+        fixture.app.send(.openSettings(.textCleanup))
+        var draft = try #require(fixture.app.state.settingsDraft?.cleanup)
+        draft.model = "unsaved-model"
+        fixture.app.send(.editCleanupDraft(draft))
+        fixture.app.send(.editCleanupPromptDraft("Unsaved prompt"))
+        fixture.app.send(.resetCleanupPrompt)
+        #expect(fixture.app.state.settingsDraft?.cleanup.customPrompt == nil)
+        #expect(fixture.app.state.settingsDraft?.cleanupPrompt == CleanupPrompts.defaultText(in: .english))
+        #expect(fixture.app.state.settingsDraft?.cleanup.model == "unsaved-model")
+        #expect(fixture.reopen().state.settings.cleanup.customPrompt == nil)
+        #expect(fixture.reopen().state.settings.cleanup.model != "unsaved-model")
+        fixture.app.send(.saveCleanupDraft(.unchanged))
+        #expect(fixture.reopen().state.settings.cleanup.customPrompt == nil)
+    }
+
+    @Test func failedPromptResetLeavesSavedAndDraftValuesUntouched() throws {
+        let f = try ShellFixture(); defer { f.remove() }
+        f.app.send(.saveCleanupPrompt("Saved custom prompt"))
+        f.app.send(.openSettings(.textCleanup))
+        f.app.send(.editCleanupPromptDraft("Unsaved prompt"))
+        let before = f.app.state.settingsDraft
+        let file = f.profile.profile.directory.appendingPathComponent("settings.json")
+        let backup = f.profile.root.appendingPathComponent("saved.json")
+        try FileManager.default.moveItem(at: file, to: backup)
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false)
+        f.app.send(.resetCleanupPrompt)
+        #expect(!f.app.state.settingsSaved)
+        #expect(f.app.state.settings.cleanup.customPrompt == "Saved custom prompt")
+        #expect(f.app.state.settingsDraft == before)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.moveItem(at: backup, to: file)
+        f.app.send(.setLanguage(.simplifiedChinese))
+        f.app.send(.resetCleanupPrompt)
+        #expect(f.app.state.settingsDraft?.cleanupPrompt == CleanupPrompts.defaultText(in: .simplifiedChinese))
+    }
+
+    @Test(arguments: [false, true])
+    func pillPreviewUsesInertSuccessAndRecoveryThroughTheRealWorkflow(recovery: Bool) async throws {
+        let profile = try ProfileFixture(keychain: false); defer { profile.remove() }
+        let app = try SyntheticPreview.make(profile: profile.profile, pill: true, recovery: recovery)
+        try await SyntheticPreview.seed(app)
+        #expect(app.state.settings.desktop.pillVisible)
+        #expect(!app.state.settings.desktop.audioCuesEnabled)
+        #expect(!app.state.settings.desktop.pauseMediaOnDictation)
+        app.send(.recordingPillAction)
+        await settle { app.state.dictation.phase == .recording }
+        app.send(.recordingPillAction)
+        await settle { app.state.dictation.phase == .result }
+        #expect(app.state.dictation.delivery == (recovery ? .recovery(copied: true) : .pasted))
+        app.send(.copyDictationResult)
+        #expect(app.state.dictation.resultCopied)
+        await app.prepareForTermination()
+    }
+
     @Test(arguments: AppLanguage.allCases)
     func mainPagesAndSeparateSettingsPreserveTheirDestinations(language: AppLanguage) async throws {
         let fixture = try ShellFixture(); defer { fixture.remove() }
