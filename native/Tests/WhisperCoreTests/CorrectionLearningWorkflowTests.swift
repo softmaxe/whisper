@@ -3,6 +3,48 @@ import Testing
 import WhisperCore
 
 @Suite(.serialized) @MainActor struct CorrectionLearningWorkflowTests {
+    @Test(arguments: ["asr-failure", "paste-recovery"])
+    func aLearnedNoticeCannotMaskTheNextRequestsFailureOrRecovery(outcome: String) async throws {
+        let fixture = try LearningFixture(); defer { fixture.remove() }
+        var preferences = fixture.f.app.state.settings.desktop
+        preferences.pillVisible = false
+        preferences.floatingIconAutoHide = true
+        fixture.f.app.send(.saveDesktopPreferences(preferences))
+        await fixture.pasteAndStart("Hey Shunade how are you")
+        await fixture.edit("Hey Sinead how are you")
+        fixture.f.clock.advance(1.5)
+        await settle { fixture.f.app.state.dictionary.words == ["Sinead"] }
+        #expect(fixture.f.app.state.recordingPill.feedback == .learned)
+        let learnedID = fixture.f.app.state.dictation.requestID
+        _ = await fixture.f.hold()
+        #expect(fixture.f.app.state.dictation.requestID != learnedID)
+        fixture.f.key(down: false)
+        await settle { await fixture.f.transport.requests.count == 2 }
+        let request = await fixture.f.transport.requests[1]
+        #expect(String(decoding: request.body, as: UTF8.self).contains("name=\"prompt\"\r\n\r\nSinead"))
+        if outcome == "asr-failure" {
+            await fixture.f.transport.reply(1, status: 503, body: "{}")
+            await settle { fixture.f.app.state.dictation.phase == .failed }
+        } else {
+            fixture.f.paste.allowProbe = false
+            await fixture.f.transport.reply(1)
+            await settle { fixture.f.app.state.dictation.phase == .result }
+            #expect(fixture.f.app.state.dictation.delivery == .recovery(copied: true))
+        }
+        let expected: PillFeedback = outcome == "asr-failure" ? .failed : .recovery
+        #expect(fixture.f.app.state.recordingPill.visible)
+        #expect(fixture.f.app.state.recordingPill.feedback == expected)
+        #expect(fixture.f.app.state.corrections.learned.map(\.word) == ["Sinead"])
+        #expect(fixture.f.app.state.dictionary.words == ["Sinead"])
+        fixture.f.app.send(.undoLearnedCorrections)
+        #expect(fixture.f.app.state.dictionary.words.isEmpty)
+        #expect(fixture.f.app.state.corrections.learned.isEmpty)
+        #expect(fixture.f.app.state.recordingPill.feedback == expected)
+        let reopened = WhisperApplication(profile: fixture.f.profile.profile, credentials: fixture.f.profile.credentials)
+        #expect(reopened.state.dictionary.words.isEmpty)
+        await fixture.f.app.prepareForTermination()
+    }
+
     @Test func earlyCorrectionLearnsAndKeepsObservingLaterEditsInTheCapturedRange() async throws {
         let fixture = try LearningFixture(before: "Prefix old Suffix", range: 7..<10)
         defer { fixture.remove() }

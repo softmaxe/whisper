@@ -115,9 +115,10 @@ extension ApplicationState {
         let feedback: PillFeedback
         let recovery: Bool
         if case .recovery = dictation.delivery { recovery = true } else { recovery = false }
-        let learning = !corrections.learned.isEmpty && !dictation.phase.isActive
-        if learning { feedback = .learned }
-        else if recovery { feedback = .recovery }
+        let learning = !corrections.learned.isEmpty && corrections.sourceRequestID != nil
+            && corrections.sourceRequestID == dictation.requestID && !dictation.phase.isActive
+        if recovery { feedback = .recovery }
+        else if learning { feedback = .learned }
         else if let transient = desktop.transientFeedback, !dictation.phase.isActive { feedback = transient }
         else {
             feedback = switch dictation.phase {
