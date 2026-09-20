@@ -29,7 +29,8 @@ the existing legacy profile and credentials are not migration inputs.
    separate cold-launch trials. Keep failures, cancellations and missing samples
    visible. Set baseline-derived budgets before deciding whether native meets
    them. Do not treat deterministic test timings as physical measurements.
-7. Follow the actual two-version signed Homebrew upgrade smoke check. Keep the
+7. Follow the [private two-version Homebrew procedure](native-upgrade-acceptance.md)
+   and the release smoke check. Keep the
    original certificate/private key and app/helper identifiers. Observe microphone,
    Accessibility and Keychain behavior; signature equality alone is insufficient.
 8. After full feature, interface, performance and upgrade acceptance, remove the
