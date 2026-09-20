@@ -170,7 +170,7 @@ extension WhisperApplication {
                 let audio = try await capture.finish()
                 defer { withExtendedLifetime(audio) {} }
                 try Task.checkCancellation()
-                guard self?.isCurrentDictation(id) == true, let configuration else { return }
+                guard self?.drainInputAndCheckDictation(id) == true, let configuration else { return }
                 self?.state.dictation.duration = audio.duration
                 self?.markDictationStage("asrPreparationStarted", requestID: id)
                 options.diagnostics?.mark(.asrPreparationStarted)
@@ -204,12 +204,12 @@ extension WhisperApplication {
     }
 
     func markDictationStage(_ stage: String, requestID: UUID) {
-        guard isCurrentDictation(requestID) else { return }
+        guard drainInputAndCheckDictation(requestID) else { return }
         state.dictation.timing[stage] = clock.now - dictationStartedAt
     }
 
     func completeDictation(rawText: String, text: String, requestID: UUID) {
-        guard isCurrentDictation(requestID) else { return }
+        guard drainInputAndCheckDictation(requestID) else { return }
         markDictationStage("result", requestID: requestID)
         dictationDiagnostics?.mark(.processingComplete)
         state.dictation.rawText = rawText
@@ -235,9 +235,9 @@ extension WhisperApplication {
                 keepClipboard: settings.keepTranscriptionInClipboard, diagnostics: diagnostics, willPaste: { [weak self] target in
                     if self?.state.settings.autoLearnCorrections == true { await learning.prepare(target, text: text) }
                 }) { [weak self] in
-                    self?.isCurrentDictation(requestID) == true
+                    self?.drainInputAndCheckDictation(requestID) == true
                 }
-            guard self?.isCurrentDictation(requestID) == true else { return }
+            guard self?.drainInputAndCheckDictation(requestID) == true else { return }
             diagnostics?.setDelivery(result)
             if case .recovery = result { diagnostics?.finish(.failed) } else { diagnostics?.finish(.completed) }
             if result == .pasted, self?.state.settings.autoLearnCorrections == true { learning.confirmedPaste() }
@@ -250,7 +250,7 @@ extension WhisperApplication {
         }
     }
 
-    func isCurrentDictation(_ id: UUID) -> Bool {
+    func drainInputAndCheckDictation(_ id: UUID) -> Bool {
         shortcutInputDrain?()
         return state.dictation.requestID == id && state.dictation.phase.isActive
     }

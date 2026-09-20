@@ -213,7 +213,7 @@ struct HistorySearchView: View {
                 }
                 Text(language.text("Search history", "搜索历史记录")).font(.headline)
                 Spacer()
-                Button(language.text("Done", "完成")) { application.send(.closeHistorySearch); dismiss() }.keyboardShortcut(.escape, modifiers: [])
+                Button(language.text("Done", "完成")) { application.send(.closeHistorySearch); dismiss() }
             }
             if let entry = history.selectedEntry {
                 ScrollView { HistoryEntryView(application: application, entry: entry, detail: true) }
@@ -241,6 +241,7 @@ struct HistorySearchView: View {
             }
         }
         .padding(24).frame(width: 560, height: 440)
+        .onExitCommand { application.send(.foregroundEscape) }
         .onKeyPress(.downArrow) {
             guard history.selectedEntry == nil else { return .ignored }
             application.send(.moveHistorySearchSelection(1)); return .handled

@@ -4,6 +4,78 @@ import WhisperCore
 
 @Suite(.serialized) @MainActor
 struct PillParityWorkflowTests {
+    @Test func footprintTracksTheActualWorkflowAndOnlyRecordingHasWaveform() async throws {
+        let f = try ShortcutFixture(); defer { f.remove() }
+        #expect(f.app.state.recordingPill.compactSize == CGSize(width: 40, height: 40))
+        #expect(!f.app.state.recordingPill.showsWaveform)
+        #expect(f.app.state.recordingPill.panelSize == CGSize(width: 60, height: 60))
+        f.app.send(.recordingPillAction)
+        #expect(f.app.state.recordingPill.compactSize == CGSize(width: 40, height: 40))
+        #expect(f.app.state.recordingPill.showsCancel)
+        let capture = try #require(f.microphones.sessions.last)
+        capture.open(); capture.deliver([Float](repeating: 0.1, count: 4800))
+        await settle { f.app.state.dictation.phase == .recording }
+        #expect(f.app.state.recordingPill.showsWaveform)
+        #expect(f.app.state.recordingPill.compactSize == CGSize(width: 98, height: 36))
+        #expect(f.app.state.recordingPill.panelSize == CGSize(width: 154, height: 56))
+        f.app.send(.recordingPillAction)
+        await settle { await f.transport.requests.count == 1 }
+        #expect(!f.app.state.recordingPill.showsWaveform)
+        #expect(f.app.state.recordingPill.compactSize == CGSize(width: 40, height: 40))
+        await f.transport.reply()
+        await settle { f.app.state.dictation.phase == .result }
+        #expect(!f.app.state.recordingPill.showsCancel)
+        #expect(f.app.state.recordingPill.panelSize == CGSize(width: 60, height: 60))
+    }
+
+    @Test func focusAcrossRecoveryChildrenHoldsTheTimerAfterHoverEnds() async throws {
+        let f = try ShortcutFixture(); defer { f.remove() }
+        let revision = try await recovery(f)
+        f.app.send(.copyRecoveryPresented(revision, true))
+        f.app.send(.copyRecoveryHeld(revision, true))
+        f.app.send(.copyRecoveryFocused(revision, true))
+        f.app.send(.copyRecoveryHeld(revision, false))
+        f.clock.advance(60)
+        #expect(f.app.state.recordingPill.feedback == .recovery)
+        #expect(f.app.state.desktop.copyRecovery.isHeld)
+        f.app.send(.copyRecoveryFocused(revision, false))
+        f.clock.advance(4.99)
+        #expect(f.app.state.recordingPill.feedback == .recovery)
+        f.clock.advance(0.01)
+        #expect(!f.app.state.recordingPill.visible)
+    }
+
+    @Test func anOldRecoveryFocusEventCannotReleaseTheReplacementFocusHold() async throws {
+        let f = try ShortcutFixture(); defer { f.remove() }
+        let old = try await recovery(f)
+        f.app.send(.copyRecoveryFocused(old, true))
+        f.app.send(.dismissPillFeedback)
+        let current = try await recovery(f, index: 1)
+        f.app.send(.copyRecoveryPresented(current, true))
+        f.app.send(.copyRecoveryFocused(current, true))
+        f.app.send(.copyRecoveryFocused(old, false))
+        f.clock.advance(60)
+        #expect(f.app.state.desktop.copyRecovery.isFocused)
+        #expect(f.app.state.recordingPill.feedback == .recovery)
+        f.app.send(.foregroundEscape)
+        #expect(!f.app.state.recordingPill.visible)
+    }
+
+    @Test func clickingCompletedFeedbackImmediatelyStartsWithoutCopying() async throws {
+        let fixture = try ShortcutFixture(); defer { fixture.remove() }
+        fixture.app.send(.setClipboardPreferences(autoPaste: false, keepResult: false))
+        _ = await fixture.hold(); await fixture.submit()
+        await settle { fixture.app.state.dictation.phase == .result }
+        #expect(fixture.app.state.recordingPill.feedback == .completed)
+        fixture.app.send(.recordingPillAction)
+        #expect(fixture.app.state.dictation.phase == .preparing)
+        #expect(fixture.app.state.dictation.origin == .pill)
+        #expect(fixture.clipboard.values.isEmpty)
+        #expect(fixture.paste.writes.isEmpty)
+        fixture.microphones.sessions.last?.open()
+        fixture.app.send(.cancelDictation)
+    }
+
     @Test func pillStartCapturesTheCurrentTargetAndAutomaticallyPastes() async throws {
         let fixture = try ShortcutFixture()
         defer { fixture.remove() }

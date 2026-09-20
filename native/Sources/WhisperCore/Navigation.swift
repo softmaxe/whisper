@@ -53,6 +53,14 @@ public struct SettingsDraftState: Equatable, Sendable {
 }
 
 extension WhisperApplication {
+    func handleForegroundEscape() {
+        if state.dictation.phase.isActive { cancelDictation() }
+        else if state.canDismissCopyRecovery { send(.dismissPillFeedback) }
+        else if state.shortcutCapture.isActive { send(.endShortcutCapture) }
+        else if state.navigation.searchPresented { closeHistorySearch() }
+        else if state.navigation.settingsPresented { closeSettings() }
+    }
+
     func navigate(to page: MainPage) {
         closeHistorySearch()
         state.navigation.page = page
@@ -112,5 +120,13 @@ extension WhisperApplication {
         let prompt = draft.cleanupPrompt == CleanupPrompts.defaultText(in: state.settings.language) ? nil : draft.cleanupPrompt
         send(.saveCleanupPrompt(prompt))
         if state.settingsSaved { let saved = state.settings.cleanup.customPrompt; state.settingsDraft?.cleanup.customPrompt = saved }
+    }
+
+    func resetCleanupPrompt() {
+        saveCleanupPrompt(nil)
+        guard state.settingsSaved else { return }
+        let prompt = CleanupPrompts.defaultText(in: state.settings.language)
+        state.settingsDraft?.cleanup.customPrompt = nil
+        state.settingsDraft?.cleanupPrompt = prompt
     }
 }

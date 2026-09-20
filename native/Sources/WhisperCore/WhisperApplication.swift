@@ -3,6 +3,7 @@ import Observation
 
 public enum AppCommand {
     case navigate(MainPage), openSettings(SettingsSection), closeSettings, toggleSidebar
+    case foregroundEscape
     case openHistorySearch, closeHistorySearch, openHistorySearchResult(UUID)
     case editASRDraft(ASRConfiguration), saveASRDraft(CredentialChange)
     case editCleanupDraft(CleanupConfiguration), saveCleanupDraft(CredentialChange)
@@ -40,6 +41,7 @@ public enum AppCommand {
     case showMainWindow, closeMainWindow, dismissPillFeedback
     case recordingPillAction
     case copyRecoveryPresented(UUID, Bool), copyRecoveryHeld(UUID, Bool)
+    case copyRecoveryFocused(UUID, Bool)
     case updatePillGeometry(size: CGSize, currentFrame: CGRect?)
     case setLaunchAtLogin(Bool), refreshLoginItemStatus, openLoginItemsSettings
     case saveShortcuts([String])
@@ -240,6 +242,7 @@ public final class WhisperApplication {
     public func send(_ command: AppCommand) {
         guard !state.isTerminating else { return }
         switch command {
+        case .foregroundEscape: handleForegroundEscape()
         case let .navigate(page): navigate(to: page)
         case let .openSettings(section): openSettings(section)
         case .closeSettings: closeSettings()
@@ -320,6 +323,7 @@ public final class WhisperApplication {
         case .recordingPillAction: recordingPillAction()
         case let .copyRecoveryPresented(revision, presented): setCopyRecoveryPresented(revision, presented)
         case let .copyRecoveryHeld(revision, held): setCopyRecoveryHeld(revision, held)
+        case let .copyRecoveryFocused(revision, focused): setCopyRecoveryFocused(revision, focused)
         case let .updatePillGeometry(size, frame): updatePillGeometry(size: size, currentFrame: frame)
         case let .setLaunchAtLogin(enabled): setLaunchAtLogin(enabled)
         case .refreshLoginItemStatus: state.desktop.loginItemStatus = desktopEffects.loginItemStatus()
@@ -351,7 +355,7 @@ public final class WhisperApplication {
         case let .testCleanupPrompt(text, prompt): testCleanupPrompt(text: text, prompt: prompt)
         case .cancelCleanupPromptTest: cancelCleanupTest()
         case let .saveCleanupPrompt(prompt): saveCleanupPrompt(prompt)
-        case .resetCleanupPrompt: saveCleanupPrompt(nil)
+        case .resetCleanupPrompt: resetCleanupPrompt()
         case .copyRawDictationResult:
             guard !state.dictation.rawText.isEmpty else { return }
             clipboard.write(state.dictation.rawText)

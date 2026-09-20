@@ -111,7 +111,7 @@ struct RecordingStatus: View {
     }
 }
 
-@MainActor final class RecordingPillController {
+@MainActor final class RecordingPillController: NSObject, NSWindowDelegate {
     private let application: WhisperApplication
     private let panel: NonactivatingRecordingPanel
     private struct LayoutRequest: Equatable {
@@ -121,9 +121,13 @@ struct RecordingStatus: View {
     }
     private var lastLayout: LayoutRequest?
     private var presentedRecovery: UUID?
+    private var focusedRecovery: UUID?
     init(application: WhisperApplication) {
         self.application = application
         panel = NonactivatingRecordingPanel(contentRect: NSRect(x: 0, y: 0, width: 170, height: 64), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        super.init()
+        panel.delegate = self
+        panel.becomesKeyOnlyIfNeeded = false
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -142,10 +146,7 @@ struct RecordingStatus: View {
             return
         }
         let recovery = presentation.feedback == .recovery
-        let failure = presentation.feedback == .failed
-        let learning = presentation.feedback == .learned
-        let size = CGSize(width: recovery || failure || learning ? 390 : 170,
-                          height: recovery ? 220 : failure ? 150 : learning ? 160 : 64)
+        let size = presentation.panelSize
         let layout = LayoutRequest(size: size, placement: presentation.placement, requestID: presentation.requestID)
         if refreshGeometry || lastLayout != layout {
             lastLayout = layout
@@ -154,8 +155,10 @@ struct RecordingStatus: View {
         let resolved = application.state.recordingPill
         if let frame = resolved.frame { panel.setFrame(frame, display: true) }
         else { panel.setContentSize(size) }
-        panel.orderFrontRegardless()
         let readyRecovery = recovery && !resolved.geometryPending ? resolved.recoveryRevision : nil
+        if presentedRecovery != readyRecovery, panel.isKeyWindow { panel.orderOut(nil) }
+        panel.permitsRecoveryFocus = readyRecovery != nil
+        panel.orderFrontRegardless()
         if presentedRecovery != readyRecovery {
             if let revision = presentedRecovery { application.send(.copyRecoveryPresented(revision, false)) }
             presentedRecovery = readyRecovery
@@ -165,10 +168,20 @@ struct RecordingStatus: View {
             }
         }
     }
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard let revision = presentedRecovery else { return }
+        focusedRecovery = revision
+        application.send(.copyRecoveryFocused(revision, true))
+    }
+    func windowDidResignKey(_ notification: Notification) {
+        if let revision = focusedRecovery { application.send(.copyRecoveryFocused(revision, false)) }
+        focusedRecovery = nil
+    }
 }
 
 private final class NonactivatingRecordingPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
+    var permitsRecoveryFocus = false
+    override var canBecomeKey: Bool { permitsRecoveryFocus }
     override var canBecomeMain: Bool { false }
 }
 
@@ -176,7 +189,6 @@ private struct RecordingPill: View {
     let application: WhisperApplication
     @State private var levels = [Float](repeating: 0, count: 10)
     @State private var recoveryHovered = false
-    @FocusState private var recoveryFocused: Bool
     private var dictation: DictationState { application.state.dictation }
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
@@ -189,25 +201,27 @@ private struct RecordingPill: View {
                 Text(dictation.delivery.message(in: language) ?? "").font(.system(size: 12))
                 ScrollView { Text(dictation.text).textSelection(.enabled).font(.system(size: 13)).frame(maxWidth: .infinity, alignment: .leading) }
                     .frame(maxHeight: 100)
-                    .focusable().focused($recoveryFocused)
+                    .focusable().accessibilityIdentifier("recovery-text")
                 Button(language.text(dictation.resultCopied ? "Copied" : "Copy text", dictation.resultCopied ? "已复制" : "复制文字")) {
                     application.send(.copyDictationResult)
                 }
                 .accessibilityIdentifier("recovery-copy")
                 Button(language.text("Dismiss", "关闭")) { application.send(.dismissPillFeedback) }
+                    .accessibilityIdentifier("recovery-dismiss")
             }
             .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
             .onHover { held in
                 recoveryHovered = held
-                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, held || recoveryFocused)) }
-            }
-            .onChange(of: recoveryFocused) {
-                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, recoveryHovered || recoveryFocused)) }
+                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, held)) }
             }
             .onChange(of: recoveryRevision) {
-                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, recoveryHovered || recoveryFocused)) }
+                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, recoveryHovered)) }
             }
-            .onExitCommand { application.send(.dismissPillFeedback) }
+            .onDisappear {
+                recoveryHovered = false
+                if let recoveryRevision { application.send(.copyRecoveryHeld(recoveryRevision, false)) }
+            }
+            .onExitCommand { application.send(.foregroundEscape) }
         } else if application.state.recordingPill.feedback == .failed {
             VStack(alignment: .leading, spacing: 12) {
                 Label(dictation.failure?.message(in: language) ?? language.text("Try again", "请重试"), systemImage: "exclamationmark.triangle")
@@ -235,7 +249,9 @@ private struct RecordingPill: View {
     }
 
     private var compactPill: some View {
-        HStack(spacing: 6) {
+        let presentation = application.state.recordingPill
+        return HStack(spacing: 8) {
+            if presentation.showsCancel && presentation.placement == .bottomRight { cancelButton }
             Button {
                 application.send(.recordingPillAction)
             } label: {
@@ -246,25 +262,24 @@ private struct RecordingPill: View {
                         Image(systemName: symbolName)
                             .font(.system(size: 20)).frame(width: 22, height: 22)
                     }
-                    HStack(spacing: 3) {
-                        ForEach(0..<10) { index in
-                            Capsule().frame(width: 2, height: CGFloat(3 + levels[index] * 21))
-                        }
-                    }.frame(width: 52, height: 24)
+                    if presentation.showsWaveform {
+                        HStack(spacing: 3) {
+                            ForEach(0..<10) { index in
+                                Capsule().frame(width: 2, height: CGFloat(3 + levels[index] * 21))
+                            }
+                        }.frame(width: 52, height: 24).accessibilityHidden(true)
+                    }
                 }
-                .frame(width: 98, height: 40)
+                .padding(.leading, presentation.showsWaveform ? 6 : 0)
+                .padding(.trailing, presentation.showsWaveform ? 12 : 0)
+                .frame(width: presentation.compactSize.width, height: presentation.compactSize.height)
                 .background(.regularMaterial, in: Capsule())
                 .overlay(Capsule().strokeBorder(.primary.opacity(0.18)))
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("recording-pill-primary")
             .accessibilityLabel(application.state.recordingPill.feedback.title(in: language))
-            if dictation.phase.isActive || application.state.recordingPill.feedback == .failed {
-                Button { application.send(dictation.phase.isActive ? .cancelDictation : .dismissPillFeedback) } label: {
-                    Image(systemName: "xmark").font(.system(size: 12, weight: .medium))
-                        .frame(width: 30, height: 30).background(.regularMaterial, in: Circle())
-                }
-                .buttonStyle(.plain).accessibilityLabel(language.text("Cancel", "取消"))
-            }
+            if presentation.showsCancel && presentation.placement != .bottomRight { cancelButton }
         }
         .padding(10)
         .help(dictation.failure?.message(in: language) ?? application.state.recordingPill.feedback.title(in: language))
@@ -273,5 +288,13 @@ private struct RecordingPill: View {
             levels.append(dictation.level)
         }
         .onChange(of: dictation.requestID) { levels = [Float](repeating: 0, count: 10) }
+    }
+    private var cancelButton: some View {
+        Button { application.send(.cancelDictation) } label: {
+            Image(systemName: "xmark").font(.system(size: 12, weight: .medium))
+                .frame(width: 28, height: 28).background(.regularMaterial, in: Circle())
+        }
+        .buttonStyle(.plain).accessibilityLabel(language.text("Cancel", "取消"))
+        .accessibilityIdentifier("recording-pill-cancel")
     }
 }

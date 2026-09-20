@@ -63,6 +63,17 @@ public struct RecordingPillPresentation: Equatable, Sendable {
     public let recoveryRevision: UUID?
     public let frame: CGRect?
     public let geometryPending: Bool
+    public var showsWaveform: Bool { feedback == .hold || feedback == .handsFree }
+    public var showsCancel: Bool { [.preparing, .hold, .handsFree, .processing, .cleaning].contains(feedback) }
+    public var compactSize: CGSize { showsWaveform ? CGSize(width: 98, height: 36) : CGSize(width: 40, height: 40) }
+    public var panelSize: CGSize {
+        switch feedback {
+        case .recovery: CGSize(width: 390, height: 220)
+        case .failed: CGSize(width: 390, height: 150)
+        case .learned: CGSize(width: 390, height: 160)
+        default: CGSize(width: compactSize.width + (showsCancel ? 36 : 0) + 20, height: compactSize.height + 20)
+        }
+    }
 }
 
 public struct DesktopState: Equatable, Sendable {

@@ -140,7 +140,7 @@ extension WhisperApplication {
 
     /// Live Dictation enters here after cleanup and Chinese conversion. Upload and retry skip it.
     func completeDictationWithSnippets(rawText: String, text: String, requestID: UUID) {
-        guard isCurrentDictation(requestID) else { return }
+        guard drainInputAndCheckDictation(requestID) else { return }
         completeDictation(rawText: rawText, text: snippetExpansion.expand(text), requestID: requestID)
     }
 }

@@ -65,10 +65,6 @@ struct CleanupSettingsView: View {
                 HStack {
                     Button(language.text("Reset to default", "恢复默认")) {
                         application.send(.resetCleanupPrompt)
-                        if application.state.settingsSaved {
-                            var changed = draft; changed.customPrompt = nil; application.send(.editCleanupDraft(changed))
-                            application.send(.editCleanupPromptDraft(CleanupPrompts.defaultText(in: language)))
-                        }
                     }
                     Spacer()
                     Button(language.text("Save prompt", "保存提示词")) { savePrompt() }
