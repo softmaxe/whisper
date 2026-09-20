@@ -5,17 +5,29 @@ Do not restart the migration or replace the installed application before the
 remaining acceptance gates pass. The implementation uses a fresh native profile;
 the existing legacy profile and credentials are not migration inputs.
 
+Source work is complete at `8770993a460eba252dce91a77274327ee436799f`, where the
+automated gates in [the status document](native-migration-status.md) pass. The
+signed package built from that revision is `dist/native-arm64/Whisper.app` with
+`release/whisper-1.0.5-macos-arm64.zip` and its checksum; `npm run pack:release`
+rebuilds and re-verifies it against the pinned certificate. The installed 1.0.5
+application and its profile were not touched.
+
 ## Next interactive session
 
-1. Check the branch, working tree, PR head and latest CI result. Preserve the
-   pre-existing edits to `CONTEXT.md` and the untracked native migration ADR.
+1. Check the branch, working tree, PR head and the latest CI result. Preserve the
+   pre-existing edits to `CONTEXT.md` and the untracked
+   `docs/adr/0002-native-macos-application.md`; decide separately whether they
+   belong in the migration commit.
 2. Read `docs/native-migration-status.md`, `docs/native-acceptance-map.md`,
    `docs/native-performance-baseline.md`, `native/README.md` and the release smoke
    procedure in `test/README.md`. Use the exact tested package and source revision
    recorded in the status document, rebuilding after any source change.
 3. Reserve the desktop and physical input session. Start with the signed native
-   bundle and a disposable profile. Complete synthetic English/Chinese UI review
-   and any source follow-ups recorded in the status document.
+   bundle and a disposable profile. The shell and recovery review is already done
+   in English and Chinese through `--synthetic-preview`, `--preview-pill` and
+   `--preview-recovery`; retest with a physical keyboard the two paths that did not
+   respond to automation, Return on a selected search result and standard
+   multi-file selection in the Open panel.
 4. Test built-in microphone and wireless iPhone independently. Check first spoken
    words, readiness feedback, Right Command hold/double tap/standalone stop,
    ordinary Command combinations, cancellation in every phase, capture release,
@@ -34,9 +46,20 @@ the existing legacy profile and credentials are not migration inputs.
    original certificate/private key and app/helper identifiers. Observe microphone,
    Accessibility and Keychain behavior; signature equality alone is insufficient.
 8. After full feature, interface, performance and upgrade acceptance, remove the
-   AGENTS rule requiring upstream OpenWhispr inspection for every change, mark
-   PR #58 ready, and decide the daily-use transition. Publishing needs a separate
-   request.
+   AGENTS rule that requires inspecting upstream OpenWhispr for every change (the
+   user asked for this removal once the migration is complete), mark PR #58 ready,
+   and decide the daily-use transition. Publishing needs a separate request.
+
+## Open observations from the last synthetic pass
+
+- Return or keypad Enter on a selected search result, and standard multi-file
+  selection in the Open panel, did not respond through the UI automation tool. The
+  cause is not established. Retest with a physical keyboard before changing
+  product behavior, and treat both as unverified rather than failed.
+- Packaged samples, the baseline-derived budgets, physical input behavior,
+  permission retention and daily-use readiness have no evidence yet. Every
+  claim in [the acceptance map](native-acceptance-map.md) that names `UI`, `HW`,
+  `PERF`, `PKG` or `UPGRADE` is still open.
 
 ## Recovery rules
 

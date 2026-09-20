@@ -8,38 +8,40 @@ hardware performance, visual parity, or permission retention.
 
 ## Delivery graph
 
-| Ticket | Workflow                                           | Dependencies                                | Evidence                                               |
-| ------ | -------------------------------------------------- | ------------------------------------------- | ------------------------------------------------------ |
-| #36    | Packaged performance baseline and budgets          | None                                        | Tools ready; measurements pending                      |
-| #37    | Native launch and fresh protected ASR settings     | None                                        | Settings, persistence, UI and package verified         |
-| #38    | Button-started Dictation and capture ownership     | #37                                         | Core and built-in smoke verified                       |
-| #39    | Right Command hold and Automatic paste             | #38                                         | Implemented; manual checks pending                     |
-| #40    | Double-tap Hands-free Dictation                    | #39                                         | Implemented; manual checks pending                     |
-| #41    | Configurable keyboard and mouse shortcuts          | #40                                         | Implemented; manual checks pending                     |
-| #42    | Selected and Auto microphones                      | #38                                         | Implemented; manual checks pending                     |
-| #43    | Configurable text cleanup                          | #38                                         | Implemented; manual checks pending                     |
-| #44    | Language and Chinese conversion                    | #38                                         | Implemented; manual checks pending                     |
-| #45    | Searchable History, copy and delete                | #38                                         | Implemented; manual checks pending                     |
-| #46    | Retained audio and History retry                   | #45                                         | Implemented; manual checks pending                     |
-| #47    | Dictionary editing, import and persistence         | #38                                         | Implemented; manual checks pending                     |
-| #48    | Correction learning                                | #39, #47                                    | Implemented; manual checks pending                     |
-| #49    | Snippets                                           | #47                                         | Implemented; manual checks pending                     |
-| #50    | Single-file Upload                                 | #45                                         | Implemented; manual checks pending                     |
-| #51    | Batch Upload and cancellation                      | #50                                         | Implemented; manual checks pending                     |
-| #52    | Local Dictation Insights                           | #45                                         | Implemented; manual checks pending                     |
-| #53    | Recording pill and desktop preferences             | #40                                         | Implemented; manual checks pending                     |
-| #54    | Core hardware and performance acceptance           | #36, #40, #42, #43                          | Measurement support in progress; hardware pending      |
-| #55    | Full feature, interface and performance acceptance | #41, #44, #46, #48, #49, #51, #52, #53, #54 | Final shell and parity fixes in progress               |
-| #56    | Signed native artifacts                            | #39                                         | Signed packaging and CI verified; final repack pending |
-| #57    | Signed upgrades and daily-use transition           | #55, #56                                    | Pending                                                |
+| Ticket | Workflow                                           | Dependencies                                | Evidence                                             |
+| ------ | -------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------- |
+| #36    | Packaged performance baseline and budgets          | None                                        | Tools ready; packaged measurements pending           |
+| #37    | Native launch and fresh protected ASR settings     | None                                        | Settings, persistence, UI and package verified       |
+| #38    | Button-started Dictation and capture ownership     | #37                                         | Core and built-in smoke verified                     |
+| #39    | Right Command hold and Automatic paste             | #38                                         | Implemented; manual checks pending                   |
+| #40    | Double-tap Hands-free Dictation                    | #39                                         | Implemented; manual checks pending                   |
+| #41    | Configurable keyboard and mouse shortcuts          | #40                                         | Implemented; manual checks pending                   |
+| #42    | Selected and Auto microphones                      | #38                                         | Implemented; manual checks pending                   |
+| #43    | Configurable text cleanup                          | #38                                         | Implemented; manual checks pending                   |
+| #44    | Language and Chinese conversion                    | #38                                         | Implemented; manual checks pending                   |
+| #45    | Searchable History, copy and delete                | #38                                         | Implemented; manual checks pending                   |
+| #46    | Retained audio and History retry                   | #45                                         | Implemented; manual checks pending                   |
+| #47    | Dictionary editing, import and persistence         | #38                                         | Implemented; manual checks pending                   |
+| #48    | Correction learning                                | #39, #47                                    | Implemented; manual checks pending                   |
+| #49    | Snippets                                           | #47                                         | Implemented; manual checks pending                   |
+| #50    | Single-file Upload                                 | #45                                         | Implemented; manual checks pending                   |
+| #51    | Batch Upload and cancellation                      | #50                                         | Implemented; manual checks pending                   |
+| #52    | Local Dictation Insights                           | #45                                         | Implemented; manual checks pending                   |
+| #53    | Recording pill and desktop preferences             | #40                                         | Implemented; manual checks pending                   |
+| #54    | Core hardware and performance acceptance           | #36, #40, #42, #43                          | Diagnostic tooling integrated; hardware pending      |
+| #55    | Full feature, interface and performance acceptance | #41, #44, #46, #48, #49, #51, #52, #53, #54 | Source complete; signed synthetic recheck passed     |
+| #56    | Signed native artifacts                            | #39                                         | Signed package verified at the final source revision |
+| #57    | Signed upgrades and daily-use transition           | #55, #56                                    | Pending                                              |
 
 ## Acceptance gates
 
-At `48ab39cfaf45a5239a3d06398da03388daa80662`, all 241 integrated native
-workflow tests pass. The 1,052 legacy/tooling quality checks also pass. The native
-command runs ordinary workflows and the long-recording memory case in separate
-processes, so large Upload fixtures cannot contaminate the process-wide RSS
-measurement. It still runs every case without relaxing the memory limit.
+At `8770993a460eba252dce91a77274327ee436799f`, all 325 integrated native workflow
+tests pass in 33 suites, plus the isolated long-recording memory case. The 1,057
+legacy/tooling quality checks pass at the same source tree; only native and
+documentation paths changed after that run. The native command runs ordinary
+workflows and the long-recording memory case in separate processes, so large
+Upload fixtures cannot contaminate the process-wide RSS measurement. It still runs
+every case without relaxing the memory limit.
 
 Integration covers the complete cleanup → Chinese conversion → Snippets →
 History/Automatic paste workflow; correction learning; retained audio and retry;
@@ -50,9 +52,10 @@ built-in microphone smoke and its limits.
 
 [Remote CI](https://github.com/softmaxe/whisper/actions/runs/35470904060) passed for
 `be835b4d5e49cdef376ff8f7d34c52ea821ea698`, including native tests and
-credential-free packaging on macOS 27/Xcode 27 arm64. That earlier run and the
-existing signed package do not validate the contents of later source revisions.
-A final integrated package, exact-head CI result and source review remain required.
+credential-free packaging on macOS 27/Xcode 27 arm64. Later review rounds changed
+source after that run, so the exact-head CI result for the final revision still has
+to be recorded once the branch is pushed. The reviewed source rounds and the
+signed synthetic checks are recorded separately from physical acceptance.
 
 Record deterministic workflow tests, packaged measurements, English/Chinese
 visual review, automated signature checks, and actual upgrade observations
@@ -68,22 +71,29 @@ Once the migration is complete, remove the maintenance requirement to inspect
 upstream OpenWhispr before every fix or feature. Subsequent development follows
 the native macOS implementation and its supported workflows.
 
-## Implementation still in progress
+## Implementation status
 
-- Final Home/Insights/Upload/Dictionary shell, separate Settings modal, one
-  application-wide search entry, persistent form drafts, Privacy controls and
-  controlled synthetic UI fixtures.
-- Recording pill start/paste parity, copy-recovery dismissal/countdown/hover and
-  display selection/geometry.
-- Content-free native capture/transport/paste diagnostics and strict numeric
-  summary support. Physical samples and performance budgets remain uncollected.
-- Existing self-hosted endpoint compatibility, including normalized endpoint
-  suffixes and Azure deployment paths.
-- A targeted termination audit for cancelled Dictation/retry tasks and capture
-  release when History is disabled or a provisional gesture is rejected.
+Source work is complete at `8770993a460eba252dce91a77274327ee436799f`:
 
-Continue these independent source tasks before waiting for human acceptance.
-[Resume instructions](native-migration-resume.md) describe the following session.
+- The Home/Insights/Upload/Dictionary shell, separate Settings modal, one
+  application-wide search entry, persistent form drafts, Privacy controls and the
+  controlled synthetic UI fixtures are integrated.
+- Recording pill start and cancel ownership, copy-recovery dismissal, countdown,
+  hover hold and display geometry are integrated. The signed bundle was rechecked
+  on September 20, 2026 in English and Chinese; the complete recovery card,
+  including its footer, is visible.
+- Content-free capture, transport and paste diagnostics with strict numeric
+  summaries are implemented. Packaged samples and the baseline-derived budgets
+  remain uncollected.
+- Self-hosted endpoint compatibility, including normalized suffixes, encoded paths
+  and Azure deployment routes, is covered by the merged protocol suite.
+- Termination awaits cancelled Dictation, retry, Upload, cleanup and paste work,
+  including captures that never write History.
+
+What remains needs the physical session, the desktop, packaged measurements and the
+signed upgrade. [Resume instructions](native-migration-resume.md) list that order.
+An implemented workflow is not hardware, performance or permission-retention
+evidence.
 
 ## Implementation defaults awaiting acceptance
 
