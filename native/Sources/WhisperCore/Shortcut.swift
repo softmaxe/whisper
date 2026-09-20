@@ -7,12 +7,15 @@ public struct ShortcutInput: Equatable, Sendable {
     public var isRepeat: Bool
     public var heldModifiers: Set<UInt16>?
     public var keyName: String?
-    public init(keyCode: UInt16, isDown: Bool, isRepeat: Bool = false, heldModifiers: Set<UInt16>? = nil, keyName: String? = nil) {
+    /// Monotonic event time in seconds since startup, before delivery can queue behind application work.
+    public var occurredAt: TimeInterval?
+    public init(keyCode: UInt16, isDown: Bool, isRepeat: Bool = false, heldModifiers: Set<UInt16>? = nil, keyName: String? = nil, occurredAt: TimeInterval? = nil) {
         self.keyCode = keyCode
         self.isDown = isDown
         self.isRepeat = isRepeat
         self.heldModifiers = heldModifiers
         self.keyName = keyName
+        self.occurredAt = occurredAt
     }
     public static let rightCommand: UInt16 = 54
     public static let escape: UInt16 = 53
@@ -33,6 +36,7 @@ extension WhisperApplication {
     public static let doubleTapWindow: TimeInterval = 0.300
 
     func receiveShortcut(_ input: ShortcutInput) {
+        let eventTime = input.occurredAt.flatMap { $0.isFinite && $0 >= 0 ? $0 : nil } ?? clock.now
         let wasDown = pressedKeys.contains(input.keyCode)
         if let held = input.heldModifiers {
             pressedKeys.subtract(ShortcutInput.modifierKeyCodes)
@@ -56,7 +60,7 @@ extension WhisperApplication {
         }
         if input.isDown, input.isRepeat || wasDown { return }
         guard state.dictation.phase != .processing else { return }
-        guard let trigger = resolveShortcutTrigger(input) else { return }
+        guard let trigger = resolveShortcutTrigger(input, at: eventTime) else { return }
 
         if state.dictation.origin == .handsFree,
            state.dictation.phase == .preparing || state.dictation.phase == .recording {
@@ -70,16 +74,17 @@ extension WhisperApplication {
                    state.dictation.phase == .preparing {
                     doubleTapDeadline?.cancel()
                     doubleTapDeadline = nil
-                    if clock.now - firstTapReleasedAt <= Self.doubleTapWindow {
+                    if (0...Self.doubleTapWindow).contains(eventTime - firstTapReleasedAt) {
                         state.dictation.gesture = .secondTap
-                        scheduleHoldRecognition()
+                        scheduleHoldRecognition(pressedAt: eventTime)
                         return
                     }
                     cancelDictation(kind: .rejectedGesture)
                 }
                 guard !state.dictation.phase.isActive else { return }
+                gesturePressedAt = eventTime
                 startDictation(origin: .hold)
-                scheduleHoldRecognition()
+                scheduleHoldRecognition(pressedAt: eventTime)
             } else {
                 guard state.dictation.origin == .hold,
                       state.dictation.phase == .preparing || state.dictation.phase == .recording else { return }
@@ -87,15 +92,21 @@ extension WhisperApplication {
                 holdDeadline = nil
                 // A busy run loop can deliver release before the scheduled threshold callback.
                 if (state.dictation.gesture == .candidate || state.dictation.gesture == .secondTap),
-                   clock.now - gesturePressedAt >= Self.holdThreshold {
+                   eventTime >= gesturePressedAt + Self.holdThreshold {
                     recognizeHold()
+                }
+                if input.occurredAt != nil, state.dictation.gesture == .hold, eventTime < gesturePressedAt + Self.holdThreshold {
+                    // The event's duration wins even when a late timer ran before its queued release.
+                    cancelDictation(kind: .rejectedGesture)
+                    return
                 }
                 if state.dictation.gesture == .candidate {
                     guard let id = state.dictation.requestID else { return }
                     state.dictation.gesture = .awaitingSecondTap
-                    firstTapReleasedAt = clock.now
-                    doubleTapDeadline = clock.schedule(after: Self.doubleTapWindow) { [weak self] in
-                        guard let self, self.isCurrentDictation(id), self.state.dictation.gesture == .awaitingSecondTap else { return }
+                    firstTapReleasedAt = eventTime
+                    doubleTapDeadline = clock.schedule(after: max(0, Self.doubleTapWindow - (clock.now - eventTime))) { [weak self] in
+                        guard let self, self.isCurrentDictation(id), self.firstTapReleasedAt == eventTime,
+                              self.state.dictation.gesture == .awaitingSecondTap else { return }
                         self.doubleTapDeadline = nil
                         self.cancelDictation(kind: .rejectedGesture)
                     }
@@ -119,11 +130,11 @@ extension WhisperApplication {
         }
     }
 
-    private func scheduleHoldRecognition() {
+    private func scheduleHoldRecognition(pressedAt: TimeInterval) {
         guard state.dictation.phase == .preparing, let id = state.dictation.requestID else { return }
-        gesturePressedAt = clock.now
-        holdDeadline = clock.schedule(after: Self.holdThreshold) { [weak self] in
-            guard let self, self.isCurrentDictation(id),
+        gesturePressedAt = pressedAt
+        holdDeadline = clock.schedule(after: max(0, Self.holdThreshold - (clock.now - pressedAt))) { [weak self] in
+            guard let self, self.isCurrentDictation(id), self.gesturePressedAt == pressedAt,
                   self.state.dictation.gesture == .candidate || self.state.dictation.gesture == .secondTap else { return }
             self.holdDeadline = nil
             self.recognizeHold()
@@ -154,7 +165,7 @@ extension WhisperApplication {
     }
 
     private enum ShortcutTrigger { case down, up, other }
-    private func resolveShortcutTrigger(_ input: ShortcutInput) -> ShortcutTrigger? {
+    private func resolveShortcutTrigger(_ input: ShortcutInput, at eventTime: TimeInterval) -> ShortcutTrigger? {
         if !state.dictation.phase.isActive {
             guard input.isDown else { return nil }
             let bindings = state.settings.shortcuts.compactMap { try? ShortcutBinding($0) }
@@ -175,7 +186,7 @@ extension WhisperApplication {
             doubleTapDeadline?.cancel()
             doubleTapDeadline = nil
             state.dictation.gesture = .candidate
-            scheduleHoldRecognition()
+            scheduleHoldRecognition(pressedAt: eventTime)
             return nil
         }
         if input.isDown, binding.matches(input, pressed: pressedKeys) {
@@ -194,6 +205,7 @@ extension WhisperApplication {
     }
 
     func publishRecordingReadiness() {
+        shortcutInputDrain?()
         guard state.dictation.phase == .preparing,
               state.dictation.timing["firstAudio"] != nil,
               !state.dictation.gesture.isProvisional else { return }

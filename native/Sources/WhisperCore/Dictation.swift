@@ -132,14 +132,14 @@ extension WhisperApplication {
             }
         case let .audio(level, duration, capturedAt):
             guard state.dictation.phase == .preparing || state.dictation.phase == .recording else { return }
+            state.dictation.level = level
+            state.dictation.duration = duration
             if state.dictation.timing["firstAudio"] == nil {
                 firstAudioDeadline?.cancel()
                 firstAudioDeadline = nil
                 state.dictation.timing["firstAudio"] = (capturedAt ?? clock.now) - dictationStartedAt
                 publishRecordingReadiness()
             }
-            state.dictation.level = level
-            state.dictation.duration = duration
         case let .failed(failure): failDictation(failure, requestID: requestID)
         }
     }
@@ -251,7 +251,8 @@ extension WhisperApplication {
     }
 
     func isCurrentDictation(_ id: UUID) -> Bool {
-        state.dictation.requestID == id && state.dictation.phase.isActive
+        shortcutInputDrain?()
+        return state.dictation.requestID == id && state.dictation.phase.isActive
     }
 
     func cancelDictation(kind: DictationCancellation = .user) {

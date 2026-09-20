@@ -173,16 +173,7 @@ public struct SelfHostedCleanup: CleanupService {
 
     private static func endpoint(_ base: String) throws -> URL {
         guard var components = URLComponents(string: base) else { throw CleanupFailure.configuration }
-        var path = components.percentEncodedPath
-        while path.hasSuffix("/") { path.removeLast() }
-        for suffix in ["/audio/transcriptions", "/audio/translations", "/chat/completions", "/responses", "/models"] {
-            if path.lowercased().hasSuffix(suffix) {
-                path.removeLast(suffix.count)
-                // Match normalizeBaseUrl without lowercasing an arbitrary configured gateway path.
-                if path.lowercased().hasSuffix("/v1") { path.removeLast(3); path += "/v1" }
-                break
-            }
-        }
+        var path = normalizedServiceBasePath(components.percentEncodedPath)
         if !path.hasSuffix("/v1") { path += "/v1" }
         components.percentEncodedPath = path + "/chat/completions"
         components.fragment = nil

@@ -141,6 +141,15 @@ gestures to the supported keyboard and mouse choices.
 The session event tap reads each modifier's physical key state rather than the
 aggregate Command flag, so Left Command cannot masquerade as a Right Command
 release. It ignores key repeat and the app's tagged synthetic paste events.
+Its dedicated runloop collects timestamped edges while synchronous Keychain or
+device preparation occupies the application thread. A thread-safe configuration
+snapshot controls suppression; ordered batches enter the same application
+commands. Hold/readiness timers and completion checks drain collected edges
+before publishing effects. A combination that was already released still
+rejects the candidate. Session generations discard callbacks after stop/restart.
+Hold duration and the double-tap window use event times, with only the remaining
+threshold scheduled after preparation. Inputs without a timestamp use the
+workflow clock for deterministic fixtures and compatibility.
 Ordinary Command combinations pass through. Global Esc cancels preparation,
 recording, ASR and pending delivery. Late device, server and Accessibility probe
 completions cannot revive the cancelled request. Enable Accessibility through
@@ -297,9 +306,11 @@ timers, acquisitions or ASR responses cannot stop a new one.
 
 The default-enabled **Learn from corrections** preference adds words only after
 confirmed Automatic paste. The app captures the exact Accessibility element and
-selection before insertion. After 500 ms it confirms the inserted text in that
-range, then watches the same field for 30 seconds using AXObserver with a 500 ms
-polling fallback. It waits 1500 ms after the latest edit before learning. A focus
+selection before insertion. After 500 ms it validates the same field, selection
+and surrounding text, then watches that scope for 30 seconds using AXObserver
+with a 500 ms polling fallback. An initial correction inside the owned range is
+compared with the original transcript; an unchanged pre-paste value is retried
+without learning. It waits 1500 ms after the latest edit before learning. A focus
 change, selection outside the inserted region, surrounding-content change,
 disabled preference, new Dictation, or teardown stops the observation. Copy
 recovery and clipboard-only delivery do not start learning.

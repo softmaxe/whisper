@@ -72,8 +72,8 @@ import WhisperCore
             correctionSystem: correctionSystem ?? InertCorrectionMonitoringFixture(), desktopEffects: desktop, pillDisplays: pillDisplays)
         app.send(.saveASR(.init(serverURL: "http://localhost:8178/v1", model: "fixture"), credential: .unchanged))
     }
-    func key(_ code: UInt16 = ShortcutInput.rightCommand, down: Bool = true, repeat repeated: Bool = false) {
-        app.send(.shortcut(.init(keyCode: code, isDown: down, isRepeat: repeated)))
+    func key(_ code: UInt16 = ShortcutInput.rightCommand, down: Bool = true, repeat repeated: Bool = false, at time: TimeInterval? = nil) {
+        app.send(.shortcut(.init(keyCode: code, isDown: down, isRepeat: repeated, occurredAt: time)))
     }
     func hold() async -> ControlledCapture {
         key()
@@ -99,6 +99,37 @@ import WhisperCore
 
 @Suite("Right Command Dictation") @MainActor
 struct ShortcutWorkflowTests {
+
+    @Test func releaseAfterSlowSynchronousPreparationStillSubmitsARealHold() async throws {
+        let f = try ShortcutFixture(); defer { f.remove() }
+        f.microphones.beforeResolve = { f.clock.now += 0.2 }
+        f.key()
+        let capture = try #require(f.microphones.sessions.first)
+        capture.open(); capture.deliver([Float](repeating: 0.25, count: 4800))
+        await settle { f.app.state.dictation.timing["firstAudio"] != nil }
+        // Advance time without running scheduled callbacks, as a busy run loop does.
+        f.clock.now = 0.3
+        f.key(down: false)
+        try #require(f.app.state.dictation.phase == .processing)
+        await settle { await f.transport.requests.count == 1 }
+        await f.transport.reply()
+        await settle { f.app.state.dictation.delivery == .pasted }
+        #expect(!capture.physicallyOpen)
+    }
+
+    @Test func synchronousPreparationUsesOnlyTheRemainingHoldThreshold() async throws {
+        let f = try ShortcutFixture(); defer { f.remove() }
+        f.microphones.beforeResolve = { f.clock.now += 0.1 }
+        f.key()
+        let capture = try #require(f.microphones.sessions.first)
+        capture.open(); capture.deliver([Float](repeating: 0, count: 4800))
+        await settle { f.app.state.dictation.timing["firstAudio"] != nil }
+        f.clock.advance(0.051)
+        try #require(f.app.state.dictation.phase == .recording)
+        await f.submit()
+        await settle { f.app.state.dictation.delivery == .pasted }
+    }
+
     @Test func holdCapturesOpeningAudioAndDeliversToStartupApp() async throws {
         let f = try ShortcutFixture(); defer { f.remove() }
         let original = f.paste.clipboard

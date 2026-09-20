@@ -1,52 +1,47 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// A session tap observes real key-up and side-specific physical state without claiming Command chords.
+/// One independently serviced tap collects edges while the application prepares capture.
 @MainActor public final class NativeShortcutMonitor {
     private weak var application: WhisperApplication?
-    private var tap: CFMachPort?
-    private var source: CFRunLoopSource?
+    private var source: NativeShortcutEventSource?
+    private let delivery: ShortcutEventDelivery
     private let globe: GlobePreferenceController
-    private var suppression = ShortcutEventSuppression()
-    private var physicalKeys = Set<UInt16>()
     private var quitObserver: NSObjectProtocol?
     private var signalSources: [DispatchSourceSignal] = []
     private var signalRestorers: [() -> Void] = []
     public init(application: WhisperApplication) {
         self.application = application
+        delivery = ShortcutEventDelivery(application: application)
         globe = GlobePreferenceController(markerURL: application.profileStore.profile.directory.appendingPathComponent("globe-preference.json"),
             system: NativeGlobePreferenceSystem())
+        delivery.didDrain = { [weak self] in self?.refreshDeliveryConfiguration() }
     }
 
     @discardableResult public func start(requestPermission: Bool = false) -> Bool {
-        if tap != nil {
+        if source != nil {
             if AXIsProcessTrusted() { updateConfiguration(); return true }
             stop()
         }
         application?.send(.setShortcutWarning(globe.setOwned(false) ? nil : .globeRestoreUnavailable))
         let options = ["AXTrustedCheckOptionPrompt": requestPermission] as CFDictionary
-        guard AXIsProcessTrustedWithOptions(options) else {
+        guard AXIsProcessTrustedWithOptions(options), let state = snapshot() else {
             application?.send(.setShortcutAvailable(false)); return false
         }
-        let mask = [CGEventType.keyDown, .keyUp, .flagsChanged, .otherMouseDown, .otherMouseUp]
-            .reduce(CGEventMask(1 << 14)) { $0 | (1 << $1.rawValue) }
-        guard let port = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
-            options: .defaultTap, eventsOfInterest: mask, callback: { _, type, event, info in
-                guard let info else { return Unmanaged.passUnretained(event) }
-                let consume = MainActor.assumeIsolated {
-                    let monitor = Unmanaged<NativeShortcutMonitor>.fromOpaque(info).takeUnretainedValue()
-                    return monitor.receive(type, event: event)
-                }
-                return consume ? nil : Unmanaged.passUnretained(event)
-            }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
+        let heldKeys = Self.readPhysicalKeys()
+        let token = delivery.start(state: state, heldKeys: heldKeys, resetInput: false)
+        let source = NativeShortcutEventSource(delivery: delivery, generation: token) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.delivery.isCurrent(token) else { return }
+                self.stop()
+            }
+        }
+        guard source.start() else {
+            delivery.stop(resetInput: false)
             application?.send(.setShortcutAvailable(false)); return false
         }
-        tap = port
-        physicalKeys = Self.readPhysicalKeys()
-        application?.send(.resetShortcutInput(physicalKeys))
-        source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
-        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: port, enable: true)
+        self.source = source
+        application?.send(.resetShortcutInput(heldKeys))
         application?.send(.setShortcutAvailable(true))
         updateConfiguration()
         quitObserver = NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
@@ -67,18 +62,31 @@ import Carbon.HIToolbox
         return true
     }
 
+    private func snapshot() -> ShortcutMonitorState? {
+        guard let application else { return nil }
+        return ShortcutMonitorState(bindings: application.state.settings.shortcuts,
+            activeShortcut: application.state.dictation.phase.isActive ? application.activeShortcut?.value : nil,
+            requestActive: application.state.dictation.phase.isActive,
+            processing: application.state.dictation.phase == .processing,
+            capturing: application.state.shortcutCapture.isActive, captureAllowed: NSApplication.shared.isActive,
+            dismissingRecovery: application.state.canDismissCopyRecovery)
+    }
+
     public func updateConfiguration() {
-        guard tap != nil, let application else { return }
+        guard source != nil, let application, let state = snapshot() else { return }
+        delivery.update(state)
         let needsGlobe = application.state.shortcutCapture.isActive || application.state.settings.shortcuts.contains("GLOBE")
             || (application.state.dictation.phase.isActive && application.state.dictation.origin != .button && application.activeShortcut?.isGlobe == true)
         application.send(.setShortcutWarning(globe.setOwned(needsGlobe) ? nil : needsGlobe ? .globeUnavailable : .globeRestoreUnavailable))
     }
 
+    private func refreshDeliveryConfiguration() {
+        if source != nil, let state = snapshot() { delivery.update(state) }
+    }
+
     public func stop() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
-        tap = nil
-        source = nil
+        delivery.stop()
+        source?.stop(); source = nil
         _ = globe.setOwned(false)
         if let quitObserver { NotificationCenter.default.removeObserver(quitObserver) }
         quitObserver = nil
@@ -86,62 +94,28 @@ import Carbon.HIToolbox
         signalSources = []
         signalRestorers.forEach { $0() }
         signalRestorers = []
-        suppression.reset()
-        application?.send(.resetShortcutInput([]))
         application?.send(.setShortcutAvailable(false))
     }
 
     isolated deinit {
+        delivery.stop()
+        source?.stop()
         _ = globe.setOwned(false)
         if let quitObserver { NotificationCenter.default.removeObserver(quitObserver) }
         signalSources.forEach { $0.cancel() }
         signalRestorers.forEach { $0() }
-        if let tap { CFMachPortInvalidate(tap) }
-        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
     }
 
-    private func receive(_ type: CGEventType, event: CGEvent) -> Bool {
-        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            guard AXIsProcessTrusted() else { stop(); return false }
-            physicalKeys = Self.readPhysicalKeys()
-            application?.send(.resetShortcutInput(physicalKeys))
-            suppression.reset()
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            return false
+    nonisolated static func readPhysicalKeys() -> Set<UInt16> {
+        var keys = Set((UInt16(0)..<256).filter { $0 != 57 && $0 != 71 && CGEventSource.keyState(.hidSystemState, key: $0) })
+        for button: UInt32 in [3, 4] where CGEventSource.buttonState(.hidSystemState, button: CGMouseButton(rawValue: button)!) {
+            keys.insert(UInt16(0x1000 + button))
         }
-        guard event.getIntegerValueField(.eventSourceUserData) != whisperPasteEventTag else { return false }
-        guard let nsEvent = NSEvent(cgEvent: event), let input = Self.input(for: nsEvent), let application else { return false }
-        if let modifiers = input.heldModifiers {
-            physicalKeys.subtract(ShortcutInput.modifierKeyCodes)
-            physicalKeys.formUnion(modifiers)
-        }
-        if input.isDown { physicalKeys.insert(input.keyCode) } else { physicalKeys.remove(input.keyCode) }
-        if application.state.shortcutCapture.isActive, !NSApplication.shared.isActive { return false }
-        let capturing = application.state.shortcutCapture.isActive && NSApplication.shared.isActive
-        var bindings = application.state.settings.shortcuts
-        if application.state.dictation.phase.isActive, application.state.dictation.origin != .button,
-           let active = application.activeShortcut { bindings.append(active.value) }
-        let recoveryEscape = application.state.canDismissCopyRecovery
-        let consume = suppression.consume(input, pressed: physicalKeys, bindings: bindings, capturing: capturing, dismissingRecovery: recoveryEscape)
-        let configuredEscape = application.activeShortcut?.key == "Esc"
-            && application.activeShortcut?.matches(input, pressed: physicalKeys) == true
-            && application.state.dictation.phase != .processing
-        if input.keyCode == ShortcutInput.escape, input.isDown, !capturing,
-           (application.state.dictation.phase.isActive && !configuredEscape) || recoveryEscape {
-            // Cancellation only invalidates ownership; do it before an already queued server reply.
-            application.send(.shortcut(input))
-            return true
-        }
-        // Keychain/device setup may block; never perform it inside the event-tap callback.
-        DispatchQueue.main.async { [weak application] in application?.send(.shortcut(input)) }
-        return consume
-    }
-    private static func readPhysicalKeys() -> Set<UInt16> {
-        Set((UInt16(0)..<128).filter { $0 != 57 && $0 != 71 && CGEventSource.keyState(.hidSystemState, key: $0) })
+        return keys
     }
 
     /// The settings responder uses the same event normalization when Accessibility is unavailable.
-    public static func input(for event: NSEvent) -> ShortcutInput? {
+    nonisolated public static func input(for event: NSEvent, physicalKeys: Set<UInt16>? = nil) -> ShortcutInput? {
         let code: UInt16
         let down: Bool
         var name: String?
@@ -164,7 +138,7 @@ import Carbon.HIToolbox
             code = event.keyCode
             // Caps Lock's latched flags are not a held key and must not block every shortcut.
             if event.type == .flagsChanged, !ShortcutInput.modifierKeyCodes.contains(code) { return nil }
-            down = event.type == .flagsChanged ? CGEventSource.keyState(.hidSystemState, key: code) : event.type == .keyDown
+            down = event.type == .flagsChanged ? physicalKeys?.contains(code) ?? CGEventSource.keyState(.hidSystemState, key: code) : event.type == .keyDown
             if event.type != .flagsChanged {
                 repeated = event.isARepeat
                 if let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first?.value {
@@ -174,7 +148,8 @@ import Carbon.HIToolbox
             }
         }
         return ShortcutInput(keyCode: code, isDown: down, isRepeat: repeated,
-            heldModifiers: Set(ShortcutInput.modifierKeyCodes.filter { CGEventSource.keyState(.hidSystemState, key: $0) }),
-            keyName: name ?? ShortcutKeys.keyName(code))
+            heldModifiers: physicalKeys?.intersection(ShortcutInput.modifierKeyCodes)
+                ?? Set(ShortcutInput.modifierKeyCodes.filter { CGEventSource.keyState(.hidSystemState, key: $0) }),
+            keyName: name ?? ShortcutKeys.keyName(code), occurredAt: event.timestamp)
     }
 }

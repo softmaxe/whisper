@@ -16,34 +16,11 @@ extension WhisperApplication {
     }
 
     func saveCleanup(_ configuration: CleanupConfiguration, credential: CredentialChange) {
-        state.settingsSaved = false
-        guard profileReadable else { state.configurationError = .incompatibleProfile; return }
-        var createdAccount: String?
-        do {
-            var settings = state.settings
-            settings.cleanup = try configuration.validated()
-            switch credential {
-            case .unchanged: break
-            case let .replace(value):
-                let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                if value.isEmpty { settings.cleanupCredentialAccount = nil }
-                else {
-                    let account = "cleanup-" + UUID().uuidString
-                    try credentials.write(value, account: account)
-                    createdAccount = account
-                    settings.cleanupCredentialAccount = account
-                }
-            case .remove: settings.cleanupCredentialAccount = nil
-            }
-            let previous = state.settings.cleanupCredentialAccount
-            try profileStore.saveSettings(settings)
-            state.settings = settings
-            state.settingsSaved = true
-            state.configurationError = nil
-            if let previous, previous != settings.cleanupCredentialAccount { try credentials.delete(account: previous) }
-        } catch {
-            if !state.settingsSaved, let createdAccount { try? credentials.delete(account: createdAccount) }
-            state.configurationError = error as? ConfigurationError ?? .persistenceFailed
+        let normalized: CredentialChange
+        if case let .replace(value) = credential { normalized = .replace(value.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        else { normalized = credential }
+        saveServiceSettings(credential: normalized, account: \.cleanupCredentialAccount, accountPrefix: "cleanup-") {
+            $0.cleanup = try configuration.validated()
         }
     }
 
