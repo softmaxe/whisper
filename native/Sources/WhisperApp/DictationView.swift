@@ -195,10 +195,10 @@ private struct RecordingPill: View {
     private var dictation: DictationState { application.state.dictation }
     private var language: AppLanguage { application.state.settings.language }
     var body: some View {
-        if !application.state.corrections.learned.isEmpty && !dictation.phase.isActive {
+        if application.state.recordingPill.feedback == .learned {
             CorrectionLearningFeedback(application: application)
                 .padding(18).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)).padding(10)
-        } else if case .recovery = dictation.delivery {
+        } else if application.state.recordingPill.feedback == .recovery {
             let recoveryRevision = application.state.desktop.copyRecovery.revision
             let panelSize = application.state.recordingPill.panelSize
             CopyRecoveryCard(application: application)

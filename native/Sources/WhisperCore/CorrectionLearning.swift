@@ -21,6 +21,7 @@ public protocol CorrectionObservation: Sendable { func cancel() }
 }
 
 public struct CorrectionLearningState: Equatable, Sendable {
+    public var sourceRequestID: UUID?
     public var learned: [DictionaryEntry] = []
     public var failure: DictionaryFailure?
     public init() {}
@@ -180,7 +181,12 @@ extension WhisperApplication {
             return added.count
         }
         if let failure = state.dictionary.failure { state.corrections.failure = failure }
-        else if !added.isEmpty { state.corrections = CorrectionLearningState(); state.corrections.learned = added }
+        else if !added.isEmpty {
+            var notice = CorrectionLearningState()
+            notice.sourceRequestID = state.dictation.requestID
+            notice.learned = added
+            state.corrections = notice
+        }
     }
 
     func undoLearnedCorrections() {
