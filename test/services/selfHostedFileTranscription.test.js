@@ -23,7 +23,7 @@ test("self-hosted file transcription bypasses stale Custom endpoint validation",
   const vite = await createRendererServer(t, {
     cachePrefix: "whisper-file-self-hosted-endpoint-test-",
     mockModules: {
-      "/lib/auth": "export const withSessionRefresh = (fn) => fn();",
+      "/lib/sessionRefresh": "export const withSessionRefresh = (fn) => fn();",
     },
   });
   const { transcribeFile } = await vite.ssrLoadModule("/services/fileTranscription.ts");

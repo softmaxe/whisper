@@ -18,8 +18,6 @@ import {
   getLlmRequestTimeoutSeconds,
   llmRequestTimeoutError,
 } from "../helpers/llmRequestTimeout.js";
-import { streamText, stepCountIs } from "ai";
-import { getAIModel } from "./ai/providers";
 import { createEnterpriseChatModel } from "./ai/enterpriseChatModel";
 import { getManagedScopeResolution } from "../stores/enterpriseIdentityStore";
 import type { InferenceScope } from "../config/inferenceScopes";
@@ -835,6 +833,12 @@ class ReasoningService extends BaseReasoningService {
     // OpenRouter ids are never in the local registry, so the supportsThinking
     // exemption below can't apply — honor the toggle directly.
     const openrouterDisableThinking = provider === "openrouter" && config.disableThinking === true;
+    // The AI SDK and its provider packages are only used by this transport, so
+    // loading them here keeps them out of the dictation window's startup.
+    const [{ streamText, stepCountIs }, { getAIModel }] = await Promise.all([
+      import("ai"),
+      import("./ai/providers"),
+    ]);
     // Resolving a Tinfoil model refreshes the registry, so read model config after it.
     const aiModel = isEnterprise
       ? createEnterpriseChatModel(provider as EnterpriseProvider, model, config.inferenceScope)

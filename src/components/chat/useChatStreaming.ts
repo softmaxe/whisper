@@ -18,7 +18,6 @@ import {
   getAgentSystemPrompt,
 } from "../../config/prompts";
 import { getDictionaryHintWords } from "../../utils/snippets";
-import { createToolRegistry } from "../../services/tools";
 import type { ToolRegistry } from "../../services/tools/ToolRegistry";
 import { getAgentToolActivityRemainingMs } from "../../helpers/agentToolPresentation";
 import type { Message, AgentState, ChatImageAttachment, ToolCallInfo } from "./types";
@@ -302,6 +301,9 @@ export function useChatStreaming({
         if (toolRegistryRef.current?.key === cacheKey) {
           registry = toolRegistryRef.current.registry;
         } else {
+          // The tools pull in notes, sync and calendar services; load them on
+          // the first tool-capable request instead of with the dictation window.
+          const { createToolRegistry } = await import("../../services/tools");
           registry = createToolRegistry({
             isSignedIn: settings.isSignedIn,
             calendarConnected,

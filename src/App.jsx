@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { AssistantPanel } from "./components/dictation/AssistantPanel";
 import { CopyRecoveryPanel } from "./components/dictation/CopyRecoveryPanel";
 import { LiquidCancelButton } from "./components/dictation/LiquidCancelButton";
 import { LiveTranscriptPanel } from "./components/dictation/LiveTranscriptPanel";
@@ -45,6 +44,14 @@ import { usePolicyStore } from "./stores/policyStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { formatHotkeyListLabel } from "./utils/hotkeys";
 import { createMainWindowResizeCoordinator } from "./utils/mainWindowResizeCoordinator";
+
+// The agent panel brings in markdown rendering and chat tooling that plain
+// dictation never needs; load it the first time the panel opens.
+const AssistantPanel = React.lazy(() =>
+  import("./components/dictation/AssistantPanel").then((module) => ({
+    default: module.AssistantPanel,
+  }))
+);
 
 const formatPillHotkeyLabel = (value) =>
   formatHotkeyListLabel(value)
@@ -818,25 +825,27 @@ export default function App() {
         onClosingFadeComplete={assistant.completeContentFade}
       >
         {activeVoicePanelMode === "assistant" && assistant.mounted && (
-          <AssistantPanel
-            pendingCommand={assistant.pendingCommand}
-            onCommandConsumed={assistant.handleCommandConsumed}
-            onCommandDiscarded={assistant.handleCommandDiscarded}
-            onCommandSettled={assistant.handleCommandSettled}
-            initialConversationId={assistant.conversationId}
-            onConversationIdChange={assistant.setConversationId}
-            voiceState={assistantVoiceState}
-            thinking={assistant.thinking && assistant.open}
-            open={assistant.open}
-            footerPhase={assistant.footerPhase}
-            horizontalDirection={voiceHorizontalDirection}
-            onClose={assistant.handleClose}
-            onBusyChange={assistant.setBusy}
-            onResponseReadyChange={assistant.setResponseReady}
-            onResponseContent={assistant.handleResponseContent}
-            onConversationReset={assistant.handleConversationReset}
-            onSelectionContextChange={assistant.handleSelectionContextChange}
-          />
+          <Suspense fallback={null}>
+            <AssistantPanel
+              pendingCommand={assistant.pendingCommand}
+              onCommandConsumed={assistant.handleCommandConsumed}
+              onCommandDiscarded={assistant.handleCommandDiscarded}
+              onCommandSettled={assistant.handleCommandSettled}
+              initialConversationId={assistant.conversationId}
+              onConversationIdChange={assistant.setConversationId}
+              voiceState={assistantVoiceState}
+              thinking={assistant.thinking && assistant.open}
+              open={assistant.open}
+              footerPhase={assistant.footerPhase}
+              horizontalDirection={voiceHorizontalDirection}
+              onClose={assistant.handleClose}
+              onBusyChange={assistant.setBusy}
+              onResponseReadyChange={assistant.setResponseReady}
+              onResponseContent={assistant.handleResponseContent}
+              onConversationReset={assistant.handleConversationReset}
+              onSelectionContextChange={assistant.handleSelectionContextChange}
+            />
+          </Suspense>
         )}
 
         {activeVoicePanelMode !== "assistant" && !liveTranscript.copyFallback && (

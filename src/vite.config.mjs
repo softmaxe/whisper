@@ -77,18 +77,6 @@ export default defineConfig(({ mode }) => {
           "unzipper",
           "@aws-sdk/client-s3",
         ],
-        output: {
-          manualChunks(id) {
-            if (
-              id.includes("@radix-ui/react-dialog") ||
-              id.includes("@radix-ui/react-dropdown-menu") ||
-              id.includes("@radix-ui/react-select") ||
-              id.includes("@radix-ui/react-tabs")
-            ) {
-              return "vendor-radix";
-            }
-          },
-        },
       },
     },
   };
