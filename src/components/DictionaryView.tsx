@@ -201,7 +201,7 @@ export default function DictionaryView() {
                 onChange={(e) => setBulkText(e.target.value)}
                 placeholder={t("dictionary.importPlaceholder")}
                 rows={4}
-                className="min-h-[72px] resize-none border-0 shadow-none rounded-none bg-transparent p-0 text-xs text-foreground placeholder:text-foreground/45 hover:border-0 focus:border-0 focus:ring-0"
+                className="min-h-[72px] resize-none border-0 shadow-none rounded-none bg-transparent dark:bg-transparent p-0 text-xs text-foreground placeholder:text-foreground/45 hover:border-0 focus:border-0 focus:ring-0"
               />
               <div className="flex items-center justify-between pt-1.5">
                 <p className="text-xs text-foreground/45">
