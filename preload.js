@@ -321,25 +321,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   readClipboard: () => ipcRenderer.invoke("read-clipboard"),
   writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
   checkPasteTools: () => ipcRenderer.invoke("check-paste-tools"),
-  onWhisperDownloadProgress: registerListener("whisper-download-progress"),
-  checkFFmpegAvailability: () => ipcRenderer.invoke("check-ffmpeg-availability"),
-  onCudaDownloadProgress: registerListener(
-    "cuda-download-progress",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onCudaFallbackNotification: registerListener(
-    "cuda-fallback-notification",
-    (callback) => () => callback()
-  ),
-  onVulkanWhisperDownloadProgress: registerListener(
-    "vulkan-whisper-download-progress",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onGpuFallbackNotification: registerListener(
-    "gpu-fallback-notification",
-    (callback) => () => callback()
-  ),
-  onParakeetDownloadProgress: registerListener("parakeet-download-progress"),
 
   relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
   updateHotkey: (hotkey) => ipcRenderer.invoke("update-hotkey", hotkey),
@@ -390,7 +371,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // External link opener
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
-  onModelDownloadProgress: registerListener("model-download-progress"),
 
   getUiLanguage: () => ipcRenderer.invoke("get-ui-language"),
   saveUiLanguage: (language) => ipcRenderer.invoke("save-ui-language", language),
@@ -411,7 +391,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Activation mode persistence (file-based for reliable startup)
   getActivationMode: () => ipcRenderer.invoke("get-activation-mode"),
   saveActivationMode: (mode) => ipcRenderer.invoke("save-activation-mode", mode),
-  syncStartupPreferences: (prefs) => ipcRenderer.invoke("sync-startup-preferences", prefs),
   cancelEnterpriseReasoning: () => ipcRenderer.send("enterprise-reasoning-cancel"),
   onEnterpriseStreamPart: registerListener(
     "enterprise-stream-part",
@@ -428,10 +407,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onManagedEnterpriseConfigChanged: registerListener(
     "managed-enterprise-config-changed",
     (callback) => (_event, snapshot) => callback(snapshot)
-  ),
-  onLlamaVulkanDownloadProgress: registerListener(
-    "llama-vulkan-download-progress",
-    (callback) => (_event, data) => callback(data)
   ),
 
   getLogLevel: () => ipcRenderer.invoke("get-log-level"),
@@ -787,8 +762,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "acal-events-synced",
     (callback) => (_event, data) => callback(data)
   ),
-  getWhisperVadConfig: () => ipcRenderer.invoke("whisper-vad-get-config"),
-  setWhisperVadConfig: (config) => ipcRenderer.invoke("whisper-vad-set-config", config),
   onMeetingNotificationData: registerListener(
     "meeting-notification-data",
     (callback) => (_event, data) => callback(data)

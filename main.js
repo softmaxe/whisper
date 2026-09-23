@@ -108,8 +108,6 @@ const EnvironmentManager = require("./src/helpers/environment");
 const WindowManager = require("./src/helpers/windowManager");
 const DatabaseManager = require("./src/helpers/database");
 const ClipboardManager = require("./src/helpers/clipboard");
-const WhisperManager = require("./src/helpers/whisper");
-const ParakeetManager = require("./src/helpers/parakeet");
 
 const TrayManager = require("./src/helpers/tray");
 const dockManager = require("./src/helpers/dockManager");
@@ -120,13 +118,8 @@ const GlobeKeyManager = require("./src/helpers/globeKeyManager");
 
 const TextEditMonitor = require("./src/helpers/textEditMonitor");
 const SelectionManager = require("./src/helpers/selectionManager");
-const WhisperCudaManager = require("./src/helpers/whisperCudaManager");
-const WhisperVulkanManager = require("./src/helpers/whisperVulkanManager");
-const { migrateLegacyBinDir, detectOrphanedGpuPacks } = require("./src/helpers/gpuBinaryManager");
 
 const { i18nMain, changeLanguage } = require("./src/helpers/i18nMain");
-const sidecarRegistry = require("./src/helpers/sidecarRegistry");
-const { reapStaleSidecars } = require("./src/helpers/sidecarReaper");
 const { laptopLidMonitor } = require("./src/helpers/laptopLidMonitor");
 
 // Manager instances - initialized after app.whenReady()
@@ -136,14 +129,10 @@ let windowManager = null;
 let hotkeyManager = null;
 let databaseManager = null;
 let clipboardManager = null;
-let whisperManager = null;
-let parakeetManager = null;
 let trayManager = null;
 let globeKeyManager = null;
 let textEditMonitor = null;
 let selectionManager = null;
-let whisperCudaManager = null;
-let whisperVulkanManager = null;
 let googleCalendarManager = null;
 let microsoftCalendarManager = null;
 let appleCalendarManager = null;
@@ -160,7 +149,7 @@ let authBridgeServer = null;
 
 let wakeRewarmTimer = null;
 
-// Set up PATH for production builds to find system tools (whisper.cpp, ffmpeg)
+// Set up PATH for production builds to find system tools (ffmpeg)
 function setupProductionPath() {
   if (process.env.NODE_ENV !== "development") {
     const commonPaths = [
@@ -220,40 +209,6 @@ function initializeCoreManagers() {
   });
   if (bootAccountId) databaseManager.setActiveAccountId(bootAccountId);
   clipboardManager = new ClipboardManager();
-  whisperManager = new WhisperManager();
-  if (process.platform !== "darwin") {
-    whisperCudaManager = new WhisperCudaManager();
-    whisperVulkanManager = new WhisperVulkanManager();
-    // Heal installs from before GPU packs got per-pack directories; must run
-    // before startup pre-warm resolves any GPU binary path.
-    const LlamaVulkanManager = require("./src/helpers/llamaVulkanManager");
-    const llamaVulkanManager = new LlamaVulkanManager();
-    const clearedPacks = migrateLegacyBinDir([
-      whisperCudaManager,
-      whisperVulkanManager,
-      llamaVulkanManager,
-    ]);
-    if (clearedPacks.length > 0) {
-      // No window exists yet — persist the notice; a control panel window
-      // shows it as a toast and clears it. See #1606.
-      require("./src/helpers/gpuPackMigrationNotice").record(clearedPacks);
-    }
-    // The 1.8.3 migration deleted lib-carrying packs without recording that
-    // notice, leaving those users on a silent CPU fallback: an enabled flag
-    // with no pack on disk only happens via such data loss. recordOnce gates
-    // each pack to one notice so a dismissed toast doesn't return every launch.
-    const orphanedPacks = detectOrphanedGpuPacks([
-      { manager: whisperCudaManager, enabledEnvVar: "WHISPER_CUDA_ENABLED" },
-      { manager: whisperVulkanManager, enabledEnvVar: "WHISPER_VULKAN_ENABLED" },
-      { manager: llamaVulkanManager, enabledEnvVar: "LLAMA_VULKAN_ENABLED" },
-    ]);
-    if (orphanedPacks.length > 0) {
-      require("./src/helpers/gpuPackMigrationNotice").recordOnce(orphanedPacks);
-    }
-    // Lets every server start resolve its GPU backend from installed packs
-    whisperManager.setGpuBinaryManagers({ cuda: whisperCudaManager, vulkan: whisperVulkanManager });
-  }
-  parakeetManager = new ParakeetManager();
   textEditMonitor = new TextEditMonitor();
   selectionManager = new SelectionManager({ clipboardManager, textEditMonitor });
   windowManager.textEditMonitor = textEditMonitor;
@@ -264,13 +219,9 @@ function initializeCoreManagers() {
     environmentManager,
     databaseManager,
     clipboardManager,
-    whisperManager,
-    parakeetManager,
     windowManager,
     textEditMonitor,
     selectionManager,
-    whisperCudaManager,
-    whisperVulkanManager,
     googleCalendarManager,
     microsoftCalendarManager,
     appleCalendarManager,
@@ -331,9 +282,6 @@ ipcMain.handle("get-pending-invitation-token", () => {
 
 // Main application startup
 async function startApp() {
-  // Await so a stale sidecar is confirmed dead before new ones can spawn and
-  // contend for its port or storage lock.
-  await reapStaleSidecars();
   laptopLidMonitor.start();
 
   // Phase 1: Core managers + IPC handlers before windows
@@ -907,12 +855,10 @@ if (gotSingleInstanceLock) {
   });
 
   let isShuttingDown = false;
-  app.on("before-quit", (event) => {
+  app.on("before-quit", () => {
     if (isShuttingDown) return;
     isShuttingDown = true;
-    event.preventDefault();
     performSyncTeardown();
-    sidecarRegistry.shutdownAll().finally(() => app.exit(0));
   });
 }
 

@@ -9,7 +9,6 @@ import {
 import { PROMPT_KIND_LIST, type PromptKind } from "../config/prompts/registry";
 import { sweepRetiredCloudModelSelections } from "../config/retiredCloudModels";
 import { sweepRetiredPromptOverrides } from "../config/retiredPrompts";
-import whisperVadConstants from "../constants/whisperVad.json";
 import { chooseDictionaryStartupAction } from "../helpers/dictionaryStartup";
 import { findStaleLocalModelKeys } from "../helpers/localModelSelections";
 import {
@@ -285,9 +284,6 @@ const BOOLEAN_SETTINGS = new Set([
   "showMenuBarIcon",
   "meetingProcessDetection",
   "speakerDiarizationEnabled",
-  "dictationSileroEnabled",
-  "noteRecordingSileroEnabled",
-  "meetingSileroEnabled",
   "isSignedIn",
   "autoPasteEnabled",
   "keepTranscriptionInClipboard",
@@ -319,30 +315,7 @@ const ARRAY_SETTINGS = new Set([
   "translationTargets",
 ]);
 
-const NUMERIC_SETTINGS = new Set([
-  "audioRetentionDays",
-  "transcriptRetentionDays",
-  "whisperVadThreshold",
-  "whisperVadMinSpeechDurationMs",
-  "whisperVadMinSilenceDurationMs",
-  "whisperVadMaxSpeechDurationS",
-  "whisperVadSpeechPadMs",
-  "whisperVadSamplesOverlap",
-]);
-
-const WHISPER_VAD_DEFAULTS = whisperVadConstants.DEFAULTS;
-const WHISPER_VAD_LIMITS = whisperVadConstants.LIMITS;
-
-type WhisperVadKey = keyof typeof WHISPER_VAD_DEFAULTS;
-
-const clampVadValue = (key: WhisperVadKey, raw: unknown): number => {
-  const fallback = WHISPER_VAD_DEFAULTS[key];
-  const n = raw === null || raw === undefined || raw === "" ? fallback : Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  const { min, max, round } = WHISPER_VAD_LIMITS[key];
-  const clamped = Math.min(max, Math.max(min, n));
-  return round ? Math.round(clamped) : clamped;
-};
+const NUMERIC_SETTINGS = new Set(["audioRetentionDays", "transcriptRetentionDays"]);
 
 const LANGUAGE_MIGRATIONS: Record<string, string> = { zh: "zh-CN" };
 
@@ -876,15 +849,6 @@ export interface SettingsState
   appleCalendarConnected: boolean;
   meetingProcessDetection: boolean;
   speakerDiarizationEnabled: boolean;
-  dictationSileroEnabled: boolean;
-  noteRecordingSileroEnabled: boolean;
-  meetingSileroEnabled: boolean;
-  whisperVadThreshold: number;
-  whisperVadMinSpeechDurationMs: number;
-  whisperVadMinSilenceDurationMs: number;
-  whisperVadMaxSpeechDurationS: number;
-  whisperVadSpeechPadMs: number;
-  whisperVadSamplesOverlap: number;
   panelStartPosition: "bottom-right" | "center" | "bottom-left";
   showTranscriptionPreview: boolean;
   autoPasteEnabled: boolean;
@@ -1185,15 +1149,6 @@ export interface SettingsState
   setAppleCalendarConnected: (value: boolean) => void;
   setMeetingProcessDetection: (value: boolean) => void;
   setSpeakerDiarizationEnabled: (value: boolean) => void;
-  setDictationSileroEnabled: (value: boolean) => void;
-  setNoteRecordingSileroEnabled: (value: boolean) => void;
-  setMeetingSileroEnabled: (value: boolean) => void;
-  setWhisperVadThreshold: (value: number) => void;
-  setWhisperVadMinSpeechDurationMs: (value: number) => void;
-  setWhisperVadMinSilenceDurationMs: (value: number) => void;
-  setWhisperVadMaxSpeechDurationS: (value: number) => void;
-  setWhisperVadSpeechPadMs: (value: number) => void;
-  setWhisperVadSamplesOverlap: (value: number) => void;
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => void;
   setShowTranscriptionPreview: (value: boolean) => void;
   setAutoPasteEnabled: (value: boolean) => void;
@@ -1594,29 +1549,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   appleCalendarConnected: readBoolean("appleCalendarConnected", false),
   meetingProcessDetection: readBoolean("meetingProcessDetection", true),
   speakerDiarizationEnabled: readBoolean("speakerDiarizationEnabled", true),
-  // Off by default: VAD on pause-heavy dictations can strip the speech and make
-  // Whisper hallucinate the dictionary prompt as the transcript (#1454).
-  dictationSileroEnabled: readBoolean("dictationSileroEnabled", false),
-  noteRecordingSileroEnabled: readBoolean("noteRecordingSileroEnabled", true),
-  meetingSileroEnabled: readBoolean("meetingSileroEnabled", true),
-  whisperVadThreshold: clampVadValue("threshold", readString("whisperVadThreshold", "0.5")),
-  whisperVadMinSpeechDurationMs: clampVadValue(
-    "minSpeechDurationMs",
-    readString("whisperVadMinSpeechDurationMs", "250")
-  ),
-  whisperVadMinSilenceDurationMs: clampVadValue(
-    "minSilenceDurationMs",
-    readString("whisperVadMinSilenceDurationMs", "200")
-  ),
-  whisperVadMaxSpeechDurationS: clampVadValue(
-    "maxSpeechDurationS",
-    readString("whisperVadMaxSpeechDurationS", "30")
-  ),
-  whisperVadSpeechPadMs: clampVadValue("speechPadMs", readString("whisperVadSpeechPadMs", "100")),
-  whisperVadSamplesOverlap: clampVadValue(
-    "samplesOverlap",
-    readString("whisperVadSamplesOverlap", "0.5")
-  ),
   panelStartPosition: (() => {
     const v = readString("panelStartPosition", "bottom-right");
     if (v === "bottom-right" || v === "center" || v === "bottom-left") return v;
@@ -2361,75 +2293,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
     useSettingsStore.setState({ speakerDiarizationEnabled: value });
     if (isBrowser) {
       window.electronAPI?.setSpeakerDiarizationEnabled?.(value);
-    }
-  },
-  setDictationSileroEnabled: (value: boolean) => {
-    if (isBrowser) localStorage.setItem("dictationSileroEnabled", String(value));
-    useSettingsStore.setState({ dictationSileroEnabled: value });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ dictationSileroEnabled: value });
-    }
-  },
-  setNoteRecordingSileroEnabled: (value: boolean) => {
-    if (isBrowser) localStorage.setItem("noteRecordingSileroEnabled", String(value));
-    useSettingsStore.setState({ noteRecordingSileroEnabled: value });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ noteRecordingSileroEnabled: value });
-    }
-  },
-  setMeetingSileroEnabled: (value: boolean) => {
-    if (isBrowser) localStorage.setItem("meetingSileroEnabled", String(value));
-    useSettingsStore.setState({ meetingSileroEnabled: value });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ meetingSileroEnabled: value });
-    }
-  },
-  setWhisperVadThreshold: (value: number) => {
-    const next = clampVadValue("threshold", value);
-    if (isBrowser) localStorage.setItem("whisperVadThreshold", String(next));
-    useSettingsStore.setState({ whisperVadThreshold: next });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ threshold: next });
-    }
-  },
-  setWhisperVadMinSpeechDurationMs: (value: number) => {
-    const next = clampVadValue("minSpeechDurationMs", value);
-    if (isBrowser) localStorage.setItem("whisperVadMinSpeechDurationMs", String(next));
-    useSettingsStore.setState({ whisperVadMinSpeechDurationMs: next });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ minSpeechDurationMs: next });
-    }
-  },
-  setWhisperVadMinSilenceDurationMs: (value: number) => {
-    const next = clampVadValue("minSilenceDurationMs", value);
-    if (isBrowser) localStorage.setItem("whisperVadMinSilenceDurationMs", String(next));
-    useSettingsStore.setState({ whisperVadMinSilenceDurationMs: next });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ minSilenceDurationMs: next });
-    }
-  },
-  setWhisperVadMaxSpeechDurationS: (value: number) => {
-    const next = clampVadValue("maxSpeechDurationS", value);
-    if (isBrowser) localStorage.setItem("whisperVadMaxSpeechDurationS", String(next));
-    useSettingsStore.setState({ whisperVadMaxSpeechDurationS: next });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ maxSpeechDurationS: next });
-    }
-  },
-  setWhisperVadSpeechPadMs: (value: number) => {
-    const next = clampVadValue("speechPadMs", value);
-    if (isBrowser) localStorage.setItem("whisperVadSpeechPadMs", String(next));
-    useSettingsStore.setState({ whisperVadSpeechPadMs: next });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ speechPadMs: next });
-    }
-  },
-  setWhisperVadSamplesOverlap: (value: number) => {
-    const next = clampVadValue("samplesOverlap", value);
-    if (isBrowser) localStorage.setItem("whisperVadSamplesOverlap", String(next));
-    useSettingsStore.setState({ whisperVadSamplesOverlap: next });
-    if (isBrowser) {
-      window.electronAPI?.setWhisperVadConfig?.({ samplesOverlap: next });
     }
   },
   setPanelStartPosition: (position: "bottom-right" | "center" | "bottom-left") => {
@@ -3277,27 +3140,6 @@ export async function initializeSettings(): Promise<void> {
     } catch (err) {
       logger.warn(
         "Failed to sync snippets on startup",
-        { error: (err as Error).message },
-        "settings"
-      );
-    }
-
-    try {
-      const currentState = useSettingsStore.getState();
-      await window.electronAPI.setWhisperVadConfig?.({
-        dictationSileroEnabled: currentState.dictationSileroEnabled,
-        noteRecordingSileroEnabled: currentState.noteRecordingSileroEnabled,
-        meetingSileroEnabled: currentState.meetingSileroEnabled,
-        threshold: currentState.whisperVadThreshold,
-        minSpeechDurationMs: currentState.whisperVadMinSpeechDurationMs,
-        minSilenceDurationMs: currentState.whisperVadMinSilenceDurationMs,
-        maxSpeechDurationS: currentState.whisperVadMaxSpeechDurationS,
-        speechPadMs: currentState.whisperVadSpeechPadMs,
-        samplesOverlap: currentState.whisperVadSamplesOverlap,
-      });
-    } catch (err) {
-      logger.warn(
-        "Failed to sync whisper VAD config on startup",
         { error: (err as Error).message },
         "settings"
       );

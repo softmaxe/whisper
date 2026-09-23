@@ -8,9 +8,7 @@ const { UPLOAD_AUDIO_EXTENSIONS } = require("../constants/uploadAudioFormats.jso
 const { providerContentType, prepareProviderUpload } = require("./providerUploadAudio");
 const { ANALYTICS_HISTORY_BACKFILL_VERSION } = require("./analytics");
 
-const { isSherpaLocalProvider } = require("./parakeetModelInfo");
 const { broadcastToWindows } = require("./windowBroadcast");
-const { resolveFailedGpuBackends } = require("./whisper");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const tokenStore = require("./tokenStore");
 const accountScopeBinding = require("./accountScopeBinding");
@@ -33,7 +31,6 @@ const transcriptionProviderBaseUrls = () =>
 // main -> cloud. Pin every local queue operation to the same authenticated
 // account generation so a delayed pass cannot adopt a replacement session.
 
-const { resolveLocalServerNeeds } = require("./localServerPolicy");
 const autoStart = require("./autoStart");
 const { getRelaunchArgs } = require("./autoStartPolicy");
 
@@ -44,7 +41,6 @@ const { getCortiToken } = require("./cortiAuth");
 const { transcribeWithTinfoil } = require("./tinfoilTranscription");
 const { transcribeWithGemini } = require("./geminiTranscription");
 const AudioStorageManager = require("./audioStorage");
-const LocalModelDownloadStatus = require("./localModelDownloadStatus");
 const AgentStreamRequestRegistry = require("./agentStreamRequestRegistry");
 
 const { applySmartSpacing } = require("./smartSpacing");
@@ -55,12 +51,6 @@ const {
 } = require("./retentionSettings");
 
 const postMigrationDetector = require("./postMigrationDetector");
-
-const {
-  DEFAULT_WHISPER_VAD_CONFIG,
-  sanitizeWhisperVadConfig,
-  resolveContextSileroEnabled,
-} = require("./whisperVadConfig");
 
 // Meeting capture runs at 24 kHz (see meetingRecordingStore AudioContext); cloud
 // streaming providers must be told the true PCM rate or they misread the audio.
@@ -154,8 +144,6 @@ async function dropUploadConnections(force = false) {
 }
 
 const { mergeSpeakersWithText } = require("./speakerMerge");
-
-const { listLocalTranscriptionModels } = require("./localTranscriptionModels");
 
 // Canonicalize allowed dirs so realpath'd inputs match on macOS (/var -> /private/var).
 // Deliberately narrow: user-picked paths anywhere else are approved individually via
@@ -489,14 +477,10 @@ class IPCHandlers {
     this.environmentManager = managers.environmentManager;
     this.databaseManager = managers.databaseManager;
     this.clipboardManager = managers.clipboardManager;
-    this.whisperManager = managers.whisperManager;
-    this.parakeetManager = managers.parakeetManager;
     this.windowManager = managers.windowManager;
     this.textEditMonitor = managers.textEditMonitor;
     this.selectionManager = managers.selectionManager;
     this.getTrayManager = managers.getTrayManager;
-    this.whisperCudaManager = managers.whisperCudaManager;
-    this.whisperVulkanManager = managers.whisperVulkanManager;
     this.googleCalendarManager = managers.googleCalendarManager;
     this.microsoftCalendarManager = managers.microsoftCalendarManager;
     this.appleCalendarManager = managers.appleCalendarManager;
@@ -534,19 +518,12 @@ class IPCHandlers {
     this._activeRecordingPipeline = null;
     this._onboardingDemoSession = null;
     this.audioStorageManager = new AudioStorageManager();
-    this.localModelDownloadStatus = new LocalModelDownloadStatus();
     this._retentionCleanupInterval = null;
     this._retentionSettings = { ...DEFAULT_RETENTION_SETTINGS }; // Synced from renderer
     this._retentionSettingsSynced = false;
     this._noteFilesEnabled = false;
     this._granolaImportPending = null;
     this._analyticsHistoryBackfillPromise = null;
-    this.whisperVadSettings = {
-      dictationSileroEnabled: false,
-      noteRecordingSileroEnabled: true,
-      meetingSileroEnabled: true,
-      ...DEFAULT_WHISPER_VAD_CONFIG,
-    };
     this._setupTextEditMonitor();
     this._setupRetentionCleanup();
     // Warm the OS default mic answer before the first hotkey press.
@@ -565,27 +542,6 @@ class IPCHandlers {
         hasToken: Boolean(token),
       });
     });
-
-    if (this.whisperManager?.serverManager) {
-      // Remember the failed backend so it isn't re-attempted (and its model
-      // reload re-paid) on every launch; cleared by retry, re-download, delete.
-      this.whisperManager.serverManager.on("cuda-fallback", () => {
-        this._recordWhisperGpuFailure("cuda");
-        broadcastToWindows("cuda-fallback-notification", {});
-      });
-      this.whisperManager.serverManager.on("gpu-fallback", () => {
-        this._recordWhisperGpuFailure("vulkan");
-        broadcastToWindows("gpu-fallback-notification", {});
-      });
-      // Persist the discrete-GPU pin so later launches spawn pinned directly
-      // instead of paying a second Vulkan cold start. See #1606.
-      this.whisperManager.serverManager.on("vulkan-device-pinned", ({ index }) => {
-        this._syncStartupEnv({ WHISPER_VULKAN_DEVICE: String(index) });
-      });
-      this.whisperManager.serverManager.on("vulkan-device-pin-cleared", () => {
-        this._syncStartupEnv({}, ["WHISPER_VULKAN_DEVICE"]);
-      });
-    }
   }
 
   // Reconstructing counters from the transcripts already on disk records exactly
@@ -702,89 +658,6 @@ class IPCHandlers {
     this.meetingDetectionEngine?.setMicWarmHold(this._micHoldSenders.size > 0);
   }
 
-  _getWhisperVadSettings() {
-    const current = this.whisperVadSettings || {};
-    return {
-      dictationSileroEnabled: current.dictationSileroEnabled === true,
-      noteRecordingSileroEnabled: current.noteRecordingSileroEnabled !== false,
-      meetingSileroEnabled: current.meetingSileroEnabled !== false,
-      ...sanitizeWhisperVadConfig(current),
-    };
-  }
-
-  _updateNativeModelDownloadStatus(modelType, modelId, progressData) {
-    if (progressData.type === "complete") {
-      return this.localModelDownloadStatus.finish(modelType, modelId);
-    }
-
-    if (progressData.type === "installing") {
-      return this.localModelDownloadStatus.update(modelType, modelId, {
-        phase: "installing",
-        progress: progressData.percentage || 100,
-      });
-    }
-
-    return this.localModelDownloadStatus.update(modelType, modelId, {
-      phase: "downloading",
-      progress: progressData.percentage || 0,
-      downloadedBytes: progressData.downloaded_bytes || 0,
-      totalBytes: progressData.total_bytes || 0,
-    });
-  }
-
-  _setWhisperVadSettings(update = {}) {
-    const ALLOWED_KEYS = new Set([
-      "dictationSileroEnabled",
-      "noteRecordingSileroEnabled",
-      "meetingSileroEnabled",
-      ...Object.keys(require("../constants/whisperVad.json").DEFAULTS),
-    ]);
-    const filtered = {};
-    for (const [k, v] of Object.entries(update)) {
-      if (ALLOWED_KEYS.has(k)) filtered[k] = v;
-    }
-    this.whisperVadSettings = { ...this._getWhisperVadSettings(), ...filtered };
-    return this._getWhisperVadSettings();
-  }
-
-  // Shared by the upload IPC handler and the CLI bridge. `filePath` must
-  // already have passed resolveAllowedAudioPath (or approveAudioPath).
-  async transcribeLocalFile(filePath, options = {}) {
-    const audioBuffer = fs.readFileSync(filePath);
-    if (isSherpaLocalProvider(options.provider)) {
-      return this.parakeetManager.transcribeLocalParakeet(audioBuffer, options);
-    }
-    return this.whisperManager.transcribeLocalWhisper(audioBuffer, {
-      ...options,
-      ...this._resolveWhisperVadOptions("noteRecording"),
-    });
-  }
-
-  approveAudioPath(filePath) {
-    approveAudioPath(filePath);
-  }
-
-  listLocalTranscriptionModels() {
-    return listLocalTranscriptionModels({
-      whisperManager: this.whisperManager,
-      parakeetManager: this.parakeetManager,
-    });
-  }
-
-  _resolveWhisperVadOptions(context) {
-    const settings = this._getWhisperVadSettings();
-    const {
-      dictationSileroEnabled,
-      noteRecordingSileroEnabled,
-      meetingSileroEnabled,
-      ...vadConfig
-    } = settings;
-    return {
-      vadEnabled: resolveContextSileroEnabled(settings, context),
-      vadConfig,
-    };
-  }
-
   _mirrorDeleteFolderIfUnshared(folderName) {
     if (!this._noteFilesEnabled) return;
     // Folder names are only unique per space — a live same-named folder in
@@ -883,23 +756,6 @@ class IPCHandlers {
     if (this.textEditMonitor && this._textEditHandler) {
       this.textEditMonitor.removeListener("text-edited", this._textEditHandler);
       this._textEditHandler = null;
-    }
-  }
-
-  async _logDetectedGpus() {
-    const { listNvidiaGpus } = require("../utils/gpuDetection");
-    const gpus = await listNvidiaGpus();
-    if (gpus.length > 0) {
-      debugLogger.info(
-        "NVIDIA GPUs detected",
-        {
-          count: gpus.length,
-          devices: gpus.map((g) => `[${g.index}] ${g.name} (${g.vramMb}MB) ${g.uuid}`),
-        },
-        "gpu"
-      );
-    } else {
-      debugLogger.debug("No NVIDIA GPUs detected", {}, "gpu");
     }
   }
 
@@ -1011,75 +867,6 @@ class IPCHandlers {
       }
     } catch (error) {
       debugLogger.debug("[AutoLearn] Error processing corrections", { error: error.message });
-    }
-  }
-
-  _whisperGpuFailedBackends() {
-    return resolveFailedGpuBackends(process.env.WHISPER_GPU_FAILED);
-  }
-
-  _recordWhisperGpuFailure(backend) {
-    const failed = this._whisperGpuFailedBackends();
-    if (!failed.includes(backend)) failed.push(backend);
-    this._syncStartupEnv({ WHISPER_GPU_FAILED: failed.join(",") });
-  }
-
-  _clearWhisperGpuFailure(backend) {
-    const failed = this._whisperGpuFailedBackends().filter((b) => b !== backend);
-    if (failed.length > 0) {
-      this._syncStartupEnv({ WHISPER_GPU_FAILED: failed.join(",") });
-    } else {
-      this._syncStartupEnv({}, ["WHISPER_GPU_FAILED"]);
-    }
-  }
-
-  // Captured before a handler stops the server to touch pack files (stopServer
-  // clears currentServerModel); tells _applyWhisperGpuPreference what to reload.
-  _whisperReloadModel() {
-    return this.whisperManager.serverManager.isRemote
-      ? null
-      : this.whisperManager.currentServerModel;
-  }
-
-  // Apply a GPU pack change to the loaded server without blocking the caller's
-  // IPC reply (a Vulkan cold start can take minutes); the renderer follows
-  // progress by polling whisper-server-status. Returns whether a reload was
-  // kicked off so the UI shows "activating" only when one is coming.
-  _applyWhisperGpuPreference(modelName) {
-    this.whisperManager.restartServerWithGpuPreference(modelName).catch((err) => {
-      debugLogger.error("whisper-server GPU preference restart failed", { error: err.message });
-    });
-    return !!modelName;
-  }
-
-  _syncStartupEnv(setVars, clearVars = []) {
-    let changed = false;
-    for (const [key, value] of Object.entries(setVars)) {
-      if (process.env[key] !== value) {
-        process.env[key] = value;
-        changed = true;
-      }
-    }
-    for (const key of clearVars) {
-      if (process.env[key]) {
-        delete process.env[key];
-        changed = true;
-      }
-    }
-    if (changed) {
-      debugLogger.debug("Synced startup env vars", {
-        set: Object.keys(setVars),
-        cleared: clearVars.filter((k) => !process.env[k]),
-      });
-      // A swallowed .env write failure here left GPU enablement flags silently
-      // out of sync with the packs on disk (#1340) — log which keys were lost.
-      this.environmentManager.saveAllKeysToEnvFile().catch((err) => {
-        debugLogger.error("Failed to persist startup env vars to .env", {
-          set: Object.keys(setVars),
-          clearRequested: clearVars,
-          error: err.message,
-        });
-      });
     }
   }
 
@@ -1816,10 +1603,6 @@ class IPCHandlers {
       return this.clipboardManager.checkPasteTools();
     });
 
-    ipcMain.handle("check-ffmpeg-availability", async (event) => {
-      return this.whisperManager.checkFFmpegAvailability();
-    });
-
     // Under `npm run dev` the Vite server dies with Electron, so a relaunched dev
     // instance would have no renderer: just quit there.
     ipcMain.handle("relaunch-app", async () => {
@@ -2104,82 +1887,6 @@ class IPCHandlers {
       return { success: true, language: result.language };
     });
 
-    ipcMain.handle("sync-startup-preferences", async (event, prefs) => {
-      const setVars = {};
-      const clearVars = [];
-
-      if (prefs.useLocalWhisper && prefs.model) {
-        // Local mode with model selected - set provider and model for pre-warming
-        setVars.LOCAL_TRANSCRIPTION_PROVIDER = prefs.localTranscriptionProvider;
-        if (prefs.language) setVars.DICTATION_LANGUAGE = prefs.language;
-        if (isSherpaLocalProvider(prefs.localTranscriptionProvider)) {
-          setVars.PARAKEET_MODEL = prefs.model;
-          clearVars.push("LOCAL_WHISPER_MODEL");
-          this.whisperManager.stopServer().catch((err) => {
-            debugLogger.error("Failed to stop whisper-server on provider switch", {
-              error: err.message,
-            });
-          });
-        } else {
-          setVars.LOCAL_WHISPER_MODEL = prefs.model;
-          clearVars.push("PARAKEET_MODEL");
-          this.parakeetManager.stopServer().catch((err) => {
-            debugLogger.error("Failed to stop parakeet-server on provider switch", {
-              error: err.message,
-            });
-          });
-        }
-      } else if (prefs.useLocalWhisper) {
-        // Local mode enabled but no model selected - clear pre-warming vars
-        clearVars.push("LOCAL_TRANSCRIPTION_PROVIDER", "PARAKEET_MODEL", "LOCAL_WHISPER_MODEL");
-      } else {
-        // Cloud mode - stop local servers to free RAM
-        clearVars.push("LOCAL_TRANSCRIPTION_PROVIDER", "PARAKEET_MODEL", "LOCAL_WHISPER_MODEL");
-        this.whisperManager.stopServer().catch((err) => {
-          debugLogger.error("Failed to stop whisper-server on cloud switch", {
-            error: err.message,
-          });
-        });
-        this.parakeetManager.stopServer().catch((err) => {
-          debugLogger.error("Failed to stop parakeet-server on cloud switch", {
-            error: err.message,
-          });
-        });
-      }
-
-      const localServer = resolveLocalServerNeeds(prefs);
-
-      if (localServer.cleanup) {
-        setVars.CLEANUP_PROVIDER = "local";
-        setVars.LOCAL_CLEANUP_MODEL = localServer.cleanup;
-      } else {
-        clearVars.push("CLEANUP_PROVIDER", "LOCAL_CLEANUP_MODEL");
-      }
-      // TODO: drop legacy REASONING_PROVIDER / LOCAL_REASONING_MODEL clears once
-      // the read fallback is removed (~2 releases after this lands).
-      clearVars.push("REASONING_PROVIDER", "LOCAL_REASONING_MODEL");
-
-      if (localServer.dictationAgent) {
-        setVars.DICTATION_AGENT_PROVIDER = "local";
-        setVars.LOCAL_DICTATION_AGENT_MODEL = localServer.dictationAgent;
-      } else {
-        clearVars.push("DICTATION_AGENT_PROVIDER", "LOCAL_DICTATION_AGENT_MODEL");
-      }
-
-      // Stop the shared llama-server only when neither scope still needs it, so
-      // the active scope keeps its server when the other one switches away.
-      if (localServer.stopServer) {
-        const modelManager = require("./modelManagerBridge").default;
-        modelManager.stopServer().catch((err) => {
-          debugLogger.error("Failed to stop llama-server on provider switch", {
-            error: err.message,
-          });
-        });
-      }
-
-      this._syncStartupEnv(setVars, clearVars);
-    });
-
     ipcMain.handle("get-log-level", async () => {
       return debugLogger.getLevel();
     });
@@ -2391,26 +2098,6 @@ class IPCHandlers {
               source: "self-hosted",
               model: route.model,
             };
-          }
-        } else if (route.transport === "local") {
-          if (isSherpaLocalProvider(settings.localTranscriptionProvider)) {
-            const model =
-              (settings.localTranscriptionProvider === "cohere"
-                ? settings.cohereModel
-                : settings.parakeetModel) ||
-              process.env.PARAKEET_MODEL ||
-              "parakeet-tdt-0.6b-v3";
-            result = await this.parakeetManager.transcribeLocalParakeet(buffer, {
-              model,
-              language,
-            });
-          } else if (this.whisperManager?.serverManager?.isAvailable?.()) {
-            const vadOptions = this._resolveWhisperVadOptions("noteRecording");
-            result = await this.whisperManager.transcribeLocalWhisper(buffer, {
-              model: settings.whisperModel,
-              language,
-              ...vadOptions,
-            });
           }
         } else if (settings?.cloudTranscriptionMode === "openwhispr") {
           const win = BrowserWindow.fromWebContents(event.sender);
@@ -2721,23 +2408,6 @@ class IPCHandlers {
         this._activeRecordingPipeline = null;
       }
       return { success: true };
-    });
-
-    ipcMain.handle("whisper-vad-get-config", async () => {
-      try {
-        return { success: true, config: this._getWhisperVadSettings() };
-      } catch (error) {
-        return { success: false, error: error.message };
-      }
-    });
-
-    ipcMain.handle("whisper-vad-set-config", async (_event, payload) => {
-      try {
-        const config = this._setWhisperVadSettings(payload || {});
-        return { success: true, config };
-      } catch (error) {
-        return { success: false, error: error.message };
-      }
     });
   }
 

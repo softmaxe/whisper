@@ -214,66 +214,6 @@ function useSettingsInternal() {
     localHistoryPolicyResolved,
   ]);
 
-  // Sync startup pre-warming preferences to main process
-  const {
-    useLocalWhisper,
-    localTranscriptionProvider,
-    whisperModel,
-    parakeetModel,
-    cohereModel,
-    preferredLanguage,
-    useCleanupModel,
-    cleanupMode,
-    cleanupModel,
-    useDictationAgent,
-    dictationAgentMode,
-    dictationAgentModel,
-  } = store;
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.electronAPI?.syncStartupPreferences) return;
-
-    const model =
-      localTranscriptionProvider === "nvidia"
-        ? parakeetModel
-        : localTranscriptionProvider === "cohere"
-          ? cohereModel
-          : whisperModel;
-    window.electronAPI
-      .syncStartupPreferences({
-        useLocalWhisper,
-        localTranscriptionProvider,
-        model: model || undefined,
-        language: preferredLanguage || undefined,
-        useCleanupModel,
-        cleanupMode,
-        cleanupModel,
-        useDictationAgent,
-        dictationAgentMode,
-        dictationAgentModel,
-      })
-      .catch((err) =>
-        logger.warn(
-          "Failed to sync startup preferences",
-          { error: (err as Error).message },
-          "settings"
-        )
-      );
-  }, [
-    useLocalWhisper,
-    localTranscriptionProvider,
-    whisperModel,
-    parakeetModel,
-    cohereModel,
-    preferredLanguage,
-    useCleanupModel,
-    cleanupMode,
-    cleanupModel,
-    useDictationAgent,
-    dictationAgentMode,
-    dictationAgentModel,
-  ]);
-
   return {
     useLocalWhisper: store.useLocalWhisper,
     whisperModel: store.whisperModel,
@@ -414,24 +354,6 @@ function useSettingsInternal() {
     setNoteFilesEnabled: store.setNoteFilesEnabled,
     noteFilesPath: store.noteFilesPath,
     setNoteFilesPath: store.setNoteFilesPath,
-    dictationSileroEnabled: store.dictationSileroEnabled,
-    setDictationSileroEnabled: store.setDictationSileroEnabled,
-    noteRecordingSileroEnabled: store.noteRecordingSileroEnabled,
-    setNoteRecordingSileroEnabled: store.setNoteRecordingSileroEnabled,
-    meetingSileroEnabled: store.meetingSileroEnabled,
-    setMeetingSileroEnabled: store.setMeetingSileroEnabled,
-    whisperVadThreshold: store.whisperVadThreshold,
-    setWhisperVadThreshold: store.setWhisperVadThreshold,
-    whisperVadMinSpeechDurationMs: store.whisperVadMinSpeechDurationMs,
-    setWhisperVadMinSpeechDurationMs: store.setWhisperVadMinSpeechDurationMs,
-    whisperVadMinSilenceDurationMs: store.whisperVadMinSilenceDurationMs,
-    setWhisperVadMinSilenceDurationMs: store.setWhisperVadMinSilenceDurationMs,
-    whisperVadMaxSpeechDurationS: store.whisperVadMaxSpeechDurationS,
-    setWhisperVadMaxSpeechDurationS: store.setWhisperVadMaxSpeechDurationS,
-    whisperVadSpeechPadMs: store.whisperVadSpeechPadMs,
-    setWhisperVadSpeechPadMs: store.setWhisperVadSpeechPadMs,
-    whisperVadSamplesOverlap: store.whisperVadSamplesOverlap,
-    setWhisperVadSamplesOverlap: store.setWhisperVadSamplesOverlap,
     cloudBackupEnabled: store.cloudBackupEnabled,
     setCloudBackupEnabled: store.setCloudBackupEnabled,
     insightsSyncEnabled: store.insightsSyncEnabled,
