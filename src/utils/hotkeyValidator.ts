@@ -1,11 +1,9 @@
 import {
-  formatHotkeyLabelForPlatform,
+  formatHotkeyDisplay,
   isGlobeLikeHotkey,
   isMouseButtonHotkey,
   parseHotkeyList,
 } from "./hotkeys.ts";
-
-export type Platform = "darwin" | "win32" | "linux";
 
 export type ValidationErrorCode =
   | "TOO_MANY_KEYS"
@@ -14,7 +12,6 @@ export type ValidationErrorCode =
   | "LEFT_MODIFIER_ONLY"
   | "DUPLICATE"
   | "RESERVED"
-  | "INVALID_GLOBE"
   | "FN_COMBINATION_UNSUPPORTED"
   | "MODIFIER_ONLY_UNSUPPORTED";
 
@@ -109,7 +106,7 @@ const SPECIAL_KEYS = new Set(
   ].concat(Array.from({ length: 24 }, (_, i) => `F${i + 1}`))
 );
 
-const MAC_RESERVED_SHORTCUTS = [
+const RESERVED_SHORTCUTS = [
   "Command+C",
   "Command+V",
   "Command+X",
@@ -160,176 +157,12 @@ const MAC_RESERVED_SHORTCUTS = [
   "Fn+F12",
 ] as const;
 
-const WINDOWS_RESERVED_SHORTCUTS = [
-  "Control+C",
-  "Control+V",
-  "Control+X",
-  "Control+Z",
-  "Control+Y",
-  "Control+R",
-  "Control+A",
-  "Control+F",
-  "Control+G",
-  "Control+O",
-  "Control+S",
-  "Control+P",
-  "Control+N",
-  "Control+T",
-  "Control+W",
-  "Control+Home",
-  "Control+End",
-  "Control+Alt+Delete",
-  "Control+Shift+Esc",
-  "Control+Backspace",
-  "Control+Delete",
-  "Control+K",
-  "Control+Shift+T",
-  "Control+=",
-  "Control+-",
-  "Alt+Tab",
-  "Alt+F4",
-  "Alt+Left",
-  "Alt+Right",
-  "Alt+PrintScreen",
-  "F5",
-  "F11",
-  "Home",
-  "End",
-  "PrintScreen",
-  "Super+E",
-  "Super+R",
-  "Super+L",
-  "Super+D",
-  "Super+Tab",
-  "Super+I",
-  "Super+S",
-  "Super+X",
-  "Super+P",
-  "Super+Q",
-  "Super+U",
-  "Super+B",
-  "Super+Up",
-  "Super+Down",
-] as const;
-
-const LINUX_RESERVED_SHORTCUTS = [
-  "Control+C",
-  "Control+V",
-  "Control+X",
-  "Control+Z",
-  "Control+Y",
-  "Control+R",
-  "Control+A",
-  "Control+F",
-  "Control+G",
-  "Control+O",
-  "Control+S",
-  "Control+P",
-  "Control+N",
-  "Control+T",
-  "Control+W",
-  "Control+Q",
-  "Control+H",
-  "Control+L",
-  "Control+Home",
-  "Control+End",
-  "Control+Backspace",
-  "Control+Delete",
-  "Control+Shift+T",
-  "Control+Shift+Q",
-  "Control+=",
-  "Control+-",
-  "Control+Alt+T",
-  "Control+Alt+Delete",
-  "Control+Alt+L",
-  "Control+Alt+Esc",
-  "Control+Alt+Left",
-  "Control+Alt+Right",
-  "Control+Alt+Up",
-  "Control+Alt+Down",
-  "Control+Alt+D",
-  "Control+Alt+S",
-  "Control+Alt+Tab",
-  "Alt+Tab",
-  "Alt+Shift+Tab",
-  "Alt+F1",
-  "Alt+F2",
-  "Alt+F4",
-  "Alt+F7",
-  "Alt+F8",
-  "Alt+F9",
-  "Alt+F10",
-  "Alt+Space",
-  "Alt+Left",
-  "Alt+Right",
-  "Alt+PrintScreen",
-  "Super",
-  "Super+A",
-  "Super+D",
-  "Super+L",
-  "Super+S",
-  "Super+M",
-  "Super+Tab",
-  "Super+Space",
-  "Super+Left",
-  "Super+Right",
-  "Super+Up",
-  "Super+Down",
-  "Super+Shift+Left",
-  "Super+Shift+Right",
-  "Super+Shift+Up",
-  "Super+Shift+Down",
-  "Super+PageUp",
-  "Super+PageDown",
-  "Super+Home",
-  "Super+End",
-  "F1",
-  "F5",
-  "F11",
-  "PrintScreen",
-  "Shift+PrintScreen",
-  "Super+PrintScreen",
-] as const;
-
-const MAC_EXAMPLES = [
-  "Control+Shift+K",
-  "Alt+F7",
-  "Command+Shift+9",
-  "Control+Space",
-  "Control+Alt+M",
-  "Shift+F9",
-] as const;
-
-const WINDOWS_EXAMPLES = [
-  "Control+Shift+K",
-  "Alt+F7",
-  "Control+Space",
-  "Control+Alt+M",
-  "Shift+F9",
-] as const;
-
-const LINUX_EXAMPLES = [
-  "Control+Super+K",
-  "Control+Shift+K",
-  "Super+Shift+R",
-  "Control+Shift+Space",
-  "Shift+F9",
-  "Control+Super+M",
-] as const;
-
-export const VALIDATION_RULES = [
-  "Uses three keys or fewer",
-  "Includes at least one modifier or non-alphanumeric key",
-  "Does not mix left and right versions of the same modifier",
-  "Is not reserved by the system",
-] as const;
-
-function normalizeModifier(part: string, platform: Platform): string | null {
+function normalizeModifier(part: string): string | null {
   const trimmed = part.replace(/\s+/g, "");
   const lowered = trimmed.toLowerCase();
 
   if (lowered === "commandorcontrol" || lowered === "cmdorctrl") {
-    return platform === "darwin" ? "Command" : "Control";
+    return "Command";
   }
 
   if (lowered === "command" || lowered === "cmd") {
@@ -349,7 +182,7 @@ function normalizeModifier(part: string, platform: Platform): string | null {
   }
 
   if (lowered === "super" || lowered === "win" || lowered === "meta") {
-    return platform === "darwin" ? "Command" : "Super";
+    return "Command";
   }
 
   if (lowered === "fn") {
@@ -361,24 +194,22 @@ function normalizeModifier(part: string, platform: Platform): string | null {
   if (isRightSideModifier(part)) {
     // Return a normalized form but mark it as a modifier
     if (lowered.includes("control") || lowered.includes("ctrl")) return "RightControl";
-    if (lowered.includes("alt") || lowered.includes("option"))
-      return platform === "darwin" ? "RightOption" : "RightAlt";
+    if (lowered.includes("alt") || lowered.includes("option")) return "RightOption";
     if (lowered.includes("shift")) return "RightShift";
     if (lowered.includes("command") || lowered.includes("cmd")) return "RightCommand";
     if (lowered.includes("super") || lowered.includes("meta") || lowered.includes("win")) {
-      return platform === "darwin" ? "RightCommand" : "RightSuper";
+      return "RightCommand";
     }
   }
 
   // Handle left-side modifiers (e.g., LeftControl, ControlLeft, LeftOption)
   if (isLeftSideModifier(part)) {
     if (lowered.includes("control") || lowered.includes("ctrl")) return "LeftControl";
-    if (lowered.includes("alt") || lowered.includes("option"))
-      return platform === "darwin" ? "LeftOption" : "LeftAlt";
+    if (lowered.includes("alt") || lowered.includes("option")) return "LeftOption";
     if (lowered.includes("shift")) return "LeftShift";
     if (lowered.includes("command") || lowered.includes("cmd")) return "LeftCommand";
     if (lowered.includes("super") || lowered.includes("meta") || lowered.includes("win")) {
-      return platform === "darwin" ? "LeftCommand" : "LeftSuper";
+      return "LeftCommand";
     }
   }
 
@@ -472,7 +303,7 @@ function isLeftRightMix(parts: string[]): boolean {
   return false;
 }
 
-export function normalizeHotkey(hotkey: string, platform: Platform): string {
+export function normalizeHotkey(hotkey: string): string {
   if (!hotkey) return "";
 
   const parts = hotkey
@@ -484,7 +315,7 @@ export function normalizeHotkey(hotkey: string, platform: Platform): string {
   const keys: string[] = [];
 
   for (const part of parts) {
-    const normalizedModifier = normalizeModifier(part, platform);
+    const normalizedModifier = normalizeModifier(part);
     if (normalizedModifier) {
       modifiers.push(normalizedModifier);
       continue;
@@ -498,53 +329,22 @@ export function normalizeHotkey(hotkey: string, platform: Platform): string {
   return [...modifiers, ...keys].join("+");
 }
 
-export function getReservedShortcuts(platform: Platform): readonly string[] {
-  switch (platform) {
-    case "darwin":
-      return MAC_RESERVED_SHORTCUTS;
-    case "win32":
-      return WINDOWS_RESERVED_SHORTCUTS;
-    case "linux":
-      return LINUX_RESERVED_SHORTCUTS;
-    default:
-      return [];
-  }
-}
-
-export function getValidExamples(platform: Platform): readonly string[] {
-  switch (platform) {
-    case "darwin":
-      return MAC_EXAMPLES;
-    case "win32":
-      return WINDOWS_EXAMPLES;
-    case "linux":
-      return LINUX_EXAMPLES;
-    default:
-      return [];
-  }
-}
-
 export function getValidationMessage(
   hotkey: string,
-  platform: Platform,
   existingHotkeys: string[] = []
 ): string | null {
-  const result = validateHotkey(hotkey, platform, existingHotkeys);
+  const result = validateHotkey(hotkey, existingHotkeys);
   if (result.valid) return null;
 
   if (result.errorCode === "RESERVED") {
-    const label = formatHotkeyLabelForPlatform(hotkey, platform);
+    const label = formatHotkeyDisplay(hotkey);
     return `${label} is reserved by the system`;
   }
 
   return result.error || "That shortcut is not supported";
 }
 
-export function validateHotkey(
-  hotkey: string,
-  platform: Platform,
-  existingHotkeys: string[] = []
-): ValidationResult {
+export function validateHotkey(hotkey: string, existingHotkeys: string[] = []): ValidationResult {
   if (!hotkey || hotkey.trim() === "") {
     return { valid: false, error: "Please enter a valid shortcut." };
   }
@@ -560,7 +360,7 @@ export function validateHotkey(
     }
     if (items.length > 1) {
       for (const item of items) {
-        const result = validateHotkey(item, platform, existingHotkeys);
+        const result = validateHotkey(item, existingHotkeys);
         if (!result.valid) return result;
       }
       return { valid: true };
@@ -569,13 +369,6 @@ export function validateHotkey(
   }
 
   if (isGlobeLikeHotkey(hotkey)) {
-    if (platform !== "darwin") {
-      return {
-        valid: false,
-        error: "The Globe/Fn key is only available on macOS.",
-        errorCode: "INVALID_GLOBE",
-      };
-    }
     return { valid: true };
   }
 
@@ -591,12 +384,6 @@ export function validateHotkey(
   }
 
   if (isMouseButtonHotkey(hotkey)) {
-    if (platform !== "darwin") {
-      return {
-        valid: false,
-        error: "Mouse button hotkeys are currently supported on macOS only.",
-      };
-    }
     return { valid: true };
   }
 
@@ -634,7 +421,7 @@ export function validateHotkey(
   let hasSpecialKey = false;
 
   for (const part of parts) {
-    const normalizedModifier = normalizeModifier(part, platform);
+    const normalizedModifier = normalizeModifier(part);
     if (normalizedModifier) {
       hasModifier = true;
       continue;
@@ -656,14 +443,13 @@ export function validateHotkey(
   }
 
   // Check for modifier-only hotkeys: require right-side for single modifier, or 2+ modifiers
-  const modifierCount = parts.filter((part) => normalizeModifier(part, platform) !== null).length;
+  const modifierCount = parts.filter((part) => normalizeModifier(part) !== null).length;
   const hasBaseKey = parts.length > modifierCount;
 
-  // Only Windows routes a modifier-only chord to a native low-level hook. macOS
-  // has no equivalent — the Globe listener reports Fn, right-side modifiers and
-  // mouse buttons, nothing else — and Electron cannot register an accelerator
-  // without a key, so the chord would be accepted here and then fail to bind.
-  if (!hasBaseKey && modifierCount >= 2 && platform === "darwin") {
+  // The Globe listener reports Fn, right-side modifiers and mouse buttons,
+  // nothing else — and Electron cannot register an accelerator without a key,
+  // so a modifier-only chord would be accepted here and then fail to bind.
+  if (!hasBaseKey && modifierCount >= 2) {
     return {
       valid: false,
       error:
@@ -678,25 +464,14 @@ export function validateHotkey(
       return {
         valid: false,
         error:
-          platform === "darwin"
-            ? "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space)."
-            : "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or use two modifiers (e.g., Control+Alt).",
-        errorCode: "LEFT_MODIFIER_ONLY",
-      };
-    }
-    // Right-side single modifiers require native listeners (not available on Linux)
-    if (platform === "linux") {
-      return {
-        valid: false,
-        error:
-          "Right-side single modifier hotkeys are not supported on Linux. Use two modifiers (e.g., Control+Alt) instead.",
+          "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space).",
         errorCode: "LEFT_MODIFIER_ONLY",
       };
     }
   }
 
-  const normalizedHotkey = normalizeHotkey(hotkey, platform);
-  const normalizedExisting = existingHotkeys.map((existing) => normalizeHotkey(existing, platform));
+  const normalizedHotkey = normalizeHotkey(hotkey);
+  const normalizedExisting = existingHotkeys.map((existing) => normalizeHotkey(existing));
 
   if (normalizedExisting.includes(normalizedHotkey)) {
     return {
@@ -706,8 +481,7 @@ export function validateHotkey(
     };
   }
 
-  const reserved = getReservedShortcuts(platform);
-  const normalizedReserved = reserved.map((entry) => normalizeHotkey(entry, platform));
+  const normalizedReserved = RESERVED_SHORTCUTS.map((entry) => normalizeHotkey(entry));
 
   if (normalizedReserved.includes(normalizedHotkey)) {
     return {

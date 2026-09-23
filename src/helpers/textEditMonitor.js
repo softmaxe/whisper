@@ -112,7 +112,6 @@ class TextEditMonitor extends EventEmitter {
    * cost a single osascript spawn instead of several.
    */
   captureTargetPid() {
-    if (process.platform !== "darwin") return Promise.resolve(null);
     if (this._captureTargetPromise) return this._captureTargetPromise;
     if (
       this.lastTargetPid !== null &&
@@ -136,10 +135,6 @@ class TextEditMonitor extends EventEmitter {
    */
   _readFrontmostPid() {
     return new Promise((resolve) => {
-      if (process.platform !== "darwin") {
-        resolve(null);
-        return;
-      }
       const script =
         'ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier';
       execFile(
@@ -180,15 +175,15 @@ class TextEditMonitor extends EventEmitter {
    * an already-active Chromium app (e.g. Claude Desktop) drops its field's first
    * responder — the focus loss this fixes — and skipping also avoids a needless
    * activation round-trip. Otherwise we activate and poll until the OS reports the
-   * target frontmost, the macOS analogue of Linux's `xdotool windowactivate --sync`.
+   * target frontmost.
    */
   async activateTargetPid() {
-    if (process.platform !== "darwin" || !this.lastTargetPid) return false;
+    if (!this.lastTargetPid) return false;
     return this.activatePid(this.lastTargetPid);
   }
 
   async activatePid(pid) {
-    if (process.platform !== "darwin" || !pid) return false;
+    if (!pid) return false;
     if ((await this._readFrontmostPid()) === pid) return true;
 
     await this._activateApp(pid);
@@ -205,7 +200,7 @@ class TextEditMonitor extends EventEmitter {
 
   getSelectedText(pid, timeoutMs = SELECTED_TEXT_TIMEOUT_MS) {
     return new Promise((resolve) => {
-      if (process.platform !== "darwin" || !pid) {
+      if (!pid) {
         resolve({ state: "unavailable" });
         return;
       }
@@ -301,14 +296,9 @@ class TextEditMonitor extends EventEmitter {
     const resolved = this.resolveBinary();
     if (!resolved) return false;
 
-    let args;
-    if (process.platform === "darwin") {
-      const pid = target?.kind === "mac-pid" ? target.pid : this.lastTargetPid;
-      if (!pid) return false;
-      args = [...resolved.args, "--editable-target", String(pid)];
-    } else {
-      args = [...resolved.args, "--probe-editable"];
-    }
+    const pid = target?.kind === "mac-pid" ? target.pid : this.lastTargetPid;
+    if (!pid) return false;
+    const args = [...resolved.args, "--editable-target", String(pid)];
 
     return this._probeTarget(
       resolved.command,
@@ -322,7 +312,7 @@ class TextEditMonitor extends EventEmitter {
   async canPasteAtTarget(pid, timeoutMs = 700) {
     // Without capture metadata or a working probe, delivery is unconfirmed.
     // Dictation keeps the transcript available for manual copy in this case.
-    if (process.platform !== "darwin" || !pid) return null;
+    if (!pid) return null;
     const resolved = this.resolveBinary();
     if (!resolved) return null;
 
@@ -370,12 +360,12 @@ class TextEditMonitor extends EventEmitter {
   /**
    * macOS: the target app's largest on-screen window rect, used to decide which
    * display the user is working on. Resolves to null when the app has no
-   * ordinary window (or off macOS), leaving the caller to fall back to the
+   * ordinary window, leaving the caller to fall back to the
    * cursor. Cached over the same press-time burst as captureTargetPid, so the
    * dictation panel and the screen-context capture share one spawn.
    */
   async getTargetWindowBounds(pid, timeoutMs = 700) {
-    if (process.platform !== "darwin" || !pid) return null;
+    if (!pid) return null;
     if (
       this._windowBounds?.pid === pid &&
       Date.now() - this._windowBounds.at < TARGET_CAPTURE_FRESHNESS_MS
@@ -421,76 +411,12 @@ class TextEditMonitor extends EventEmitter {
     this.stopMonitoring();
     this.currentOriginalText = originalText;
 
-    if (process.platform === "darwin") {
-      const resolved = this.resolveBinary();
-      if (resolved) {
-        this._startMacOSNative(originalText, timeoutMs, options.targetPid, resolved);
-        return;
-      }
-      this._startMacOSPolling(originalText, timeoutMs, options.targetPid);
-      return;
-    }
-
     const resolved = this.resolveBinary();
-    if (!resolved) {
-      debugLogger.debug("[TextEditMonitor] No binary found for platform", {
-        platform: process.platform,
-      });
-      this.currentOriginalText = null;
+    if (resolved) {
+      this._startMacOSNative(originalText, timeoutMs, options.targetPid, resolved);
       return;
     }
-
-    const { command, args } = resolved;
-    debugLogger.debug("[TextEditMonitor] Resolved binary", { command, args });
-
-    // For native binaries, verify executable permission
-    if (command !== "python3") {
-      try {
-        fs.accessSync(command, fs.constants.X_OK);
-      } catch {
-        debugLogger.debug("[TextEditMonitor] Binary not executable", { command });
-        this.currentOriginalText = null;
-        return;
-      }
-    }
-
-    debugLogger.debug("[TextEditMonitor] Spawning monitor", {
-      textPreview: originalText.substring(0, 80),
-    });
-
-    this.process = spawn(command, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-
-    // Send original text via stdin
-    this.process.stdin.write(originalText + "\n");
-    this.process.stdin.end();
-
-    this._stdoutBuffer = "";
-    this.process.stdout.setEncoding("utf8");
-    this.process.stdout.on("data", (chunk) => {
-      debugLogger.debug("[TextEditMonitor] stdout", { data: chunk.trim() });
-      this._handleProcessStdoutChunk(chunk);
-    });
-
-    this.process.stderr.setEncoding("utf8");
-    this.process.stderr.on("data", (data) => {
-      debugLogger.debug("[TextEditMonitor] stderr", { data: data.trim() });
-    });
-
-    this.process.on("error", (err) => {
-      debugLogger.debug("[TextEditMonitor] Process error", { error: err.message });
-      this.process = null;
-    });
-
-    this.process.on("exit", (code, signal) => {
-      debugLogger.debug("[TextEditMonitor] Process exited", { code, signal });
-      this.process = null;
-    });
-
-    // Safety net timeout (binary also self-exits after its own timeout)
-    this.timeout = setTimeout(() => this.stopMonitoring(), timeoutMs);
+    this._startMacOSPolling(originalText, timeoutMs, options.targetPid);
   }
 
   stopMonitoring() {
@@ -776,31 +702,12 @@ class TextEditMonitor extends EventEmitter {
   }
 
   /**
-   * Resolve the platform-specific binary.
+   * Resolve the native monitor binary.
    * Returns { command, args } or null if unavailable.
    */
   resolveBinary() {
-    const platform = process.platform;
-
-    if (platform === "linux") {
-      const nativePath = this._findFile("linux-text-monitor");
-      if (nativePath) return { command: nativePath, args: [] };
-      const scriptPath = this._findFile("linux-text-monitor.py");
-      return scriptPath ? { command: "python3", args: [scriptPath] } : null;
-    }
-
-    if (platform === "win32") {
-      const binaryPath = this._findFile("windows-text-monitor.exe");
-      return binaryPath ? { command: binaryPath, args: [] } : null;
-    }
-
-    if (platform === "darwin") {
-      const nativePath = this._findFile("macos-text-monitor");
-      if (nativePath) return { command: nativePath, args: [] }; // PID added at spawn time
-      return null;
-    }
-
-    return null;
+    const nativePath = this._findFile("macos-text-monitor");
+    return nativePath ? { command: nativePath, args: [] } : null; // PID added at spawn time
   }
 
   _findFile(fileName) {

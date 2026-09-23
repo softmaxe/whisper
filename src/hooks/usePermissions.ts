@@ -39,41 +39,6 @@ const stopTracks = (stream?: MediaStream) => {
   }
 };
 
-const getPlatformSettingsPath = (t: TFunction): string => {
-  if (typeof navigator !== "undefined") {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes("win")) return t("hooks.permissions.paths.windowsMicrophone");
-    if (ua.includes("linux")) return t("hooks.permissions.paths.linuxSound");
-  }
-  return t("hooks.permissions.paths.defaultSound");
-};
-
-const getPlatformPrivacyPath = (t: TFunction): string => {
-  if (typeof navigator !== "undefined") {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes("win")) return t("hooks.permissions.paths.windowsMicrophone");
-    if (ua.includes("linux")) return t("hooks.permissions.paths.linuxPrivacy");
-  }
-  return t("hooks.permissions.paths.defaultPrivacy");
-};
-
-const getPlatform = (): "darwin" | "win32" | "linux" => {
-  if (typeof window !== "undefined" && window.electronAPI?.getPlatform) {
-    const platform = window.electronAPI.getPlatform();
-    if (platform === "darwin" || platform === "win32" || platform === "linux") {
-      return platform;
-    }
-  }
-  // Fallback to user agent detection
-  if (typeof navigator !== "undefined") {
-    const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes("mac")) return "darwin";
-    if (ua.includes("win")) return "win32";
-    if (ua.includes("linux")) return "linux";
-  }
-  return "darwin"; // Default fallback
-};
-
 const describeMicError = (error: unknown, t: TFunction): string => {
   if (!error || typeof error !== "object") {
     return t("hooks.permissions.micErrors.accessFailed");
@@ -82,8 +47,8 @@ const describeMicError = (error: unknown, t: TFunction): string => {
   const err = error as { name?: string; message?: string };
   const name = err.name || "";
   const message = (err.message || "").toLowerCase();
-  const settingsPath = getPlatformSettingsPath(t);
-  const privacyPath = getPlatformPrivacyPath(t);
+  const settingsPath = t("hooks.permissions.paths.defaultSound");
+  const privacyPath = t("hooks.permissions.paths.defaultPrivacy");
 
   if (name === "NotFoundError") {
     return t("hooks.permissions.micErrors.noMicrophones", { settingsPath });
@@ -218,13 +183,6 @@ export const usePermissions = (
       if (window.electronAPI?.checkPasteTools) {
         const result = await window.electronAPI.checkPasteTools();
         setPasteToolsInfo(result);
-
-        // On Windows and Linux with tools available, auto-grant accessibility
-        if (result.platform === "win32") {
-          setAccessibilityPermissionGranted(true);
-        } else if (result.platform === "linux" && result.available) {
-          setAccessibilityPermissionGranted(true);
-        }
         return result;
       }
       return null;
@@ -234,37 +192,19 @@ export const usePermissions = (
     } finally {
       setIsCheckingPasteTools(false);
     }
-  }, [setAccessibilityPermissionGranted]);
+  }, []);
 
   const requestAccessibilityPermission = useCallback(async () => {
-    const platform = getPlatform();
-
-    if (platform === "darwin") {
-      // Check if already granted
-      const alreadyGranted = await window.electronAPI?.checkAccessibilityPermission?.(true);
-      if (alreadyGranted) {
-        setAccessibilityPermissionGranted(true);
-        return;
-      }
-
-      // Open System Settings directly — avoids the undismissable macOS TCC dialog
-      // that isTrustedAccessibilityClient(true) would show.
-      await openSystemSettings("accessibility", window.electronAPI?.openAccessibilitySettings);
-      return;
-    }
-
-    // On Windows, PowerShell SendKeys is always available
-    if (platform === "win32") {
+    const alreadyGranted = await window.electronAPI?.checkAccessibilityPermission?.(true);
+    if (alreadyGranted) {
       setAccessibilityPermissionGranted(true);
       return;
     }
 
-    // On Linux, auto-paste is optional — grant regardless of paste tool availability
-    if (platform === "linux") {
-      await checkPasteToolsAvailability();
-      setAccessibilityPermissionGranted(true);
-    }
-  }, [openSystemSettings, checkPasteToolsAvailability, setAccessibilityPermissionGranted]);
+    // Open System Settings directly — avoids the undismissable macOS TCC dialog
+    // that isTrustedAccessibilityClient(true) would show.
+    await openSystemSettings("accessibility", window.electronAPI?.openAccessibilitySettings);
+  }, [openSystemSettings, setAccessibilityPermissionGranted]);
 
   // Check paste tools on mount
   useEffect(() => {
@@ -274,7 +214,6 @@ export const usePermissions = (
   // On macOS, re-validate microphone permission on mount to override stale
   // localStorage values (e.g. after TCC reset or app update).
   useEffect(() => {
-    if (getPlatform() !== "darwin") return;
     window.electronAPI?.checkMicrophoneAccess?.().then((result) => {
       if (result) setMicPermissionGranted(result.granted);
     });
@@ -283,7 +222,7 @@ export const usePermissions = (
   // On macOS, re-validate accessibility permission once this screen is allowed
   // to touch protected features, overriding stale localStorage values.
   useEffect(() => {
-    if (getPlatform() !== "darwin" || !macAccessibilityChecksEnabled) return;
+    if (!macAccessibilityChecksEnabled) return;
     window.electronAPI?.checkAccessibilityPermission?.(true).then((granted) => {
       setAccessibilityPermissionGranted(granted);
     });
@@ -291,7 +230,7 @@ export const usePermissions = (
 
   // Poll for accessibility permission changes on macOS (e.g. user grants in System Settings)
   useEffect(() => {
-    if (getPlatform() !== "darwin" || !macAccessibilityChecksEnabled) return;
+    if (!macAccessibilityChecksEnabled) return;
     if (accessibilityPermissionGranted) {
       setAccessibilityTroubleshooting(false);
       accessibilityPollCount.current = 0;

@@ -1,9 +1,6 @@
-const { app, screen, BrowserWindow, dialog, ipcMain, Menu } = require("electron");
+const { app, screen, BrowserWindow, dialog, ipcMain, Menu, shell } = require("electron");
 const debugLogger = require("./debugLogger");
 const { randomUUID } = require("node:crypto");
-const { createLinuxWindowInputRegion } = require("./linuxWindowInputRegion");
-// Aliased: this class has an openExternalUrl method wrapping the helper.
-const { openExternalUrl: openUrlInExternalBrowser } = require("./externalUrlOpener");
 const HotkeyManager = require("./hotkeyManager");
 const { isGlobeLikeHotkey } = HotkeyManager;
 const DragManager = require("./dragManager");
@@ -98,7 +95,6 @@ class WindowManager {
     this.isQuitting = false;
     this.loadErrorShown = false;
     this.macCompoundPushState = null;
-    this.winPushState = null;
     this._cachedActivationMode = "tap";
     this._floatingIconAutoHide = false;
     this._panelStartPosition = "bottom-right";
@@ -197,7 +193,6 @@ class WindowManager {
 
   // The pill window is created focusable:false so it never steals focus; the
   // assistant panel makes it focusable so it can take keyboard input at all.
-  // How it then becomes key is platform-split — see the branches below.
   setAssistantPanelOpen(open) {
     this._assistantPanelOpen = Boolean(open);
     if (!this._assistantPanelOpen) {
@@ -216,17 +211,8 @@ class WindowManager {
         // open/close. The window is a non-activating panel, so clicking its
         // input still makes it key (typing and Escape work from then on)
         // without activating the app or stealing the user's keyboard.
-        if (process.platform !== "darwin") {
-          this.mainWindow.focus();
-        }
       } else {
-        // On Windows/Linux the pill is a normal/toolbar window, so focus()
-        // activated OpenWhispr — blur before dropping focusability to hand
-        // the foreground back to the app the user was in. On macOS nothing
-        // was activated, and blur() would only churn key-window state.
-        if (process.platform !== "darwin") {
-          this.mainWindow.blur();
-        }
+        // Nothing was activated, and blur() would only churn key-window state.
         this.mainWindow.setFocusable(false);
       }
       this.enforceMainWindowOnTop();
@@ -245,37 +231,10 @@ class WindowManager {
       return;
     }
 
-    if (process.platform === "win32") {
-      // Windows click-through forwarding is unreliable for this floating panel.
-      this.mainWindow.setIgnoreMouseEvents(false);
-      return;
-    }
-
-    if (process.platform === "linux") {
-      // Native capture is the fallback when the input-region helper is unavailable.
-      this.mainWindow.setIgnoreMouseEvents(!shouldCapture);
-    } else if (shouldCapture) {
+    if (shouldCapture) {
       this.mainWindow.setIgnoreMouseEvents(false);
     } else {
       this.mainWindow.setIgnoreMouseEvents(true, { forward: true });
-    }
-  }
-
-  async setMainWindowInputRegion(region) {
-    const win = this.mainWindow;
-    if (process.platform !== "linux" || !win || win.isDestroyed()) return false;
-    if (this._linuxWindowInputRegion?.window !== win) {
-      this._linuxWindowInputRegion?.stop();
-      this._linuxWindowInputRegion = { window: win, ...createLinuxWindowInputRegion(win) };
-    }
-    try {
-      await this._linuxWindowInputRegion.set(region);
-      return !win.isDestroyed() && win.isVisible() && !win.isMinimized();
-    } catch (error) {
-      // The writer rejects after its process closes, so an old shape cannot
-      // overwrite this fallback and leave native hover unreachable.
-      if (!win.isDestroyed()) win.setIgnoreMouseEvents(false);
-      throw error;
     }
   }
 
@@ -287,17 +246,11 @@ class WindowManager {
     if (!win || win.isDestroyed() || sender !== win.webContents) {
       return;
     }
-    // Linux ignores the `forward` option, so a card returned to click-through
-    // there never sees another mouseenter and Start/Dismiss stay unreachable
-    // for the rest of its life (#1456). It is only click-through on macOS to
-    // begin with, so on Linux leave the hit-testing alone and move the
-    // countdown alone.
-    const togglesClickThrough = process.platform !== "linux";
     if (interactive) {
-      if (togglesClickThrough) win.setIgnoreMouseEvents(false);
+      win.setIgnoreMouseEvents(false);
       this._notificationDismissTimer.pause();
     } else {
-      if (togglesClickThrough) win.setIgnoreMouseEvents(true, { forward: true });
+      win.setIgnoreMouseEvents(true, { forward: true });
       this._notificationDismissTimer.resume();
     }
   }
@@ -356,8 +309,8 @@ class WindowManager {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
 
     // The renderer must install screen-space anchor compensation before
-    // setBounds reaches the OS compositor. Without this handshake, Windows
-    // and macOS can paint the new viewport size one frame before the
+    // setBounds reaches the OS compositor. Without this handshake, macOS can
+    // paint the new viewport size one frame before the
     // corresponding window position, which visibly kicks the pill or panel.
     // A fixed sleep loses that race whenever the renderer is mid-task (an
     // entrance commit, mic warm-up), so wait for its explicit ack; the
@@ -598,9 +551,8 @@ class WindowManager {
   createHotkeyCallback() {
     const isPress = createHotkeyRepeatGate();
 
-    // globalShortcut registrations pass the hotkey that fired; native shortcuts
-    // use down/up phases and resolve their primary hotkey from the active slot.
-    return async (triggeredHotkey, phase) => {
+    // globalShortcut registrations pass the hotkey that fired.
+    return async (triggeredHotkey) => {
       if (this.hotkeyManager.isInListeningMode()) {
         return;
       }
@@ -611,32 +563,13 @@ class WindowManager {
       const activationMode = this.getActivationMode();
       const currentHotkey = triggeredHotkey || this.hotkeyManager.getCurrentHotkey?.();
 
-      if (process.platform === "linux" && activationMode === "push") {
-        if (phase === "down") {
-          this.startWindowsPushToTalk(currentHotkey);
-        } else if (phase === "up") {
-          this.handleWindowsPushKeyUp(currentHotkey);
-        }
-        return;
-      }
-      if (phase === "up") return;
-
       if (
-        process.platform === "darwin" &&
         activationMode === "push" &&
         currentHotkey &&
         !isGlobeLikeHotkey(currentHotkey) &&
         currentHotkey.includes("+")
       ) {
         this.startMacCompoundPushToTalk(currentHotkey);
-        return;
-      }
-
-      // Push mode: defer to native listener (globalShortcut can't detect key-up)
-      if (
-        (process.platform === "win32" || process.platform === "linux") &&
-        activationMode === "push"
-      ) {
         return;
       }
 
@@ -790,82 +723,6 @@ class WindowManager {
     return required;
   }
 
-  startWindowsPushToTalk(key) {
-    if (!this._isOnboardingInputAllowed("dictation")) return;
-    if (this.winPushState?.active || this.isDictationProcessing()) {
-      return;
-    }
-
-    const MIN_HOLD_DURATION_MS = 150;
-    const MAX_PUSH_DURATION_MS = 300000;
-    const downTime = Date.now();
-
-    this.showDictationPanel({ reposition: true });
-    this.sendPrepareDictation();
-
-    const safetyTimeoutId = setTimeout(() => {
-      if (!this.winPushState || this.winPushState.downTime !== downTime) return;
-      debugLogger.warn("Native PTT safety timeout", undefined, "ptt");
-      this.handleWindowsPushKeyUp(undefined, { reason: "timeout" });
-    }, MAX_PUSH_DURATION_MS);
-
-    this.winPushState = {
-      active: true,
-      key,
-      downTime,
-      isRecording: false,
-      safetyTimeoutId,
-    };
-
-    setTimeout(() => {
-      if (!this.winPushState || this.winPushState.downTime !== downTime) {
-        return;
-      }
-
-      if (!this.winPushState.isRecording) {
-        this.winPushState.isRecording = true;
-        this.sendStartDictation();
-      }
-    }, MIN_HOLD_DURATION_MS);
-  }
-
-  // With several dictation hotkeys bound, only the key that started the push may
-  // stop it; called without a key to force-stop. "release" is the user letting
-  // go; every other reason ends a push whose trigger keys are still physically
-  // down, which the renderer must know before it pastes.
-  handleWindowsPushKeyUp(key, { reason = "release" } = {}) {
-    if (!this.winPushState?.active) {
-      return;
-    }
-    if (key && this.winPushState.key && key !== this.winPushState.key) {
-      return;
-    }
-
-    if (this.winPushState.safetyTimeoutId) {
-      clearTimeout(this.winPushState.safetyTimeoutId);
-    }
-
-    const wasRecording = this.winPushState.isRecording;
-    this.winPushState = null;
-
-    if (reason !== "release") this._notifyPushForceStopped(reason);
-
-    if (wasRecording) {
-      this.sendStopDictation();
-    } else {
-      this.sendCancelDictationPreparation();
-      this.hideDictationPanel();
-    }
-  }
-
-  resetWindowsPushState() {
-    if (!this.winPushState?.active) {
-      return;
-    }
-
-    this.handleWindowsPushKeyUp(undefined, { reason: "reset" });
-  }
-
   _isOnboardingInputAllowed(inputKind) {
     return isOnboardingInputAllowed(this._onboardingActive, this._onboardingDemoKind, inputKind);
   }
@@ -953,7 +810,6 @@ class WindowManager {
       // sites in main.js; a stop-press capture resolves the same frontmost
       // app, since NSWorkspace ignores the overlay panel.
       const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
-      void this.selectionManager?.captureTarget?.();
       if (!isStarting) {
         this._mainWindowPlacementCoordinator.cancelPending();
       }
@@ -1067,7 +923,6 @@ class WindowManager {
       const startupRequest = this._preparedStartupRequest ?? this.createRecordingStartupRequest();
       this._preparedStartupRequest = null;
       const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
-      void this.selectionManager?.captureTarget?.();
       this.showDictationPanel({ reposition: true, targetPidPromise });
       this.mainWindow.webContents.send("start-dictation", { startupRequest });
     }
@@ -1159,31 +1014,6 @@ class WindowManager {
     return true;
   }
 
-  /**
-   * Sync the native low-level key listeners (Windows/Linux) so every hotkey slot
-   * that needs one is watched. Call after any change to a slot hotkey or the
-   * activation mode. No-op during hotkey capture (listeners are stopped then).
-   */
-  reconcileNativeKeyListeners() {
-    if (!this.mainWindow || this.mainWindow.isDestroyed()) return;
-    if (this.hotkeyManager.isInListeningMode()) return;
-    const activationMode = this.getActivationMode();
-    const nativeListenerKeys = this.hotkeyManager.getNativeListenerKeys(activationMode);
-    // Native desktop shortcuts replace the low-level listener in tap mode. In
-    // push mode, keep the dictation listener as a release-event fallback; the
-    // push state machine makes duplicate backend and low-level phases harmless.
-    const keys = this.hotkeyManager.isUsingNativeShortcut()
-      ? activationMode === "push"
-        ? nativeListenerKeys.filter((key) => this.hotkeyManager.slotHasHotkey("dictation", key))
-        : []
-      : nativeListenerKeys;
-    if (process.platform === "win32" && this.windowsKeyManager) {
-      this.windowsKeyManager.setKeys(keys);
-    } else if (process.platform === "linux" && this.linuxKeyManager) {
-      this.linuxKeyManager.setKeys(keys);
-    }
-  }
-
   setFloatingIconAutoHide(enabled) {
     this._floatingIconAutoHide = Boolean(enabled);
   }
@@ -1237,26 +1067,6 @@ class WindowManager {
 
   async updateHotkey(hotkey) {
     return await this.hotkeyManager.updateHotkey(hotkey, this.createHotkeyCallback());
-  }
-
-  isUsingGnomeHotkeys() {
-    return this.hotkeyManager.isUsingGnome();
-  }
-
-  isUsingHyprlandHotkeys() {
-    return this.hotkeyManager.isUsingHyprland();
-  }
-
-  getHyprlandConfigStatus() {
-    return this.hotkeyManager.getHyprlandConfigStatus();
-  }
-
-  isUsingKDEHotkeys() {
-    return this.hotkeyManager.isUsingKDE();
-  }
-
-  isUsingNativeShortcutHotkeys() {
-    return this.hotkeyManager.isUsingNativeShortcut();
   }
 
   // The control panel is transparent on macOS, where Electron ignores
@@ -1316,7 +1126,7 @@ class WindowManager {
   }
 
   openExternalUrl(url, showError = true) {
-    openUrlInExternalBrowser(url).catch((error) => {
+    shell.openExternal(url).catch((error) => {
       if (showError) {
         dialog.showErrorBox(
           i18nMain.t("dialog.openLink.title"),
@@ -1407,7 +1217,7 @@ class WindowManager {
       dockManager.setControlPanelVisible(false);
     });
 
-    MenuManager.setupControlPanelMenu(this.controlPanelWindow, () => this.openSettings());
+    MenuManager.setupControlPanelMenu(() => this.openSettings());
 
     this.controlPanelWindow.webContents.on("did-finish-load", () => {
       // Every fresh document starts unresolved. AppRouter releases the gate
@@ -1534,8 +1344,8 @@ class WindowManager {
 
   // The display the user is working on is the one showing the app being dictated
   // into, which on a multi-monitor desk is often not the one the mouse rests on.
-  // Falls back to the cursor when the target has no readable window (non-macOS,
-  // no target captured yet, or an app with no ordinary window).
+  // Falls back to the cursor when the target has no readable window (no target
+  // captured yet, or an app with no ordinary window).
   async _resolveActiveDisplay(targetPidPromise) {
     let pid = this.textEditMonitor?.lastTargetPid;
     if (targetPidPromise) {
@@ -1763,7 +1573,7 @@ class WindowManager {
       Math.min(floor.width, workArea.width),
       Math.min(floor.height, workArea.height)
     );
-    if (process.platform === "darwin" && typeof win.setWindowButtonVisibility === "function") {
+    if (typeof win.setWindowButtonVisibility === "function") {
       win.setWindowButtonVisibility(true);
     }
   }
@@ -1801,7 +1611,7 @@ class WindowManager {
         win.setFullScreenable(state.fullscreenable);
         if (state.minimumSize) win.setMinimumSize(...state.minimumSize);
       }
-      if (process.platform === "darwin" && typeof win.setWindowButtonVisibility === "function") {
+      if (typeof win.setWindowButtonVisibility === "function") {
         win.setWindowButtonVisibility(true);
       }
       this._onboardingRestoreBounds = null;
@@ -2074,13 +1884,9 @@ class WindowManager {
   }
 
   // Like the dictation pill and meeting notification, the companion is
-  // click-through on macOS so its transparent bounds never swallow clicks
-  // meant for the app beneath; hovering re-captures via IPC. Windows
-  // forwarding is unreliable for floating panels and Linux ignores `forward`
-  // (one hover-out would strand the pill unreachable, #1456), so both keep
-  // normal hit-testing.
+  // click-through so its transparent bounds never swallow clicks meant for the
+  // app beneath; hovering re-captures via IPC.
   _applyAgentDictationPillClickThrough(pillWindow, clickThrough) {
-    if (process.platform !== "darwin") return;
     if (clickThrough) pillWindow.setIgnoreMouseEvents(true, { forward: true });
     else pillWindow.setIgnoreMouseEvents(false);
   }
@@ -2100,20 +1906,6 @@ class WindowManager {
   registerMainWindowEvents() {
     if (!this.mainWindow) {
       return;
-    }
-
-    if (process.platform === "linux") {
-      const win = this.mainWindow;
-      // backgroundThrottling:false keeps document.visibilityState visible even
-      // after hide(). Native visibility owns the Linux input-region updates.
-      for (const event of ["show", "hide", "minimize", "restore"]) {
-        win.on(event, () => {
-          win.webContents.send(
-            "main-window-visibility-changed",
-            win.isVisible() && !win.isMinimized()
-          );
-        });
-      }
     }
 
     // Safety timeout: force show the window if ready-to-show doesn't fire within 10 seconds
@@ -2223,9 +2015,7 @@ class WindowManager {
 
     win.setContentProtection(true);
 
-    if (process.platform === "darwin") {
-      win.setIgnoreMouseEvents(true, { forward: true });
-    }
+    win.setIgnoreMouseEvents(true, { forward: true });
 
     // Notifications must clear every other window, including our own floating
     // dictation panel and assistant pill.
@@ -2382,7 +2172,7 @@ class WindowManager {
     MenuManager.setupMainMenu(() => this.openSettings());
 
     if (this.controlPanelWindow && !this.controlPanelWindow.isDestroyed()) {
-      MenuManager.setupControlPanelMenu(this.controlPanelWindow, () => this.openSettings());
+      MenuManager.setupControlPanelMenu(() => this.openSettings());
       this.controlPanelWindow.setTitle(i18nMain.t("window.controlPanelTitle"));
     }
 

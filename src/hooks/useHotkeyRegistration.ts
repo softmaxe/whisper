@@ -2,7 +2,6 @@ import { useState, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { formatHotkeyListLabel } from "../utils/hotkeys";
 import { validateHotkey } from "../utils/hotkeyValidator";
-import { getPlatform } from "../utils/platform";
 
 export interface UseHotkeyRegistrationOptions {
   /**
@@ -112,8 +111,7 @@ export function useHotkeyRegistration(
         return false;
       }
 
-      const platform = getPlatform();
-      const validation = validateHotkey(hotkey, platform);
+      const validation = validateHotkey(hotkey);
       if (!validation.valid) {
         const errorMsg =
           validation.error || t("hooks.hotkeyRegistration.errors.unsupportedShortcut");

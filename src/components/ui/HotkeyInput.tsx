@@ -3,11 +3,10 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle, Trash2 } from "../icons";
 import {
   formatHotkeyLabel,
-  formatHotkeyLabelForPlatform,
+  formatHotkeyDisplay,
   isGlobeLikeHotkey,
   sidedModifierToken,
 } from "../../utils/hotkeys";
-import { getPlatform, type Platform } from "../../utils/platform";
 import {
   hasMetModifierOnlyHoldThreshold,
   shouldAcceptModifierOnlyCapture,
@@ -164,12 +163,12 @@ const MODIFIER_CODE_STEM: Record<ModifierKind, string> = {
 };
 
 /** Token for a modifier whose side is unknown, e.g. one held before capture began. */
-function sidelessModifierToken(kind: ModifierKind, platform: Platform): string {
+function sidelessModifierToken(kind: ModifierKind): string {
   switch (kind) {
     case "ctrl":
       return "Control";
     case "meta":
-      return platform === "darwin" ? "Command" : "Super";
+      return "Command";
     case "alt":
       return "Alt";
     default:
@@ -177,22 +176,18 @@ function sidelessModifierToken(kind: ModifierKind, platform: Platform): string {
   }
 }
 
-function heldModifierToken(
-  kind: ModifierKind,
-  code: string | undefined,
-  platform: Platform
-): string {
-  return (code && sidedModifierToken(code, platform)) || sidelessModifierToken(kind, platform);
+function heldModifierToken(kind: ModifierKind, code: string | undefined): string {
+  return (code && sidedModifierToken(code)) || sidelessModifierToken(kind);
 }
 
 /**
  * Chip label for a held token. "Fn" is spelled out rather than passed through
- * formatHotkeyLabelForPlatform, which resolves it to the "Globe/Fn" name a
+ * formatHotkeyDisplay, which resolves it to the "Globe/Fn" name a
  * stored hotkey gets — too long for a chip that sits beside "+ key" and reads
  * as a second key rather than the one the user is holding.
  */
-function heldModifierLabel(token: string, platform: Platform): string {
-  return token === "Fn" ? "Fn" : formatHotkeyLabelForPlatform(token, platform);
+function heldModifierLabel(token: string): string {
+  return token === "Fn" ? "Fn" : formatHotkeyDisplay(token);
 }
 
 /** Outcome of releasing a modifier-only chord: a hotkey, a reason it cannot be
@@ -228,16 +223,9 @@ function mapKeyboardEventToHotkey(e: KeyboardEvent): string | null {
     return null;
   }
 
-  const platform = getPlatform();
   const modifiers: string[] = [];
-
-  if (platform === "darwin") {
-    if (e.ctrlKey) modifiers.push("Control");
-    if (e.metaKey) modifiers.push("Command");
-  } else {
-    if (e.ctrlKey) modifiers.push("Control");
-    if (e.metaKey) modifiers.push("Super");
-  }
+  if (e.ctrlKey) modifiers.push("Control");
+  if (e.metaKey) modifiers.push("Command");
 
   if (e.altKey) modifiers.push("Alt");
   if (e.shiftKey) modifiers.push("Shift");
@@ -278,8 +266,6 @@ export function HotkeyInput({
     shift: false,
   });
   const modifierCodesRef = useRef<Partial<Record<ModifierKind, string>>>({});
-  const platform = getPlatform();
-  const isMac = platform === "darwin";
 
   const resolveModifierOnlyCapture = useCallback(
     (
@@ -293,29 +279,28 @@ export function HotkeyInput({
       // free for ordinary chords.
       if (heldKinds.length === 1) {
         const kind = heldKinds[0];
-        const token = heldModifierToken(kind, codes[kind], platform);
+        const token = heldModifierToken(kind, codes[kind]);
         if (token.startsWith("Right")) {
           return { kind: "hotkey", hotkey: token };
         }
-        const rightSideToken =
-          sidedModifierToken(`${MODIFIER_CODE_STEM[kind]}Right`, platform) ?? token;
+        const rightSideToken = sidedModifierToken(`${MODIFIER_CODE_STEM[kind]}Right`) ?? token;
         return {
           kind: "needsRightSide",
-          held: formatHotkeyLabelForPlatform(token, platform),
-          rightSide: formatHotkeyLabelForPlatform(rightSideToken, platform),
+          held: formatHotkeyDisplay(token),
+          rightSide: formatHotkeyDisplay(rightSideToken),
         };
       }
 
       if (heldKinds.length >= 2) {
         return {
           kind: "hotkey",
-          hotkey: heldKinds.map((kind) => sidelessModifierToken(kind, platform)).join("+"),
+          hotkey: heldKinds.map((kind) => sidelessModifierToken(kind)).join("+"),
         };
       }
 
       return null;
     },
-    [platform]
+    []
   );
 
   const clearFnHeld = useCallback(() => {
@@ -404,15 +389,9 @@ export function HotkeyInput({
 
       const codes = modifierCodesRef.current;
       const held: string[] = [];
-      const holdKind = (kind: ModifierKind) =>
-        held.push(heldModifierToken(kind, codes[kind], platform));
-      if (isMac) {
-        if (e.metaKey) holdKind("meta");
-        if (e.ctrlKey) holdKind("ctrl");
-      } else {
-        if (e.ctrlKey) holdKind("ctrl");
-        if (e.metaKey) holdKind("meta");
-      }
+      const holdKind = (kind: ModifierKind) => held.push(heldModifierToken(kind, codes[kind]));
+      if (e.metaKey) holdKind("meta");
+      if (e.ctrlKey) holdKind("ctrl");
       if (e.altKey) holdKind("alt");
       if (e.shiftKey) holdKind("shift");
       if (fnHeldRef.current) held.push("Fn");
@@ -431,7 +410,7 @@ export function HotkeyInput({
       }
       // If no base key, modifiers are held - don't finalize yet
     },
-    [disabled, isMac, platform, finalizeCapture, onValidationError]
+    [disabled, finalizeCapture, onValidationError]
   );
 
   const handleKeyUp = useCallback(
@@ -537,14 +516,7 @@ export function HotkeyInput({
     let cancelled = false;
     let frame: number | null = null;
 
-    const focusCaptureSurface = async (onlyIfPageFocusIsUnclaimed = false) => {
-      if (platform === "win32") {
-        // On Windows, focusing a DOM node does not bring an inactive native
-        // window to the foreground. Main restores/focuses the BrowserWindow as
-        // part of this handshake; waiting for it makes the first chord reliable.
-        const listening = window.electronAPI?.setHotkeyListeningMode?.(true);
-        if (listening) await listening.catch(() => undefined);
-      }
+    const focusCaptureSurface = (onlyIfPageFocusIsUnclaimed = false) => {
       if (cancelled) return;
 
       if (frame !== null) cancelAnimationFrame(frame);
@@ -560,10 +532,10 @@ export function HotkeyInput({
       });
     };
 
-    void focusCaptureSurface();
-    const handleWindowFocus = () => void focusCaptureSurface(true);
+    focusCaptureSurface();
+    const handleWindowFocus = () => focusCaptureSurface(true);
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") void focusCaptureSurface(true);
+      if (document.visibilityState === "visible") focusCaptureSurface(true);
     };
     window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -573,7 +545,7 @@ export function HotkeyInput({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [autoFocus, platform]);
+  }, [autoFocus]);
 
   useEffect(() => {
     onHeldModifiersChange?.(activeModifiers.join("+"));
@@ -587,7 +559,7 @@ export function HotkeyInput({
   }, []);
 
   useEffect(() => {
-    if (!isCapturing || !isMac) return;
+    if (!isCapturing) return;
 
     const disposeDown = window.electronAPI?.onGlobeKeyPressed?.(() => {
       setValidationWarning(null);
@@ -610,7 +582,7 @@ export function HotkeyInput({
       disposeDown?.();
       disposeUp?.();
     };
-  }, [isCapturing, isMac, finalizeCapture]);
+  }, [isCapturing, finalizeCapture]);
 
   const displayValue = formatHotkeyLabel(value);
   const isGlobe = isGlobeLikeHotkey(value);
@@ -705,7 +677,7 @@ export function HotkeyInput({
                       key={token}
                       className="px-2.5 py-1 bg-primary/10 border border-primary/20 rounded-sm text-xs font-semibold text-primary"
                     >
-                      {heldModifierLabel(token, platform)}
+                      {heldModifierLabel(token)}
                     </kbd>
                   ))}
                   <span className="text-primary/50 text-sm font-medium">+</span>
@@ -718,7 +690,7 @@ export function HotkeyInput({
               </div>
             ) : (
               <span className="text-xs text-muted-foreground">
-                {isMac ? t("hotkeyInput.pressAnyKeyMac") : t("hotkeyInput.pressAnyKey")}
+                {t("hotkeyInput.pressAnyKeyMac")}
               </span>
             )}
             {validationWarning && (
@@ -823,7 +795,7 @@ export function HotkeyInput({
                         key={token}
                         className="px-2 py-0.5 bg-primary/10 border border-primary/20 rounded-sm text-xs font-semibold text-primary"
                       >
-                        {heldModifierLabel(token, platform)}
+                        {heldModifierLabel(token)}
                       </kbd>
                     ))}
                   </span>
@@ -833,7 +805,7 @@ export function HotkeyInput({
                 </div>
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  {isMac ? t("hotkeyInput.tryShortcutMac") : t("hotkeyInput.tryShortcut")}
+                  {t("hotkeyInput.tryShortcutMac")}
                 </span>
               )}
             </div>

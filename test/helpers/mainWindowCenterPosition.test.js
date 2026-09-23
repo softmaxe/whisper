@@ -126,7 +126,6 @@ try {
       };
     }
     if (request === "./debugLogger") return { warn() {}, debug() {}, info() {} };
-    if (request === "./linuxWindowInputRegion") return {};
     if (request === "./hotkeyManager") return class {};
     if (request === "./dragManager") return FakeDragManager;
     if (request === "./menuManager" || request === "./dockManager") return {};

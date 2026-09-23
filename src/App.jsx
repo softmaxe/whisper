@@ -30,7 +30,6 @@ import {
 import { useAssistantPanel } from "./hooks/useAssistantPanel";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useHotkey } from "./hooks/useHotkey";
-import { useLinuxPillInteractivity } from "./hooks/useLinuxPillInteractivity";
 import { useListeningEntrancePhase } from "./hooks/useListeningEntrancePhase";
 import { useLiveTranscriptPanel } from "./hooks/useLiveTranscriptPanel";
 import { useMainProcessNotifications } from "./hooks/useMainProcessNotifications";
@@ -89,9 +88,6 @@ export default function App() {
   const [mainWindowHorizontalDirection, setMainWindowHorizontalDirection] = useState(null);
 
   const setWindowInteractivity = React.useCallback((shouldCapture) => {
-    // Linux has one pointer-poll owner; native mouseleave must not undo its
-    // drag/menu capture or strand the next hover in click-through mode.
-    if (window.electronAPI?.getPlatform?.() === "linux") return;
     window.electronAPI?.setMainWindowInteractivity?.(shouldCapture);
   }, []);
   const dismissDictationError = React.useCallback(
@@ -641,12 +637,6 @@ export default function App() {
       panelReturnResizeActive,
       hasLiveActivity: pillHasLiveActivity,
     });
-
-  useLinuxPillInteractivity({
-    pillRef: pillPresenceRef,
-    captureWindow: isCommandMenuOpen || toastCount > 0 || anyPanelMounted || isDragging,
-    pillInteractive: pillIsInteractive && !pillVisuallySuppressed,
-  });
 
   return (
     <div className="dictation-window">

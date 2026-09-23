@@ -33,10 +33,7 @@ import { setControlPanelHold } from "../utils/controlPanelRetention";
 import { onSettingsRequested } from "../utils/settingsRequests";
 import logger from "../utils/logger";
 import { isAccessibilitySkipped } from "../utils/permissions";
-import { getCachedPlatform } from "../utils/platform";
 import HistoryView from "./HistoryView";
-
-const platform = getCachedPlatform();
 
 const SIDEBAR_WIDTH_PX = 192;
 
@@ -107,7 +104,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const mod = platform === "darwin" ? e.metaKey : e.ctrlKey;
+      const mod = e.metaKey;
       if (mod && e.key === "k") {
         e.preventDefault();
         setShowSearch(true);

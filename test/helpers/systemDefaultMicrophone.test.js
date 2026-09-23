@@ -3,46 +3,35 @@ const assert = require("node:assert/strict");
 
 const helper = require("../../src/helpers/systemDefaultMicrophone");
 
-test("parses a WirePlumber default source", () => {
+test("parses the macOS helper's default input", () => {
   assert.deepEqual(
-    helper.parseWpctlResult(`
-      node.name = "alsa_input.pci-0000_00_1f.3.analog-stereo"
-      node.description = "Built-in Audio Analog Stereo"
-    `),
+    helper.parseJsonResult('noise\n{"name":" Built-in Microphone ","id":"BuiltIn"}'),
     {
-      name: "Built-in Audio Analog Stereo",
-      nativeId: "alsa_input.pci-0000_00_1f.3.analog-stereo",
+      name: "Built-in Microphone",
+      nativeId: "BuiltIn",
     }
   );
+  assert.equal(helper.parseJsonResult('{"name":""}'), null);
 });
 
-test("parses a PulseAudio default source", () => {
-  const sources = JSON.stringify([
-    { name: "usb", description: "USB Microphone" },
-    { name: "internal", description: "Internal Microphone" },
-  ]);
-  assert.deepEqual(helper.parsePactlSources(sources, "internal"), {
-    name: "Internal Microphone",
-    nativeId: "internal",
-  });
-});
-
-function wpctlResolver({ now = () => 100, respond } = {}) {
+function helperResolver({ now = () => 100, respond } = {}) {
   let calls = 0;
   const resolve = helper.createSystemDefaultMicrophoneResolver({
-    platform: "linux",
     now,
-    run: (command) => {
+    resolveBinary: () => "/helpers/macos-mic-listener",
+    run: (command, args) => {
       calls += 1;
-      if (command !== "wpctl") throw new Error("unexpected command");
-      return respond ? respond() : 'node.description = "Desk Microphone"';
+      if (command !== "/helpers/macos-mic-listener" || args[0] !== "--print-default-input") {
+        throw new Error("unexpected command");
+      }
+      return respond ? respond() : '{"name":"Desk Microphone"}';
     },
   });
   return { resolve, calls: () => calls };
 }
 
 test("resolver keeps a successful lookup until asked to refresh", async () => {
-  const { resolve, calls } = wpctlResolver();
+  const { resolve, calls } = helperResolver();
 
   assert.equal((await resolve()).name, "Desk Microphone");
   assert.equal((await resolve()).name, "Desk Microphone");
@@ -56,29 +45,39 @@ test("resolver retries a failed lookup only after the back-off", async () => {
   let clock = 0;
   let calls = 0;
   const resolve = helper.createSystemDefaultMicrophoneResolver({
-    platform: "linux",
     now: () => clock,
+    resolveBinary: () => "/helpers/macos-mic-listener",
     run: async () => {
       calls += 1;
-      throw new Error("no audio server");
+      throw new Error("helper failed");
     },
   });
 
   assert.equal((await resolve()).source, "unavailable");
   clock = 1000;
   await resolve();
-  assert.equal(calls, 2, "wpctl then pactl, no retry inside the back-off");
+  assert.equal(calls, 1, "no retry inside the back-off");
   clock = 31000;
   await resolve();
-  assert.equal(calls, 4);
+  assert.equal(calls, 2);
+});
+
+test("resolver reports unavailable without the helper binary", async () => {
+  const resolve = helper.createSystemDefaultMicrophoneResolver({
+    resolveBinary: () => null,
+    run: () => {
+      throw new Error("must not run");
+    },
+  });
+  assert.deepEqual(await resolve(), { name: "", source: "unavailable" });
 });
 
 test("concurrent lookups share one process", async () => {
   let release;
-  const { resolve, calls } = wpctlResolver({
+  const { resolve, calls } = helperResolver({
     respond: () =>
       new Promise((done) => {
-        release = () => done('node.description = "Desk Microphone"');
+        release = () => done('{"name":"Desk Microphone"}');
       }),
   });
 

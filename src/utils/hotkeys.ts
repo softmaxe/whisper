@@ -3,8 +3,6 @@
  * Supports both single keys and compound hotkeys (e.g., "CommandOrControl+Shift+K").
  */
 
-import { getPlatform, type Platform } from "./platform.ts";
-
 export function isGlobeLikeHotkey(hotkey: string): boolean {
   return hotkey === "GLOBE" || hotkey === "Fn";
 }
@@ -48,22 +46,22 @@ export function isMouseButtonHotkey(hotkey: string): boolean {
  * "Right Option", "LeftControl" → "Left Ctrl"), or null when the token carries
  * no side.
  */
-function formatSideModifierPart(part: string, platform: Platform): string | null {
+function formatSideModifierPart(part: string): string | null {
   const match = /^(Right|Left)(Option|Alt|Command|Cmd|Control|Ctrl|Shift|Super|Meta|Win)$/.exec(
     part
   );
   if (!match) return null;
   const [, side, key] = match;
-  return `${side} ${formatModifierPart(key === "Option" ? "Alt" : key, platform)}`;
+  return `${side} ${formatModifierPart(key === "Option" ? "Alt" : key)}`;
 }
 
 /**
  * Side-qualified token for a modifier `KeyboardEvent.code`, matching the tokens
  * {@link formatSideModifierPart} and the hotkey validator understand
- * ("AltRight" → "RightOption" on macOS, "RightAlt" elsewhere). Null for codes
- * that carry no side, such as "CapsLock".
+ * ("AltRight" → "RightOption"). Null for codes that carry no side, such as
+ * "CapsLock".
  */
-export function sidedModifierToken(code: string, platform: Platform): string | null {
+export function sidedModifierToken(code: string): string | null {
   const match = /^(Control|Alt|Shift|Meta)(Left|Right)$/.exec(code);
   if (!match) return null;
   const [, key, side] = match;
@@ -73,16 +71,16 @@ export function sidedModifierToken(code: string, platform: Platform): string | n
     case "Shift":
       return `${side}Shift`;
     case "Alt":
-      return platform === "darwin" ? `${side}Option` : `${side}Alt`;
+      return `${side}Option`;
     default:
-      return platform === "darwin" ? `${side}Command` : `${side}Super`;
+      return `${side}Command`;
   }
 }
 
-function formatModifierPart(part: string, platform: Platform): string {
+function formatModifierPart(part: string): string {
   switch (part) {
     case "CommandOrControl":
-      return platform === "darwin" ? "Cmd" : "Ctrl";
+      return "Cmd";
     case "Command":
     case "Cmd":
       return "Cmd";
@@ -90,16 +88,16 @@ function formatModifierPart(part: string, platform: Platform): string {
     case "Ctrl":
       return "Ctrl";
     case "Alt":
-      return platform === "darwin" ? "Option" : "Alt";
+      return "Option";
     case "Option":
       return "Option";
     case "Shift":
       return "Shift";
     case "Super":
     case "Meta":
-      return platform === "darwin" ? "Cmd" : platform === "win32" ? "Win" : "Super";
+      return "Cmd";
     case "Win":
-      return platform === "win32" ? "Win" : "Super";
+      return "Super";
     case "Fn":
       return "Fn";
     default:
@@ -111,18 +109,17 @@ function formatModifierPart(part: string, platform: Platform): string {
  * Formats an Electron accelerator string into a user-friendly display label.
  *
  * @param hotkey - The hotkey string in Electron accelerator format
- * @returns User-friendly label (e.g., "Cmd+Shift+K" on macOS, "Ctrl+Shift+K" on Windows)
+ * @returns User-friendly label (e.g., "Cmd+Shift+K")
  *
  * @example
- * formatHotkeyLabel("CommandOrControl+Shift+K") // "Cmd+Shift+K" on macOS, "Ctrl+Shift+K" on Windows
- * formatHotkeyLabel("GLOBE") // "Globe"
+ * formatHotkeyLabel("CommandOrControl+Shift+K") // "Cmd+Shift+K"
+ * formatHotkeyLabel("GLOBE") // "Globe/Fn"
  * formatHotkeyLabel("`") // "`"
- * formatHotkeyLabel(null) // platform default
+ * formatHotkeyLabel(null) // the default hotkey
  */
 export function formatHotkeyLabel(hotkey?: string | null): string {
-  const platform = getPlatform();
   const resolvedHotkey = hotkey && hotkey.trim() !== "" ? hotkey : getDefaultHotkey();
-  return formatHotkeyLabelForPlatform(resolvedHotkey, platform);
+  return formatHotkeyDisplay(resolvedHotkey);
 }
 
 /**
@@ -135,7 +132,8 @@ export function formatHotkeyListLabel(value?: string | null): string {
   return list.map((hotkey) => formatHotkeyLabel(hotkey)).join(" / ");
 }
 
-export function formatHotkeyLabelForPlatform(hotkey: string, platform: Platform): string {
+// Like formatHotkeyLabel, but an empty hotkey formats as "" instead of the default.
+export function formatHotkeyDisplay(hotkey: string): string {
   if (!hotkey || hotkey.trim() === "") {
     return "";
   }
@@ -151,12 +149,12 @@ export function formatHotkeyLabelForPlatform(hotkey: string, platform: Platform)
   if (hotkey.includes("+")) {
     const parts = hotkey.split("+");
     const formattedParts = parts.map(
-      (part) => formatSideModifierPart(part, platform) ?? formatModifierPart(part, platform)
+      (part) => formatSideModifierPart(part) ?? formatModifierPart(part)
     );
     return formattedParts.join("+");
   }
 
-  return formatSideModifierPart(hotkey, platform) ?? formatModifierPart(hotkey, platform);
+  return formatSideModifierPart(hotkey) ?? formatModifierPart(hotkey);
 }
 
 /**
@@ -194,14 +192,9 @@ export function isCompoundHotkey(hotkey: string): boolean {
   return hotkey?.includes("+") || false;
 }
 
-/**
- * Gets the default hotkey for the current platform.
- * - macOS: GLOBE key (Fn key on modern Macs)
- * - Windows/Linux: Control+Super (Ctrl+Win / Ctrl+Super)
- */
+/** The default hotkey: the Globe key (Fn key on modern Macs). */
 export function getDefaultHotkey(): string {
-  const platform = getPlatform();
-  return platform === "darwin" ? "GLOBE" : "Control+Super";
+  return "GLOBE";
 }
 
 /**

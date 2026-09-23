@@ -14,7 +14,6 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { useSettings } from "../hooks/useSettings";
-import { getCachedPlatform } from "../utils/platform";
 import type { Snippet } from "../utils/snippets";
 
 const EXAMPLE_KEYS = ["linkedin", "rewrite", "intro", "signoff"] as const;
@@ -224,7 +223,7 @@ export default function SnippetsView() {
           <div className="flex items-center justify-between pt-1.5">
             <div dir="ltr" className="flex items-center gap-0.5">
               <kbd className="text-[10px] px-1 py-px rounded border border-border/70 dark:border-white/10 bg-muted/40 text-muted-foreground/70 font-mono leading-tight">
-                {getCachedPlatform() === "darwin" ? "⌘" : "Ctrl"}
+                ⌘
               </kbd>
               <kbd className="text-[10px] px-1 py-px rounded border border-border/70 dark:border-white/10 bg-muted/40 text-muted-foreground/70 font-mono leading-tight">
                 ⏎

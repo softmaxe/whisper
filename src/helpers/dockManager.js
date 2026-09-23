@@ -1,5 +1,4 @@
 const { app } = require("electron");
-const { resolveDockVisibility } = require("./dockPolicy");
 
 // Keeps the throttle of Electron's DockHide (browser_mac.mm): hiding the icon
 // within this long of showing it can leave duplicate Dock icons behind.
@@ -37,11 +36,11 @@ class DockManager {
   }
 
   _applyVisibility() {
-    const visible = resolveDockVisibility({
-      platform: process.platform,
-      controlPanelVisible: this._controlPanelVisible,
-    });
-    if (visible === null || !app.dock) return;
+    // Hiding the dictation panel must never touch the Dock. The panel is
+    // hidden outright rather than minimized into the Dock, so there is nothing
+    // to restore from there.
+    const visible = this._controlPanelVisible;
+    if (!app.dock) return;
 
     if (visible) {
       if (app.dock.isVisible()) return;

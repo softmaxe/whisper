@@ -341,18 +341,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   ),
   onParakeetDownloadProgress: registerListener("parakeet-download-progress"),
 
-  // Window control functions
-  windowMinimize: () => ipcRenderer.invoke("window-minimize"),
-  windowMaximize: () => ipcRenderer.invoke("window-maximize"),
-  windowClose: () => ipcRenderer.invoke("window-close"),
-  windowIsMaximized: () => ipcRenderer.invoke("window-is-maximized"),
-  getPlatform: () => process.platform,
-
   relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
   updateHotkey: (hotkey) => ipcRenderer.invoke("update-hotkey", hotkey),
   setHotkeyListeningMode: (enabled) => ipcRenderer.invoke("set-hotkey-listening-mode", enabled),
   getHotkeyModeInfo: (hotkey) => ipcRenderer.invoke("get-hotkey-mode-info", hotkey),
-  getHyprlandConfigStatus: () => ipcRenderer.invoke("get-hyprland-config-status"),
   startWindowDrag: () => ipcRenderer.invoke("start-window-drag"),
   stopWindowDrag: () => ipcRenderer.invoke("stop-window-drag"),
   startControlPanelDrag: () => ipcRenderer.invoke("start-control-panel-drag"),
@@ -370,11 +362,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   ackMainWindowResizeMask: (token) => ipcRenderer.send("main-window-resize-mask-ready", token),
   setMainWindowInteractivity: (interactive) =>
     ipcRenderer.invoke("set-main-window-interactivity", interactive),
-  setMainWindowInputRegion: (region) => ipcRenderer.invoke("set-main-window-input-region", region),
-  onMainWindowVisibilityChanged: registerListener(
-    "main-window-visibility-changed",
-    (callback) => (_event, visible) => callback(visible)
-  ),
   resizeMainWindow: (sizeKey) => ipcRenderer.invoke("resize-main-window", sizeKey),
   resizeAssistantWindowToContent: (surfaceHeight) =>
     ipcRenderer.invoke("resize-assistant-window-to-content", surfaceHeight),
@@ -449,9 +436,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   getLogLevel: () => ipcRenderer.invoke("get-log-level"),
   log: (entry) => ipcRenderer.invoke("app-log", entry),
-
-  // ydotool status check
-  getYdotoolStatus: () => ipcRenderer.invoke("get-ydotool-status"),
 
   // Debug logging management
   getDebugState: () => ipcRenderer.invoke("get-debug-state"),
@@ -641,11 +625,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   // Hotkey registration events (for notifying user when hotkey fails)
-  onHotkeyFallbackUsed: (callback) => {
-    const listener = (_event, data) => callback?.(data);
-    ipcRenderer.on("hotkey-fallback-used", listener);
-    return () => ipcRenderer.removeListener("hotkey-fallback-used", listener);
-  },
   onHotkeyRegistrationFailed: (callback) => {
     const listener = (_event, data) => callback?.(data);
     ipcRenderer.on("hotkey-registration-failed", listener);
@@ -661,11 +640,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("dictation-key-active", listener);
     return () => ipcRenderer.removeListener("dictation-key-active", listener);
   },
-  onWindowsPushToTalkUnavailable: registerListener("windows-ptt-unavailable"),
-  onLinuxPttPermissionDenied: registerListener(
-    "linux-ptt-permission-denied",
-    (callback) => () => callback()
-  ),
 
   // Settings shortcut (Cmd+, / Ctrl+,)
   onShowSettings: registerListener("show-settings", (callback) => () => callback()),
@@ -678,7 +652,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   checkAccessibilityTrusted: () => ipcRenderer.invoke("check-accessibility-trusted"),
 
-  // Notify main process of activation mode changes (for Windows Push-to-Talk)
+  // Notify main process of activation mode changes
   notifyActivationModeChanged: (mode) => ipcRenderer.send("activation-mode-changed", mode),
   notifyHotkeyChanged: (hotkey) => ipcRenderer.send("hotkey-changed", hotkey),
 

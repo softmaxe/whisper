@@ -10,7 +10,6 @@ function setup(options = {}) {
   const broadcasts = [];
   const errors = [];
   const monitor = createLaptopLidMonitor({
-    platform: "darwin",
     resolveBinary: () => "/helper/macos-mic-listener",
     spawnHelper: (file, args, spawnOptions) => {
       assert.equal(file, "/helper/macos-mic-listener");
@@ -55,14 +54,6 @@ test("only accepts explicit boolean or unknown lid states", () => {
   for (const value of ['{"lidClosed":0}', '{"lidClosed":"true"}', "{}", "null", "bad"]) {
     assert.equal(parseLidState(value), undefined);
   }
-});
-
-test("non-macOS hosts return unknown without starting a helper", async () => {
-  const { monitor, children, timers } = setup({ platform: "linux" });
-  monitor.start();
-  assert.equal(await monitor.getState(), null);
-  assert.equal(children.length, 0);
-  assert.equal(timers.size, 0);
 });
 
 test("concurrent lookups share a helper and parse partial and combined lines", async () => {

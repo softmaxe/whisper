@@ -29,7 +29,6 @@ import { formatBytes } from "../utils/formatBytes";
 import { validateHotkeyForSlot } from "../utils/hotkeyValidation";
 import { formatHotkeyLabel } from "../utils/hotkeys";
 import logger from "../utils/logger";
-import { getCachedPlatform } from "../utils/platform";
 import InferenceConfigEditor from "./settings/InferenceConfigEditor";
 import { ActivationModeSelector } from "./ui/ActivationModeSelector";
 import { HotkeyListInput } from "./ui/HotkeyListInput";
@@ -257,11 +256,11 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     [t]
   );
 
-  const { isUsingNativeShortcut, supportsPushToTalk, pushToTalkUnavailableReason } =
-    useHotkeyModeInfo("settings", dictationKey);
+  const { supportsPushToTalk, pushToTalkUnavailableReason } = useHotkeyModeInfo(
+    "settings",
+    dictationKey
+  );
   const [effectiveDefaultHotkey, setEffectiveDefaultHotkey] = useState<string | null>(null);
-
-  const platform = getCachedPlatform();
 
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [autoStartNeedsApproval, setAutoStartNeedsApproval] = useState(false);
@@ -381,16 +380,14 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     </div>
                   </SettingsRow>
                 </SettingsPanelRow>
-                {platform === "darwin" && (
-                  <SettingsPanelRow>
-                    <SettingsRow
-                      label={t("settingsPage.general.appearance.showMenuBarIcon")}
-                      description={t("settingsPage.general.appearance.showMenuBarIconDescription")}
-                    >
-                      <Toggle checked={showMenuBarIcon} onChange={setShowMenuBarIcon} />
-                    </SettingsRow>
-                  </SettingsPanelRow>
-                )}
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.appearance.showMenuBarIcon")}
+                    description={t("settingsPage.general.appearance.showMenuBarIconDescription")}
+                  >
+                    <Toggle checked={showMenuBarIcon} onChange={setShowMenuBarIcon} />
+                  </SettingsRow>
+                </SettingsPanelRow>
               </SettingsPanel>
             </div>
 
@@ -667,7 +664,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     onChange={(list) => registerHotkey(list)}
                     validate={validateDictationHotkey}
                     disabled={isHotkeyRegistering}
-                    maxHotkeys={isUsingNativeShortcut ? 1 : undefined}
                     required
                     footerEnd={
                       effectiveDefaultHotkey &&
@@ -690,24 +686,22 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   />
                 </SettingsPanelRow>
 
-                {!isUsingNativeShortcut && (
-                  <SettingsPanelRow>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs text-muted-foreground/80">
-                        {t("settingsPage.general.hotkey.activationMode")}
-                      </span>
-                      <ActivationModeSelector
-                        value={activationMode}
-                        onChange={setActivationMode}
-                        pushDisabledReason={
-                          !supportsPushToTalk
-                            ? pushToTalkUnavailableReason || t("windows.pttUnavailable")
-                            : undefined
-                        }
-                      />
-                    </div>
-                  </SettingsPanelRow>
-                )}
+                <SettingsPanelRow>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground/80">
+                      {t("settingsPage.general.hotkey.activationMode")}
+                    </span>
+                    <ActivationModeSelector
+                      value={activationMode}
+                      onChange={setActivationMode}
+                      pushDisabledReason={
+                        !supportsPushToTalk
+                          ? pushToTalkUnavailableReason || t("windows.pttUnavailable")
+                          : undefined
+                      }
+                    />
+                  </div>
+                </SettingsPanelRow>
               </SettingsPanel>
             </div>
           </div>
@@ -862,16 +856,14 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   buttonText={t("settingsPage.permissions.grantAccess")}
                 />
 
-                {platform === "darwin" && (
-                  <PermissionCard
-                    icon={Shield}
-                    title={t("settingsPage.permissions.accessibilityTitle")}
-                    description={t("settingsPage.permissions.accessibilityDescription")}
-                    granted={permissionsHook.accessibilityPermissionGranted}
-                    onRequest={permissionsHook.requestAccessibilityPermission}
-                    buttonText={t("settingsPage.permissions.grantAccess")}
-                  />
-                )}
+                <PermissionCard
+                  icon={Shield}
+                  title={t("settingsPage.permissions.accessibilityTitle")}
+                  description={t("settingsPage.permissions.accessibilityDescription")}
+                  granted={permissionsHook.accessibilityPermissionGranted}
+                  onRequest={permissionsHook.requestAccessibilityPermission}
+                  buttonText={t("settingsPage.permissions.grantAccess")}
+                />
               </div>
 
               {!permissionsHook.micPermissionGranted && permissionsHook.micPermissionError && (
@@ -882,32 +874,28 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                 />
               )}
 
-              {platform === "darwin" && (
-                <div className="mt-5">
-                  <p className="text-xs font-medium text-foreground mb-3">
-                    {t("settingsPage.permissions.troubleshootingTitle")}
-                  </p>
-                  <SettingsPanel>
-                    <SettingsPanelRow>
-                      <SettingsRow
-                        label={t("settingsPage.permissions.resetAccessibility.label")}
-                        description={t(
-                          "settingsPage.permissions.resetAccessibility.rowDescription"
-                        )}
+              <div className="mt-5">
+                <p className="text-xs font-medium text-foreground mb-3">
+                  {t("settingsPage.permissions.troubleshootingTitle")}
+                </p>
+                <SettingsPanel>
+                  <SettingsPanelRow>
+                    <SettingsRow
+                      label={t("settingsPage.permissions.resetAccessibility.label")}
+                      description={t("settingsPage.permissions.resetAccessibility.rowDescription")}
+                    >
+                      <Button
+                        onClick={resetAccessibilityPermissions}
+                        variant="ghost"
+                        size="sm"
+                        className="text-foreground/70 hover:text-foreground"
                       >
-                        <Button
-                          onClick={resetAccessibilityPermissions}
-                          variant="ghost"
-                          size="sm"
-                          className="text-foreground/70 hover:text-foreground"
-                        >
-                          {t("settingsPage.permissions.troubleshoot")}
-                        </Button>
-                      </SettingsRow>
-                    </SettingsPanelRow>
-                  </SettingsPanel>
-                </div>
-              )}
+                        {t("settingsPage.permissions.troubleshoot")}
+                      </Button>
+                    </SettingsRow>
+                  </SettingsPanelRow>
+                </SettingsPanel>
+              </div>
             </div>
           </div>
         );

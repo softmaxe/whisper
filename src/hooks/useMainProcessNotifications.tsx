@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import type { ToastContextType } from "../components/ui/useToast";
 
 /**
- * Surfaces main-process notifications (hotkey fallback/failure, GPU fallback,
+ * Surfaces main-process notifications (hotkey failure, GPU fallback,
  * learned dictionary corrections) as toasts in the dictation window.
  */
 export function useMainProcessNotifications({
@@ -16,17 +16,6 @@ export function useMainProcessNotifications({
   t: TFunction;
 }): void {
   useEffect(() => {
-    const unsubscribeFallback = window.electronAPI?.onHotkeyFallbackUsed?.((data) => {
-      toast({
-        title: t("app.toasts.hotkeyChanged.title"),
-        description: t("app.toasts.hotkeyChanged.description", {
-          original: data.original,
-          fallback: data.fallback,
-        }),
-        duration: 8000,
-      });
-    });
-
     const unsubscribeFailed = window.electronAPI?.onHotkeyRegistrationFailed?.((_data) => {
       toast({
         title: t("app.toasts.hotkeyUnavailable.title"),
@@ -97,7 +86,6 @@ export function useMainProcessNotifications({
     });
 
     return () => {
-      unsubscribeFallback?.();
       unsubscribeFailed?.();
       unsubscribeCudaFallback?.();
       unsubscribeGpuFallback?.();

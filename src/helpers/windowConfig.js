@@ -1,41 +1,5 @@
 const path = require("path");
-const { getLinuxSessionInfo } = require("./linuxSession");
 const { ASSISTANT_PANEL_SIZE_LIMITS } = require("./voiceSurfaceGeometry");
-
-const FOCUSLESS_OVERLAY_ROLES = new Set(["main", "notification"]);
-
-function usesGnomeOverlayPolicy(linuxSession) {
-  return (
-    linuxSession.isWayland &&
-    (linuxSession.isGnome || /ubuntu|unity/.test(linuxSession.desktopEnv || ""))
-  );
-}
-
-function resolveOverlayWindowType({ role, platform, linuxSession }) {
-  if (platform === "darwin") return "panel";
-  if (platform !== "linux") return "normal";
-
-  // Sway asks wlroots whether an unmanaged XWayland surface wants focus.
-  // "toolbar" opts in; "notification" keeps the existing text field focused.
-  if (linuxSession.isSway && linuxSession.xwaylandAvailable && FOCUSLESS_OVERLAY_ROLES.has(role)) {
-    return "notification";
-  }
-
-  if (linuxSession.isKde || (role === "main" && usesGnomeOverlayPolicy(linuxSession))) {
-    return "normal";
-  }
-  return "toolbar";
-}
-
-const linuxSession = getLinuxSessionInfo();
-const OVERLAY_WINDOW_TYPES = {
-  main: resolveOverlayWindowType({ role: "main", platform: process.platform, linuxSession }),
-  notification: resolveOverlayWindowType({
-    role: "notification",
-    platform: process.platform,
-    linuxSession,
-  }),
-};
 
 const ASSISTANT_WINDOW_SIZE = {
   width: ASSISTANT_PANEL_SIZE_LIMITS.ratioWidth + ASSISTANT_PANEL_SIZE_LIMITS.gutter,
@@ -197,11 +161,11 @@ const MAIN_WINDOW_CONFIG = {
   show: false,
   skipTaskbar: true,
   focusable: false,
-  visibleOnAllWorkspaces: process.platform !== "win32",
+  visibleOnAllWorkspaces: true,
   fullScreenable: false,
   hasShadow: false,
   acceptsFirstMouse: true,
-  type: OVERLAY_WINDOW_TYPES.main,
+  type: "panel",
 };
 
 // The expanded flow deliberately uses a denser frame than the main control
@@ -216,10 +180,9 @@ const ONBOARDING_WINDOW_SIZES = {
 const CONTROL_PANEL_CONFIG = {
   width: 1200,
   height: 800,
-  // macOS: fully transparent, so nothing paints into the compact onboarding
-  // frame's rounded corners. Windows/Linux keep an opaque backing (the renderer
-  // paints its own background on top) — see the transparent flag below.
-  backgroundColor: process.platform === "darwin" ? "#00000000" : "#1c1c2e",
+  // Fully transparent, so nothing paints into the compact onboarding frame's
+  // rounded corners.
+  backgroundColor: "#00000000",
   webPreferences: {
     preload: path.join(__dirname, "..", "..", "preload.js"),
     nodeIntegration: false,
@@ -239,20 +202,14 @@ const CONTROL_PANEL_CONFIG = {
   resizable: true,
   show: false,
   frame: false,
-  ...(process.platform === "darwin" && {
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 20, y: 20 },
-  }),
-  // macOS only: transparent so a renderer that insets or rounds itself shows
-  // the desktop rather than a square page backing bleeding out behind it. Safe
-  // for the other control panel screens because each paints its own opaque
-  // background (ControlPanel's root is `bg-background`); only the compact
-  // onboarding steps clear body/#root — see index.css. Not on Windows/Linux:
-  // transparency is creation-time-only and this window outlives onboarding, and
-  // on Windows `transparent` forces thickFrame:false (no maximize/Aero-snap)
-  // and renders black when compositing is off. The compact onboarding frame
-  // falls back to square corners there by design.
-  transparent: process.platform === "darwin",
+  titleBarStyle: "hiddenInset",
+  trafficLightPosition: { x: 20, y: 20 },
+  // Transparent so a renderer that insets or rounds itself shows the desktop
+  // rather than a square page backing bleeding out behind it. Safe for the
+  // other control panel screens because each paints its own opaque background
+  // (ControlPanel's root is `bg-background`); only the compact onboarding steps
+  // clear body/#root — see index.css.
+  transparent: true,
   minimizable: true,
   maximizable: true,
   closable: true,
@@ -281,8 +238,8 @@ const NOTIFICATION_WINDOW_CONFIG = {
     contextIsolation: true,
     sandbox: true,
   },
-  visibleOnAllWorkspaces: process.platform !== "win32",
-  type: OVERLAY_WINDOW_TYPES.notification,
+  visibleOnAllWorkspaces: true,
+  type: "panel",
 };
 
 class WindowPositionUtil {
@@ -340,38 +297,26 @@ class WindowPositionUtil {
     return { ...WindowPositionUtil.clampToWorkArea(bounds, display), width, height };
   }
 
-  // `level` only applies on macOS; Windows and Linux already use the strongest
-  // level their window managers honor.
   static setupAlwaysOnTop(window, { level = "floating" } = {}) {
-    if (process.platform === "darwin") {
-      // macOS: Use panel level for proper floating behavior
-      // This ensures the window stays on top across spaces and fullscreen apps
-      window.setAlwaysOnTop(true, level, 1);
-      // Re-applying the collection behavior when nothing drifted makes the
-      // window server momentarily pull the window out of the active Space,
-      // which blinks the entire visible window. Enforce calls land on hot
-      // paths (assistant panel open/close, window show), so Spaces membership
-      // is only touched when it was actually lost.
-      if (!window.isVisibleOnAllWorkspaces()) {
-        window.setVisibleOnAllWorkspaces(true, {
-          visibleOnFullScreen: true,
-          skipTransformProcessType: true, // Keep Dock/Command-Tab behaviour
-        });
-      }
-      if (window.isFullScreenable()) {
-        window.setFullScreenable(false);
-      }
+    // Panel level keeps the window on top across spaces and fullscreen apps.
+    window.setAlwaysOnTop(true, level, 1);
+    // Re-applying the collection behavior when nothing drifted makes the
+    // window server momentarily pull the window out of the active Space,
+    // which blinks the entire visible window. Enforce calls land on hot
+    // paths (assistant panel open/close, window show), so Spaces membership
+    // is only touched when it was actually lost.
+    if (!window.isVisibleOnAllWorkspaces()) {
+      window.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true, // Keep Dock/Command-Tab behaviour
+      });
+    }
+    if (window.isFullScreenable()) {
+      window.setFullScreenable(false);
+    }
 
-      if (window.isVisible()) {
-        window.setAlwaysOnTop(true, level, 1);
-      }
-    } else if (process.platform === "win32") {
-      window.setAlwaysOnTop(true, "pop-up-menu");
-    } else if (usesGnomeOverlayPolicy(linuxSession)) {
-      window.setAlwaysOnTop(true, "floating");
-    } else {
-      // KDE XWayland and other Linux — "screen-saver" is the strongest z-level
-      window.setAlwaysOnTop(true, "screen-saver");
+    if (window.isVisible()) {
+      window.setAlwaysOnTop(true, level, 1);
     }
   }
 }
@@ -389,5 +334,4 @@ module.exports = {
   resolveHorizontalWindowDirection,
   WINDOW_SIZES,
   WindowPositionUtil,
-  resolveOverlayWindowType,
 };

@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { getCachedPlatform } from "../utils/platform";
 
 // Matches OnboardingShell's 48px drag strip — the frameless window's titlebar.
 const DRAG_STRIP_HEIGHT_PX = 48;
@@ -38,7 +37,7 @@ const INTERACTIVE_SELECTOR = [
  */
 export function useControlPanelWindowDrag(enabled) {
   useEffect(() => {
-    if (!enabled || getCachedPlatform() !== "darwin") return undefined;
+    if (!enabled) return undefined;
     const api = window.electronAPI;
     if (!api?.startControlPanelDrag) return undefined;
 

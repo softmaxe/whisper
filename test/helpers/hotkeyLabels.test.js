@@ -15,82 +15,82 @@ test("isGlobeLikeHotkey matches exactly GLOBE and Fn, nothing else", async () =>
 });
 
 test("empty input formats to an empty label", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("", "darwin"), "");
-  assert.equal(formatHotkeyLabelForPlatform("  ", "darwin"), "");
+  assert.equal(formatHotkeyDisplay(""), "");
+  assert.equal(formatHotkeyDisplay("  "), "");
 });
 
 test("globe-like hotkeys display as Globe/Fn on macOS", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("GLOBE", "darwin"), "Globe/Fn");
+  assert.equal(formatHotkeyDisplay("GLOBE"), "Globe/Fn");
 });
 
 test("mouse button hotkeys display with spaces", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("MouseButton4", "darwin"), "Mouse Button 4");
-  assert.equal(formatHotkeyLabelForPlatform("MouseButton5", "darwin"), "Mouse Button 5");
+  assert.equal(formatHotkeyDisplay("MouseButton4"), "Mouse Button 4");
+  assert.equal(formatHotkeyDisplay("MouseButton5"), "Mouse Button 5");
 });
 
 test("CommandOrControl displays as Cmd on macOS", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("CommandOrControl+K", "darwin"), "Cmd+K");
+  assert.equal(formatHotkeyDisplay("CommandOrControl+K"), "Cmd+K");
 });
 
 test("Alt displays as Option on macOS", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("Alt+R", "darwin"), "Option+R");
+  assert.equal(formatHotkeyDisplay("Alt+R"), "Option+R");
 });
 
 test("Super and Meta display as Cmd on macOS", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("Super+K", "darwin"), "Cmd+K");
-  assert.equal(formatHotkeyLabelForPlatform("Meta+K", "darwin"), "Cmd+K");
+  assert.equal(formatHotkeyDisplay("Super+K"), "Cmd+K");
+  assert.equal(formatHotkeyDisplay("Meta+K"), "Cmd+K");
 });
 
-test("right-side single modifiers get spelled-out platform-aware labels", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+test("right-side single modifiers get spelled-out labels", async () => {
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("RightOption", "darwin"), "Right Option");
-  assert.equal(formatHotkeyLabelForPlatform("RightCommand", "darwin"), "Right Cmd");
+  assert.equal(formatHotkeyDisplay("RightOption"), "Right Option");
+  assert.equal(formatHotkeyDisplay("RightCommand"), "Right Cmd");
 });
 
 test("left-side modifiers are labelled by side too, so a rejection can name the key pressed", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("LeftOption", "darwin"), "Left Option");
-  assert.equal(formatHotkeyLabelForPlatform("LeftControl", "darwin"), "Left Ctrl");
-  assert.equal(formatHotkeyLabelForPlatform("LeftCommand", "darwin"), "Left Cmd");
+  assert.equal(formatHotkeyDisplay("LeftOption"), "Left Option");
+  assert.equal(formatHotkeyDisplay("LeftControl"), "Left Ctrl");
+  assert.equal(formatHotkeyDisplay("LeftCommand"), "Left Cmd");
 });
 
 test("bare modifier tokens format like they do inside a chord", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("Alt", "darwin"), "Option");
-  assert.equal(formatHotkeyLabelForPlatform("Command", "darwin"), "Cmd");
+  assert.equal(formatHotkeyDisplay("Alt"), "Option");
+  assert.equal(formatHotkeyDisplay("Command"), "Cmd");
 });
 
 test("sidedModifierToken names the physical key behind a modifier code", async () => {
   const { sidedModifierToken } = await load();
 
-  assert.equal(sidedModifierToken("AltRight", "darwin"), "RightOption");
-  assert.equal(sidedModifierToken("AltLeft", "darwin"), "LeftOption");
-  assert.equal(sidedModifierToken("MetaLeft", "darwin"), "LeftCommand");
-  assert.equal(sidedModifierToken("ShiftRight", "darwin"), "RightShift");
+  assert.equal(sidedModifierToken("AltRight"), "RightOption");
+  assert.equal(sidedModifierToken("AltLeft"), "LeftOption");
+  assert.equal(sidedModifierToken("MetaLeft"), "LeftCommand");
+  assert.equal(sidedModifierToken("ShiftRight"), "RightShift");
   // Sideless codes have no side to report.
-  assert.equal(sidedModifierToken("CapsLock", "darwin"), null);
-  assert.equal(sidedModifierToken("KeyK", "darwin"), null);
+  assert.equal(sidedModifierToken("CapsLock"), null);
+  assert.equal(sidedModifierToken("KeyK"), null);
 });
 
 test("single keys pass through unchanged", async () => {
-  const { formatHotkeyLabelForPlatform } = await load();
+  const { formatHotkeyDisplay } = await load();
 
-  assert.equal(formatHotkeyLabelForPlatform("`", "darwin"), "`");
+  assert.equal(formatHotkeyDisplay("`"), "`");
 });
 
 test("parseHotkey splits modifiers from the base key", async () => {

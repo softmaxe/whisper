@@ -2,7 +2,6 @@ const { ipcMain, app, shell, BrowserWindow, systemPreferences, net, session } = 
 const path = require("path");
 const fs = require("fs");
 const os = require("os");
-const { isRestorablePasteTarget } = require("./windowsPasteTarget");
 const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { UPLOAD_AUDIO_EXTENSIONS } = require("../constants/uploadAudioFormats.json");
@@ -11,7 +10,6 @@ const { ANALYTICS_HISTORY_BACKFILL_VERSION } = require("./analytics");
 
 const { isSherpaLocalProvider } = require("./parakeetModelInfo");
 const { broadcastToWindows } = require("./windowBroadcast");
-const { openExternalUrl } = require("./externalUrlOpener");
 const { resolveFailedGpuBackends } = require("./whisper");
 const { BYOK_API_KEYS } = require("../config/secretKeys");
 const tokenStore = require("./tokenStore");
@@ -37,13 +35,11 @@ const transcriptionProviderBaseUrls = () =>
 
 const { resolveLocalServerNeeds } = require("./localServerPolicy");
 const autoStart = require("./autoStart");
-const { getRelaunchOptions, getRelaunchWaiter } = require("./autoStartPolicy");
+const { getRelaunchArgs } = require("./autoStartPolicy");
 
-const { i18nMain, changeLanguage } = require("./i18nMain");
+const { changeLanguage } = require("./i18nMain");
 
 const { getCortiToken } = require("./cortiAuth");
-
-const { focusWindowsHotkeyCaptureWindow } = require("./hotkeyCaptureFocus");
 
 const { transcribeWithTinfoil } = require("./tinfoilTranscription");
 const { transcribeWithGemini } = require("./geminiTranscription");
@@ -496,8 +492,6 @@ class IPCHandlers {
     this.whisperManager = managers.whisperManager;
     this.parakeetManager = managers.parakeetManager;
     this.windowManager = managers.windowManager;
-    this.windowsKeyManager = managers.windowsKeyManager;
-    this.linuxKeyManager = managers.linuxKeyManager;
     this.textEditMonitor = managers.textEditMonitor;
     this.selectionManager = managers.selectionManager;
     this.getTrayManager = managers.getTrayManager;
@@ -508,8 +502,6 @@ class IPCHandlers {
     this.appleCalendarManager = managers.appleCalendarManager;
     this.meetingDetectionEngine = managers.meetingDetectionEngine;
     this.audioTapManager = managers.audioTapManager;
-    this.linuxPortalAudioManager = managers.linuxPortalAudioManager;
-    this.windowsLoopbackAudioManager = managers.windowsLoopbackAudioManager;
     this.meetingAecManager = managers.meetingAecManager;
     this.oauthProtocolRegistered = managers.oauthProtocolRegistered === true;
     this.oauthProtocol = managers.oauthProtocol || "openwhispr";
@@ -557,7 +549,7 @@ class IPCHandlers {
     };
     this._setupTextEditMonitor();
     this._setupRetentionCleanup();
-    // Warm the OS default mic answer before the first hotkey press (~2s on Windows).
+    // Warm the OS default mic answer before the first hotkey press.
     resolveSystemDefaultMicrophone();
     this.setupHandlers();
     // Lives for the app's lifetime; IPCHandlers has no teardown path.
@@ -1198,35 +1190,6 @@ class IPCHandlers {
       return testProviderConnection(config);
     });
 
-    ipcMain.handle("window-minimize", () => {
-      if (this.windowManager.controlPanelWindow) {
-        this.windowManager.controlPanelWindow.minimize();
-      }
-    });
-
-    ipcMain.handle("window-maximize", () => {
-      if (this.windowManager.controlPanelWindow) {
-        if (this.windowManager.controlPanelWindow.isMaximized()) {
-          this.windowManager.controlPanelWindow.unmaximize();
-        } else {
-          this.windowManager.controlPanelWindow.maximize();
-        }
-      }
-    });
-
-    ipcMain.handle("window-close", () => {
-      if (this.windowManager.controlPanelWindow) {
-        this.windowManager.controlPanelWindow.close();
-      }
-    });
-
-    ipcMain.handle("window-is-maximized", () => {
-      if (this.windowManager.controlPanelWindow) {
-        return this.windowManager.controlPanelWindow.isMaximized();
-      }
-      return false;
-    });
-
     ipcMain.handle("hide-window", () => {
       this.windowManager.hideDictationPanel();
     });
@@ -1237,7 +1200,6 @@ class IPCHandlers {
 
     ipcMain.handle("capture-dictation-target", async () => {
       const pid = (await this.textEditMonitor?.captureTargetPid?.()) ?? null;
-      await this.selectionManager?.captureTarget?.();
       return { success: true, pid };
     });
 
@@ -1251,11 +1213,6 @@ class IPCHandlers {
     ipcMain.handle("set-main-window-interactivity", (event, shouldCapture) => {
       this.windowManager.setMainWindowInteractivity(Boolean(shouldCapture));
       return { success: true };
-    });
-
-    ipcMain.handle("set-main-window-input-region", (event, region) => {
-      if (event.sender !== this.windowManager.mainWindow?.webContents) return null;
-      return this.windowManager.setMainWindowInputRegion(region);
     });
 
     ipcMain.handle("get-main-window-horizontal-direction", () => {
@@ -1789,19 +1746,14 @@ class IPCHandlers {
       // Activating the target by PID is more reliable than hide()'s implicit
       // focus hand-off for Chromium apps like Claude desktop and Brave (#668).
       let activated = false;
-      if (process.platform === "darwin" && this.textEditMonitor) {
+      if (this.textEditMonitor) {
         activated = await this.textEditMonitor.activateTargetPid();
       }
 
       if (!activated && mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
-        if (process.platform === "darwin") {
-          mainWindow.hide();
-          await new Promise((resolve) => setTimeout(resolve, 120));
-          mainWindow.showInactive();
-        } else {
-          mainWindow.blur();
-          await new Promise((resolve) => setTimeout(resolve, 80));
-        }
+        mainWindow.hide();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        mainWindow.showInactive();
       }
 
       // Smart spacing (#856): append a trailing space so the next paste's leading
@@ -1810,34 +1762,10 @@ class IPCHandlers {
       // of ms — too slow for the paste hot path.
       const textToPaste = applySmartSpacing(text);
 
-      // Windows: restore the foreground window captured at record start so the
-      // paste lands in the field the user was dictating into, not wherever focus
-      // drifted during transcription (#859). macOS handles this via
-      // activateTargetPid above; Linux re-detects the target inside pasteLinux.
-      const winTarget =
-        process.platform === "win32"
-          ? ((await this.selectionManager?.getWinTarget?.()) ?? null)
-          : null;
-      const targetWindow =
-        winTarget &&
-        isRestorablePasteTarget({
-          target: winTarget,
-          ownExeName: path.basename(process.execPath),
-          ownWindowHandles: BrowserWindow.getAllWindows()
-            .filter((win) => !win.isDestroyed())
-            .map((win) => win.getNativeWindowHandle()),
-        })
-          ? winTarget.id
-          : null;
-
       const pasteResult = await this.clipboardManager.pasteText(textToPaste, {
         ...options,
         webContents: event.sender,
-        targetWindow,
-        checkPasteTarget:
-          process.platform === "darwin"
-            ? () => this.textEditMonitor?.canPasteAtTarget(targetPid) ?? null
-            : undefined,
+        checkPasteTarget: () => this.textEditMonitor?.canPasteAtTarget(targetPid) ?? null,
       });
       const pasted = pasteResult?.pasted !== false;
       debugLogger.debug("[AutoLearn] Paste completed", {
@@ -1873,7 +1801,6 @@ class IPCHandlers {
 
     // Passes `true` to isTrustedAccessibilityClient to trigger the macOS system prompt
     ipcMain.handle("prompt-accessibility-permission", async () => {
-      if (process.platform !== "darwin") return true;
       return systemPreferences.isTrustedAccessibilityClient(true);
     });
 
@@ -1897,31 +1824,7 @@ class IPCHandlers {
     // instance would have no renderer: just quit there.
     ipcMain.handle("relaunch-app", async () => {
       if (process.env.NODE_ENV === "development") return app.quit();
-      const { launcherPath, args } = getRelaunchOptions({
-        argv: process.argv,
-        protocol: this.oauthProtocol,
-        appImagePath: process.env.APPIMAGE,
-        portableExecutablePath: process.env.PORTABLE_EXECUTABLE_FILE,
-      });
-      if (launcherPath) {
-        const waiter = getRelaunchWaiter({
-          platform: process.platform,
-          launcherPath,
-          args,
-          pid: process.pid,
-          ppid: process.ppid,
-          systemRoot: process.env.SystemRoot,
-        });
-        require("child_process")
-          .spawn(waiter.file, waiter.args, {
-            detached: true,
-            stdio: "ignore",
-            cwd: path.dirname(launcherPath), // never inside the directory being removed
-          })
-          .unref();
-      } else {
-        app.relaunch({ args });
-      }
+      app.relaunch({ args: getRelaunchArgs({ argv: process.argv, protocol: this.oauthProtocol }) });
       app.quit();
     });
 
@@ -1930,15 +1833,6 @@ class IPCHandlers {
     });
 
     ipcMain.handle("set-hotkey-listening-mode", async (event, enabled) => {
-      if (enabled) {
-        const captureWindow = BrowserWindow.fromWebContents(event.sender);
-        // Only the control panel owns editable hotkey fields. Refocusing the
-        // sender before the idempotence check also repairs a stale capture-mode
-        // flag after Windows has moved foreground focus to another window.
-        if (captureWindow === this.windowManager.controlPanelWindow) {
-          focusWindowsHotkeyCaptureWindow(captureWindow);
-        }
-      }
       if (this._hotkeyCaptureMode === enabled) return { success: true, skipped: true };
       this._hotkeyCaptureMode = enabled;
       this.windowManager.setHotkeyListeningMode(enabled);
@@ -1947,9 +1841,7 @@ class IPCHandlers {
 
       // Restore from slot state only. A freshly captured hotkey is registered by
       // its own update IPC (invoked before this one); re-binding it here would
-      // overwrite the primary on DE backends or leak untracked registrations.
-      const effectiveHotkey = hotkeyManager.getCurrentHotkey();
-
+      // leak untracked registrations.
       const {
         isGlobeLikeHotkey,
         isModifierOnlyHotkey,
@@ -1968,8 +1860,7 @@ class IPCHandlers {
         // Dictation is always active; meeting and agent may or may not be set.
         const allSlots = hotkeyManager.slots;
         for (const [slot, info] of allSlots) {
-          // Native-listener entries (null accelerator) are handled by stopping
-          // the key listeners below.
+          // Native-listener entries (null accelerator) have no accelerator.
           for (const accel of info?.accelerators || []) {
             if (!accel) continue;
             debugLogger.log(
@@ -1981,117 +1872,24 @@ class IPCHandlers {
             } catch {}
           }
         }
-
-        // On Windows, stop the Windows key listener
-        if (process.platform === "win32" && this.windowsKeyManager) {
-          debugLogger.log("[IPC] Stopping Windows key listener for hotkey capture mode");
-          this.windowsKeyManager.stop();
-        }
-
-        // On Linux, stop the Linux key listener
-        if (process.platform === "linux" && this.linuxKeyManager) {
-          debugLogger.log("[IPC] Stopping Linux key listener for hotkey capture mode");
-          this.linuxKeyManager.stop();
-        }
-
-        // On GNOME, unregister all native keybindings during capture
-        if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager) {
-          await hotkeyManager.gnomeManager.unregisterPushToTalk();
-          for (const slot of [...hotkeyManager.gnomeManager.registeredSlots]) {
-            debugLogger.log(
-              `[IPC] Unregistering GNOME keybinding (slot "${slot}") for capture mode`
-            );
-            await hotkeyManager.gnomeManager.unregisterKeybinding(slot).catch((err) => {
-              debugLogger.warn(`[IPC] Failed to unregister GNOME slot "${slot}":`, err.message);
-            });
-          }
-        }
-
-        // On Hyprland Wayland, unregister the keybinding during capture
-        if (hotkeyManager.isUsingHyprland() && hotkeyManager.hyprlandManager) {
-          debugLogger.log("[IPC] Unregistering Hyprland keybinding for hotkey capture mode");
-          const unregistered = await hotkeyManager.hyprlandManager
-            .unregisterKeybinding()
-            .catch((err) => {
-              debugLogger.warn("[IPC] Failed to unregister Hyprland keybinding:", err.message);
-              return false;
-            });
-          if (!unregistered) {
-            debugLogger.warn("[IPC] Hyprland keybinding remained active during capture");
-          }
-        }
       } else {
-        // Exiting capture mode - re-register globalShortcut if not already registered
-        // Skip for KDE/GNOME/Hyprland — updateHotkey handles re-registration via native path
-        const usesNativePath =
-          hotkeyManager.isUsingKDE() ||
-          hotkeyManager.isUsingGnome() ||
-          hotkeyManager.isUsingHyprland();
-        if (!usesNativePath) {
-          const { globalShortcut } = require("electron");
-          // Re-register every globalShortcut-backed dictation hotkey (the slot
-          // may hold several).
-          for (const hk of hotkeyManager.getSlotHotkeys("dictation")) {
-            if (!hk || usesNativeListener(hk)) continue;
-            const accelerator = hk;
-            if (!globalShortcut.isRegistered(accelerator)) {
-              debugLogger.log(
-                `[IPC] Re-registering globalShortcut "${accelerator}" after capture mode`
-              );
-              const callback = this.windowManager.createHotkeyCallback();
-              const registered = globalShortcut.register(accelerator, () => callback(hk));
-              if (!registered) {
-                debugLogger.warn(
-                  `[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`
-                );
-              }
-            }
-          }
-        }
-
-        // Re-sync native key listeners (Windows/Linux) across all hotkey slots now
-        // that capture is done. Idempotent — reads the current slot hotkeys.
-        this.windowManager.reconcileNativeKeyListeners();
-
-        // On GNOME, re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingGnome() && hotkeyManager.gnomeManager && effectiveHotkey) {
-          debugLogger.log(
-            `[IPC] Re-registering GNOME keybinding "${effectiveHotkey}" after capture mode`
-          );
-          await hotkeyManager.registerGnomeDictationHotkey(
-            effectiveHotkey,
-            this.windowManager.createHotkeyCallback()
-          );
-        }
-
-        // On Hyprland Wayland, re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingHyprland() && hotkeyManager.hyprlandManager && effectiveHotkey) {
-          debugLogger.log(
-            `[IPC] Re-registering Hyprland keybinding "${effectiveHotkey}" after capture mode`
-          );
-          await hotkeyManager.hyprlandManager.registerKeybinding(
-            effectiveHotkey,
-            this.windowManager.getActivationMode() === "push"
-          );
-        }
-
-        // On KDE (X11 or Wayland), re-register the keybinding with the effective hotkey
-        if (hotkeyManager.isUsingKDE() && hotkeyManager.kdeManager && effectiveHotkey) {
-          debugLogger.log(
-            `[IPC] Re-registering KDE keybinding "${effectiveHotkey}" after capture mode`
-          );
-          const callback = this.windowManager.createHotkeyCallback();
-          const result = await hotkeyManager.kdeManager.registerKeybinding(
-            effectiveHotkey,
-            "dictation",
-            callback,
-            this.windowManager.getActivationMode() === "push"
-          );
-          if (result !== true) {
-            debugLogger.warn(
-              `[IPC] Failed to re-register KDE keybinding "${effectiveHotkey}" after capture mode`,
-              { result }
+        // Exiting capture mode - re-register every globalShortcut-backed
+        // dictation hotkey (the slot may hold several).
+        const { globalShortcut } = require("electron");
+        for (const hk of hotkeyManager.getSlotHotkeys("dictation")) {
+          if (!hk || usesNativeListener(hk)) continue;
+          const accelerator = hk;
+          if (!globalShortcut.isRegistered(accelerator)) {
+            debugLogger.log(
+              `[IPC] Re-registering globalShortcut "${accelerator}" after capture mode`
             );
+            const callback = this.windowManager.createHotkeyCallback();
+            const registered = globalShortcut.register(accelerator, () => callback(hk));
+            if (!registered) {
+              debugLogger.warn(
+                `[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`
+              );
+            }
           }
         }
 
@@ -2124,31 +1922,14 @@ class IPCHandlers {
         typeof requestedHotkey === "string" && requestedHotkey.trim()
           ? requestedHotkey.split(",")[0].trim()
           : hotkeyManager.getCurrentHotkey();
-      const isUsingNativeShortcut = this.windowManager.isUsingNativeShortcutHotkeys();
-      const supportsPushToTalk =
-        process.platform === "linux"
-          ? isUsingNativeShortcut
-            ? hotkeyManager.supportsPushToTalk(hotkey)
-            : this.linuxKeyManager?.isAvailable?.() === true
-          : process.platform === "darwin"
-            ? hotkeyManager.supportsPushToTalk(hotkey)
-            : !isUsingNativeShortcut;
+      const supportsPushToTalk = hotkeyManager.supportsPushToTalk(hotkey);
 
       return {
-        isUsingGnome: this.windowManager.isUsingGnomeHotkeys(),
-        isUsingHyprland: this.windowManager.isUsingHyprlandHotkeys(),
-        isUsingKDE: this.windowManager.isUsingKDEHotkeys(),
-        isUsingNativeShortcut,
         supportsPushToTalk,
         pushToTalkUnavailableReason: supportsPushToTalk
           ? null
           : hotkeyManager.getPushToTalkUnavailableReason(hotkey),
       };
-    });
-
-    ipcMain.handle("get-hyprland-config-status", async () => {
-      if (!this.windowManager.isUsingHyprlandHotkeys()) return null;
-      return this.windowManager.getHyprlandConfigStatus();
     });
 
     // Recording completion and copy recovery can overlap. Keep the shared
@@ -2223,7 +2004,7 @@ class IPCHandlers {
         if (!["http:", "https:", "mailto:"].includes(protocol)) {
           return { success: false, error: `Blocked URL scheme: ${protocol}` };
         }
-        await openExternalUrl(url);
+        await shell.openExternal(url);
         return { success: true };
       } catch (error) {
         return { success: false, error: error.message };
@@ -2303,7 +2084,7 @@ class IPCHandlers {
       if (typeof visible !== "boolean") throw new TypeError("Expected a boolean visibility");
       await Promise.all([
         this.environmentManager.saveMenuBarIconVisible(visible),
-        process.platform === "darwin" ? this.getTrayManager?.()?.setVisible(visible) : undefined,
+        this.getTrayManager?.()?.setVisible(visible),
       ]);
       const currentVisible = this.environmentManager.getMenuBarIconVisible();
       broadcastToWindows("setting-updated", { key: "showMenuBarIcon", value: currentVisible });
@@ -2409,47 +2190,15 @@ class IPCHandlers {
     });
 
     const SYSTEM_SETTINGS_URLS = {
-      darwin: {
-        microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-        sound: "x-apple.systempreferences:com.apple.preference.sound?input",
-        accessibility:
-          "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-        systemAudio:
-          "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-        screenRecording:
-          "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture",
-        calendars: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars",
-        loginItems: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
-      },
-      win32: {
-        microphone: "ms-settings:privacy-microphone",
-        sound: "ms-settings:sound",
-        loginItems: "ms-settings:startupapps",
-      },
+      microphone: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+      sound: "x-apple.systempreferences:com.apple.preference.sound?input",
+      accessibility:
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+      loginItems: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
     };
 
     const openSystemSettings = async (settingType) => {
-      const platform = process.platform;
-      const urls = SYSTEM_SETTINGS_URLS[platform];
-      const url = urls?.[settingType];
-
-      if (!url) {
-        // Platform doesn't support this settings URL
-        const messages = {
-          microphone: i18nMain.t("systemSettings.microphone"),
-          sound: i18nMain.t("systemSettings.sound"),
-          accessibility: i18nMain.t("systemSettings.accessibility"),
-          systemAudio: i18nMain.t("systemSettings.systemAudio"),
-          screenRecording: i18nMain.t("systemSettings.screenRecording"),
-          loginItems: i18nMain.t("systemSettings.loginItems"),
-        };
-        return {
-          success: false,
-          error:
-            messages[settingType] || `${settingType} settings are not available on this platform.`,
-        };
-      }
-
+      const url = SYSTEM_SETTINGS_URLS[settingType];
       try {
         await shell.openExternal(url);
         return { success: true };
@@ -2484,17 +2233,11 @@ class IPCHandlers {
     });
 
     ipcMain.handle("request-microphone-access", async () => {
-      if (process.platform !== "darwin") {
-        return { granted: true, status: "granted" };
-      }
       const granted = await systemPreferences.askForMediaAccess("microphone");
       return { granted };
     });
 
     ipcMain.handle("check-microphone-access", () => {
-      if (process.platform !== "darwin") {
-        return { granted: true, status: "granted" };
-      }
       const status = systemPreferences.getMediaAccessStatus("microphone");
       return { granted: status === "granted", status };
     });
@@ -2866,27 +2609,6 @@ class IPCHandlers {
         );
         return { success: false, error: error.message };
       }
-    });
-
-    ipcMain.handle("get-ydotool-status", () => {
-      const { getYdotoolStatus } = require("./ensureYdotool");
-      const { getLinuxSessionInfo } = require("./linuxSession");
-      const { execFileSync } = require("child_process");
-      const status = getYdotoolStatus();
-      const { isKde } = getLinuxSessionInfo();
-      let hasXclip = false;
-      let hasXsel = false;
-      if (isKde) {
-        try {
-          execFileSync("which", ["xclip"], { timeout: 1000 });
-          hasXclip = true;
-        } catch {}
-        try {
-          execFileSync("which", ["xsel"], { timeout: 1000 });
-          hasXsel = true;
-        } catch {}
-      }
-      return { ...status, hasXclip, hasXsel };
     });
 
     ipcMain.handle("get-debug-state", async () => {

@@ -14,15 +14,6 @@ export interface RecordingRequestOptions {
   startupRequest?: { requestId: string; acceptedAt: number };
 }
 
-export interface MainWindowInputRegion {
-  viewportWidth: number;
-  viewportHeight: number;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export type ChineseScriptPreference = "simplified" | "traditional" | "as-transcribed";
 
 export type InferenceMode = "openwhispr" | "providers" | "local" | "self-hosted" | "enterprise";
@@ -936,19 +927,11 @@ export interface ParakeetDiagnosticsResult {
 }
 
 export interface PasteToolsResult {
-  platform: "darwin" | "win32" | "linux";
+  platform: "darwin";
   available: boolean;
   method: string | null;
   requiresPermission: boolean;
-  isWayland?: boolean;
-  xwaylandAvailable?: boolean;
-  terminalAware?: boolean;
-  hasNativeBinary?: boolean;
-  hasUinput?: boolean;
-  hasWtype?: boolean;
-  isWlroots?: boolean;
   tools?: string[];
-  recommendedInstall?: string;
 }
 
 export type GpuBackend = "vulkan" | "cpu" | "metal" | null;
@@ -1945,21 +1928,13 @@ declare global {
         callback: (data: LlamaVulkanDownloadProgress) => void
       ) => () => void;
 
-      // Window control operations
-      windowMinimize: () => Promise<void>;
-      windowMaximize: () => Promise<void>;
-      windowClose: () => Promise<void>;
-      windowIsMaximized: () => Promise<boolean>;
       snapToMeetingMode: () => Promise<void>;
       restoreFromMeetingMode: () => Promise<void>;
-      getPlatform: () => string;
       startWindowDrag: () => Promise<void>;
       stopWindowDrag: () => Promise<void>;
       startControlPanelDrag: () => Promise<void>;
       stopControlPanelDrag: () => Promise<void>;
       setMainWindowInteractivity: (interactive: boolean) => Promise<void>;
-      setMainWindowInputRegion: (region: MainWindowInputRegion | null) => Promise<boolean>;
-      onMainWindowVisibilityChanged: (callback: (visible: boolean) => void) => () => void;
       setNotificationInteractivity: (interactive: boolean) => Promise<void>;
       resizeMainWindow: (
         sizeKey:
@@ -2019,32 +1994,8 @@ declare global {
       updateHotkey: (key: string) => Promise<{ success: boolean; message: string }>;
       setHotkeyListeningMode?: (enabled: boolean) => Promise<{ success: boolean }>;
       getHotkeyModeInfo?: (hotkey?: string) => Promise<{
-        isUsingGnome: boolean;
-        isUsingHyprland: boolean;
-        isUsingKDE: boolean;
-        isUsingNativeShortcut: boolean;
         supportsPushToTalk: boolean;
         pushToTalkUnavailableReason: string | null;
-      }>;
-      getHyprlandConfigStatus?: () => Promise<{ canWrite: boolean; path: string } | null>;
-
-      // Wayland paste diagnostics
-      getYdotoolStatus?: () => Promise<{
-        isLinux: boolean;
-        isWayland: boolean;
-        hasYdotool: boolean;
-        hasYdotoold: boolean;
-        hasWtype: boolean;
-        daemonRunning: boolean;
-        hasService: boolean;
-        hasUinput: boolean;
-        hasUdevRule: boolean;
-        hasGroup: boolean;
-        isNixOS: boolean;
-        isKde: boolean;
-        isWlroots: boolean;
-        hasXclip: boolean;
-        hasXsel: boolean;
       }>;
 
       // Globe key listener for hotkey capture (macOS only)
@@ -2052,9 +2003,6 @@ declare global {
       onGlobeKeyReleased?: (callback: () => void) => () => void;
 
       // Hotkey registration events
-      onHotkeyFallbackUsed?: (
-        callback: (data: { original: string; fallback: string }) => void
-      ) => () => void;
       onHotkeyRegistrationFailed?: (
         callback: (data: { hotkey: string; error: string; suggestions: string[] }) => void
       ) => () => void;
@@ -2270,7 +2218,6 @@ declare global {
       getSystemDefaultMicrophone?: (options?: { refresh?: boolean }) => Promise<{
         name: string;
         nativeId?: string;
-        platform: string;
         source: "system" | "unavailable";
       }>;
       getLaptopLidState?: () => Promise<boolean | null>;
