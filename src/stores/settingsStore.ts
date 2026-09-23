@@ -58,8 +58,6 @@ import {
 import { usePolicyStore } from "./policyStore";
 import { recordTinfoilModelSwitch } from "./tinfoilModelSwitchStore";
 
-let _ReasoningService: typeof import("../services/ReasoningService").default | null = null;
-
 // Requires localStorage as well as window: the module-scope migrations below
 // dereference the bare localStorage global, and test harnesses import this
 // store with partial window stubs that don't define it.
@@ -1336,7 +1334,7 @@ function debouncedSaveSecret(provider: SecretProvider, key: string) {
 }
 
 function invalidateApiKeyCaches(
-  provider?:
+  _provider?:
     | "openai"
     | "anthropic"
     | "gemini"
@@ -1347,18 +1345,6 @@ function invalidateApiKeyCaches(
     | "openrouter"
     | "corti"
 ) {
-  if (provider) {
-    if (_ReasoningService) {
-      _ReasoningService.clearApiKeyCache(provider);
-    } else {
-      import("../services/ReasoningService")
-        .then((mod) => {
-          _ReasoningService = mod.default;
-          _ReasoningService.clearApiKeyCache(provider);
-        })
-        .catch(() => {});
-    }
-  }
   if (isBrowser) window.dispatchEvent(new Event("api-key-changed"));
   debouncedPersistToEnv();
 }

@@ -92,7 +92,6 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
         cleanupModel.trim(),
         agentName,
         {
-          provider: "lan",
           lanUrl: cleanupRemoteUrl.trim(),
           customApiKey: effectiveSettings.cleanupCustomApiKey,
           inferenceScope: "dictationCleanup",
