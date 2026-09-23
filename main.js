@@ -117,7 +117,6 @@ const IPCHandlers = require("./src/helpers/ipcHandlers");
 const GlobeKeyManager = require("./src/helpers/globeKeyManager");
 
 const TextEditMonitor = require("./src/helpers/textEditMonitor");
-const SelectionManager = require("./src/helpers/selectionManager");
 
 const { i18nMain, changeLanguage } = require("./src/helpers/i18nMain");
 const { laptopLidMonitor } = require("./src/helpers/laptopLidMonitor");
@@ -132,14 +131,6 @@ let clipboardManager = null;
 let trayManager = null;
 let globeKeyManager = null;
 let textEditMonitor = null;
-let selectionManager = null;
-let googleCalendarManager = null;
-let microsoftCalendarManager = null;
-let appleCalendarManager = null;
-let calendarReminderScheduler = null;
-let meetingDetectionEngine = null;
-let audioTapManager = null;
-let meetingAecManager = null;
 let ipcHandlers = null;
 let cliBridge = null;
 let globeKeyAlertShown = false;
@@ -210,9 +201,7 @@ function initializeCoreManagers() {
   if (bootAccountId) databaseManager.setActiveAccountId(bootAccountId);
   clipboardManager = new ClipboardManager();
   textEditMonitor = new TextEditMonitor();
-  selectionManager = new SelectionManager({ clipboardManager, textEditMonitor });
   windowManager.textEditMonitor = textEditMonitor;
-  windowManager.selectionManager = selectionManager;
 
   // IPC handlers must be registered before window content loads
   ipcHandlers = new IPCHandlers({
@@ -221,13 +210,6 @@ function initializeCoreManagers() {
     clipboardManager,
     windowManager,
     textEditMonitor,
-    selectionManager,
-    googleCalendarManager,
-    microsoftCalendarManager,
-    appleCalendarManager,
-    meetingDetectionEngine,
-    audioTapManager,
-    meetingAecManager,
     getTrayManager: () => trayManager,
     oauthProtocolRegistered: protocolRegistered,
     oauthProtocol: OAUTH_PROTOCOL,
@@ -437,19 +419,7 @@ async function startApp() {
         debugLogger?.debug("[Globe] Ignored — mainWindow not live");
       }
     }
-
-    // Check voice agent slot for Globe/Fn key
-    const voiceAgentUsesGlobe = hotkeyManager.getSlotHotkeys("voiceAgent").some(isGlobeLikeHotkey);
-    const translationUsesGlobe = hotkeyManager
-      .getSlotHotkeys("translation")
-      .some(isGlobeLikeHotkey);
-    if (voiceAgentUsesGlobe) {
-      windowManager.sendToggleVoiceAgent();
-    }
-    if (translationUsesGlobe) {
-      windowManager.sendToggleTranslation();
-    }
-    if (!voiceAgentUsesGlobe && !translationUsesGlobe && !dictationUsesGlobe) {
+    if (!dictationUsesGlobe) {
       debugLogger?.debug("[Globe] Ignored — hotkey is not GLOBE", { currentHotkey });
     }
   });
@@ -523,14 +493,6 @@ async function startApp() {
   let rightModActiveKey = null;
 
   globeKeyManager.on("right-modifier-down", async (modifier) => {
-    // Check voice agent slot for right-modifier
-    if (hotkeyManager.slotHasHotkey("voiceAgent", modifier)) {
-      windowManager.sendToggleVoiceAgent();
-    }
-    if (hotkeyManager.slotHasHotkey("translation", modifier)) {
-      windowManager.sendToggleTranslation();
-    }
-
     if (!hotkeyManager.slotHasHotkey("dictation", modifier)) return;
     if (!isLiveWindow(windowManager.mainWindow)) return;
     if (windowManager.isDictationProcessing()) return;
@@ -597,7 +559,7 @@ async function startApp() {
     }
   });
 
-  const MAC_NATIVE_HOTKEY_SLOTS = ["dictation", "voiceAgent", "translation"];
+  const MAC_NATIVE_HOTKEY_SLOTS = ["dictation"];
   const syncMacNativeHotkeyConfiguration = () => {
     globeKeyManager.setConfiguration(
       hotkeyManager.getMacNativeListenerConfig(MAC_NATIVE_HOTKEY_SLOTS)
@@ -613,13 +575,6 @@ async function startApp() {
   globeKeyManager.on("mouse-button-down", async (button) => {
     if (hotkeyManager.isInListeningMode && hotkeyManager.isInListeningMode()) return;
     if (!isMouseButtonHotkey(button)) return;
-
-    if (hotkeyManager.slotHasHotkey("voiceAgent", button)) {
-      windowManager.sendToggleVoiceAgent();
-    }
-    if (hotkeyManager.slotHasHotkey("translation", button)) {
-      windowManager.sendToggleTranslation();
-    }
 
     if (!hotkeyManager.slotHasHotkey("dictation", button)) return;
     if (!isLiveWindow(windowManager.mainWindow)) return;
@@ -882,13 +837,6 @@ function performSyncTeardown() {
     globalShortcut.unregisterAll();
   }
   if (globeKeyManager) globeKeyManager.stop();
-  if (meetingDetectionEngine) meetingDetectionEngine.stop();
-  if (googleCalendarManager) googleCalendarManager.stop();
-  if (microsoftCalendarManager) microsoftCalendarManager.stop();
-  if (appleCalendarManager) appleCalendarManager.stop();
-  if (calendarReminderScheduler) calendarReminderScheduler.stop();
-  if (audioTapManager) audioTapManager.stop().catch(() => {});
-  if (meetingAecManager) meetingAecManager.stop().catch(() => {});
   if (ipcHandlers) ipcHandlers._cleanupTextEditMonitor();
   if (textEditMonitor) textEditMonitor.stopMonitoring();
 }

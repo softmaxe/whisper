@@ -70,17 +70,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     expectedAccountScope
       ? ipcRenderer.send("mac-accessibility-features-ready", expectedAccountScope)
       : ipcRenderer.send("mac-accessibility-features-ready"),
-  onOnboardingDemoEvent: registerListener(
-    "onboarding-demo-event",
-    (callback) => (_event, payload) => callback(payload)
-  ),
   testProviderConnection: (config) => ipcRenderer.invoke("test-provider-connection", config),
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   captureSelectedText: (options) => ipcRenderer.invoke("capture-selected-text", options),
-  replaceSelectedText: (sessionId, text, options) =>
-    ipcRenderer.invoke("replace-selected-text", sessionId, text, options),
-  pasteAtCapturedTarget: (sessionId, text, options) =>
-    ipcRenderer.invoke("paste-at-captured-target", sessionId, text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
   captureDictationTarget: () => ipcRenderer.invoke("capture-dictation-target"),
@@ -88,15 +80,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "toggle-dictation",
     (callback) => (_event, options) => callback(options)
   ),
-  onToggleVoiceAgent: registerListener(
-    "toggle-voice-agent",
-    (callback) => (_event, options) => callback(options)
-  ),
-  onToggleTranslation: registerListener(
-    "toggle-translation",
-    (callback) => (_event, options) => callback(options)
-  ),
-  onOpenAssistantPanel: registerListener("open-assistant-panel", (callback) => () => callback()),
   onStartDictation: registerListener(
     "start-dictation",
     (callback) => (_event, options) => callback(options)
@@ -116,23 +99,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
     (callback) => (_event, payload) => callback(payload)
   ),
   micWarmHoldChanged: (active) => ipcRenderer.send("mic-warm-hold-changed", active),
-  dictationLifecycleStateChanged: (state, inputKind) =>
-    ipcRenderer.send("dictation-lifecycle-state-changed", state, inputKind),
+  dictationLifecycleStateChanged: (state) =>
+    ipcRenderer.send("dictation-lifecycle-state-changed", state),
   dictationAudioLevelChanged: (level) => ipcRenderer.send("dictation-audio-level-changed", level),
-  onAgentDictationPillStateChanged: registerListener(
-    "agent-dictation-pill-state-changed",
-    (callback) => (_event, state) => callback(state)
-  ),
-  onAgentDictationPillAudioLevelChanged: registerListener(
-    "agent-dictation-pill-audio-level-changed",
-    (callback) => (_event, level) => callback(level)
-  ),
-  showAgentDictationFinalTranscript: (text) =>
-    ipcRenderer.send("show-agent-dictation-final-transcript", text),
-  onAgentDictationPillFinalTranscript: registerListener(
-    "agent-dictation-pill-final-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
 
   // Database functions
   saveTranscription: (text, rawText, options) =>
@@ -183,39 +152,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   undoLearnedCorrections: (words) => ipcRenderer.invoke("undo-learned-corrections", words),
 
-  // Note functions
-  saveNote: (title, content, noteType, sourceFile, audioDuration, folderId, spaceId) =>
-    ipcRenderer.invoke(
-      "db-save-note",
-      title,
-      content,
-      noteType,
-      sourceFile,
-      audioDuration,
-      folderId,
-      spaceId
-    ),
-  exportTranscript: (noteId, format) => ipcRenderer.invoke("export-transcript", noteId, format),
   exportDictionary: (words) => ipcRenderer.invoke("export-dictionary", words),
-  onSemanticReindexProgress: (callback) => {
-    const listener = (_event, data) => callback?.(data);
-    ipcRenderer.on("semantic-reindex-progress", listener);
-    return () => ipcRenderer.removeListener("semantic-reindex-progress", listener);
-  },
   onActiveAccountScopeChanged: registerListener(
     "active-account-scope-changed",
     (callback) => (_event, scope) => callback(scope)
   ),
-  onSpacePurged: (callback) => {
-    const listener = (_event, payload) => callback?.(payload);
-    ipcRenderer.on("space-purged", listener);
-    return () => ipcRenderer.removeListener("space-purged", listener);
-  },
-  onSpaceSynced: (callback) => {
-    const listener = (_event, space) => callback?.(space);
-    ipcRenderer.on("space-synced", listener);
-    return () => ipcRenderer.removeListener("space-synced", listener);
-  },
   selectAudioFile: (options) => ipcRenderer.invoke("select-audio-file", options),
   cancelUploadTranscription: (requestId) =>
     ipcRenderer.invoke("cancel-upload-transcription", requestId),
@@ -232,58 +173,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "url-download-progress",
     (callback) => (_event, data) => callback(data)
   ),
-
-  onNoteAdded: (callback) => {
-    const listener = (_event, note) => callback?.(note);
-    ipcRenderer.on("note-added", listener);
-    return () => ipcRenderer.removeListener("note-added", listener);
-  },
-  onNoteUpdated: (callback) => {
-    const listener = (_event, note) => callback?.(note);
-    ipcRenderer.on("note-updated", listener);
-    return () => ipcRenderer.removeListener("note-updated", listener);
-  },
-  onNoteDeleted: (callback) => {
-    const listener = (_event, data) => callback?.(data);
-    ipcRenderer.on("note-deleted", listener);
-    return () => ipcRenderer.removeListener("note-deleted", listener);
-  },
-  onNoteSynced: (callback) => {
-    const listener = (_event, note) => callback?.(note);
-    ipcRenderer.on("note-synced", listener);
-    return () => ipcRenderer.removeListener("note-synced", listener);
-  },
-  onFolderSynced: (callback) => {
-    const listener = (_event, folder) => callback?.(folder);
-    ipcRenderer.on("folder-synced", listener);
-    return () => ipcRenderer.removeListener("folder-synced", listener);
-  },
-  onFolderDeleted: (callback) => {
-    const listener = (_event, data) => callback?.(data);
-    ipcRenderer.on("folder-deleted", listener);
-    return () => ipcRenderer.removeListener("folder-deleted", listener);
-  },
-  onSyncEvent: (callback) => {
-    const listener = (_event, data) => callback?.(data);
-    ipcRenderer.on("sync-event", listener);
-    return () => ipcRenderer.removeListener("sync-event", listener);
-  },
-
-  onActionCreated: (callback) => {
-    const listener = (_event, action) => callback?.(action);
-    ipcRenderer.on("action-created", listener);
-    return () => ipcRenderer.removeListener("action-created", listener);
-  },
-  onActionUpdated: (callback) => {
-    const listener = (_event, action) => callback?.(action);
-    ipcRenderer.on("action-updated", listener);
-    return () => ipcRenderer.removeListener("action-updated", listener);
-  },
-  onActionDeleted: (callback) => {
-    const listener = (_event, data) => callback?.(data);
-    ipcRenderer.on("action-deleted", listener);
-    return () => ipcRenderer.removeListener("action-deleted", listener);
-  },
 
   onTranscriptionAdded: (callback) => {
     const listener = (_event, transcription) => callback?.(transcription);
@@ -348,8 +237,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("resize-assistant-window-to-content", surfaceHeight),
   resizeDictationErrorWindowToContent: (surfaceHeight) =>
     ipcRenderer.invoke("resize-dictation-error-window-to-content", surfaceHeight),
-  setAssistantPanelOpen: (open) => ipcRenderer.invoke("set-assistant-panel-open", open),
-  setAssistantPanelBusy: (busy) => ipcRenderer.invoke("set-assistant-panel-busy", busy),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   getPostMigrationState: () => ipcRenderer.invoke("get-post-migration-state"),
   markBundleMigrated: () => ipcRenderer.invoke("mark-bundle-migrated"),
@@ -516,48 +403,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "corti-session-end",
     (callback) => (_event, data) => callback(data)
   ),
-  meetingTranscriptionSend: (buffer, source) =>
-    ipcRenderer.send("meeting-transcription-send", buffer, source),
-  onMeetingTranscriptionSegment: registerListener(
-    "meeting-transcription-segment",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingSpeakerIdentified: registerListener(
-    "meeting-speaker-identified",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingSpeakersMerged: registerListener(
-    "meeting-speakers-merged",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingSessionSpeakerConfigUpdated: registerListener(
-    "meeting-session-speaker-config-updated",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingTranscriptionError: registerListener(
-    "meeting-transcription-error",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingTranscriptionFatalError: registerListener(
-    "meeting-transcription-fatal-error",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingSystemAudioSilent: registerListener(
-    "meeting-system-audio-silent",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingSystemAudioDegraded: registerListener(
-    "meeting-system-audio-degraded",
-    (callback) => () => callback()
-  ),
-  onMeetingSystemAudioInterrupted: registerListener(
-    "meeting-system-audio-interrupted",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingSystemAudioResumed: registerListener(
-    "meeting-system-audio-resumed",
-    (callback) => () => callback()
-  ),
   dictationRealtimeSend: (buffer) => ipcRenderer.send("dictation-realtime-send", buffer),
   onDictationRealtimePartial: registerListener(
     "dictation-realtime-partial",
@@ -687,42 +532,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "cloud-agent-stream-end",
     (callback) => (_event, payload) => callback(payload)
   ),
-  acknowledgeNoteCreate: (id, snapshot, cloudId, cloudUpdatedAt, ownerUserId, settleIfUnchanged) =>
-    ipcRenderer.invoke(
-      "db-acknowledge-note-create",
-      id,
-      snapshot,
-      cloudId,
-      cloudUpdatedAt,
-      ownerUserId,
-      settleIfUnchanged
-    ),
-  markNoteSyncedIfUnchanged: (id, snapshot, expectedCloudId, cloudUpdatedAt, ownerUserId) =>
-    ipcRenderer.invoke(
-      "db-mark-note-synced-if-unchanged",
-      id,
-      snapshot,
-      expectedCloudId,
-      cloudUpdatedAt,
-      ownerUserId
-    ),
-  acknowledgeFolderCreate: (
-    id,
-    snapshot,
-    expectedCloudId,
-    responseClientFolderId,
-    cloudId,
-    cloudUpdatedAt
-  ) =>
-    ipcRenderer.invoke(
-      "db-acknowledge-folder-create",
-      id,
-      snapshot,
-      expectedCloudId,
-      responseClientFolderId,
-      cloudId,
-      cloudUpdatedAt
-    ),
   markSnippetSynced: (id, cloudId, serverUpdatedAt, expectedTrigger, expectedReplacement) =>
     ipcRenderer.invoke(
       "db-mark-snippet-synced",
@@ -732,50 +541,4 @@ contextBridge.exposeInMainWorld("electronAPI", {
       expectedTrigger,
       expectedReplacement
     ),
-
-  // Google Calendar event listeners
-  onGcalConnectionChanged: registerListener(
-    "gcal-connection-changed",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onGcalEventsSynced: registerListener(
-    "gcal-events-synced",
-    (callback) => (_event, data) => callback(data)
-  ),
-
-  // Microsoft Calendar event listeners
-  onMcalConnectionChanged: registerListener(
-    "mcal-connection-changed",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMcalEventsSynced: registerListener(
-    "mcal-events-synced",
-    (callback) => (_event, data) => callback(data)
-  ),
-
-  // Apple Calendar event listeners
-  onAcalConnectionChanged: registerListener(
-    "acal-connection-changed",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onAcalEventsSynced: registerListener(
-    "acal-events-synced",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingNotificationData: registerListener(
-    "meeting-notification-data",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingAutoEndRequested: registerListener(
-    "meeting-auto-end-requested",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onMeetingNoteNavigationPending: registerListener(
-    "meeting-note-navigation-pending",
-    (callback) => () => callback()
-  ),
-  onNoteNavigationPending: registerListener(
-    "note-navigation-pending",
-    (callback) => () => callback()
-  ),
 });

@@ -12,67 +12,12 @@ const ACCESSIBILITY_CHECK_TTL_MS = 5000;
 const PASTE_DELAY_MS = 120;
 const RESTORE_DELAY_MS = 450;
 
-// Terminal emulators, matched against app and executable names. Generated text
-// pasted into a shell executes on its embedded newlines.
-const TERMINAL_SIGNATURES = [
-  "konsole",
-  "gnome-terminal",
-  "terminal",
-  "kitty",
-  "alacritty",
-  "terminator",
-  "xterm",
-  "urxvt",
-  "rxvt",
-  "tilix",
-  "terminology",
-  "wezterm",
-  "foot",
-  "st",
-  "yakuake",
-  "ghostty",
-  "guake",
-  "tilda",
-  "hyper",
-  "tabby",
-  "sakura",
-  "warp",
-  "termius",
-  "waveterm",
-  "ptyxis",
-  "kgx",
-  "org.gnome.console",
-  "iterm",
-];
-
 class ClipboardManager {
   constructor() {
     this.accessibilityCache = { value: null, expiresAt: 0 };
     this.fastPastePath = null;
     this.fastPasteChecked = false;
     this.pasteQueue = Promise.resolve();
-  }
-
-  // Accepts a macOS app or executable name.
-  isTerminalSignature(signature) {
-    if (!signature) return false;
-    const normalized = String(signature).toLowerCase();
-    return TERMINAL_SIGNATURES.some((term) => normalized.includes(term));
-  }
-
-  // Selection capture (SelectionManager) seeds a sentinel and polls until a
-  // synthetic copy replaces it.
-  _writeClipboardTextAll(text) {
-    clipboard.writeText(text);
-  }
-
-  _readClipboardTextAll() {
-    try {
-      const text = clipboard.readText();
-      return typeof text === "string" ? [text] : [];
-    } catch {
-      return [];
-    }
   }
 
   _resolveNativeBinary(binaryName, cacheKeyChecked, cacheKeyPath) {

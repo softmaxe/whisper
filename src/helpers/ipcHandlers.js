@@ -143,8 +143,6 @@ async function dropUploadConnections(force = false) {
   }
 }
 
-const { mergeSpeakersWithText } = require("./speakerMerge");
-
 // Canonicalize allowed dirs so realpath'd inputs match on macOS (/var -> /private/var).
 // Deliberately narrow: user-picked paths anywhere else are approved individually via
 // approvedAudioPaths, so a compromised renderer can't read arbitrary files.
@@ -468,10 +466,6 @@ async function chunkedCloudTranscribe({
   }
 }
 
-// Cleanup toast wording for replies the main-process providers reject; mirror
-// TRUNCATED_/EMPTY_OUTPUT_MESSAGE_KEY in services/ai/chatRequestBody.ts (#2091).
-const CLEANUP_TRUNCATED_MESSAGE_KEY = "hooks.audioRecording.errorDescriptions.cleanupTruncated";
-
 class IPCHandlers {
   constructor(managers) {
     this.environmentManager = managers.environmentManager;
@@ -479,14 +473,7 @@ class IPCHandlers {
     this.clipboardManager = managers.clipboardManager;
     this.windowManager = managers.windowManager;
     this.textEditMonitor = managers.textEditMonitor;
-    this.selectionManager = managers.selectionManager;
     this.getTrayManager = managers.getTrayManager;
-    this.googleCalendarManager = managers.googleCalendarManager;
-    this.microsoftCalendarManager = managers.microsoftCalendarManager;
-    this.appleCalendarManager = managers.appleCalendarManager;
-    this.meetingDetectionEngine = managers.meetingDetectionEngine;
-    this.audioTapManager = managers.audioTapManager;
-    this.meetingAecManager = managers.meetingAecManager;
     this.oauthProtocolRegistered = managers.oauthProtocolRegistered === true;
     this.oauthProtocol = managers.oauthProtocol || "openwhispr";
     this.sessionId = crypto.randomUUID();
@@ -498,8 +485,6 @@ class IPCHandlers {
     this._cloudReasonRequests = new AgentStreamRequestRegistry();
     this._cloudTranscriptionRequests = new AgentStreamRequestRegistry();
     this._enterpriseReasoningRequests = new AgentStreamRequestRegistry();
-    // webContents id -> its release listener, for renderers holding the mic open.
-    this._micHoldSenders = new Map();
     this.assemblyAiStreaming = null;
     this.deepgramStreaming = null;
     this.geminiStreaming = null;
@@ -516,13 +501,10 @@ class IPCHandlers {
     this._autoLearnLatestData = null;
     this._textEditHandler = null;
     this._activeRecordingPipeline = null;
-    this._onboardingDemoSession = null;
     this.audioStorageManager = new AudioStorageManager();
     this._retentionCleanupInterval = null;
     this._retentionSettings = { ...DEFAULT_RETENTION_SETTINGS }; // Synced from renderer
     this._retentionSettingsSynced = false;
-    this._noteFilesEnabled = false;
-    this._granolaImportPending = null;
     this._analyticsHistoryBackfillPromise = null;
     this._setupTextEditMonitor();
     this._setupRetentionCleanup();
@@ -647,96 +629,6 @@ class IPCHandlers {
   // which keys the native Globe listener owns.
   _notifyHotkeyChanged(hotkey) {
     ipcMain.emit("hotkey-changed", null, hotkey);
-  }
-
-  _releaseMicHold(sender) {
-    const release = this._micHoldSenders.get(sender.id);
-    if (!release) return;
-    this._micHoldSenders.delete(sender.id);
-    sender.off("destroyed", release);
-    sender.off("did-finish-load", release);
-    this.meetingDetectionEngine?.setMicWarmHold(this._micHoldSenders.size > 0);
-  }
-
-  _mirrorDeleteFolderIfUnshared(folderName) {
-    if (!this._noteFilesEnabled) return;
-    // Folder names are only unique per space — a live same-named folder in
-    // another space shares the mirror directory, so leave it on disk.
-    const stillLive = this.databaseManager.db
-      .prepare("SELECT 1 FROM folders WHERE name = ? AND deleted_at IS NULL")
-      .get(folderName);
-    if (stillLive) return;
-    const markdownMirror = require("./markdownMirror");
-    markdownMirror.deleteFolder(folderName);
-  }
-
-  _asyncMirrorWrite(note) {
-    if (!this._noteFilesEnabled) {
-      debugLogger.debug(
-        "Mirror write skipped: note files disabled",
-        { noteId: note.id },
-        "note-files"
-      );
-      return;
-    }
-    setImmediate(() => {
-      const markdownMirror = require("./markdownMirror");
-      const folderName = this._getFolderName(note.folder_id);
-      markdownMirror.writeNote(note, folderName);
-      if (note.transcript) {
-        markdownMirror.writeTranscript(note, folderName, this._buildSpeakerMappings(note.id));
-      }
-    });
-  }
-
-  _asyncMirrorDelete(noteId) {
-    if (!this._noteFilesEnabled) {
-      debugLogger.debug("Mirror delete skipped: note files disabled", { noteId }, "note-files");
-      return;
-    }
-    setImmediate(() => {
-      const markdownMirror = require("./markdownMirror");
-      markdownMirror.deleteNote(noteId);
-    });
-  }
-
-  _buildFolderMap() {
-    const folders = this.databaseManager.getFolders();
-    const map = {};
-    for (const f of folders) {
-      map[f.id] = f.name;
-    }
-    return map;
-  }
-
-  _buildSpeakerMappings(noteId) {
-    const arr = this.databaseManager.getSpeakerMappings(noteId);
-    const map = {};
-    for (const m of arr) {
-      map[m.speaker_id] = m.display_name;
-    }
-    return map;
-  }
-
-  _rebuildMirror(basePath) {
-    const markdownMirror = require("./markdownMirror");
-    if (basePath) markdownMirror.init(basePath);
-    const notes = this.databaseManager.getNotes(null, 99999);
-    const speakerMappingsMap = {};
-    for (const note of notes) {
-      if (note.transcript) {
-        speakerMappingsMap[note.id] = this._buildSpeakerMappings(note.id);
-      }
-    }
-    markdownMirror.rebuildAll(notes, this._buildFolderMap(), speakerMappingsMap);
-  }
-
-  _getFolderName(folderId) {
-    if (!folderId) return "Personal";
-    const folder = this.databaseManager.db
-      .prepare("SELECT name FROM folders WHERE id = ?")
-      .get(folderId);
-    return folder?.name || "Personal";
   }
 
   _getDictionarySafe() {
@@ -887,30 +779,6 @@ class IPCHandlers {
   }
 
   setupHandlers() {
-    ipcMain.handle("set-assistant-panel-open", (event, open) => {
-      const dictationWindow = this.windowManager?.mainWindow;
-      if (
-        !dictationWindow ||
-        dictationWindow.isDestroyed() ||
-        event.sender !== dictationWindow.webContents
-      ) {
-        return { success: false, error: "Not the dictation window" };
-      }
-      this.windowManager.setAssistantPanelOpen(open);
-      return { success: true };
-    });
-    ipcMain.handle("set-assistant-panel-busy", (event, busy) => {
-      const dictationWindow = this.windowManager?.mainWindow;
-      if (
-        !dictationWindow ||
-        dictationWindow.isDestroyed() ||
-        event.sender !== dictationWindow.webContents
-      ) {
-        return { success: false, error: "Not the dictation window" };
-      }
-      this.windowManager.setAssistantPanelBusy(busy);
-      return { success: true };
-    });
     ipcMain.handle("onboarding-set-window-mode", (_event, mode) =>
       this.windowManager.setOnboardingWindowMode(mode)
     );
@@ -1163,28 +1031,11 @@ class IPCHandlers {
       return this.databaseManager.getTranscriptionById(id);
     });
 
-    // Every window's AudioManager can hold the mic open outside a recording, so
-    // gate the audio-evidence meeting detector until they all release. A
-    // renderer that reloads or goes away releases implicitly — otherwise a
-    // crash mid-hold would gate detection for the rest of the session.
-    ipcMain.on("mic-warm-hold-changed", (event, active) => {
-      if (!active) {
-        this._releaseMicHold(event.sender);
-        return;
-      }
-      if (this._micHoldSenders.has(event.sender.id)) return;
-      const release = () => this._releaseMicHold(event.sender);
-      this._micHoldSenders.set(event.sender.id, release);
-      event.sender.on("destroyed", release);
-      event.sender.on("did-finish-load", release);
-      this.meetingDetectionEngine?.setMicWarmHold(true);
-    });
-
     // Hotkey handlers run in main, while AudioManager owns the real lifecycle
     // in the dictation renderer. Only confirmed renderer state may change the
     // main-process recording gate; raw key presses are merely requests and can
     // be declined while a transcript is still being finalized.
-    ipcMain.on("dictation-lifecycle-state-changed", (event, state, inputKind) => {
+    ipcMain.on("dictation-lifecycle-state-changed", (event, state) => {
       const dictationWindow = this.windowManager.mainWindow;
       if (
         !dictationWindow ||
@@ -1193,19 +1044,7 @@ class IPCHandlers {
       ) {
         return;
       }
-      this.windowManager.setDictationLifecycleState(state, inputKind);
-    });
-
-    ipcMain.on("dictation-audio-level-changed", (event, level) => {
-      const dictationWindow = this.windowManager.mainWindow;
-      if (
-        !dictationWindow ||
-        dictationWindow.isDestroyed() ||
-        event.sender !== dictationWindow.webContents
-      ) {
-        return;
-      }
-      this.windowManager.setDictationAudioLevel(level);
+      this.windowManager.setDictationLifecycleState(state);
     });
 
     // Dictionary handlers
@@ -1279,54 +1118,6 @@ class IPCHandlers {
       } catch (err) {
         debugLogger.debug("[AutoLearn] Undo failed", { error: err.message });
         return { success: false };
-      }
-    });
-
-    ipcMain.handle("export-transcript", async (event, noteId, format) => {
-      try {
-        const note = this.databaseManager.getNote(noteId);
-        if (!note) return { success: false, error: "Note not found" };
-
-        const segments = JSON.parse(note.transcript || "[]");
-        if (!segments.length) return { success: false, error: "No transcript available" };
-
-        const speakerMappings = this._buildSpeakerMappings(noteId);
-
-        const { dialog } = require("electron");
-        const fs = require("fs");
-        const extMap = { srt: "srt", json: "json", md: "md" };
-        const ext = extMap[format] || "txt";
-        const safeName = (note.title || "Untitled").replace(/[/\\?%*:|"<>]/g, "-");
-
-        const result = await dialog.showSaveDialog({
-          defaultPath: `${safeName}.${ext}`,
-          filters: [
-            { name: "Text", extensions: ["txt"] },
-            { name: "SubRip Subtitles", extensions: ["srt"] },
-            { name: "JSON", extensions: ["json"] },
-            { name: "Markdown", extensions: ["md"] },
-          ],
-        });
-
-        if (result.canceled || !result.filePath) return { success: false };
-
-        const transcriptFormatter = require("./transcriptFormatter");
-        let exportContent;
-        if (format === "txt") {
-          exportContent = transcriptFormatter.formatTxt(note, segments, speakerMappings);
-        } else if (format === "srt") {
-          exportContent = transcriptFormatter.formatSrt(segments, speakerMappings, note);
-        } else if (format === "md") {
-          exportContent = transcriptFormatter.formatMd(note, segments, speakerMappings);
-        } else {
-          exportContent = transcriptFormatter.formatJson(note, segments, speakerMappings);
-        }
-
-        fs.writeFileSync(result.filePath, exportContent, "utf-8");
-        return { success: true };
-      } catch (error) {
-        debugLogger.error("Error exporting transcript", { error: error.message }, "notes");
-        return { success: false, error: error.message };
       }
     });
 
@@ -1486,47 +1277,7 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("capture-selected-text", async (event, options = {}) => {
-      if (!this.selectionManager) {
-        return { status: "unavailable", code: "selection_manager_unavailable" };
-      }
-      return this.selectionManager.captureSelectedText({
-        probeEditable: options.probeEditable === true,
-      });
-    });
-
-    ipcMain.handle("replace-selected-text", async (event, sessionId, text, options = {}) => {
-      if (!this.selectionManager) {
-        return { success: false, code: "selection_manager_unavailable" };
-      }
-      return this.selectionManager.replaceSelectedText(sessionId, text, {
-        restoreClipboard: options.restoreClipboard !== false,
-        allowClipboardFallback: options.allowClipboardFallback === true,
-        webContents: event.sender,
-      });
-    });
-
-    ipcMain.handle("paste-at-captured-target", async (event, sessionId, text, options = {}) => {
-      if (!this.selectionManager) {
-        return { success: false, code: "selection_manager_unavailable" };
-      }
-      return this.selectionManager.pasteAtCapturedTarget(sessionId, text, {
-        restoreClipboard: options.restoreClipboard !== false,
-        allowClipboardFallback: options.allowClipboardFallback === true,
-        webContents: event.sender,
-      });
-    });
-
     ipcMain.handle("paste-text", async (event, text, options) => {
-      // An onboarding demo already puts the transcript in its own textarea from
-      // the demo event, and that textarea is what has focus — pasting on top of
-      // it appends the same sentence a second time. This is a successful no-op,
-      // not a completed paste, so callers can avoid reporting paste-dependent
-      // fallbacks as if text reached another application.
-      if (this.windowManager?.isOnboardingDemoActive()) {
-        return { success: true, pasted: false };
-      }
-
       const mainWindow = this.windowManager?.mainWindow;
       const targetPid = this.textEditMonitor?.lastTargetPid || null;
 

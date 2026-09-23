@@ -15,10 +15,6 @@ const ACTIVATE_CONFIRM_DELAY_MS = 25;
 // across that burst. Kept short so back-to-back dictations in different apps
 // still get a fresh capture.
 const TARGET_CAPTURE_FRESHNESS_MS = 250;
-// Must outlast the binary's retry ladder (5 attempts, 300ms apart, ~1.25s): a
-// killed run's verdict is discarded, so a tighter timeout means the app below is
-// never learned and every read pays the full ladder.
-const SELECTED_TEXT_TIMEOUT_MS = 1600;
 // AXError -25212 (kAXErrorNoValue) on the focused-element read is how
 // Chromium/Electron apps respond while their AX tree is dormant, making the
 // native binary's 5-attempt retry (~1.2s) dead time on every read. A single
@@ -40,23 +36,6 @@ function isPersistentAxNoValueFailure(stderr) {
 // so every dictation after the first pasted into a field that no longer had
 // keyboard focus. Modern Chromium builds the tree on demand when our
 // reads arrive; where it doesn't, we skip auto-learn for that paste instead.
-
-// Read the exact current selection without touching the clipboard. Prefixes
-// distinguish an empty selection from an inaccessible target so selection
-// editing can fail closed when Accessibility cannot inspect the focused field.
-const MACOS_AX_SELECTED_TEXT_SCRIPT = (pid) =>
-  `tell application "System Events"\n` +
-  `\ttry\n` +
-  `\t\tset targetProc to first application process whose unix id is ${pid}\n` +
-  `\t\tset focAttr to value of attribute "AXFocusedUIElement" of targetProc\n` +
-  `\t\tif focAttr is missing value then return "UNAVAILABLE:"\n` +
-  `\t\tset selectedValue to value of attribute "AXSelectedText" of focAttr\n` +
-  `\t\tif selectedValue is missing value or selectedValue is "" then return "NONE:"\n` +
-  `\t\treturn "SELECTED:" & selectedValue\n` +
-  `\ton error\n` +
-  `\t\treturn "UNAVAILABLE:"\n` +
-  `\tend try\n` +
-  `end tell`;
 
 // AppleScript to read the focused text field value from a specific app by PID.
 // Using PID avoids the problem where the Electron overlay is "frontmost".
@@ -95,7 +74,7 @@ class TextEditMonitor extends EventEmitter {
     this._windowBounds = null;
     // PIDs whose AX tree never yields a focused element (see
     // isPersistentAxNoValueFailure). A recycled PID only costs a detour via
-    // AppleScript, which is still correct.
+    // AppleScript polling, which is still correct.
     this._nativeSelectionUnsupportedPids = new Set();
   }
 
@@ -196,117 +175,6 @@ class TextEditMonitor extends EventEmitter {
     }
     debugLogger.debug("[TextEditMonitor] Target did not become frontmost", { pid });
     return false;
-  }
-
-  getSelectedText(pid, timeoutMs = SELECTED_TEXT_TIMEOUT_MS) {
-    return new Promise((resolve) => {
-      if (!pid) {
-        resolve({ state: "unavailable" });
-        return;
-      }
-
-      const resolved = this.resolveBinary();
-      if (resolved && !this._nativeSelectionUnsupportedPids.has(pid)) {
-        execFile(
-          resolved.command,
-          [...resolved.args, "--selected-text", String(pid)],
-          { timeout: timeoutMs },
-          (error, stdout, stderr) => {
-            const output = stdout.replace(/\n$/, "");
-            if (output === "EDITABLE_NONE:") {
-              resolve({ state: "none", editable: true });
-              return;
-            }
-            if (output === "NONE:") {
-              resolve({ state: "none" });
-              return;
-            }
-            if (output.startsWith("SELECTED_B64:")) {
-              try {
-                resolve({
-                  state: "selected",
-                  text: Buffer.from(output.slice("SELECTED_B64:".length), "base64").toString(
-                    "utf8"
-                  ),
-                });
-                return;
-              } catch (decodeError) {
-                debugLogger.debug("[TextEditMonitor] Failed to decode native selected text", {
-                  error: decodeError.message,
-                });
-              }
-            }
-            if (output.startsWith("SELECTED:")) {
-              resolve({ state: "selected", text: output.slice("SELECTED:".length) });
-              return;
-            }
-
-            // A timeout-killed child never finished the retry ladder — the
-            // tree could have woken on a later attempt — so only a completed
-            // run's verdict counts (the untimed monitor path also teaches).
-            if (!error?.killed && isPersistentAxNoValueFailure(stderr || error?.message || "")) {
-              this._nativeSelectionUnsupportedPids.add(pid);
-            }
-            debugLogger.debug(
-              "[TextEditMonitor] Native selected-text read unavailable; trying AppleScript",
-              {
-                pid,
-                error: error?.message || null,
-                stderr: stderr?.trim() || null,
-                nativeSkippedNextTime: this._nativeSelectionUnsupportedPids.has(pid),
-              }
-            );
-            this._getSelectedTextViaAppleScript(pid, timeoutMs, resolve);
-          }
-        );
-        return;
-      }
-
-      this._getSelectedTextViaAppleScript(pid, timeoutMs, resolve);
-    });
-  }
-
-  _getSelectedTextViaAppleScript(pid, timeoutMs, resolve) {
-    execFile(
-      "osascript",
-      ["-e", MACOS_AX_SELECTED_TEXT_SCRIPT(pid)],
-      { timeout: timeoutMs },
-      (err, stdout) => {
-        if (err) {
-          resolve({ state: "unavailable" });
-          return;
-        }
-
-        // The AppleScript never reports an editable caret (only the native
-        // binary emits EDITABLE_NONE:), so this fallback can read selections
-        // but never produce a caret delivery target — panel-first by design.
-        const output = stdout.replace(/\n$/, "");
-        if (output === "NONE:") {
-          resolve({ state: "none" });
-        } else if (output.startsWith("SELECTED:")) {
-          resolve({ state: "selected", text: output.slice("SELECTED:".length) });
-        } else {
-          resolve({ state: "unavailable" });
-        }
-      }
-    );
-  }
-
-  async isFocusedEditable(target, timeoutMs = 1000) {
-    const resolved = this.resolveBinary();
-    if (!resolved) return false;
-
-    const pid = target?.kind === "mac-pid" ? target.pid : this.lastTargetPid;
-    if (!pid) return false;
-    const args = [...resolved.args, "--editable-target", String(pid)];
-
-    return this._probeTarget(
-      resolved.command,
-      args,
-      (line) => line === "EDITABLE",
-      false,
-      timeoutMs
-    );
   }
 
   async canPasteAtTarget(pid, timeoutMs = 700) {

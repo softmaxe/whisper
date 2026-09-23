@@ -1074,7 +1074,6 @@ declare global {
       endOnboardingDemo?: (id: string) => Promise<boolean>;
       stopOnboardingDemo?: (id: string) => Promise<boolean>;
       publishOnboardingDemoEvent?: (event: Omit<OnboardingDemoEvent, "demoId">) => Promise<boolean>;
-      onOnboardingDemoEvent?: (callback: (event: OnboardingDemoEvent) => void) => () => void;
       testProviderConnection?: (config: {
         scope: "transcription" | "reasoning";
         provider: string;
@@ -1112,43 +1111,10 @@ declare global {
             maxCharacters?: number;
           }
       >;
-      replaceSelectedText?: (
-        sessionId: string,
-        text: string,
-        options?: { restoreClipboard?: boolean; allowClipboardFallback?: boolean }
-      ) => Promise<{
-        success: boolean;
-        code?:
-          | "invalid_replacement"
-          | "session_expired"
-          | "target_changed"
-          | "selection_unavailable"
-          | "selection_changed"
-          | "paste_failed"
-          | "selection_manager_unavailable";
-        error?: string;
-      }>;
-      pasteAtCapturedTarget?: (
-        sessionId: string,
-        text: string,
-        options?: { restoreClipboard?: boolean; allowClipboardFallback?: boolean }
-      ) => Promise<{
-        success: boolean;
-        code?:
-          | "invalid_replacement"
-          | "session_expired"
-          | "target_changed"
-          | "paste_failed"
-          | "selection_manager_unavailable";
-        error?: string;
-      }>;
       hideWindow: () => Promise<void>;
       showDictationPanel: () => Promise<void>;
       captureDictationTarget?: () => Promise<{ success: boolean; pid: number | null }>;
       onToggleDictation: (callback: (options?: RecordingRequestOptions) => void) => () => void;
-      onToggleVoiceAgent?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
-      onToggleTranslation?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
-      onOpenAssistantPanel?: (callback: () => void) => () => void;
       onStartDictation?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
       onStopDictation?: (callback: () => void) => () => void;
       onPrepareDictation?: (
@@ -1173,8 +1139,7 @@ declare global {
       ) => () => void;
       micWarmHoldChanged?: (active: boolean) => void;
       dictationLifecycleStateChanged: (
-        state: "idle" | "preparing" | "recording" | "processing",
-        inputKind?: "dictation" | "assistant" | "translation"
+        state: "idle" | "preparing" | "recording" | "processing"
       ) => void;
       dictationAudioLevelChanged?: (level: number) => void;
       toggleAgentPanelDictation?: () => Promise<{ success: boolean }>;
@@ -1191,16 +1156,6 @@ declare global {
         message?: string;
       }>;
       setAgentDictationPillInteractivity?: (interactive: boolean) => Promise<{ success: boolean }>;
-      onAgentDictationPillStateChanged?: (
-        callback: (state: {
-          lifecycle: "idle" | "preparing" | "recording" | "processing";
-          interactive: boolean;
-          horizontalDirection: "left" | "right";
-        }) => void
-      ) => () => void;
-      onAgentDictationPillAudioLevelChanged?: (callback: (level: number) => void) => () => void;
-      showAgentDictationFinalTranscript?: (text: string) => void;
-      onAgentDictationPillFinalTranscript?: (callback: (text: string) => void) => () => void;
 
       // STT config
       getSttConfig?: () => Promise<
@@ -1396,16 +1351,6 @@ declare global {
       onCorrectionsLearned?: (callback: (words: string[]) => void) => () => void;
       undoLearnedCorrections?: (words: string[]) => Promise<{ success: boolean }>;
 
-      // Note operations
-      saveNote: (
-        title: string,
-        content: string,
-        noteType?: string,
-        sourceFile?: string | null,
-        audioDuration?: number | null,
-        folderId?: number | null,
-        spaceId?: number | null
-      ) => Promise<{ success: boolean; note?: NoteItem }>;
       getNote: (id: number) => Promise<NoteItem | null>;
       getNotes: (
         noteType?: string | null,
@@ -1442,10 +1387,6 @@ declare global {
         noteId: number,
         format: "txt" | "md"
       ) => Promise<{ success: boolean; error?: string }>;
-      exportTranscript: (
-        noteId: number,
-        format: "txt" | "srt" | "json" | "md"
-      ) => Promise<{ success: boolean; error?: string }>;
       exportDictionary: (words: string[]) => Promise<{ success: boolean; error?: string }>;
       searchNotes: (
         query: string,
@@ -1460,9 +1401,6 @@ declare global {
         folderId?: number | null
       ) => Promise<NoteItem[]>;
       semanticReindexAll: () => Promise<{ success: boolean; indexed?: number; error?: string }>;
-      onSemanticReindexProgress: (
-        callback: (data: { done: number; total: number }) => void
-      ) => () => void;
       updateNoteCloudId: (id: number, cloudId: string) => Promise<NoteItem>;
       updateNoteShareState: (
         id: number,
@@ -1535,8 +1473,6 @@ declare global {
         id: number,
         status: SpaceItem["sync_status"]
       ) => Promise<{ success: boolean; space?: SpaceItem | null }>;
-      onSpacePurged?: (callback: (payload: { spaceId: number }) => void) => () => void;
-      onSpaceSynced?: (callback: (space: SpaceItem) => void) => () => void;
 
       // Note files (markdown mirror)
       noteFilesSetEnabled?: (
@@ -1589,9 +1525,6 @@ declare global {
         }
       ) => Promise<{ success: boolean; action?: ActionItem; error?: string }>;
       deleteAction: (id: number) => Promise<{ success: boolean; id?: number; error?: string }>;
-      onActionCreated?: (callback: (action: ActionItem) => void) => () => void;
-      onActionUpdated?: (callback: (action: ActionItem) => void) => () => void;
-      onActionDeleted?: (callback: (payload: { id: number }) => void) => () => void;
 
       // Audio file operations
       saveTempAudio: (buffer: ArrayBuffer) => Promise<{ success: boolean; path: string }>;
@@ -1639,17 +1572,8 @@ declare global {
         }) => void
       ) => () => void;
 
-      // Note event listeners
-      onNoteAdded?: (callback: (note: NoteItem) => void) => () => void;
-      onNoteUpdated?: (callback: (note: NoteItem) => void) => () => void;
-      onNoteDeleted?: (callback: (payload: { id: number }) => void) => () => void;
-      onNoteSynced?: (callback: (note: NoteItem) => void) => () => void;
-      onFolderSynced?: (callback: (folder: FolderItem) => void) => () => void;
-      onFolderDeleted?: (callback: (payload: { id: number }) => void) => () => void;
-
       // Cross-window sync events
       emitSyncEvent?: (name: string, payload?: unknown) => Promise<{ success: boolean }>;
-      onSyncEvent?: (callback: (event: { name: string; payload?: unknown }) => void) => () => void;
 
       // Database event listeners
       onTranscriptionAdded?: (callback: (item: TranscriptionItem) => void) => () => void;
@@ -1961,8 +1885,6 @@ declare global {
       resizeDictationErrorWindowToContent: (
         surfaceHeight: number
       ) => Promise<{ success: boolean; bounds?: Electron.Rectangle; message?: string }>;
-      setAssistantPanelOpen: (open: boolean) => Promise<{ success: boolean }>;
-      setAssistantPanelBusy: (busy: boolean) => Promise<{ success: boolean }>;
 
       // App management
       relaunchApp: () => Promise<void>;
@@ -2874,7 +2796,6 @@ declare global {
           oneOnOneAttendee?: { displayName: string; email: string | null } | null;
         } & PolicyFailureMetadata
       >;
-      meetingTranscriptionSend?: (buffer: ArrayBuffer, source: "mic" | "system") => void;
       meetingTranscriptionSetSystemAudioAvailable?: (
         sessionId: string,
         available: boolean
@@ -2890,45 +2811,6 @@ declare global {
         success: boolean;
         reason?: "recording-active";
       }>;
-      onMeetingTranscriptionSegment?: (
-        callback: (data: {
-          text: string;
-          source: "mic" | "system";
-          type: "partial" | "final" | "retract";
-          timestamp?: number;
-        }) => void
-      ) => () => void;
-      onMeetingSpeakerIdentified?: (
-        callback: (data: {
-          speakerId: string;
-          displayName?: string | null;
-          startTime: number;
-          endTime: number;
-        }) => void
-      ) => () => void;
-      onMeetingSpeakersMerged?: (
-        callback: (
-          merges: Array<{
-            keep: string;
-            remove: string;
-            displayName?: string | null;
-            similarity: number;
-          }>
-        ) => void
-      ) => () => void;
-      onMeetingSessionSpeakerConfigUpdated?: (
-        callback: (config: { enabled: boolean; expectedCount: number }) => void
-      ) => () => void;
-      onMeetingTranscriptionError?: (callback: (error: string) => void) => () => void;
-      onMeetingTranscriptionFatalError?: (callback: (error: string) => void) => () => void;
-      onMeetingSystemAudioSilent?: (
-        callback: (data: { systemAudioStrategy: SystemAudioStrategy }) => void
-      ) => () => void;
-      onMeetingSystemAudioDegraded?: (callback: () => void) => () => void;
-      onMeetingSystemAudioInterrupted?: (
-        callback: (data: MeetingSystemAudioInterruption) => void
-      ) => () => void;
-      onMeetingSystemAudioResumed?: (callback: () => void) => () => void;
 
       // Speaker diarization
       downloadDiarizationModels?: () => Promise<{ success: boolean; error?: string }>;
@@ -3016,10 +2898,6 @@ declare global {
       onDictationRealtimeError?: (callback: (error: string) => void) => () => void;
       onDictationRealtimeSessionEnd?: (callback: (data: { text: string }) => void) => () => void;
 
-      // Google Calendar event listeners
-      onGcalConnectionChanged?: (callback: (data: any) => void) => () => void;
-      onGcalEventsSynced?: (callback: (data: any) => void) => () => void;
-
       // Microsoft Calendar
       mcalStartOAuth?: () => Promise<{ success: boolean; email?: string; error?: string }>;
       mcalDisconnect?: (email?: string) => Promise<{ success: boolean; error?: string }>;
@@ -3028,18 +2906,12 @@ declare global {
         accounts: Array<{ email: string }>;
       }>;
       mcalSetPrimaryOnly?: (value: boolean) => Promise<{ success: boolean; error?: string }>;
-      onMcalConnectionChanged?: (callback: (data: any) => void) => () => void;
-      onMcalEventsSynced?: (callback: (data: any) => void) => () => void;
 
       // Apple Calendar (macOS EventKit)
       acalConnect?: () => Promise<{ success: boolean; reason?: string; error?: string }>;
       acalDisconnect?: () => Promise<{ success: boolean; error?: string }>;
       acalGetConnectionStatus?: () => Promise<{ connected: boolean; sourceNames: string[] }>;
       openCalendarPrivacySettings?: () => Promise<{ success: boolean; error?: string }>;
-      onAcalConnectionChanged?: (
-        callback: (data: { connected: boolean; sourceNames: string[] }) => void
-      ) => () => void;
-      onAcalEventsSynced?: (callback: (data: any) => void) => () => void;
 
       meetingDetectionGetPreferences?: () => Promise<{ success: boolean; preferences?: any }>;
       meetingDetectionSetPreferences?: (
@@ -3082,10 +2954,6 @@ declare global {
         speechPadMs?: number;
         samplesOverlap?: number;
       }) => Promise<{ success: boolean; config?: Record<string, unknown>; error?: string }>;
-      onMeetingNotificationData?: (callback: (data: MeetingNotificationData) => void) => () => void;
-      onMeetingAutoEndRequested?: (
-        callback: (request: MeetingAutoEndRequest) => void
-      ) => () => void;
       getMeetingNotificationData?: () => Promise<MeetingNotificationData | null>;
       meetingNotificationReady?: () => Promise<void>;
       meetingNotificationRespond?: (
@@ -3100,12 +2968,10 @@ declare global {
         event: any;
         trigger?: "hotkey" | "manual" | "calendar-join";
       } | null>;
-      onMeetingNoteNavigationPending?: (callback: () => void) => () => void;
       getPendingNoteNavigation?: () => Promise<{
         noteId: number;
         folderId: number | null;
       } | null>;
-      onNoteNavigationPending?: (callback: () => void) => () => void;
       onPreviewText?: (callback: (text: string) => void) => () => void;
       onPreviewAppend?: (callback: (text: string) => void) => () => void;
       onPreviewHold?: (callback: (payload: { showCleanup: boolean }) => void) => () => void;
@@ -3136,21 +3002,6 @@ declare global {
         localFolderId: number | null,
         localSpaceId?: number | null
       ) => Promise<NoteItem>;
-      acknowledgeNoteCreate?: (
-        id: number,
-        snapshot: NoteCreateSnapshot,
-        cloudId: string,
-        cloudUpdatedAt?: string | null,
-        ownerUserId?: string | null,
-        settleIfUnchanged?: boolean
-      ) => Promise<NoteCreateAckResult>;
-      markNoteSyncedIfUnchanged?: (
-        id: number,
-        snapshot: NoteUpdateSnapshot,
-        expectedCloudId: string,
-        cloudUpdatedAt?: string | null,
-        ownerUserId?: string | null
-      ) => Promise<NoteUpdateAckResult>;
       setNoteCloudBase?: (id: number, cloudUpdatedAt: string | null) => Promise<void>;
       setNoteOwnerFromCloud?: (id: number, ownerUserId: string) => Promise<void>;
       countTeamNotesMissingOwner?: () => Promise<number>;
@@ -3164,14 +3015,6 @@ declare global {
         cloudFolder: Record<string, unknown>,
         localSpaceId?: number | null
       ) => Promise<FolderItem>;
-      acknowledgeFolderCreate?: (
-        id: number,
-        snapshot: FolderPushSnapshot,
-        expectedCloudId: string | null,
-        responseClientFolderId: string,
-        cloudId: string,
-        cloudUpdatedAt?: string | null
-      ) => Promise<FolderAckResult>;
       markFolderSyncedIfUnchanged?: (
         id: number,
         snapshot: FolderPushSnapshot,

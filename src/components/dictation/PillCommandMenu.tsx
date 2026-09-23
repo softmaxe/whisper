@@ -5,13 +5,9 @@ import { useTranslation } from "react-i18next";
 interface PillCommandMenuProps {
   buttonRef: React.RefObject<HTMLDivElement | null>;
   isRecording: boolean;
-  agentAllowed: boolean;
-  meetingAllowed: boolean;
   isHovered: boolean;
   setWindowInteractivity: (capture: boolean) => void;
   onToggleListening: () => void;
-  onAskAssistant: () => void;
-  onStartMeeting: () => void;
   onHide: () => void;
   onClose: () => void;
 }
@@ -68,11 +64,6 @@ export function PillCommandMenu({
       >
         {isRecording ? t("app.commandMenu.stopListening") : t("app.commandMenu.startListening")}
       </button>
-      {/* Opening the Agent panel mid-recording would strand the capture with no
-          surface (a translation recording becomes invisible AND un-stoppable:
-          its hotkey is blocked while the panel is open and Escape belongs to the
-          panel). Stop or finish the recording first. */}
-
       <div className="h-px bg-border" />
       <button
         className="w-full px-3 py-2 text-start text-sm hover:bg-muted focus:bg-muted focus:outline-none"
