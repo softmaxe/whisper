@@ -48,6 +48,9 @@ jobs:
     name: Build release package
     needs: validate
     uses: ./.github/workflows/build.yml
+    # A called workflow only resolves the release environment's secrets when
+    # the caller forwards them; the repository itself holds no secrets.
+    secrets: inherit
     with:
       release-tag: ${{ github.ref_name }}
 
