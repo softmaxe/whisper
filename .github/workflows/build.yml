@@ -9,13 +9,6 @@ on:
         required: false
         default: ""
         type: string
-    secrets:
-      WHISPER_SIGNING_CERTIFICATE:
-        description: Base64-encoded PKCS12 matching the pinned release certificate
-        required: false
-      WHISPER_SIGNING_PASSWORD:
-        description: Password for the release signing PKCS12
-        required: false
     outputs:
       version:
         value: ${{ jobs.build.outputs.version }}
@@ -34,6 +27,8 @@ jobs:
     name: Test and package macOS arm64
     runs-on: macos-15
     timeout-minutes: 45
+    # Signing secrets live in the release environment, which only v* tags can use.
+    environment: ${{ inputs.release-tag != '' && 'release' || '' }}
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       archive: ${{ steps.metadata.outputs.archive }}
@@ -47,7 +42,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           cache: npm
@@ -56,26 +51,7 @@ jobs:
         id: metadata
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = "arm64"
-          node <<'NODE'
-          const assert = require("node:assert/strict");
-          const fs = require("node:fs");
-          const pkg = require("./package.json");
-          const lock = require("./package-lock.json");
-          assert.equal(process.versions.node.split(".")[0], "24");
-          assert.match(pkg.version, /^[0-9]+\.[0-9]+\.[0-9]+$/);
-          assert.equal(lock.version, pkg.version);
-          assert.equal(lock.packages[""].version, pkg.version);
-          if (process.env.RELEASE_TAG) {
-            assert.equal(process.env.RELEASE_TAG, "v" + pkg.version);
-          }
-          fs.appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            "version=" + pkg.version + "\narchive=whisper-" + pkg.version + "-macos-arm64.zip\n"
-          );
-          NODE
+        run: node scripts/check-package-version.js
 
       - name: Install dependencies
         run: npm ci

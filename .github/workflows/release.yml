@@ -16,7 +16,19 @@ jobs:
     name: Validate publishing credentials
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    environment: release
     steps:
+      - name: Require the tag to point at main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)"
+          if [[ "$status" != "identical" && "$status" != "behind" ]]; then
+            echo "::error::$GITHUB_REF_NAME must point at a commit on main (compare status: $status)."
+            exit 1
+          fi
+
       - name: Require publishing and signing credentials
         env:
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
@@ -38,9 +50,6 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       release-tag: ${{ github.ref_name }}
-    secrets:
-      WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
-      WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
 
   release:
     name: Publish GitHub Release
@@ -106,6 +115,7 @@ jobs:
     needs: [build, release]
     runs-on: macos-15
     timeout-minutes: 20
+    environment: release
     concurrency:
       group: homebrew-tap-whisper
       cancel-in-progress: false
