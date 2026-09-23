@@ -480,7 +480,12 @@ async function startApp() {
     environmentManager.savePanelStartPosition(position);
   });
 
-  dockManager.init();
+  // A login launch goes to the tray whatever the preference says: the user asked
+  // the OS to start us, not to put a window in front of them at every login.
+  const launchedHidden = wasLaunchedAtLoginHidden();
+  const startMinimized = environmentManager.getStartMinimized() || launchedHidden;
+  if (debugLogger) debugLogger.info("Start minimized", { enabled: startMinimized, launchedHidden });
+  dockManager.init({ controlPanelVisible: !startMinimized });
 
   // In development, wait for Vite dev server to be ready
   if (process.env.NODE_ENV === "development") {
@@ -488,11 +493,6 @@ async function startApp() {
   }
 
   // Create windows FIRST so the user sees UI as soon as possible.
-  // A login launch goes to the tray whatever the preference says: the user asked
-  // the OS to start us, not to put a window in front of them at every login.
-  const launchedHidden = wasLaunchedAtLoginHidden();
-  const startMinimized = environmentManager.getStartMinimized() || launchedHidden;
-  if (debugLogger) debugLogger.info("Start minimized", { enabled: startMinimized, launchedHidden });
   await windowManager.createMainWindow();
   // The activation mode was cached before the hotkey was registered, so a saved
   // Hold could not be checked against its key until now.

@@ -1,6 +1,10 @@
 const { app } = require("electron");
 const { resolveDockVisibility } = require("./dockPolicy");
 
+// Keeps the throttle of Electron's DockHide (browser_mac.mm): hiding the icon
+// within this long of showing it can leave duplicate Dock icons behind.
+const HIDE_AFTER_SHOW_GUARD_MS = 1000;
+
 // Single owner of the macOS Dock icon. Every caller that wants the icon shown
 // or hidden goes through here, and the icon simply tracks the control panel.
 //
@@ -13,12 +17,16 @@ const { resolveDockVisibility } = require("./dockPolicy");
 class DockManager {
   constructor() {
     this._controlPanelVisible = false;
+    this._lastShownAt = null;
   }
 
-  // Called once at startup, before any window exists: hides the Dock icon
-  // until the control panel opens, so tray-only launches never show one.
-  init() {
-    this._controlPanelVisible = false;
+  // Called once at startup, before any window exists. A launch that opens the
+  // control panel keeps the icon macOS already shows: dropping to accessory and
+  // back would deactivate the app and hand focus to the previous app. Tray-only
+  // launches hide the icon until the control panel opens.
+  init({ controlPanelVisible = false } = {}) {
+    this._controlPanelVisible = !!controlPanelVisible;
+    this._lastShownAt = null;
     this._applyVisibility();
   }
 
@@ -36,13 +44,24 @@ class DockManager {
     if (visible === null || !app.dock) return;
 
     if (visible) {
-      app.dock.show();
+      if (app.dock.isVisible()) return;
+      // Not app.dock.show(): while the app is active, it activates the Dock and
+      // reactivates the app a second later, which macOS cooperative activation
+      // refuses. The window the user just opened loses focus to the previous
+      // app, so launching from Raycast or the Dock left Finder in front.
+      // app.dock.hide() is avoided for symmetry: it also marks every window as
+      // unhideable, which only app.dock.show() undoes.
+      app.setActivationPolicy("regular");
+      this._lastShownAt = Date.now();
     } else {
-      // Electron swallows dock.hide() within 1s of a dock.show() (see DockHide
-      // in browser_mac.mm), so closing the control panel right after opening it
-      // leaves the icon up until the next hide. Working around that throttle
-      // risks the macOS bug it exists to prevent: duplicate Dock icons.
-      app.dock.hide();
+      if (!app.dock.isVisible()) return;
+      // Closing the control panel right after opening it leaves the icon up
+      // until the next hide. Working around the guard risks the duplicate
+      // Dock icons it exists to prevent.
+      if (this._lastShownAt !== null && Date.now() - this._lastShownAt < HIDE_AFTER_SHOW_GUARD_MS) {
+        return;
+      }
+      app.setActivationPolicy("accessory");
     }
   }
 }
