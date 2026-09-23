@@ -115,14 +115,10 @@ class TrayManager {
       }
 
       if (this.createControlPanelCallback) {
+        // A new window shows itself once its renderer has mounted; showing it
+        // here would flash an empty frame whenever the panel had been released.
         await this.createControlPanelCallback();
         this.syncControlPanelWindow();
-
-        if (this.controlPanelWindow && !this.controlPanelWindow.isDestroyed()) {
-          this.controlPanelWindow.show();
-          this.controlPanelWindow.focus();
-          dockManager.setControlPanelVisible(true);
-        }
         return;
       }
 

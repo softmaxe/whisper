@@ -3,8 +3,11 @@ import { useTranslation } from "react-i18next";
 import App from "./App.jsx";
 import { useControlPanelWindowDrag } from "./hooks/useControlPanelWindowDrag";
 import { useTheme } from "./hooks/useTheme";
+import { listenForSettingsRequests } from "./utils/settingsRequests.ts";
 import { isControlPanelWindow } from "./utils/windowContext.ts";
 const ControlPanel = React.lazy(() => import("./components/ControlPanel.tsx"));
+
+if (isControlPanelWindow()) listenForSettingsRequests();
 
 export default function AppRouter() {
   useTheme();

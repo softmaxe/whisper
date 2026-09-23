@@ -41,6 +41,9 @@ const {
   WindowPositionUtil,
 } = require("./windowConfig");
 const AGENT_DICTATION_PILL_SIZE = Object.freeze({ ...WINDOW_SIZES.BASE });
+// A hidden control panel still holds a full renderer process. Keep it briefly
+// so reopening right away stays instant, then release it.
+const CONTROL_PANEL_RELEASE_DELAY_MS = 60_000;
 const { centeredBounds, clampedBounds } = require("./onboardingWindowBounds");
 const { ONBOARDING_DEMO_KINDS, isOnboardingInputAllowed } = require("./onboardingInputPolicy");
 const { createHotkeyRepeatGate } = require("./hotkeyRepeatGate");
@@ -51,6 +54,12 @@ class WindowManager {
     this.controlPanelWindow = null;
     this._resizeMaskTokenCounter = 0;
     this._controlPanelVisibilityTimer = null;
+    this._controlPanelReleaseTimer = null;
+    // The control panel renderer reports work that a release would lose.
+    this._controlPanelRetained = false;
+    // Set while an idle release closes the panel, and until its replacement
+    // loads, so neither step re-gates dictation like a real app reset.
+    this._controlPanelReleased = false;
     this._onboardingRestoreBounds = null;
     this._onboardingWindowMode = null;
     this._onboardingWindowState = null;
@@ -1384,10 +1393,14 @@ class WindowManager {
 
     this.controlPanelWindow.on("closed", () => {
       this._clearControlPanelVisibilityTimer();
+      this._clearControlPanelReleaseTimer();
+      this._controlPanelRetained = false;
       this.endOnboardingDemo();
       this.controlPanelWindow = null;
-      this._onboardingActive = true;
-      this._hideNormalAppSurfaces();
+      if (!this._controlPanelReleased) {
+        this._onboardingActive = true;
+        this._hideNormalAppSurfaces();
+      }
       this._onboardingRestoreBounds = null;
       this._onboardingWindowMode = null;
       this._onboardingWindowState = null;
@@ -1399,8 +1412,14 @@ class WindowManager {
     this.controlPanelWindow.webContents.on("did-finish-load", () => {
       // Every fresh document starts unresolved. AppRouter releases the gate
       // only after it commits the normal app, so OAuth/onboarding reloads cannot
-      // expose the dictation pill, hotkeys, or popup surfaces in between.
-      this.setOnboardingActive(true);
+      // expose the dictation pill, hotkeys, or popup surfaces in between. A
+      // panel recreated after an idle release replaces a committed app, so it
+      // must not cancel a dictation that is already running.
+      if (this._controlPanelReleased) {
+        this._controlPanelReleased = false;
+      } else {
+        this.setOnboardingActive(true);
+      }
       this.endOnboardingDemo();
       this.controlPanelWindow.setTitle(i18nMain.t("window.controlPanelTitle"));
     });
@@ -1435,6 +1454,7 @@ class WindowManager {
     });
 
     this.controlPanelWindow.on("show", () => {
+      this._clearControlPanelReleaseTimer();
       if (this.controlPanelWindow.webContents.isCrashed()) {
         debugLogger.error("Control panel crashed, reloading on show", undefined, "window");
         this.loadControlPanel();
@@ -1844,6 +1864,49 @@ class WindowManager {
     this.endOnboardingDemo();
     this.controlPanelWindow.hide();
     dockManager.setControlPanelVisible(false);
+    this._scheduleControlPanelRelease();
+  }
+
+  setControlPanelRetained(retained) {
+    this._controlPanelRetained = retained === true;
+    if (this._controlPanelRetained) {
+      this._clearControlPanelReleaseTimer();
+    } else {
+      this._scheduleControlPanelRelease();
+    }
+  }
+
+  _clearControlPanelReleaseTimer() {
+    clearTimeout(this._controlPanelReleaseTimer);
+    this._controlPanelReleaseTimer = null;
+  }
+
+  _canReleaseControlPanel() {
+    const win = this.controlPanelWindow;
+    return (
+      !!win &&
+      !win.isDestroyed() &&
+      !win.isVisible() &&
+      !this._controlPanelRetained &&
+      !this.isQuitting
+    );
+  }
+
+  _scheduleControlPanelRelease() {
+    this._clearControlPanelReleaseTimer();
+    if (!this._canReleaseControlPanel()) return;
+    this._controlPanelReleaseTimer = setTimeout(() => {
+      this._controlPanelReleaseTimer = null;
+      this._releaseHiddenControlPanel();
+    }, CONTROL_PANEL_RELEASE_DELAY_MS);
+  }
+
+  _releaseHiddenControlPanel() {
+    if (!this._canReleaseControlPanel()) return;
+    debugLogger.debug("Releasing hidden control panel", undefined, "window");
+    this._controlPanelReleased = true;
+    // destroy() skips the close handler that would only hide the window again.
+    this.controlPanelWindow.destroy();
   }
 
   hideDictationPanel() {

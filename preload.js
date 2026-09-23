@@ -65,6 +65,7 @@ const registerListener = (channel, handlerFactory) => {
 contextBridge.exposeInMainWorld("electronAPI", {
   setOnboardingWindowMode: (mode) => ipcRenderer.invoke("onboarding-set-window-mode", mode),
   setOnboardingActive: (active) => ipcRenderer.invoke("onboarding-set-active", active),
+  setControlPanelRetained: (retained) => ipcRenderer.send("control-panel-retained", retained),
   markMacAccessibilityFeaturesReady: (expectedAccountScope) =>
     expectedAccountScope
       ? ipcRenderer.send("mac-accessibility-features-ready", expectedAccountScope)
