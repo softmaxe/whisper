@@ -28,24 +28,13 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version-file: .nvmrc
           cache: npm
 
       - name: Validate architecture and package version
-        run: |
-          set -euo pipefail
-          test "$(uname -m)" = "arm64"
-          node <<'NODE'
-          const assert = require("node:assert/strict");
-          const pkg = require("./package.json");
-          const lock = require("./package-lock.json");
-          assert.equal(process.versions.node.split(".")[0], "24");
-          assert.match(pkg.version, /^[0-9]+\.[0-9]+\.[0-9]+$/);
-          assert.equal(lock.version, pkg.version);
-          assert.equal(lock.packages[""].version, pkg.version);
-          NODE
+        run: node scripts/check-package-version.js
 
       - name: Install dependencies
         run: npm ci
