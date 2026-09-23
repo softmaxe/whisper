@@ -505,12 +505,13 @@ a:hover {
   }
 }
 
+/* Scales instead of resizing so the countdown stays on the compositor. */
 @keyframes toast-progress {
   from {
-    width: 100%;
+    transform: scaleX(1);
   }
   to {
-    width: 0%;
+    transform: scaleX(0);
   }
 }
 

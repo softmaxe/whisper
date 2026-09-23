@@ -117,7 +117,7 @@ export default function ApiKeyInput({
               <button
                 type="button"
                 onClick={save}
-                className="h-6 w-6 flex items-center justify-center rounded text-success hover:bg-success/10 active:scale-95 transition-all"
+                className="h-6 w-6 flex items-center justify-center rounded text-success hover:bg-success/10 active:scale-95 transition-[color,background-color,transform] duration-150 ease-out"
                 aria-label={t("apiKeyInput.save")}
               >
                 <Check className="w-3.5 h-3.5" />
@@ -125,7 +125,7 @@ export default function ApiKeyInput({
               <button
                 type="button"
                 onClick={cancel}
-                className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted/50 active:scale-95 transition-all"
+                className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/70 hover:text-muted-foreground hover:bg-muted/50 active:scale-95 transition-[color,background-color,transform] duration-150 ease-out"
                 aria-label={t("apiKeyInput.cancelEdit")}
               >
                 <X className="w-3.5 h-3.5" />
@@ -136,7 +136,7 @@ export default function ApiKeyInput({
           <button
             type="button"
             onClick={enterEdit}
-            className={`w-full h-8 flex items-center px-3 rounded border text-sm transition-all cursor-pointer group ${
+            className={`w-full h-8 flex items-center px-3 rounded border text-sm transition-[border-color,background-color] cursor-pointer group ${
               hasKey
                 ? "border-border/70 bg-input hover:border-border-hover dark:bg-surface-1 dark:border-border-subtle/60 dark:hover:border-border-hover"
                 : "border-dashed border-border/70 bg-transparent hover:border-border/70 hover:bg-muted/30"

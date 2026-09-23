@@ -433,7 +433,7 @@ const Toast: React.FC<
             "bg-white/10 backdrop-blur-sm border border-white/10",
             "text-white/70 hover:text-white hover:bg-white/20",
             "opacity-0 scale-75 group-hover:opacity-100 group-hover:scale-100",
-            "transition-all duration-150",
+            "transition-[opacity,transform,background-color,color] duration-150 ease-out",
             "focus:outline-none focus-visible:ring-1 focus-visible:ring-white/30"
           )}
         >
@@ -445,7 +445,7 @@ const Toast: React.FC<
       {duration > 0 && !isExiting && (
         <div className="absolute bottom-0 start-0.5 end-0 h-px overflow-hidden">
           <div
-            className={cn("h-full", config.progressClass)}
+            className={cn("h-full origin-left rtl:origin-right", config.progressClass)}
             style={{
               animation: `toast-progress ${duration}ms linear forwards`,
               animationPlayState: timerPaused ? "paused" : "running",
