@@ -11,7 +11,6 @@ const { broadcastToWindows } = require("./windowBroadcast");
 const { resolveSystemDefaultMicrophone } = require("./systemDefaultMicrophone");
 const { laptopLidMonitor } = require("./laptopLidMonitor");
 const autoStart = require("./autoStart");
-const { getRelaunchArgs } = require("./autoStartPolicy");
 
 const { changeLanguage } = require("./i18nMain");
 
@@ -144,7 +143,6 @@ class IPCHandlers {
     this._autoLearnDebounceTimer = null;
     this._autoLearnLatestData = null;
     this._textEditHandler = null;
-    this._activeRecordingPipeline = null;
     this.audioStorageManager = new AudioStorageManager();
     this._retentionCleanupInterval = null;
     this._retentionSettings = { ...DEFAULT_RETENTION_SETTINGS }; // Synced from renderer
@@ -523,19 +521,6 @@ class IPCHandlers {
       return buffer ? buffer.buffer : null;
     });
 
-    ipcMain.handle("delete-transcription-audio", async (event, id) => {
-      const result = this.audioStorageManager.deleteAudio(id);
-      if (result.success) {
-        this.databaseManager.updateTranscriptionAudio(id, {
-          hasAudio: 0,
-          audioDurationMs: null,
-          provider: null,
-          model: null,
-        });
-      }
-      return result;
-    });
-
     ipcMain.handle("get-audio-storage-usage", async () => {
       return this.audioStorageManager.getStorageUsage();
     });
@@ -790,34 +775,6 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("delete-temp-file", async (event, filePath) => {
-      try {
-        if (typeof filePath !== "string") {
-          return { success: false, error: "Invalid file path" };
-        }
-        const { getSafeTempDir } = require("./safeTempDir");
-        const resolved = path.resolve(filePath);
-        const basename = path.basename(resolved);
-        if (!basename.startsWith("ow-url-") && !basename.startsWith("ow-diarize-")) {
-          return { success: false, error: "Not an OpenWhispr temp file" };
-        }
-        const real = fs.realpathSync(resolved);
-        let tempDir = getSafeTempDir();
-        try {
-          tempDir = fs.realpathSync(tempDir);
-        } catch {}
-        const rel = path.relative(tempDir, real);
-        if (rel.startsWith("..") || path.isAbsolute(rel)) {
-          return { success: false, error: "Not an OpenWhispr temp file" };
-        }
-        fs.unlinkSync(real);
-        return { success: true };
-      } catch (error) {
-        debugLogger.warn("Failed to delete temp file", { error: error.message });
-        return { success: false, error: error.message };
-      }
-    });
-
     ipcMain.handle("paste-text", async (event, text, options) => {
       const mainWindow = this.windowManager?.mainWindow;
       const targetPid = this.textEditMonitor?.lastTargetPid || null;
@@ -878,11 +835,6 @@ class IPCHandlers {
       return this.clipboardManager.checkAccessibilityPermissions(silent);
     });
 
-    // Passes `true` to isTrustedAccessibilityClient to trigger the macOS system prompt
-    ipcMain.handle("prompt-accessibility-permission", async () => {
-      return systemPreferences.isTrustedAccessibilityClient(true);
-    });
-
     ipcMain.handle("read-clipboard", async (event) => {
       return this.clipboardManager.readClipboard();
     });
@@ -893,14 +845,6 @@ class IPCHandlers {
 
     ipcMain.handle("check-paste-tools", async () => {
       return this.clipboardManager.checkPasteTools();
-    });
-
-    // Under `npm run dev` the Vite server dies with Electron, so a relaunched dev
-    // instance would have no renderer: just quit there.
-    ipcMain.handle("relaunch-app", async () => {
-      if (process.env.NODE_ENV === "development") return app.quit();
-      app.relaunch({ args: getRelaunchArgs({ argv: process.argv, protocol: this.oauthProtocol }) });
-      app.quit();
     });
 
     ipcMain.handle("update-hotkey", async (event, hotkey) => {
@@ -1208,11 +1152,6 @@ class IPCHandlers {
     ipcMain.handle("open-accessibility-settings", () => openSystemSettings("accessibility"));
     ipcMain.handle("open-login-items-settings", () => openSystemSettings("loginItems"));
 
-    ipcMain.handle("toggle-media-playback", () => {
-      const mediaPlayer = require("./mediaPlayer");
-      return mediaPlayer.toggleMedia();
-    });
-
     ipcMain.handle("pause-media-playback", () => {
       const mediaPlayer = require("./mediaPlayer");
       return mediaPlayer.pauseMedia();
@@ -1311,8 +1250,6 @@ class IPCHandlers {
       }
     });
 
-    const fs = require("fs");
-
     ipcMain.handle("update-transcription-text", async (_event, id, text, rawText) => {
       try {
         this.databaseManager.updateTranscriptionText(id, text, rawText);
@@ -1326,106 +1263,6 @@ class IPCHandlers {
         );
         return { success: false, error: error.message };
       }
-    });
-
-    ipcMain.handle("get-debug-state", async () => {
-      try {
-        return {
-          enabled: debugLogger.isEnabled(),
-          logPath: debugLogger.getLogPath(),
-          logLevel: debugLogger.getLevel(),
-        };
-      } catch (error) {
-        debugLogger.error("Failed to get debug state:", error);
-        return { enabled: false, logPath: null, logLevel: "info" };
-      }
-    });
-
-    ipcMain.handle("set-debug-logging", async (event, enabled) => {
-      try {
-        const path = require("path");
-        const fs = require("fs");
-        const envPath = path.join(app.getPath("userData"), ".env");
-
-        // Read current .env content
-        let envContent = "";
-        if (fs.existsSync(envPath)) {
-          envContent = fs.readFileSync(envPath, "utf8");
-        }
-
-        // Parse lines
-        const lines = envContent.split("\n");
-        const logLevelIndex = lines.findIndex((line) =>
-          line.trim().startsWith("OPENWHISPR_LOG_LEVEL=")
-        );
-
-        if (enabled) {
-          // Set to debug
-          if (logLevelIndex !== -1) {
-            lines[logLevelIndex] = "OPENWHISPR_LOG_LEVEL=debug";
-          } else {
-            // Add new line
-            if (lines.length > 0 && lines[lines.length - 1] !== "") {
-              lines.push("");
-            }
-            lines.push("# Debug logging setting");
-            lines.push("OPENWHISPR_LOG_LEVEL=debug");
-          }
-        } else {
-          // Remove or set to info
-          if (logLevelIndex !== -1) {
-            lines[logLevelIndex] = "OPENWHISPR_LOG_LEVEL=info";
-          }
-        }
-
-        // Write back
-        fs.writeFileSync(envPath, lines.join("\n"), "utf8");
-
-        // Update environment variable
-        process.env.OPENWHISPR_LOG_LEVEL = enabled ? "debug" : "info";
-
-        // Refresh logger state
-        debugLogger.refreshLogLevel();
-
-        return {
-          success: true,
-          enabled: debugLogger.isEnabled(),
-          logPath: debugLogger.getLogPath(),
-        };
-      } catch (error) {
-        debugLogger.error("Failed to set debug logging:", error);
-        return { success: false, error: error.message };
-      }
-    });
-
-    ipcMain.handle("open-logs-folder", async () => {
-      try {
-        const logsDir = path.join(app.getPath("userData"), "logs");
-        await shell.openPath(logsDir);
-        return { success: true };
-      } catch (error) {
-        debugLogger.error("Failed to open logs folder:", error);
-        return { success: false, error: error.message };
-      }
-    });
-
-    ipcMain.handle("get-app-version", async () => {
-      return { version: app.getVersion() };
-    });
-
-    ipcMain.handle("acquire-recording-lock", async (_event, pipeline) => {
-      if (this._activeRecordingPipeline && this._activeRecordingPipeline !== pipeline) {
-        return { success: false, holder: this._activeRecordingPipeline };
-      }
-      this._activeRecordingPipeline = pipeline;
-      return { success: true };
-    });
-
-    ipcMain.handle("release-recording-lock", async (_event, pipeline) => {
-      if (this._activeRecordingPipeline === pipeline) {
-        this._activeRecordingPipeline = null;
-      }
-      return { success: true };
     });
   }
 

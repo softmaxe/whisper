@@ -62,7 +62,3 @@ export const MODEL_PICKER_COLORS: Record<ColorScheme, ModelPickerStyles> = {
     },
   },
 };
-
-export function getModelPickerStyles(colorScheme: ColorScheme): ModelPickerStyles {
-  return MODEL_PICKER_COLORS[colorScheme];
-}

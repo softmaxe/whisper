@@ -647,16 +647,6 @@ async function startApp() {
     }
   });
 
-  // Allow renderer to request an accessibility check (e.g. on sign-in).
-  // Also sends accessibility-missing events if untrusted.
-  ipcMain.handle("check-accessibility-trusted", () => {
-    const trusted = systemPreferences.isTrustedAccessibilityClient(false);
-    if (!trusted) {
-      checkAndNotifyAccessibility();
-    }
-    return trusted;
-  });
-
   // Reset native key state when hotkey changes
   ipcMain.on("hotkey-changed", (_event, _newHotkey) => {
     globeKeyDownTime = 0;

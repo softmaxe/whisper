@@ -106,38 +106,6 @@ test("parseHotkey splits modifiers from the base key", async () => {
   assert.deepEqual(parseHotkey(null), { modifiers: [], baseKey: "" });
 });
 
-test("isCompoundHotkey is true only when modifiers are present", async () => {
-  const { isCompoundHotkey } = await load();
-
-  assert.equal(isCompoundHotkey("Ctrl+Shift+K"), true);
-  assert.equal(isCompoundHotkey("Alt+R"), true);
-  assert.equal(isCompoundHotkey("F8"), false);
-  assert.equal(isCompoundHotkey("GLOBE"), false);
-  assert.equal(isCompoundHotkey(""), false);
-  assert.equal(isCompoundHotkey(null), false);
-});
-
-test("isValidHotkeyFormat accepts single keys, globe, mouse buttons, and well-formed combos", async () => {
-  const { isValidHotkeyFormat } = await load();
-
-  assert.equal(isValidHotkeyFormat("GLOBE"), true);
-  assert.equal(isValidHotkeyFormat("Fn"), true);
-  assert.equal(isValidHotkeyFormat("MouseButton4"), true);
-  assert.equal(isValidHotkeyFormat("`"), true);
-  assert.equal(isValidHotkeyFormat("A"), true);
-  assert.equal(isValidHotkeyFormat("Ctrl+K"), true);
-  assert.equal(isValidHotkeyFormat("Alt+Shift+F9"), true);
-});
-
-test("isValidHotkeyFormat rejects empty input and combos with empty parts", async () => {
-  const { isValidHotkeyFormat } = await load();
-
-  assert.equal(isValidHotkeyFormat(""), false);
-  assert.equal(isValidHotkeyFormat("  "), false);
-  assert.equal(isValidHotkeyFormat("Ctrl+"), false);
-  assert.equal(isValidHotkeyFormat("+K"), false);
-});
-
 test("parseHotkeyList preserves hotkeys ending with '+' when followed by another hotkey", async () => {
   const { parseHotkeyList } = await load();
 

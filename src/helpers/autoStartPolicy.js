@@ -15,14 +15,7 @@ function wasLaunchedHidden({ loginItemSettings }) {
   return !!loginItemSettings.wasOpenedAtLogin;
 }
 
-// A relaunch must not replay a cold-start deep link (a sign-in link would
-// restore the session a reset just cleared).
-function getRelaunchArgs({ argv, protocol }) {
-  return argv.slice(1).filter((arg) => !arg.startsWith(`${protocol}://`));
-}
-
 module.exports = {
   resolveAutoStartState,
   wasLaunchedHidden,
-  getRelaunchArgs,
 };

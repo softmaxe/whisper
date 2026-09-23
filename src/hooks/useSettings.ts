@@ -2,11 +2,10 @@ import React, { createContext, useCallback, useContext, useEffect, useRef } from
 import { useSettingsStore, initializeSettings } from "../stores/settingsStore";
 import logger from "../utils/logger";
 import { useLocalStorage } from "./useLocalStorage";
-import type { Snippet } from "../utils/snippets";
 
 function useSettingsInternal() {
   const store = useSettingsStore();
-  const { applyCustomDictionaryFromExternal, applySnippetsFromExternal } = store;
+  const { applyCustomDictionaryFromExternal } = store;
 
   // One-time initialization: sync API keys, dictation key, activation mode,
   // UI language, and dictionary from the main process / SQLite.
@@ -35,16 +34,6 @@ function useSettingsInternal() {
     });
     return unsubscribe;
   }, [applyCustomDictionaryFromExternal]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.electronAPI?.onSnippetsUpdated) return;
-    const unsubscribe = window.electronAPI.onSnippetsUpdated((snippets: Snippet[]) => {
-      if (Array.isArray(snippets)) {
-        applySnippetsFromExternal(snippets);
-      }
-    });
-    return unsubscribe;
-  }, [applySnippetsFromExternal]);
 
   // Auto-learn corrections from user edits in external apps
   const [autoLearnCorrections, setAutoLearnCorrectionsRaw] = useLocalStorage(

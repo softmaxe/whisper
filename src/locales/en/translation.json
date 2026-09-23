@@ -30,9 +30,7 @@
     "speech": "Speech",
     "settings": "Settings...",
     "help": "Help",
-    "learnMore": "Learn More",
-    "file": "File",
-    "closeWindow": "Close Window"
+    "learnMore": "Learn More"
   },
   "window": {
     "voiceRecorderTitle": "Voice Recorder",
@@ -73,31 +71,13 @@
   "hotkey": {
     "errors": {
       "callbackRequired": "Callback function is required for hotkey setup",
-      "globeOnlyMac": "The Globe key is only available on macOS.",
       "fnCombinationUnsupported": "The Globe/Fn key can only be used by itself.",
-      "mouseButtonOnlyMac": "Mouse button hotkeys are currently supported on macOS only.",
       "alreadyRegistered": "\"{{hotkey}}\" is already registered by another application.",
-      "osReserved": "\"{{hotkey}}\" may be reserved by your desktop environment.",
       "holdNeedsReleaseKey": "Hold-to-talk needs a key macOS can see you release: Globe, a right-side key like Right Option, or a shortcut with a modifier. Tap works with any key.",
       "registrationFailed": "Could not register \"{{hotkey}}\". It may be in use by another application.",
-      "updateFailedCheckFormat": "Failed to update hotkey to \"{{hotkey}}\". Check the format is valid.",
       "trySuggestions": "Try: {{suggestions}}",
       "slotConflict": "This hotkey is already used for {{slot}}."
     }
-  },
-  "systemSettings": {
-    "microphone": "Please open your system settings to configure microphone permissions.",
-    "sound": "Please open your system sound settings (for example, pavucontrol).",
-    "accessibility": "Accessibility settings are not available on this platform.",
-    "systemAudio": "System audio settings are not available on this platform.",
-    "screenRecording": "Screen recording settings are not available on this platform.",
-    "loginItems": "Login item settings are not available on this platform."
-  },
-  "windowControls": {
-    "minimize": "Minimize",
-    "maximize": "Maximize",
-    "restore": "Restore",
-    "close": "Close"
   },
   "windows": {
     "pttUnavailable": "Push-to-Talk native listener not available"
@@ -110,47 +90,13 @@
     "cancel": "Cancel",
     "recommended": "Recommended",
     "active": "Active",
-    "managedByOrg": "Managed by your organization",
     "apiKey": "API Key",
     "model": "Model",
     "loading": "Loading...",
     "hold": "Hold",
     "tap": "Tap",
     "close": "Close",
-    "save": "Save",
-    "error": "Something went wrong",
-    "unknownError": "An unknown error occurred",
-    "copied": "Copied",
-    "policyAiProcessingRestricted": "AI processing is restricted by your organization.",
-    "policyAgentRestricted": "AI assistant use is restricted by your organization.",
-    "policyTranscriptionRestricted": "Transcription is restricted by your organization.",
-    "policyUnresolved": "Your organization's settings haven't loaded yet. Try again in a moment.",
-    "managedConfigLoading": "Checking your organization's managed setup. Try again in a moment.",
-    "managedConfigUnavailable": "Managed enterprise access is unavailable. Sign in again or contact your administrator.",
-    "managedPolicyConflict": "Managed access is blocked by your workspace policy. Contact your administrator."
-  },
-  "onboarding": {
-    "rehaul": {
-      "assistantDemo": {
-        "email": {
-          "subject": "Coffee next week?",
-          "senderName": "Maria Alvarez",
-          "body": "Hi! It was great meeting you at the meetup yesterday. Would you be up for a quick coffee sometime next week? Let me know what works for you.\n\nMaria"
-        }
-      }
-    },
-    "activation": {
-      "holdDescription": "Hold while speaking"
-    }
-  },
-  "streaming": {
-    "errors": {
-      "cloudUnreachable": {
-        "title": "Cannot reach the transcription service",
-        "generic": "Network request failed. Check your connection.",
-        "fallback": "Cloud unreachable — using local engine for this recording."
-      }
-    }
+    "save": "Save"
   },
   "controlPanel": {
     "accessibilityMissing": {
@@ -185,8 +131,6 @@
       "deleteItem": "Delete",
       "viewRawTranscript": "View raw transcript",
       "showInFolder": "Reveal in Finder",
-      "showInFolderWindows": "Show in Explorer",
-      "showInFolderLinux": "Show in File Manager",
       "retryTranscription": "Re-transcribe",
       "retrySuccess": "Transcription updated",
       "retryError": "Failed to re-transcribe",
@@ -222,7 +166,6 @@
     "custom": {
       "endpointWithProtocol": "Enter a full base URL including protocol (for example, https://server/v1).",
       "httpsRequired": "HTTPS required (HTTP allowed for local network only).",
-      "endpointInvalid": "Set a valid server URL in Settings → Text cleanup.",
       "endpointUnauthorized": "Endpoint rejected the request (401/403). Add an API key or adjust server auth settings.",
       "endpointTitle": "Endpoint URL",
       "endpointExamples": "Examples:",
@@ -269,16 +212,8 @@
     "audioRecording": {
       "errorTitles": {
         "microphoneUnavailable": "Microphone unavailable",
-        "sessionExpired": "Session Expired",
         "offline": "You're Offline",
-        "agentUnavailable": "Assistant Unavailable",
-        "screenContextSkipped": "Screen Context Skipped",
-        "dailyLimitReached": "Daily Limit Reached",
         "providerRateLimited": "Provider Rate Limited"
-      },
-      "fallback": {
-        "title": "Fallback Mode",
-        "description": "Local Whisper failed. Used OpenAI API instead."
       },
       "errorActions": {
         "viewTranscript": "View Transcript"
@@ -301,38 +236,15 @@
       },
       "errorDescriptions": {
         "microphoneUnavailable": "The selected microphone could not capture audio. Reconnect it, check microphone access in System Settings, or choose another microphone in Settings before trying again.",
-        "sessionExpired": "Your transcription service session is unavailable. Check your service configuration.",
-        "offline": "Network unavailable. Check your connection to the transcription server.",
         "providerRateLimited": "Your transcription provider rate-limited the request. Wait a moment and try again.",
-        "chunkLoss": "A network problem lost too much of the recording. Re-transcribe it from History.",
-        "agentReasoningFailed": "Your voice assistant couldn't process the command — the raw transcript was inserted instead.",
-        "screenContextSkipped": "The screenshot couldn't be sent, so your command ran without screen context.",
         "customEndpointInvalid": "Your custom transcription endpoint is not configured or its URL is invalid. Update it in Settings → Speech to Text.",
-        "managedTranscriptionUnavailable": "Managed transcription is not available right now. Try again in a moment.",
-        "streamingOnlyProvider": "This provider only supports live transcription. Choose another provider for file uploads and retries.",
-        "providerKeyMissing": "No API key is set for your transcription provider. Add it in Settings → Speech to Text.",
         "cleanupTruncated": "The AI model ran out of room before it finished cleaning up your dictation.",
         "cleanupEmptyReply": "The AI model returned an empty reply instead of the cleaned-up dictation."
-      },
-      "translationFallback": {
-        "unreachableTitle": "Translation unavailable",
-        "unreachableDescription": "Your dictation was pasted untranslated. Check the translation settings.",
-        "failedTitle": "Translation failed",
-        "failedDescription": "The original text was pasted. You can retry it from History."
       },
       "pushForceStopped": {
         "title": "Transcription not pasted",
         "description": "Dictation stopped while the hotkey was still held, so the text was not pasted. Your transcription is on the clipboard.",
         "descriptionClipboardFailed": "Dictation stopped while the hotkey was still held, so the text was not pasted, and it could not be copied to the clipboard either."
-      },
-      "selectionEditing": {
-        "notAppliedTitle": "Selection edit not applied",
-        "changed": "The selected text or target app changed while Whisper was processing. Nothing was replaced.",
-        "expired": "The selection edit took too long and expired. Select the text and try again.",
-        "pasteFailed": "Whisper generated the edit but could not replace the selected text.",
-        "unavailable": "Whisper could not safely read the selected text. Check accessibility or input automation permissions and try again.",
-        "tooLarge": "The selection is too large to edit safely. Select 6,000 characters or fewer.",
-        "reasoningFailed": "The AI could not complete the selection edit. Your original text was not changed."
       }
     },
     "clipboard": {
@@ -360,10 +272,7 @@
     },
     "permissions": {
       "paths": {
-        "windowsMicrophone": "Settings -> Privacy -> Microphone",
-        "linuxSound": "your system sound settings",
         "defaultSound": "System Settings -> Sound -> Input",
-        "linuxPrivacy": "your system privacy settings",
         "defaultPrivacy": "System Settings -> Privacy & Security -> Microphone"
       },
       "micErrors": {
@@ -392,9 +301,7 @@
       },
       "warning": {
         "messages": {
-          "macos": "Check Sound settings to select your input device",
-          "windows": "Check Windows Settings to select your input device",
-          "linux": "Check system sound settings to select your input device"
+          "macos": "Check Sound settings to select your input device"
         },
         "soundLabel": "Sound",
         "privacyLabel": "Privacy"
@@ -418,10 +325,8 @@
     "hotkeyLabel": "Hotkey",
     "keyHint": "+ key",
     "listening": "Listening...",
-    "pressAnyKey": "Press any key or Ctrl+Shift+K",
     "pressAnyKeyMac": "Press any key or ⌘⇧K",
     "recording": "Recording",
-    "tryShortcut": "Try Ctrl+Shift+K",
     "tryShortcutMac": "Try ⌘⇧K",
     "remove": "Remove hotkey",
     "addAnother": "Add another hotkey",
@@ -433,16 +338,12 @@
     "searchPlaceholder": "Search languages"
   },
   "microphoneSettings": {
-    "builtIn": "(Built-in)",
     "errors": {
       "unableToAccess": "Unable to access microphone. Please check permissions."
     },
     "helpText": "A selected device stays selected when the lid changes.",
     "inputDevice": "Input Device",
     "noBuiltInDetected": "No built-in microphone detected. Using system default.",
-    "preferBuiltIn": {
-      "label": "Prefer Built-in Microphone"
-    },
     "selectPlaceholder": "Select a microphone",
     "systemDefault": "System Default",
     "unknownDevice": "Unknown Device",
@@ -455,15 +356,6 @@
     "builtInDevice": "Built-in Microphone",
     "unavailableDevice": "{{device}} (Unavailable)",
     "refreshDevices": "Refresh microphones"
-  },
-  "pasteToolsInfo": {
-    "installCommands": {
-      "archLinux": "# Arch Linux",
-      "debianUbuntuPop": "# Debian / Ubuntu / Pop!_OS",
-      "debianUbuntuMint": "# Debian / Ubuntu / Mint",
-      "fedoraRhel": "# Fedora / RHEL",
-      "openSuse": "# openSUSE Tumbleweed / Leap"
-    }
   },
   "promptStudio": {
     "common": {
@@ -543,9 +435,6 @@
     "title": "Settings"
   },
   "settingsPage": {
-    "agentConfig": {
-      "title": "Voice Assistant"
-    },
     "aiModels": {
       "enableTextCleanup": "Enable text cleanup",
       "enableTextCleanupDescription": "Use AI to remove filler words, fix grammar, and polish punctuation"
@@ -671,146 +560,7 @@
   },
   "models": {
     "learnMore": "Learn more",
-    "noneAvailable": "No models available",
-    "descriptions": {
-      "cohere": {
-        "cohere_transcribe_03_2026": "Most accurate local ASR (5.42% avg WER, 14 languages). No auto language detection"
-      },
-      "parakeet": {
-        "parakeet_tdt_0_6b_v3": "Fast multilingual ASR with auto language detection (25 languages)",
-        "parakeet_unified_en_0_6b": "English-only ASR with state-of-the-art accuracy (5.91% avg WER)",
-        "nemotron_speech_streaming_en_0_6b": "English streaming ASR from NVIDIA Nemotron",
-        "nemotron_3_5_asr_streaming_0_6b": "Multilingual streaming ASR from NVIDIA Nemotron with auto language detection (15 languages)",
-        "orukeet": "Parakeet fine-tune for multilingual speech recognition"
-      },
-      "diarization": {
-        "segmentation": "Speech boundary detection for speaker diarization",
-        "embedding_en": "Speaker voice fingerprinting for identification"
-      },
-      "whisper": {
-        "tiny": "Fastest, lower quality",
-        "base": "Good balance",
-        "small": "Better quality, slower",
-        "medium": "High quality",
-        "large": "Best quality, slowest",
-        "turbo": "Fast with good quality"
-      },
-      "transcription": {
-        "openai_gpt_transcribe": "Newest, most accurate transcription",
-        "openai_gpt_4o_mini_transcribe": "Fast and accurate transcription",
-        "openai_gpt_4o_transcribe": "Most accurate transcription",
-        "openai_whisper_1": "Original Whisper model",
-        "groq_whisper_large_v3": "High accuracy speech recognition",
-        "groq_whisper_large_v3_turbo": "216x real-time speed",
-        "mistral_voxtral_mini_latest": "Fast multilingual transcription",
-        "gemini_3_5_transcribe": "Google's Gemini speech-to-text",
-        "gemini_3_5_transcribe_live": "Realtime streaming speech-to-text",
-        "corti_transcribe": "Clinical-grade medical transcription",
-        "xai_grok_stt": "High-accuracy speech recognition by xAI",
-        "tinfoil_voxtral": "Verifiably private transcription",
-        "deepgram_nova_3": "Deepgram's most accurate realtime model",
-        "assemblyai_universal_streaming_english": "Immutable realtime transcripts, English",
-        "assemblyai_universal_streaming_multilingual": "Immutable realtime transcripts, multilingual",
-        "assemblyai_universal_3_5_pro": "Highest accuracy realtime, 18 languages"
-      },
-      "cloud": {
-        "openai_gpt_5_2": "Strong reasoning model",
-        "openai_gpt_5_mini": "Fast and cost-efficient",
-        "openai_gpt_5_nano": "Ultra-fast, low latency",
-        "openai_gpt_4_1": "Strong baseline, 1M context",
-        "openai_gpt_4_1_mini": "Smaller GPT-4.1 model",
-        "openai_gpt_4_1_nano": "Lowest latency GPT-4.1",
-        "anthropic_claude_fable_5_1": "Anthropic's most capable model, Mythos-class",
-        "anthropic_claude_fable_5": "Previous Mythos-class flagship",
-        "anthropic_claude_sonnet_5": "Fast, capable assistant model at lower cost",
-        "anthropic_claude_sonnet_4_6": "Balanced performance",
-        "anthropic_claude_sonnet_4_5": "Previous Sonnet generation",
-        "anthropic_claude_haiku_4_5": "Fast with near-frontier intelligence",
-        "gemini_gemini_3_5_flash": "Latest fast, high-capability Gemini model",
-        "gemini_gemini_3_5_flash_lite": "Fastest, most cost-effective 3.5 model",
-        "gemini_gemini_3_1_pro_preview": "Next-gen flagship model for complex reasoning",
-        "gemini_gemini_3_1_flash_lite": "Frontier-class performance at low cost",
-        "gemini_gemini_3_flash_preview": "Ultra-fast, high-capability next-gen model",
-        "gemini_gemini_2_5_flash_lite": "Lowest latency and cost",
-        "gemini_gemma_4_31b_it": "Google's largest Gemma 4, 31B dense, 256K context",
-        "gemini_gemma_4_26b_a4b_it": "Google's Gemma 4 MoE, 4B active params, 256K context",
-        "groq_openai_gpt_oss_120b": "OpenAI's open-source flagship, 500 T/sec",
-        "groq_openai_gpt_oss_20b": "Fast open-source model, 1000 T/sec",
-        "groq_compound": "Groq's compound system, 450 T/sec",
-        "groq_compound_mini": "Fast compound system, 3x lower latency",
-        "openai_gpt_6_astra": "OpenAI's most capable model for coding and research",
-        "openai_gpt_5_6_sol": "Flagship GPT-5.6 for complex coding and research",
-        "openai_gpt_5_6_terra": "Balanced GPT-5.6 for everyday work",
-        "openai_gpt_5_6_luna": "Fastest, lowest-cost GPT-5.6",
-        "openai_gpt_5_5": "Frontier model for complex reasoning",
-        "anthropic_claude_opus_5": "Most capable Opus model, 1M context",
-        "anthropic_claude_opus_4_8": "Powerful Opus model tuned for honesty and reliability",
-        "anthropic_claude_opus_4_7": "Powerful Opus model",
-        "anthropic_claude_opus_4_6": "Previous Opus generation, 1M context",
-        "anthropic_claude_opus_4_5": "Earlier Opus model",
-        "tinfoil_glm_5_3": "Private agentic coding model in secure enclaves, 1M context",
-        "tinfoil_gemma4_31b": "Private multilingual reasoning model with tool calling, 256K context",
-        "tinfoil_gpt_oss_120b": "Private open-weight reasoning model with tool use, 131K context",
-        "tinfoil_llama3_3_70b": "Private conversational model with tool calling, 128K context",
-        "corti_corti_s1_instant": "Fast healthcare model, no reasoning trace",
-        "corti_corti_s1": "Most capable clinical model with reasoning",
-        "corti_corti_s1_mini_instant": "Compact healthcare model, fastest and lowest cost",
-        "corti_corti_s1_mini": "Compact clinical model with reasoning at half the price"
-      },
-      "enterprise": {
-        "bedrock_claude_fable_5": "Most capable Claude model. Best for the hardest Assistant tasks.",
-        "bedrock_claude_haiku_4_5": "Fast and cheap. Great default for text cleanup.",
-        "bedrock_claude_sonnet_5": "Balanced workhorse. Best default for Assistant tasks.",
-        "bedrock_claude_opus_4_8": "Max intelligence. Best for complex Assistant tasks.",
-        "bedrock_gpt_oss_120b": "Open-weight OpenAI model. Strong reasoning at low cost.",
-        "bedrock_deepseek_v3_2": "Open-weight frontier model. Great value for Assistant tasks.",
-        "bedrock_qwen3_next_80b": "Sparse open-weight model. Fast and multilingual.",
-        "vertex_gemini_2_5_flash": "Fast multimodal model via Vertex",
-        "vertex_gemini_2_5_pro": "Advanced reasoning via Vertex"
-      },
-      "local": {
-        "qwen_qwen3_5_9b_q4_k_m": "Powerful hybrid model",
-        "qwen_qwen3_5_4b_q4_k_m": "Balanced Qwen3.5 for general use",
-        "qwen_qwen3_5_2b_q4_k_m": "Small Qwen3.5 for quick tasks",
-        "qwen_qwen3_8b_q4_k_m": "Latest Qwen3 with thinking mode support",
-        "qwen_qwen3_8b_q5_k_m": "Higher quality Qwen3 with thinking mode",
-        "qwen_qwen3_4b_q4_k_m": "Compact Qwen3 with reasoning capabilities",
-        "qwen_qwen3_1_7b_q8_0": "Small but capable Qwen3 model",
-        "qwen_qwen3_32b_q4_k_m": "Most powerful local Qwen3 with deep reasoning",
-        "qwen_qwen2_5_1_5b_instruct_q5_k_m": "Small model, good for basic tasks",
-        "qwen_qwen2_5_3b_instruct_q5_k_m": "Balanced model for general use",
-        "qwen_qwen2_5_7b_instruct_q4_k_m": "Large model with high quality (Q4_K_M)",
-        "qwen_qwen2_5_7b_instruct_q5_k_m": "Large model, high quality reasoning (Q5_K_M)",
-        "mistral_mistral_7b_instruct_v0_3_q4_k_m": "Fast and efficient instruction model",
-        "mistral_mistral_7b_instruct_v0_3_q5_k_m": "Higher quality instruction model",
-        "mistral_nemo_12b_instruct_q4_k_m": "Mistral's 12B model, strong multilingual performance",
-        "llama_llama_3_2_1b_instruct_q4_k_m": "Tiny model for edge devices",
-        "llama_llama_3_2_3b_instruct_q4_k_m": "Small but capable multilingual model",
-        "llama_llama_3_1_8b_instruct_q4_k_m": "Powerful model with great performance",
-        "openai_oss_gpt_oss_20b_mxfp4": "OpenAI's open-weight model for consumer hardware",
-        "gemma_gemma_3_4b_it_q4_k_m": "Google's open-weight model, great balance of speed and quality",
-        "gemma_gemma_4_31b_it_q4_k_m": "Google's largest Gemma 4, best quality",
-        "gemma_gemma_4_31b_it_qat_q4_0": "Google's official QAT build, smaller with quality preserved",
-        "gemma_gemma_4_26b_a4b_it_q4_k_m": "Google's MoE Gemma 4, fast with 4B active params",
-        "gemma_gemma_4_26b_a4b_it_qat_q4_0": "Google's official QAT MoE build, smaller with quality preserved",
-        "gemma_gemma_4_e4b_it_q4_k_m": "Google's latest multimodal, strong reasoning",
-        "gemma_gemma_4_e4b_it_qat_q4_0": "Google's official QAT build, strong reasoning, smaller size",
-        "gemma_gemma_4_e2b_it_q4_k_m": "Google's compact Gemma 4, fast and efficient",
-        "gemma_gemma_4_e2b_it_qat_q4_0": "Google's official compact QAT build, quality preserved",
-        "gemma_gemma_3_12b_it_q4_k_m": "Google's mid-range model, strong reasoning",
-        "gemma_gemma_3_1b_it_q4_k_m": "Ultra-fast Google model, best for short dictation cleanup",
-        "liquidai_lfm2_5_1_2b_instruct_q4_k_m": "Liquid AI's efficient on-device model, excellent instruction following",
-        "liquidai_lfm2_5_8b_a1b_q4_k_m": "Liquid AI's MoE, high quality with only 1.5B active params",
-        "liquidai_lfm2_2_6b_q4_k_m": "Balanced LFM2 for higher quality cleanup",
-        "liquidai_lfm2_5_350m_q8_0": "Ultra-light model for fast dictation cleanup",
-        "liquidai_lfm2_5_230m_q8_0": "Tiny model, instant cleanup on modest hardware"
-      }
-    },
-    "errors": {
-      "contextTooLarge": "This is too long for {{model}} to read on this computer. It needs about {{needed}} tokens of context, but only {{max}} fit in memory. Try a cloud model, or run the action on a shorter selection.",
-      "contextTooLargeGeneric": "This is too long for {{model}} to read on this computer. Try a cloud model, or run the action on a shorter selection.",
-      "localServerUnavailable": "{{model}} couldn't be started on this computer. Try again, or switch to a cloud model."
-    }
+    "noneAvailable": "No models available"
   },
   "sidebar": {
     "home": "Home",
@@ -859,11 +609,6 @@
       "minutesAgo": "{{count}}m",
       "hoursAgo": "{{count}}h",
       "daysAgo": "{{count}}d"
-    },
-    "editor": {
-      "stop": "Stop",
-      "transcribe": "Transcribe",
-      "participants": "Participants"
     },
     "upload": {
       "title": "Upload Audio",
@@ -918,27 +663,6 @@
     "empty": {
       "title": "No notes here yet",
       "emptyFolder": "No notes in this folder"
-    },
-    "actions": {
-      "builtin": {
-        "generateNotes": {
-          "name": "Generate Notes",
-          "description": "Clean up, structure, and enhance your notes"
-        },
-        "followUpEmail": {
-          "name": "Follow-up email",
-          "description": "Draft a follow-up email from your notes and transcript",
-          "cta": "Draft a follow-up email"
-        },
-        "detailedNotes": {
-          "name": "Detailed Notes",
-          "description": "Accurate, comprehensive meeting notes with decisions and action items"
-        }
-      }
-    },
-    "speaker": {
-      "unknown": "Unknown Speaker",
-      "label": "Speaker {{n}}"
     }
   },
   "dictionary": {
@@ -1008,21 +732,12 @@
   },
   "app": {
     "toasts": {
-      "hotkeyChanged": {
-        "title": "Hotkey changed",
-        "description": "\"{{original}}\" was unavailable. Using \"{{fallback}}\" instead. You can change this in Settings."
-      },
       "hotkeyUnavailable": {
         "title": "Hotkey unavailable",
         "description": "The selected hotkey could not be registered. Please choose a different one in settings."
       },
       "addedToDict": "Added {{words}} to your dictionary",
       "undo": "Undo",
-      "gpuFallback": {
-        "title": "GPU acceleration unavailable",
-        "description": "Whisper switched to CPU transcription.",
-        "retry": "Retry GPU"
-      },
       "cleanupFailed": {
         "title": "Cleanup failed",
         "description": "Original dictation pasted without AI cleanup."
@@ -1040,73 +755,7 @@
     "commandMenu": {
       "stopListening": "Stop listening",
       "startListening": "Start listening",
-      "hideForNow": "Hide for now",
-      "busyRecording": "Finish the current dictation first"
-    }
-  },
-  "agentMode": {
-    "chat": {
-      "errorPrefix": "Error",
-      "emptyResponse": "The model returned no response."
-    },
-    "input": {
-      "listening": "Listening...",
-      "transcribing": "Transcribing...",
-      "thinking": "Thinking...",
-      "typeMessage": "Type a message...",
-      "send": "Send",
-      "voiceDraftStreamingOnly": "Voice input isn't available with your transcription provider: it only supports live dictation. Choose another provider in Settings → Speech to Text."
-    },
-    "tools": {
-      "search_notesName": "Search notes",
-      "get_noteName": "Get note",
-      "create_noteName": "Create note",
-      "update_noteName": "Update note",
-      "list_foldersName": "List folders",
-      "copy_to_clipboardName": "Copy to clipboard",
-      "web_searchName": "Web search",
-      "get_calendar_eventsName": "Get calendar events",
-      "get_calendar_availabilityName": "Check calendar availability",
-      "get_snippetName": "Get snippet",
-      "update_dictionaryName": "Update dictionary",
-      "update_snippetsName": "Update snippets",
-      "search_notesStatus": "Searching notes...",
-      "web_searchStatus": "Searching the web...",
-      "copy_to_clipboardStatus": "Copying to clipboard...",
-      "get_calendar_eventsStatus": "Checking calendar...",
-      "get_calendar_availabilityStatus": "Checking availability...",
-      "get_snippetStatus": "Fetching snippet...",
-      "update_dictionaryStatus": "Updating dictionary...",
-      "update_snippetsStatus": "Updating snippets...",
-      "get_noteStatus": "Reading note...",
-      "create_noteStatus": "Creating note...",
-      "update_noteStatus": "Updating note...",
-      "copiedToClipboard": "Copied to your clipboard",
-      "openNote": "Open note",
-      "unknownTool": "Unknown tool: {{name}}",
-      "invalidArgs": "Invalid tool arguments for {{name}}"
-    }
-  },
-  "assistant": {
-    "panel": {
-      "selectionHint": "Select text to edit with",
-      "selectedContext": "Selected text added",
-      "removeSelectedContext": "Remove selected text",
-      "newConversation": "New conversation",
-      "copyToClipboard": "Copy to clipboard",
-      "suggestions": {
-        "summarizeNotes": "Summarize my recent notes",
-        "calendar": "What is on my calendar?",
-        "draft": "Help me draft something"
-      }
-    },
-    "toolActivity": {
-      "verbs": {
-        "invoking": "Invoking",
-        "calling": "Calling",
-        "using": "Using"
-      },
-      "toolFallback": "Tool"
+      "hideForNow": "Hide for now"
     }
   },
   "commandSearch": {
@@ -1140,12 +789,5 @@
     },
     "collapse": "Collapse transcript",
     "waitingForInput": "Say something..."
-  },
-  "transcript": {
-    "speaker": {
-      "you": "You",
-      "others": "Others"
-    },
-    "missingAudio": "[missing audio {{from}}-{{to}}]"
   }
 }

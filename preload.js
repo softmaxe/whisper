@@ -88,15 +88,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "cancel-dictation-preparation",
     (callback) => () => callback()
   ),
-  onCancelDictation: registerListener("cancel-dictation", (callback) => () => callback()),
   onDictationForceStopped: registerListener(
     "dictation-force-stopped",
     (callback) => (_event, payload) => callback(payload)
   ),
-  micWarmHoldChanged: (active) => ipcRenderer.send("mic-warm-hold-changed", active),
   dictationLifecycleStateChanged: (state) =>
     ipcRenderer.send("dictation-lifecycle-state-changed", state),
-  dictationAudioLevelChanged: (level) => ipcRenderer.send("dictation-audio-level-changed", level),
 
   // Database functions
   saveTranscription: (text, rawText, options) =>
@@ -114,7 +111,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getAudioPath: (id) => ipcRenderer.invoke("get-audio-path", id),
   showAudioInFolder: (id) => ipcRenderer.invoke("show-audio-in-folder", id),
   getAudioBuffer: (id) => ipcRenderer.invoke("get-audio-buffer", id),
-  deleteTranscriptionAudio: (id) => ipcRenderer.invoke("delete-transcription-audio", id),
   getAudioStorageUsage: () => ipcRenderer.invoke("get-audio-storage-usage"),
   deleteAllAudio: () => ipcRenderer.invoke("delete-all-audio"),
   syncRetentionSettings: (settings) => ipcRenderer.send("retention-settings-changed", settings),
@@ -134,11 +130,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   getSnippets: () => ipcRenderer.invoke("db-get-snippets"),
   setSnippets: (snippets) => ipcRenderer.invoke("db-set-snippets", snippets),
-  onSnippetsUpdated: (callback) => {
-    const listener = (_event, snippets) => callback?.(snippets);
-    ipcRenderer.on("snippets-updated", listener);
-    return () => ipcRenderer.removeListener("snippets-updated", listener);
-  },
   setAutoLearnEnabled: (enabled) => ipcRenderer.send("auto-learn-changed", enabled),
   onCorrectionsLearned: (callback) => {
     const listener = (_event, words) => callback?.(words);
@@ -159,11 +150,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     if (filePath) ipcRenderer.send("approve-audio-path", filePath);
     return filePath;
   },
-  deleteTempFile: (filePath) => ipcRenderer.invoke("delete-temp-file", filePath),
-  onUrlDownloadProgress: registerListener(
-    "url-download-progress",
-    (callback) => (_event, data) => callback(data)
-  ),
 
   onTranscriptionAdded: (callback) => {
     const listener = (_event, transcription) => callback?.(transcription);
@@ -197,12 +183,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Clipboard functions
   checkAccessibilityPermission: (silent) =>
     ipcRenderer.invoke("check-accessibility-permission", silent),
-  promptAccessibilityPermission: () => ipcRenderer.invoke("prompt-accessibility-permission"),
   readClipboard: () => ipcRenderer.invoke("read-clipboard"),
   writeClipboard: (text) => ipcRenderer.invoke("write-clipboard", text),
   checkPasteTools: () => ipcRenderer.invoke("check-paste-tools"),
 
-  relaunchApp: () => ipcRenderer.invoke("relaunch-app"),
   updateHotkey: (hotkey) => ipcRenderer.invoke("update-hotkey", hotkey),
   setHotkeyListeningMode: (enabled) => ipcRenderer.invoke("set-hotkey-listening-mode", enabled),
   getHotkeyModeInfo: (hotkey) => ipcRenderer.invoke("get-hotkey-mode-info", hotkey),
@@ -228,14 +212,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("resize-assistant-window-to-content", surfaceHeight),
   resizeDictationErrorWindowToContent: (surfaceHeight) =>
     ipcRenderer.invoke("resize-dictation-error-window-to-content", surfaceHeight),
-  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
-
-  // Update event listeners
-  onUpdateAvailable: registerListener("update-available"),
-  onUpdateNotAvailable: registerListener("update-not-available"),
-  onUpdateDownloaded: registerListener("update-downloaded"),
-  onUpdateDownloadProgress: registerListener("update-download-progress"),
-  onUpdateError: registerListener("update-error"),
 
   // Audio event listeners
   onCancelHotkeyPressed: registerListener("cancel-hotkey-pressed", (cb) => () => cb()),
@@ -267,11 +243,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getLogLevel: () => ipcRenderer.invoke("get-log-level"),
   log: (entry) => ipcRenderer.invoke("app-log", entry),
 
-  // Debug logging management
-  getDebugState: () => ipcRenderer.invoke("get-debug-state"),
-  setDebugLogging: (enabled) => ipcRenderer.invoke("set-debug-logging", enabled),
-  openLogsFolder: () => ipcRenderer.invoke("open-logs-folder"),
-
   // System settings helpers for microphone/audio permissions
   requestMicrophoneAccess: () => ipcRenderer.invoke("request-microphone-access"),
   checkMicrophoneAccess: () => ipcRenderer.invoke("check-microphone-access"),
@@ -286,13 +257,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   openSoundInputSettings: () => ipcRenderer.invoke("open-sound-input-settings"),
   openAccessibilitySettings: () => ipcRenderer.invoke("open-accessibility-settings"),
   openLoginItemsSettings: () => ipcRenderer.invoke("open-login-items-settings"),
-  toggleMediaPlayback: () => ipcRenderer.invoke("toggle-media-playback"),
   pauseMediaPlayback: () => ipcRenderer.invoke("pause-media-playback"),
   resumeMediaPlayback: () => ipcRenderer.invoke("resume-media-playback"),
-  onUploadTranscriptionProgress: registerListener(
-    "upload-transcription-progress",
-    (callback) => (_event, data) => callback(data)
-  ),
 
   // Globe key listener for hotkey capture (macOS only)
   onGlobeKeyPressed: (callback) => {
@@ -332,7 +298,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.on("accessibility-missing", listener);
     return () => ipcRenderer.removeListener("accessibility-missing", listener);
   },
-  checkAccessibilityTrusted: () => ipcRenderer.invoke("check-accessibility-trusted"),
 
   // Notify main process of activation mode changes
   notifyActivationModeChanged: (mode) => ipcRenderer.send("activation-mode-changed", mode),
@@ -374,6 +339,4 @@ contextBridge.exposeInMainWorld("electronAPI", {
     (callback) => (_event, payload) => callback(payload)
   ),
   onPreviewHide: registerListener("preview-hide", (callback) => () => callback()),
-  acquireRecordingLock: (pipeline) => ipcRenderer.invoke("acquire-recording-lock", pipeline),
-  releaseRecordingLock: (pipeline) => ipcRenderer.invoke("release-recording-lock", pipeline),
 });

@@ -113,31 +113,6 @@ const DEFAULT_TRANSCRIPTION_BASE = computeBaseUrl(
   DEFAULT_OPENAI_BASE
 );
 
-export const API_ENDPOINTS = {
-  OPENAI_BASE: DEFAULT_OPENAI_BASE,
-  OPENAI: buildApiUrl(DEFAULT_OPENAI_BASE, "/responses"),
-  OPENAI_MODELS: buildApiUrl(DEFAULT_OPENAI_BASE, "/models"),
-  ANTHROPIC: "https://api.anthropic.com/v1/messages",
-  GEMINI: "https://generativelanguage.googleapis.com/v1beta",
-  GROQ_BASE: "https://api.groq.com/openai/v1",
-  CORTI_MODELS_BASE: "https://ai.eu.corti.app/v1",
-  OPENROUTER_BASE: "https://openrouter.ai/api/v1",
-  TRANSCRIPTION_BASE: DEFAULT_TRANSCRIPTION_BASE,
-  TRANSCRIPTION: buildApiUrl(DEFAULT_TRANSCRIPTION_BASE, "/audio/transcriptions"),
-} as const;
-
-export const API_VERSIONS = {
-  ANTHROPIC: "2023-06-01",
-  GEMINI: "v1beta",
-} as const;
-
-// Model Configuration
-export const MODEL_CONSTRAINTS = {
-  MIN_FILE_SIZE: 1_000_000, // 1MB minimum for valid model files
-  MODEL_TEST_TIMEOUT: 5000, // 5 seconds for model validation
-  INFERENCE_TIMEOUT: 30000, // 30 seconds default (configurable)
-} as const;
-
 // List length above which pickers switch to a searchable variant.
 export const LIST_SEARCH_THRESHOLD = 12;
 
@@ -150,17 +125,6 @@ export const TOKEN_LIMITS = {
   TOKEN_MULTIPLIER: 2, // text.length * multiplier
   REASONING_CONTEXT_SIZE: 4096,
 } as const;
-
-// Cache Configuration
-export const CACHE_CONFIG = {
-  API_KEY_TTL: 3600000, // 1 hour in milliseconds
-  MODEL_CACHE_SIZE: 3, // Maximum models to keep in memory
-  AVAILABILITY_CHECK_TTL: 30000, // 30s for accessibility, FFmpeg, tool availability checks
-  PASTE_DELAY_MS: 50, // Delay before paste simulation to allow clipboard to settle
-} as const;
-
-// OpenWhispr Cloud API
-export const OPENWHISPR_API_URL = (env.VITE_OPENWHISPR_API_URL as string) || "";
 
 // Retry Configuration
 export const RETRY_CONFIG = {

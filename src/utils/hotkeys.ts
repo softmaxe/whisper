@@ -182,48 +182,7 @@ export function parseHotkey(hotkey: string): {
   return { modifiers, baseKey };
 }
 
-/**
- * Checks if a hotkey is a compound hotkey (has modifiers).
- *
- * @param hotkey - The hotkey string
- * @returns True if the hotkey includes modifiers
- */
-export function isCompoundHotkey(hotkey: string): boolean {
-  return hotkey?.includes("+") || false;
-}
-
 /** The default hotkey: the Globe key (Fn key on modern Macs). */
 export function getDefaultHotkey(): string {
   return "GLOBE";
-}
-
-/**
- * Validates if a hotkey string is in a valid format.
- * Valid formats include single keys and Electron accelerator strings.
- *
- * @param hotkey - The hotkey string to validate
- * @returns True if the hotkey format is valid
- */
-export function isValidHotkeyFormat(hotkey: string): boolean {
-  if (!hotkey || hotkey.trim() === "") {
-    return false;
-  }
-
-  if (isGlobeLikeHotkey(hotkey) || isMouseButtonHotkey(hotkey)) {
-    return true;
-  }
-
-  // Single character or word keys are valid
-  if (!hotkey.includes("+")) {
-    return true;
-  }
-
-  // Compound hotkey: must have at least one modifier and one base key
-  const parts = hotkey.split("+");
-  if (parts.length < 2) {
-    return false;
-  }
-
-  // Check that all parts are non-empty
-  return parts.every((part) => part.trim().length > 0);
 }

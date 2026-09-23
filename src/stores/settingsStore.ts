@@ -68,7 +68,6 @@ export interface SettingsState {
   updateCustomDictionary: (changes: { add?: string[]; remove?: string[] }) => void;
   applyCustomDictionaryFromExternal: (words: string[]) => void;
   setSnippets: (snippets: Snippet[]) => void;
-  applySnippetsFromExternal: (snippets: Snippet[]) => void;
 
   setUseCleanupModel: (value: boolean) => void;
   setCleanupModel: (model: string) => void;
@@ -382,12 +381,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
         "settings"
       );
     });
-  },
-
-  // For broadcasts from main process — DB is already authoritative, only update UI.
-  applySnippetsFromExternal: (snippets: Snippet[]) => {
-    persist("snippets", JSON.stringify(snippets));
-    set({ snippets });
   },
 
   setUseCleanupModel: createBooleanSetter("useCleanupModel"),

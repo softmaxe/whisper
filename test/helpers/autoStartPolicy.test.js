@@ -4,7 +4,6 @@ const assert = require("node:assert/strict");
 const {
   resolveAutoStartState,
   wasLaunchedHidden,
-  getRelaunchArgs,
 } = require("../../src/helpers/autoStartPolicy.js");
 
 test("an item awaiting approval reads as off, with the reason surfaced", () => {
@@ -31,14 +30,4 @@ test("a disabled macOS item is neither enabled nor awaiting approval", () => {
 test("macOS detects a login launch from wasOpenedAtLogin", () => {
   assert.equal(wasLaunchedHidden({ loginItemSettings: { wasOpenedAtLogin: true } }), true);
   assert.equal(wasLaunchedHidden({ loginItemSettings: { wasOpenedAtLogin: false } }), false);
-});
-
-test("a relaunch drops cold-start deep links", () => {
-  assert.deepEqual(
-    getRelaunchArgs({
-      argv: ["Whisper", "--flag", "openwhispr-selfhosted://auth"],
-      protocol: "openwhispr-selfhosted",
-    }),
-    ["--flag"]
-  );
 });

@@ -108,10 +108,8 @@ class AudioManager {
     this.micCaptureStatus = "inactive";
     this._micWarmedAt = 0;
     this._startInProgress = false;
-    this._micOpenReported = false;
     this.preparedMicCapture = new PreparedMicCapture({
       dispose: (prepared) => this._disposePrepared(prepared),
-      onActiveChange: () => this._syncMicOpenGate(),
     });
     const micSettings = getSettings();
     this._micDeviceKey = micDeviceKey(micSettings);
@@ -444,14 +442,6 @@ class AudioManager {
       attempt,
       this._getCaptureSession().observations.get(prepared.stream)
     );
-  }
-
-  // Tells the main process whether this renderer is preparing capture.
-  _syncMicOpenGate() {
-    const open = this.preparedMicCapture.active;
-    if (open === this._micOpenReported) return;
-    this._micOpenReported = open;
-    window.electronAPI?.micWarmHoldChanged?.(open);
   }
 
   _disposePrepared(prepared) {

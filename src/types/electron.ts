@@ -4,8 +4,6 @@ export interface RecordingRequestOptions {
 
 export type ChineseScriptPreference = "simplified" | "traditional" | "as-transcribed";
 
-export type InferenceMode = "openwhispr" | "providers" | "local" | "self-hosted" | "enterprise";
-
 export type TranscriptionStatus = "completed" | "failed" | "pending" | "discarded";
 
 export type TranscriptionErrorCode =
@@ -119,35 +117,6 @@ export interface NoteItem {
   left_team?: number;
 }
 
-// Immutable view of every local field that affects a note push. The main
-// process compares this atomically when the cloud response returns, so an
-// in-flight create/PATCH cannot settle a newer edit or a purged identity.
-export type NotePushSnapshot = Pick<
-  NoteItem,
-  | "client_note_id"
-  | "title"
-  | "content"
-  | "enhanced_content"
-  | "enhancement_prompt"
-  | "enhanced_at_content_hash"
-  | "note_type"
-  | "source_file"
-  | "audio_duration_seconds"
-  | "folder_id"
-  | "space_id"
-  | "transcript"
-  | "calendar_event_id"
-  | "participants"
-  | "diarization_enabled"
-  | "expected_speaker_count"
-  | "created_at"
-  | "updated_at"
-  | "sync_status"
-  | "deleted_at"
-  | "cloud_updated_at"
-  | "left_team"
->;
-
 export interface FolderItem {
   id: number;
   name: string;
@@ -164,20 +133,6 @@ export interface FolderItem {
   // retraction push (D6); cleared when the row settles.
   left_team?: number;
 }
-
-export type FolderPushSnapshot = Pick<
-  FolderItem,
-  | "client_folder_id"
-  | "name"
-  | "is_default"
-  | "sort_order"
-  | "space_id"
-  | "created_at"
-  | "updated_at"
-  | "sync_status"
-  | "deleted_at"
-  | "left_team"
->;
 
 /** A team assigned to a space, as mirrored from GET /api/me/spaces. */
 export interface SpaceTeamRef {
@@ -219,10 +174,6 @@ export interface SpaceItem {
 
 export type TeamRole = "admin" | "member";
 
-export interface AppVersionResult {
-  version: string;
-}
-
 export interface PasteToolsResult {
   platform: "darwin";
   available: boolean;
@@ -260,7 +211,6 @@ declare global {
         ) => void
       ) => () => void;
       onCancelDictationPreparation?: (callback: () => void) => () => void;
-      onCancelDictation?: (callback: () => void) => () => void;
       onCancelHotkeyPressed?: (callback: () => void) => () => void;
       registerCancelHotkey?: (
         key: string,
@@ -272,11 +222,9 @@ declare global {
       onDictationForceStopped?: (
         callback: (payload?: { reason?: "timeout" | "reset" | "manual" }) => void
       ) => () => void;
-      micWarmHoldChanged?: (active: boolean) => void;
       dictationLifecycleStateChanged: (
         state: "idle" | "preparing" | "recording" | "processing"
       ) => void;
-      dictationAudioLevelChanged?: (level: number) => void;
 
       // Database operations
       saveTranscription: (
@@ -312,7 +260,6 @@ declare global {
       getAudioPath: (id: number) => Promise<string | null>;
       showAudioInFolder: (id: number) => Promise<{ success: boolean }>;
       getAudioBuffer: (id: number) => Promise<ArrayBuffer | null>;
-      deleteTranscriptionAudio: (id: number) => Promise<{ success: boolean }>;
       getAudioStorageUsage: () => Promise<{ fileCount: number; totalBytes: number }>;
       deleteAllAudio: () => Promise<{ deleted: number }>;
       syncRetentionSettings?: (settings: {
@@ -353,9 +300,6 @@ declare global {
       setSnippets?: (
         snippets: Array<{ trigger: string; replacement: string }>
       ) => Promise<{ success: boolean }>;
-      onSnippetsUpdated?: (
-        callback: (snippets: Array<{ trigger: string; replacement: string }>) => void
-      ) => () => void;
       setAutoLearnEnabled?: (enabled: boolean) => void;
       onCorrectionsLearned?: (callback: (words: string[]) => void) => () => void;
       undoLearnedCorrections?: (words: string[]) => Promise<{ success: boolean }>;
@@ -370,16 +314,6 @@ declare global {
       getFileSize?: (filePath: string) => Promise<number>;
       getPathForFile: (file: File) => string;
 
-      deleteTempFile: (filePath: string) => Promise<{ success: boolean; error?: string }>;
-      onUrlDownloadProgress?: (
-        callback: (data: {
-          stage: "resolving" | "downloading" | "ready";
-          percent: number;
-          title?: string;
-          downloadId?: string;
-        }) => void
-      ) => () => void;
-
       // Database event listeners
       onTranscriptionAdded?: (callback: (item: TranscriptionItem) => void) => () => void;
       onTranscriptionUpdated?: (callback: (item: TranscriptionItem) => void) => () => void;
@@ -393,7 +327,6 @@ declare global {
 
       // Clipboard operations
       checkAccessibilityPermission: (silent?: boolean) => Promise<boolean>;
-      promptAccessibilityPermission: () => Promise<boolean>;
       readClipboard: () => Promise<string>;
       writeClipboard: (text: string) => Promise<{ success: boolean }>;
       checkPasteTools: () => Promise<PasteToolsResult>;
@@ -431,18 +364,6 @@ declare global {
         surfaceHeight: number
       ) => Promise<{ success: boolean; bounds?: Electron.Rectangle; message?: string }>;
 
-      // App management
-      relaunchApp: () => Promise<void>;
-
-      getAppVersion: () => Promise<AppVersionResult>;
-
-      // Update event listeners
-      onUpdateAvailable: (callback: (event: any, info: any) => void) => () => void;
-      onUpdateNotAvailable: (callback: (event: any, info: any) => void) => () => void;
-      onUpdateDownloaded: (callback: (event: any, info: any) => void) => () => void;
-      onUpdateDownloadProgress: (callback: (event: any, progressObj: any) => void) => () => void;
-      onUpdateError: (callback: (event: any, error: any) => void) => () => void;
-
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
       // Hotkey management
@@ -470,7 +391,6 @@ declare global {
       // Accessibility permission events (macOS)
       markMacAccessibilityFeaturesReady?: () => void;
       onAccessibilityMissing?: (callback: () => void) => () => void;
-      checkAccessibilityTrusted?: () => Promise<boolean>;
 
       getCleanupCustomKey?: () => Promise<string | null>;
       saveCleanupCustomKey?: (key: string) => Promise<void>;
@@ -494,18 +414,6 @@ declare global {
         scope?: string;
         source?: string;
       }) => Promise<void>;
-      getDebugState: () => Promise<{
-        enabled: boolean;
-        logPath: string | null;
-        logLevel: string;
-      }>;
-      setDebugLogging: (enabled: boolean) => Promise<{
-        success: boolean;
-        enabled?: boolean;
-        logPath?: string | null;
-        error?: string;
-      }>;
-      openLogsFolder: () => Promise<{ success: boolean; error?: string }>;
 
       // System settings helpers
       requestMicrophoneAccess?: () => Promise<{ granted: boolean }>;
@@ -521,7 +429,6 @@ declare global {
       openSoundInputSettings?: () => Promise<{ success: boolean; error?: string }>;
       openAccessibilitySettings?: () => Promise<{ success: boolean; error?: string }>;
       openLoginItemsSettings?: () => Promise<{ success: boolean; error?: string }>;
-      toggleMediaPlayback?: () => Promise<boolean>;
       pauseMediaPlayback?: () => Promise<boolean>;
       resumeMediaPlayback?: () => Promise<boolean>;
 
@@ -552,10 +459,6 @@ declare global {
       setAutoStartEnabled?: (enabled: boolean) => Promise<{ success: boolean; error?: string }>;
 
       cancelUploadTranscription?: (requestId: string) => Promise<{ success: boolean }>;
-
-      onUploadTranscriptionProgress?: (
-        callback: (data: { stage: string; chunksTotal: number; chunksCompleted: number }) => void
-      ) => () => void;
 
       // BYOK audio file transcription
       transcribeAudioFile?: (options: {
