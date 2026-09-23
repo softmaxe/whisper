@@ -34,20 +34,27 @@ const TRADITIONAL_CHINESE_VARIANT_RE =
 
 const VALID_PREFERENCES = new Set(["simplified", "traditional", "as-transcribed"]);
 
-let convertersPromise = null;
+let openccPromise = null;
+const converterPromises = new Map();
 
 // opencc-js ships ~1.2 MB of dictionaries. Import it on first conversion rather
 // than at module load, so the renderer bundle stays lean for everyone who never
-// dictates Chinese.
-function getConverters() {
-  if (!convertersPromise) {
-    convertersPromise = import("opencc-js").then((OpenCC) => ({
-      // twp includes Taiwan phrase variants (軟體) that plain tw misses.
-      toSimplified: OpenCC.Converter({ from: "twp", to: "cn" }),
-      toTraditional: OpenCC.Converter({ from: "cn", to: "twp" }),
-    }));
+// dictates Chinese. Build only the direction a conversion needs: the
+// Traditional converter alone takes ~50 ms, which a Simplified user's first
+// dictation would otherwise wait for.
+function getConverter(target) {
+  let converterPromise = converterPromises.get(target);
+  if (!converterPromise) {
+    openccPromise ??= import("opencc-js");
+    converterPromise = openccPromise.then((OpenCC) =>
+      target === "simplified"
+        ? // twp includes Taiwan phrase variants (軟體) that plain tw misses.
+          OpenCC.Converter({ from: "twp", to: "cn" })
+        : OpenCC.Converter({ from: "cn", to: "twp" })
+    );
+    converterPromises.set(target, converterPromise);
   }
-  return convertersPromise;
+  return converterPromise;
 }
 
 /**
@@ -141,8 +148,8 @@ export async function applyChineseScript(text, target) {
   if (!text || !target) return text || "";
   if (!HAN_RE.test(text)) return text;
 
-  const { toSimplified, toTraditional } = await getConverters();
-  return target === "simplified" ? toSimplified(text) : toTraditional(text);
+  const convert = await getConverter(target);
+  return convert(text);
 }
 
 /**
