@@ -59,3 +59,48 @@ test("the same correction appearing twice is only learned once", () => {
   const sinead = result.filter((w) => w.toLowerCase() === "sinead");
   assert.ok(sinead.length <= 1);
 });
+
+test("a Latin term replacing a misheard Chinese transliteration is learned as a phrase", () => {
+  assert.deepEqual(
+    extractCorrections("我们今天用克劳德扣的写代码。", "我们今天用Claude Code写代码。", []),
+    ["Claude Code"]
+  );
+});
+
+test("a short Chinese sentence dominated by the misheard term is not mistaken for a rewrite", () => {
+  assert.deepEqual(extractCorrections("克劳德扣的写代码", "Claude Code写代码", []), [
+    "Claude Code",
+  ]);
+  assert.deepEqual(extractCorrections("用爱爱写代码", "用AI写代码", []), ["AI"]);
+});
+
+test("a misheard Chinese name is learned without the surrounding sentence", () => {
+  assert.deepEqual(extractCorrections("明天和张三开会", "明天和章珊开会", []), ["章珊"]);
+});
+
+test("unspaced English words inside Chinese text are learned as the corrected term", () => {
+  assert.deepEqual(extractCorrections("我在用open whisper做听写", "我在用OpenWhispr做听写", []), [
+    "OpenWhispr",
+  ]);
+  assert.deepEqual(
+    extractCorrections("我们用 cloud code 写代码", "我们用 Claude code 写代码", []),
+    ["Claude"]
+  );
+});
+
+test("Chinese grammar fixes and everyday word swaps are content edits, not vocabulary", () => {
+  assert.deepEqual(extractCorrections("他说的很好", "他说得很好", []), []);
+  assert.deepEqual(extractCorrections("我觉得这个方案可以", "我认为这个方案可以", []), []);
+});
+
+test("a rewritten Chinese sentence is not mistaken for corrections", () => {
+  assert.deepEqual(extractCorrections("今天天气很好我们去公园", "明天下雨大家待在家里", []), []);
+});
+
+test("a correction inside a longer field is learned from the pasted region only", () => {
+  const prefix = "Earlier chat content that was already in the field before dictation. ";
+  assert.deepEqual(
+    extractCorrections("部署到乌班图服务器上", `${prefix}部署到Ubuntu服务器上`, []),
+    ["Ubuntu"]
+  );
+});
