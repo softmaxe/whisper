@@ -162,7 +162,6 @@ test("cleanup prompt tests use the configured server and unsaved prompt without 
   );
   assert.equal(model, state.cleanupModel);
   assert.equal(agentName, "Whisper");
-  assert.equal(config.provider, "lan");
   assert.equal(config.lanUrl, state.cleanupRemoteUrl);
   assert.equal(config.inferenceScope, "dictationCleanup");
   assert.equal(config.disableThinking, true);

@@ -3,17 +3,6 @@ const assert = require("node:assert/strict");
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
 const transcription = {
-  useLocalWhisper: false,
-  localTranscriptionProvider: "whisper",
-  whisperModel: "",
-  parakeetModel: "",
-  cohereModel: "",
-  isOpenWhisprCloud: false,
-  getApiKey: () => "fixture-key",
-  cloudTranscriptionProvider: "custom",
-  cloudTranscriptionBaseUrl: "http://127.0.0.1:8000/v1",
-  cloudTranscriptionModel: "fixture-asr",
-  transcriptionMode: "self-hosted",
   remoteTranscriptionUrl: "http://127.0.0.1:8000/v1",
   remoteTranscriptionModel: "fixture-asr",
   language: "en",
@@ -34,20 +23,13 @@ for (const enabled of [true, false]) {
     const vite = await createRendererServer(t, {
       cachePrefix: "whisper-upload-history-integration-test-",
       mockModules: {
-        "/lib/sessionRefresh": "export const withSessionRefresh = (fn) => fn();",
-        "/services/managedTranscription":
-          "export const getManagedTranscriptionResolution = () => null; export const isManagedTranscriptionActive = () => false;",
-        "./managedTranscription":
-          "export const getManagedTranscriptionResolution = () => null; export const isManagedTranscriptionActive = () => false;",
         "/stores/settingsStore": `export const getSettings = () => ({ dataRetentionEnabled: ${enabled} });`,
-        "/stores/policyStore":
-          'export const usePolicyStore = { getState: () => ({ status: "unmanaged" }) };',
       },
     });
     const requests = [];
     const saves = [];
     Object.assign(window.electronAPI, {
-      transcribeAudioFileByok: async (options) => {
+      transcribeAudioFile: async (options) => {
         requests.push(options);
         return { success: true, text: `Transcript ${requests.length}` };
       },
@@ -72,12 +54,9 @@ for (const enabled of [true, false]) {
       ["Transcript 1", "Transcript 2"]
     );
     for (const request of requests) {
-      assert.equal(request.transcriptionMode, "self-hosted");
       assert.equal(request.remoteTranscriptionUrl, transcription.remoteTranscriptionUrl);
       assert.equal(request.remoteTranscriptionModel, "fixture-asr");
-      assert.equal(request.apiKey, "fixture-key");
-      assert.equal(request.diarize, undefined);
-      assert.equal(request.timestamps, undefined);
+      assert.equal(request.language, "en");
     }
     if (enabled) {
       assert.deepEqual(saves, [

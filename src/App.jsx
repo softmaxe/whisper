@@ -1,4 +1,4 @@
-import React, { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { CopyRecoveryPanel } from "./components/dictation/CopyRecoveryPanel";
 import { LiquidCancelButton } from "./components/dictation/LiquidCancelButton";
@@ -9,11 +9,8 @@ import { VoiceModePanelCore } from "./components/dictation/VoiceModePanelCore";
 import { VoicePill } from "./components/dictation/VoicePill";
 import { useToast } from "./components/ui/useToast";
 import {
-  ASSISTANT_FOOTER_TRANSITION_TIMING,
   isVoicePillActivationKey,
   LIVE_TRANSCRIPT_ENTRANCE_TIMING,
-  resolveAgentModeActive,
-  resolveAssistantFooterPresentation,
   resolveListeningEntrancePresentation,
   resolveLiveTranscriptEntrancePresentation,
   resolvePillVisualSuppression,
@@ -24,34 +21,20 @@ import {
   resolveVoicePillInteraction,
   shouldActivateVoicePill,
   shouldOfferLiveTranscriptReopen,
-  shouldSuppressPillForAssistantActions,
   VOICE_PILL_FOOTPRINT,
 } from "./helpers/voicePillPresentation";
-import { useAssistantPanel } from "./hooks/useAssistantPanel";
 import { useAudioRecording } from "./hooks/useAudioRecording";
 import { useHotkey } from "./hooks/useHotkey";
-import { useLinuxPillInteractivity } from "./hooks/useLinuxPillInteractivity";
 import { useListeningEntrancePhase } from "./hooks/useListeningEntrancePhase";
 import { useLiveTranscriptPanel } from "./hooks/useLiveTranscriptPanel";
 import { useMainProcessNotifications } from "./hooks/useMainProcessNotifications";
 import { useMainWindowSizeOwner } from "./hooks/useMainWindowSizeOwner";
-import { useOnboardingAssistantDemo } from "./hooks/useOnboardingAssistantDemo";
-import { useTrayQuickActions } from "./hooks/useTrayQuickActions";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useWindowResizeCompensation } from "./hooks/useWindowResizeCompensation";
 import "./index.css";
-import { usePolicyStore } from "./stores/policyStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import { formatHotkeyListLabel } from "./utils/hotkeys";
 import { createMainWindowResizeCoordinator } from "./utils/mainWindowResizeCoordinator";
-
-// The agent panel brings in markdown rendering and chat tooling that plain
-// dictation never needs; load it the first time the panel opens.
-const AssistantPanel = React.lazy(() =>
-  import("./components/dictation/AssistantPanel").then((module) => ({
-    default: module.AssistantPanel,
-  }))
-);
 
 const formatPillHotkeyLabel = (value) =>
   formatHotkeyListLabel(value)
@@ -69,7 +52,6 @@ export default function App() {
   const [isHovered, setIsHovered] = useState(false);
   const [isCommandMenuOpen, setIsCommandMenuOpen] = useState(false);
   const buttonRef = useRef(null);
-  const pillPresenceRef = useRef(null);
   const { toast, dismiss, toastCount, dictationErrorActionCount, dismissByPresentation } =
     useToast();
   const { t } = useTranslation();
@@ -89,9 +71,6 @@ export default function App() {
   const [mainWindowHorizontalDirection, setMainWindowHorizontalDirection] = useState(null);
 
   const setWindowInteractivity = React.useCallback((shouldCapture) => {
-    // Linux has one pointer-poll owner; native mouseleave must not undo its
-    // drag/menu capture or strand the next hover in click-through mode.
-    if (window.electronAPI?.getPlatform?.() === "linux") return;
     window.electronAPI?.setMainWindowInteractivity?.(shouldCapture);
   }, []);
   const dismissDictationError = React.useCallback(
@@ -123,14 +102,6 @@ export default function App() {
 
   useWindowResizeCompensation();
   useMainProcessNotifications({ toast, dismiss, t });
-
-  const agentAllowed = false;
-  const meetingAllowed = false;
-  // Both allowances fail closed while the policy is loading or its fetch failed,
-  // so the tray's refusals need to tell those apart from a real org restriction.
-  const policyStatus = usePolicyStore((state) => state.status);
-  const policyResolved =
-    policyStatus === "idle" || policyStatus === "managed" || policyStatus === "unmanaged";
 
   const mainWindowResizeCoordinatorRef = useRef(null);
   useEffect(() => {
@@ -166,56 +137,25 @@ export default function App() {
 
   const onPanelOpened = React.useCallback(() => setIsHovered(false), []);
 
-  // The assistant panel and the recording pipeline reference each other
-  // (voice commands flow in, closing the panel cancels a recording), and the
-  // live transcript needs recording state as effect deps. These refs break the
-  // render-order cycle; both are read only at event time, never during render.
-  const recordingControlsRef = useRef({});
+  // The live transcript needs recording state as effect deps, and recording
+  // callbacks need the live transcript. This ref breaks the render-order
+  // cycle; it is read only at event time, never during render.
   const liveTranscriptApiRef = useRef(null);
 
-  // Demo sessions only exist while onboarding is incomplete — skip the IPC otherwise.
-  const publishOnboardingDemoEvent = useCallback((event) => {
-    if (localStorage.getItem("onboardingCompleted") === "true") return;
-    window.electronAPI?.publishOnboardingDemoEvent?.(event);
+  const handleDictationError = React.useCallback(() => {
+    liveTranscriptApiRef.current?.dismissForError();
   }, []);
-  const runOnboardingAssistantDemo = useOnboardingAssistantDemo(
-    useCallback(
-      (event) => publishOnboardingDemoEvent({ ...event, kind: "assistant" }),
-      [publishOnboardingDemoEvent]
-    )
-  );
-
-  const assistant = useAssistantPanel({
-    requestMainWindowSize,
-    dictationErrorActionCount,
-    recordingControlsRef,
-    onPanelOpened,
-  });
-  const {
-    noteDictationError,
-    openRef: assistantOpenRef,
-    openPanel: openAssistantPanel,
-  } = assistant;
-
-  const handleDictationError = React.useCallback(
-    (options = {}) => {
-      noteDictationError(options);
-      liveTranscriptApiRef.current?.dismissForError();
-    },
-    [noteDictationError]
-  );
 
   const handleDictationToggle = React.useCallback(() => {
     setIsCommandMenuOpen(false);
-    if (!assistantOpenRef.current && !liveTranscriptApiRef.current?.openRef.current) {
+    if (!liveTranscriptApiRef.current?.openRef.current) {
       setWindowInteractivity(false);
     }
-  }, [assistantOpenRef, setWindowInteractivity]);
+  }, [setWindowInteractivity]);
 
   const {
     isRecording,
     isProcessing,
-    isAssistantVoice,
     isPreparing,
     isStopping,
     micCaptureStatus,
@@ -225,43 +165,19 @@ export default function App() {
     getAudioLevel,
   } = useAudioRecording(toast, {
     onToggle: handleDictationToggle,
-    onDemoEvent: publishOnboardingDemoEvent,
-    onAssistantCommand: assistant.handleCommand,
-    onOnboardingAssistantCommand: runOnboardingAssistantDemo,
     dismissDictationError,
     onDictationError: handleDictationError,
-    getAssistantSelectionContext: assistant.getSelectionContext,
     onShowTranscript: (text, options) => {
-      // While the Agent panel is open the main window's transcript is suppressed
-      // (openPanel refuses under assistantOpenRef); the companion hosts it instead.
-      if (assistantOpenRef.current) {
-        window.electronAPI?.showAgentDictationFinalTranscript?.(text);
-        return;
-      }
       liveTranscriptApiRef.current?.showFinalText(text, options);
     },
-    assistantOpenRef,
   });
   const isVisuallyProcessing = isProcessing || isPreparing || isStopping;
 
-  useLayoutEffect(() => {
-    recordingControlsRef.current = {
-      isAssistantVoice,
-      isRecording,
-      isPreparing,
-      isProcessing,
-      cancelRecording,
-      cancelProcessing,
-    };
-  });
-
   const liveTranscript = useLiveTranscriptPanel({
     resizeToContent: resizeLiveTranscriptToContent,
-    assistantOpenRef,
     onWillOpen: onPanelOpened,
     isRecording,
     isProcessing,
-    isAssistantVoice,
   });
 
   useLayoutEffect(() => {
@@ -277,8 +193,7 @@ export default function App() {
   // Direction is part of the interaction's geometry, not a live decoration.
   // Hold the origin through processing and panel exit so every close animation
   // returns to the same side from which that voice session started.
-  const voiceDirectionLocked =
-    isRecording || isVisuallyProcessing || assistant.mounted || liveTranscript.mounted;
+  const voiceDirectionLocked = isRecording || isVisuallyProcessing || liveTranscript.mounted;
   useLayoutEffect(() => {
     if (voiceDirectionLocked) return;
     setVoiceHorizontalDirection(
@@ -286,46 +201,24 @@ export default function App() {
     );
   }, [mainWindowHorizontalDirection, panelStartPosition, voiceDirectionLocked]);
 
-  const { beginThinking: beginAssistantThinking } = assistant;
-  useEffect(() => {
-    if (isAssistantVoice && isProcessing && assistantOpenRef.current) {
-      beginAssistantThinking();
-    }
-  }, [isAssistantVoice, isProcessing, assistantOpenRef, beginAssistantThinking]);
-
-  // While the Agent panel is open, plain dictation renders on the
-  // opposite-edge companion pill — neither its recording nor its processing
-  // may animate the footer pill here. Ownership returns at close INTENT
-  // (assistant.closing), not at fade completion: beginClose hides the
-  // companion immediately, so waiting for the fade would leave a running
-  // recording with no visual owner for the fade duration.
-  const voicePillOwnsActivity = !assistant.open || assistant.closing || isAssistantVoice;
-  const voicePillIsRecording = isRecording && voicePillOwnsActivity;
-  const voicePillIsProcessing = (isProcessing || isStopping) && voicePillOwnsActivity;
   const voiceActivity = resolveVoiceActivityPresentation({
-    isRecording: voicePillIsRecording,
+    isRecording,
     // Mic warm-up is an acknowledged press, not work on a transcript. Keeping
     // isPreparing out of the thinking state leaves the press on the pulsing
     // "processing" mic-state pill instead of lighting the glow at hotkey time.
-    isProcessing: voicePillIsProcessing,
-    isAssistantVoice,
-    assistantThinking: assistant.thinking || assistant.busy,
+    isProcessing: isProcessing || isStopping,
   });
-  const listeningEntrancePhase = useListeningEntrancePhase(voicePillIsRecording, {
-    afterAssistantFooterHandoff: assistant.open,
-  });
+  const listeningEntrancePhase = useListeningEntrancePhase(isRecording);
   const listeningEntrance = resolveListeningEntrancePresentation({
-    isRecording: voicePillIsRecording,
+    isRecording,
     phase: listeningEntrancePhase,
   });
-  const isCompactPill = voicePillIsRecording
-    ? listeningEntrance.compactPill
-    : voiceActivity.compactPill;
+  const isCompactPill = isRecording ? listeningEntrance.compactPill : voiceActivity.compactPill;
   // BASE and RECORDING resolve to the same native box (windowConfig.js), so
   // recording edges never call setBounds — resizing the transparent window
   // always kicks a compositor frame. This flag still feeds the size ladder so
   // a menu opening over the compact pill resolves to EXPANDED geometry.
-  const windowFitsCompactPill = voicePillIsRecording || voiceActivity.compactPill;
+  const windowFitsCompactPill = isRecording || voiceActivity.compactPill;
 
   const { dictationErrorPillHandoffActive, panelReturnResizeActive } = useMainWindowSizeOwner({
     requestMainWindowSize,
@@ -334,9 +227,6 @@ export default function App() {
     isCommandMenuOpen,
     isCompactPill: windowFitsCompactPill,
     isDictationActive: isRecording || isVisuallyProcessing,
-    assistantOpen: assistant.open,
-    assistantMounted: assistant.mounted,
-    assistantOpenRef,
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptMounted: liveTranscript.mounted,
     liveTranscriptOpenRef: liveTranscript.openRef,
@@ -344,19 +234,12 @@ export default function App() {
   });
 
   useEffect(() => {
-    if (isCommandMenuOpen || toastCount > 0 || assistant.mounted || liveTranscript.mounted) {
+    if (isCommandMenuOpen || toastCount > 0 || liveTranscript.mounted) {
       setWindowInteractivity(true);
     } else if (!isHovered) {
       setWindowInteractivity(false);
     }
-  }, [
-    isCommandMenuOpen,
-    isHovered,
-    toastCount,
-    assistant.mounted,
-    liveTranscript.mounted,
-    setWindowInteractivity,
-  ]);
+  }, [isCommandMenuOpen, isHovered, toastCount, liveTranscript.mounted, setWindowInteractivity]);
 
   useEffect(() => {
     if (isRecording && dictationErrorActionCount > 0) {
@@ -386,38 +269,6 @@ export default function App() {
     return () => unsubscribe?.();
   }, [cancelRecording]);
 
-  // The Agent companion pill's cancel button routes here: only this renderer
-  // owns the recording, so it decides what "cancel" means at arrival time.
-  useEffect(() => {
-    const unsubscribe = window.electronAPI?.onCancelDictation?.(() => {
-      if (isRecording || isPreparing) cancelRecording();
-      else if (isProcessing) cancelProcessing();
-    });
-    return () => unsubscribe?.();
-  }, [isRecording, isPreparing, isProcessing, cancelRecording, cancelProcessing]);
-
-  // Every tray refusal surfaces the pill first, so the message is visible even
-  // when the pill was hidden. useTrayQuickActions decides when one is needed.
-  const refuse = useCallback(
-    (messageKey) => {
-      void window.electronAPI?.showDictationPanel?.();
-      toast({ title: t(messageKey), variant: "default" });
-    },
-    [toast, t]
-  );
-
-  const closeCommandMenu = useCallback(() => setIsCommandMenuOpen(false), []);
-
-  useTrayQuickActions({
-    agentAllowed,
-    policyResolved,
-    isRecording,
-    liveTranscriptMounted: liveTranscript.mounted,
-    closeCommandMenu,
-    openAssistantPanel,
-    refuse,
-  });
-
   // Auto-hide the floating icon when idle (setting enabled or dictation cycle completed)
   useEffect(() => {
     let hideTimeout;
@@ -428,7 +279,6 @@ export default function App() {
       !isVisuallyProcessing &&
       toastCount === 0 &&
       !dictationErrorPillHandoffActive &&
-      !assistant.mounted &&
       !liveTranscript.mounted &&
       !liveTranscript.copyFallback
     ) {
@@ -448,7 +298,6 @@ export default function App() {
     floatingIconAutoHide,
     toastCount,
     dictationErrorPillHandoffActive,
-    assistant.mounted,
     liveTranscript.mounted,
     liveTranscript.copyFallback,
   ]);
@@ -460,8 +309,6 @@ export default function App() {
   useEffect(() => {
     const handleKeyPress = (e) => {
       if (e.key === "Escape") {
-        // The assistant panel owns Escape while it is open.
-        if (assistant.mounted) return;
         if (isCommandMenuOpen) {
           setIsCommandMenuOpen(false);
         } else if (isRecording) {
@@ -482,7 +329,6 @@ export default function App() {
     return () => document.removeEventListener("keydown", handleKeyPress);
   }, [
     isCommandMenuOpen,
-    assistant.mounted,
     isRecording,
     isPreparing,
     isProcessing,
@@ -518,30 +364,15 @@ export default function App() {
   };
 
   const micTooltip = getMicTooltip();
-  const assistantVoiceState =
-    isRecording && isAssistantVoice
-      ? "listening"
-      : isProcessing && isAssistantVoice
-        ? "transcribing"
-        : "idle";
-  const anyPanelOpen = assistant.open || liveTranscript.open;
-  const anyPanelMounted = assistant.mounted || liveTranscript.mounted;
+  const panelOpen = liveTranscript.open;
+  const panelMounted = liveTranscript.mounted;
   const canReopenLiveTranscript =
     shouldOfferLiveTranscriptReopen({
       manuallyCollapsed: liveTranscript.manuallyCollapsed,
       isRecording,
       isProcessing,
-      isAssistantVoice,
-    }) && !anyPanelMounted;
-  const agentModeActive = resolveAgentModeActive({
-    isAssistantVoice,
-    isRecording,
-    isProcessing: isVisuallyProcessing,
-    assistantPanelMounted: assistant.mounted,
-  });
-  const assistantFooter = resolveAssistantFooterPresentation(assistant.footerPhase);
+    }) && !panelMounted;
   const voicePillInteraction = resolveVoicePillInteraction({
-    assistantMounted: assistant.mounted,
     liveTranscriptMounted: liveTranscript.mounted,
     isRecording,
     isProcessing,
@@ -572,18 +403,14 @@ export default function App() {
         hasDragged,
         liveTranscriptMounted: liveTranscript.mounted,
         isProcessing: micState === "processing",
-        isAgentThinking: voiceActivity.isAgentThinking,
       })
     ) {
       setIsCommandMenuOpen(false);
-      toggleListening({ voiceAgentRequested: assistant.mounted });
+      toggleListening();
     }
   };
-  // Prefer a currently open mode over a sibling finishing its exit. The core
-  // itself never unmounts; only these inner sections change ownership.
+  // The core itself never unmounts; only its inner sections change ownership.
   const activeVoicePanel = resolveVoicePanelCorePresentation({
-    assistantOpen: assistant.open,
-    assistantMounted: assistant.mounted,
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptMounted: liveTranscript.mounted,
   });
@@ -592,21 +419,14 @@ export default function App() {
     liveTranscript.entrancePhase
   );
   const activeVoicePanelLabel =
-    activeVoicePanelMode === "assistant"
-      ? t("settingsPage.agentConfig.title")
-      : activeVoicePanelMode === "live-transcript"
-        ? t("transcriptionPreview.label")
-        : undefined;
+    activeVoicePanelMode === "live-transcript" ? t("transcriptionPreview.label") : undefined;
   const commonPillState =
     micState === "unavailable"
       ? "unavailable"
-      : listeningEntrance.activeState ||
-        voiceActivity.activeState ||
-        (assistant.open ? (isHovered ? "hover" : "idle") : micState);
+      : listeningEntrance.activeState || voiceActivity.activeState || micState;
   const voicePillDock = resolveVoicePillDock({
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptEntrancePhase: liveTranscript.entrancePhase,
-    assistantOpen: assistant.open,
     panelStartPosition,
     horizontalDirection: voiceHorizontalDirection,
   });
@@ -616,37 +436,12 @@ export default function App() {
       : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
   const dictationErrorSuppressesPill =
     dictationErrorActionCount > 0 || dictationErrorPillHandoffActive;
-  // Keep one pill DOM node alive while final Agent actions own the footer. On
-  // close it can fade and travel from the panel dock instead of mounting at
-  // the resting dock halfway through the surface contraction.
-  const pillHasLiveActivity = voicePillIsRecording || voicePillIsProcessing;
-  const assistantActionsSuppressPill = shouldSuppressPillForAssistantActions({
-    assistantOpen: assistant.open,
-    footerPillVisible: assistantFooter.pillVisible,
-    assistantClosing: assistant.closing,
-    hasLiveActivity: pillHasLiveActivity,
-  });
-  // assistant.closing folds the pill into the panel's own exit: it fades with
-  // the closing content, stays hidden through the surface contraction, the
-  // travel, and the masked window shrink (panelReturnResizeActive picks up at
-  // unmount), and materializes once at its settled dock — one beat, not a
-  // condense-then-blink. Live activity opts out of that fold: the pill is the
-  // only owner left once beginClose hides the companion.
   const pillVisuallySuppressed =
     Boolean(liveTranscript.copyFallback) ||
     resolvePillVisualSuppression({
       dictationErrorSuppressed: dictationErrorSuppressesPill,
-      assistantActionsSuppressed: assistantActionsSuppressPill,
-      assistantClosing: assistant.closing,
       panelReturnResizeActive,
-      hasLiveActivity: pillHasLiveActivity,
     });
-
-  useLinuxPillInteractivity({
-    pillRef: pillPresenceRef,
-    captureWindow: isCommandMenuOpen || toastCount > 0 || anyPanelMounted || isDragging,
-    pillInteractive: pillIsInteractive && !pillVisuallySuppressed,
-  });
 
   return (
     <div className="dictation-window">
@@ -659,18 +454,10 @@ export default function App() {
           "--voice-pill-travel-duration": `${voicePillTravelDuration}ms`,
         }}
         data-dictation-error-suppressed={dictationErrorSuppressesPill || undefined}
-        data-assistant-actions-suppressed={assistantActionsSuppressPill || undefined}
         aria-hidden={pillVisuallySuppressed || undefined}
       >
         <div
-          ref={pillPresenceRef}
-          className="assistant-pill-presence relative flex items-center"
-          data-assistant-footer-phase={assistant.open ? assistant.footerPhase : undefined}
-          data-horizontal-direction={voiceHorizontalDirection}
-          style={{
-            "--assistant-pill-retreat-duration": `${ASSISTANT_FOOTER_TRANSITION_TIMING.pillRetreatMs}ms`,
-            "--assistant-pill-entrance-duration": `${ASSISTANT_FOOTER_TRANSITION_TIMING.pillEntranceMs}ms`,
-          }}
+          className="relative flex items-center"
           onMouseEnter={() => {
             if (!pillIsInteractive) return;
             setIsHovered(true);
@@ -679,29 +466,26 @@ export default function App() {
           onMouseLeave={() => {
             setIsHovered(false);
             if (!pillIsInteractive) return;
-            if (!isCommandMenuOpen && !assistant.mounted) {
+            if (!isCommandMenuOpen) {
               setWindowInteractivity(false);
             }
           }}
         >
           <PillTooltip
             content={canReopenLiveTranscript ? t("transcriptionPreview.label") : micTooltip}
-            disabled={anyPanelMounted}
+            disabled={panelMounted}
             align={panelStartPosition === "center" ? "center" : voiceHorizontalDirection}
           >
             <VoicePill
               ref={buttonRef}
-              variant={anyPanelOpen ? "panel" : "floating"}
+              variant={panelOpen ? "panel" : "floating"}
               state={commonPillState}
-              expanded={!anyPanelOpen && isCompactPill}
-              collapseToLogo={
-                listeningEntrance.collapseToLogo || assistantFooter.collapsePillToLogo
-              }
+              expanded={!panelOpen && isCompactPill}
+              collapseToLogo={listeningEntrance.collapseToLogo}
               waveformVisible={listeningEntrance.waveformVisible}
-              waveformOnlyWhileRecording={anyPanelMounted}
+              waveformOnlyWhileRecording={panelMounted}
               integratedWithPanel={liveTranscript.open}
               liquidFused={cancelSkinActive}
-              agentMode={agentModeActive}
               showExpandChevron={canReopenLiveTranscript && isHovered}
               getAudioLevel={getAudioLevel}
               isDragging={isDragging}
@@ -709,16 +493,12 @@ export default function App() {
               role={pillIsInteractive ? "button" : "status"}
               tabIndex={pillIsInteractive ? 0 : undefined}
               aria-label={
-                canReopenLiveTranscript
+                canReopenLiveTranscript || liveTranscript.mounted
                   ? t("transcriptionPreview.label")
-                  : assistant.mounted
-                    ? t("settingsPage.agentConfig.title")
-                    : liveTranscript.mounted
-                      ? t("transcriptionPreview.label")
-                      : micTooltip
+                  : micTooltip
               }
               onMouseDown={(e) => {
-                if (anyPanelMounted) {
+                if (panelMounted) {
                   setHasDragged(false);
                   return;
                 }
@@ -728,7 +508,7 @@ export default function App() {
                 handleMouseDown(e);
               }}
               onMouseMove={(e) => {
-                if (anyPanelMounted) return;
+                if (panelMounted) return;
                 if (dragStartPos && !hasDragged) {
                   const distance = Math.sqrt(
                     Math.pow(e.clientX - dragStartPos.x, 2) +
@@ -741,7 +521,7 @@ export default function App() {
                 }
               }}
               onMouseUp={(e) => {
-                if (anyPanelMounted) return;
+                if (panelMounted) return;
                 handleMouseUp(e);
                 setDragStartPos(null);
               }}
@@ -755,7 +535,7 @@ export default function App() {
                 activateVoicePill();
               }}
               onContextMenu={(e) => {
-                if (anyPanelMounted) return;
+                if (panelMounted) return;
                 e.preventDefault();
                 if (!hasDragged) {
                   setWindowInteractivity(true);
@@ -779,24 +559,14 @@ export default function App() {
             }}
             onFusedSkinChange={setCancelSkinActive}
           />
-          {!anyPanelMounted && isCommandMenuOpen && (
+          {!panelMounted && isCommandMenuOpen && (
             <PillCommandMenu
               buttonRef={buttonRef}
               isRecording={isRecording}
-              agentAllowed={agentAllowed}
-              meetingAllowed={meetingAllowed}
               isHovered={isHovered}
               setWindowInteractivity={setWindowInteractivity}
               onToggleListening={() => {
                 toggleListening();
-              }}
-              onAskAssistant={() => {
-                setIsCommandMenuOpen(false);
-                void openAssistantPanel();
-              }}
-              onStartMeeting={() => {
-                setIsCommandMenuOpen(false);
-                void window.electronAPI?.startManualMeeting?.();
               }}
               onHide={() => {
                 setIsCommandMenuOpen(false);
@@ -812,7 +582,6 @@ export default function App() {
       <VoiceModePanelCore
         mode={liveTranscript.copyFallback ? null : activeVoicePanelMode}
         open={!liveTranscript.copyFallback && activeVoicePanel.open}
-        closing={activeVoicePanelMode === "assistant" && assistant.closing}
         stage={
           activeVoicePanelMode === "live-transcript" ? liveTranscriptEntrance.coreStage : "content"
         }
@@ -822,38 +591,13 @@ export default function App() {
           activeVoicePanelMode === "live-transcript" ? liveTranscript.measurementText : null
         }
         onPreferredHeightChange={liveTranscript.requestHeight}
-        onClosingFadeComplete={assistant.completeContentFade}
       >
-        {activeVoicePanelMode === "assistant" && assistant.mounted && (
-          <Suspense fallback={null}>
-            <AssistantPanel
-              pendingCommand={assistant.pendingCommand}
-              onCommandConsumed={assistant.handleCommandConsumed}
-              onCommandDiscarded={assistant.handleCommandDiscarded}
-              onCommandSettled={assistant.handleCommandSettled}
-              initialConversationId={assistant.conversationId}
-              onConversationIdChange={assistant.setConversationId}
-              voiceState={assistantVoiceState}
-              thinking={assistant.thinking && assistant.open}
-              open={assistant.open}
-              footerPhase={assistant.footerPhase}
-              horizontalDirection={voiceHorizontalDirection}
-              onClose={assistant.handleClose}
-              onBusyChange={assistant.setBusy}
-              onResponseReadyChange={assistant.setResponseReady}
-              onResponseContent={assistant.handleResponseContent}
-              onConversationReset={assistant.handleConversationReset}
-              onSelectionContextChange={assistant.handleSelectionContextChange}
-            />
-          </Suspense>
-        )}
-
-        {activeVoicePanelMode !== "assistant" && !liveTranscript.copyFallback && (
+        {!liveTranscript.copyFallback && (
           <LiveTranscriptPanel
             text={liveTranscript.mounted ? liveTranscript.text : ""}
             measurementText={liveTranscript.mounted ? liveTranscript.measurementText : ""}
             phase={liveTranscript.phase}
-            processing={liveTranscript.mounted && isProcessing && !isAssistantVoice}
+            processing={liveTranscript.mounted && isProcessing}
             controlsVisible={liveTranscript.mounted && liveTranscriptEntrance.controlsVisible}
             contentVisible={liveTranscript.mounted && liveTranscriptEntrance.contentVisible}
             onCollapse={() => liveTranscript.close({ suppress: true })}

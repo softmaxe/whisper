@@ -1,11 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { getCachedPlatform } from "../utils/platform";
 import { PanelLeftClose, Search } from "./icons";
 import { cn } from "./lib/utils";
-import WindowControls from "./WindowControls";
-
-const platform = getCachedPlatform();
 
 // Controls inside the drag region must opt out or the click starts a window drag.
 const noDragStyle = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
@@ -40,7 +36,7 @@ export default function ControlPanelTopBar({
   const { t } = useTranslation();
   // With the sidebar out of the way the container's start edge sits under the
   // macOS traffic lights, so the leading controls shift past them.
-  const clearTrafficLights = platform === "darwin" && (sidebarCollapsed || isSidePanelLayout);
+  const clearTrafficLights = sidebarCollapsed || isSidePanelLayout;
 
   return (
     <header
@@ -93,18 +89,12 @@ export default function ControlPanelTopBar({
             dir="ltr"
             className="shrink-0 rounded-full bg-foreground/6 px-1.5 py-px font-sans text-[10px] font-medium text-muted-foreground/70 dark:bg-white/8"
           >
-            {platform === "darwin" ? "⌘ + K" : "Ctrl + K"}
+            ⌘ + K
           </kbd>
         </button>
       )}
 
-      <div className="col-start-3 flex items-center gap-2">
-        {platform !== "darwin" && (
-          <div data-no-window-drag="" style={noDragStyle} className="ms-auto">
-            <WindowControls />
-          </div>
-        )}
-      </div>
+      <div className="col-start-3 flex items-center gap-2" />
     </header>
   );
 }

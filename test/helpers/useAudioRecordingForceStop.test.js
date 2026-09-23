@@ -11,9 +11,6 @@ const {
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export default class FakeAudioManager {
   constructor() {
-    this.voiceAgentRequested = false;
-    this.translationRequested = false;
-    this.sttConfig = {};
     globalThis.__forceStopAudioManager = this;
   }
   getState() {
@@ -22,9 +19,7 @@ export default class FakeAudioManager {
   setCallbacks(callbacks) {
     this.callbacks = callbacks;
   }
-  setVoiceAgentRequested() {}
-  setAssistantSelectionContext() {}
-  setTranslationRequested() {}
+  resetRecordingRequest() {}
   startRecording() {
     return Promise.resolve(true);
   }
@@ -37,9 +32,6 @@ export default class FakeAudioManager {
   }
   saveTranscription() {
     return Promise.resolve(true);
-  }
-  shouldUseStreaming() {
-    return false;
   }
   cleanup() {}
 }
@@ -118,7 +110,6 @@ async function mountHarness(t, { settings, writeClipboard } = {}) {
     snippets: [],
     useLocalWhisper: false,
     pauseMediaOnDictation: false,
-    voiceAgentScreenContext: false,
     ...settings,
   };
   globalThis.__forceStopPastes = [];

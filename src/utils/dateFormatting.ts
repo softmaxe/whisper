@@ -1,16 +1,3 @@
-// Calendar events store all-day starts as date-only `YYYY-MM-DD` (Google's
-// `start.date`). The ECMAScript parser reads that form as UTC midnight, which
-// is still the previous local calendar day west of UTC, so date-only values
-// must be parsed as local dates.
-export function parseEventDate(value: string): Date | null {
-  if (typeof value !== "string" || !value) return null;
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  const parsed = dateOnly
-    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
-    : new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
 export function normalizeDbDate(dateStr: string): Date {
   if (typeof dateStr !== "string" || !dateStr.trim()) return new Date(NaN);
   const trimmed = dateStr.trim();
@@ -24,18 +11,6 @@ export function formatShortDate(dateStr: string, locale?: string): string {
   const date = normalizeDbDate(dateStr);
   if (Number.isNaN(date.getTime())) return "";
   return date.toLocaleDateString(locale, { month: "short", day: "numeric" });
-}
-
-export function formatNoteDate(dateStr: string, locale?: string): string {
-  const date = normalizeDbDate(dateStr);
-  if (Number.isNaN(date.getTime())) return "";
-  const datePart = date.toLocaleDateString(locale, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  const timePart = date.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
-  return `${datePart} \u00b7 ${timePart}`;
 }
 
 export function formatRelativeTime(

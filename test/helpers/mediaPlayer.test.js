@@ -7,8 +7,8 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 
 const modulePath = require.resolve("../../src/helpers/mediaPlayer");
-// mediaPlayer kills timed-out helpers through this shared utility, which
-// spawns taskkill on Windows — so it has to re-bind to each test's stub too.
+// mediaPlayer kills timed-out helpers through this shared utility, so it has to
+// re-bind to each test's stub too.
 const processUtilPath = require.resolve("../../src/utils/process");
 const originalLoad = Module._load;
 const originalPlatform = process.platform;
@@ -22,8 +22,7 @@ test.afterEach(() => {
 });
 
 // A child whose pipes only close when the test says so, so a helper that never
-// finishes can be observed the way the reporter's stuck PowerShell behaved.
-// Records what the timeout branch does to it (kill / destroy).
+// finishes can be observed. Records what the timeout branch does to it.
 function createFakeChild() {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
@@ -36,8 +35,7 @@ function createFakeChild() {
   child.stderr.destroy = () => {
     child.stderrDestroyed = true;
   };
-  // killProcess skips a child that has already exited, and needs a pid to
-  // hand to taskkill.
+  // killProcess skips a child that has already exited.
   child.exitCode = null;
   child.pid = 4242;
   child.killSignals = [];
@@ -123,18 +121,14 @@ function loadMediaPlayer(platform, { existingPaths = () => false, warnThrows = f
     if (builtin === "fs") {
       // Binary resolution hits the real filesystem; pin it so the host's
       // downloaded binaries can't change which fallback runs. Only existsSync
-      // is stubbed, which covers nircmd and the macOS mediaremote adapter;
-      // resolvers that also call accessSync (linux-fast-paste,
-      // macos-media-remote) still see the real filesystem and resolve null.
+      // is stubbed, which covers the mediaremote adapter; macos-media-remote
+      // also calls accessSync and still sees the real filesystem.
       return { ...fs, existsSync: (p) => existingPaths(String(p)) };
     }
     return originalLoad.call(this, request, parent, isMain);
   };
   return { mediaPlayer: require(modulePath), calls, logs };
 }
-
-// Lets any pending continuation run, for assertions that something did *not*
-// happen and so have no call to wait for.
 
 // Awaits until the module has spawned call #index. The chain between one
 // child's close and the next spawn is microtask-only, so a single immediate
@@ -147,35 +141,9 @@ async function waitForCall(calls, index) {
   return calls[index];
 }
 
-// Dropping our own read ends is what actually lets the deadline resolve: a
-// descendant holding the helper's inherited pipes keeps "close" from firing, so
-// without the destroy we leak a stuck pair per timed-out dictation. Only the
-// media-key path spawns such a descendant, through Add-Type -TypeDefinition and
-// its csc.exe; the GSMTC scripts use Add-Type -AssemblyName and spawn nothing.
-
-// The deadline can arrive after the helper has already done its job and
-// exited, with only its pipes held open by a descendant — the shape behind
-// #2073. Its exit code and the output we buffered are the real result;
-// discarding them sends the pause into the media-key fallback, which toggles
-// playback back ON mid-dictation and then leaves it paused afterwards.
-
-// spawnSync capped output at 1 MB and killed anything past it. Without a
-// replacement cap a runaway helper buffers in the main process until its
-// deadline, and a large enough payload makes the settle path throw after it
-// has marked itself settled — stalling the serialized queue for good.
-
-// Teardown and logging at the deadline are best effort, but the deadline must
-// still settle: an unsettled promise sits at the head of the serial queue and
-// kills every later pause and resume for the rest of the session.
-
-// A quick tap stops the recording before the pause has decided which apps it
-// paused. With synchronous spawns that ordering was free; with async ones the
-// resume must queue behind the pause or media is left paused (#2073).
-
-// macOS never blocked the main thread, but it was already async and therefore
-// already raced: _pauseMacOS only sets _didPause after two perl spawns, so a
-// resume arriving in that window saw _didPause false, returned early, and left
-// media paused until the next dictation ended.
+// _pauseMacOS only sets _didPause after two perl spawns, so a resume arriving
+// in that window must queue behind the pause rather than return early and leave
+// media paused until the next dictation ended (#2073).
 const MAC_ADAPTER_PATHS = (p) =>
   p === "/usr/bin/perl" ||
   p.endsWith("mediaremote-adapter.pl") ||
@@ -207,6 +175,3 @@ test("darwin: resume waits for an in-flight pause instead of no-oping on _didPau
   assert.equal(await resuming, true);
   assert.equal(mediaPlayer._didPause, false);
 });
-
-// Linux has the same hazard: dbus-send and playerctl ran through spawnSync on
-// the same main thread (#2073).

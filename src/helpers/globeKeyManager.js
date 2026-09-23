@@ -24,7 +24,6 @@ class GlobeKeyManager extends EventEmitter {
   constructor({ preferenceStatePath = null } = {}) {
     super();
     this.process = null;
-    this.isSupported = process.platform === "darwin";
     this.hasReportedError = false;
     this._isStopping = false;
     this._restartCount = 0;
@@ -91,7 +90,7 @@ class GlobeKeyManager extends EventEmitter {
   }
 
   restoreLeftoverSystemPreference() {
-    if (!this.isSupported || !this.preferenceStatePath) {
+    if (!this.preferenceStatePath) {
       return Promise.resolve();
     }
     if (!fs.existsSync(this.preferenceStatePath)) {
@@ -185,10 +184,6 @@ class GlobeKeyManager extends EventEmitter {
   }
 
   start() {
-    if (!this.isSupported) {
-      debugLogger.info("[GlobeKeyManager] Skipped — not macOS");
-      return;
-    }
     if (this._preferenceRecoveryBlocked) {
       this.reportError(
         new Error("Globe listener blocked because preference recovery could not be terminated")

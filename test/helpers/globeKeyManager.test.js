@@ -204,15 +204,11 @@ test("an unconfirmed recovery termination blocks the long-lived listener", async
   }
 });
 
-test("leftover preference recovery is skipped without a marker or off macOS", async () => {
+test("leftover preference recovery is skipped without a marker", async () => {
   const { GlobeKeyManager, spawnCalls } = loadManager();
   const manager = new GlobeKeyManager();
 
   await manager.restoreLeftoverSystemPreference();
-  setPlatform("win32");
-  await new GlobeKeyManager({
-    preferenceStatePath: "/tmp/state.json",
-  }).restoreLeftoverSystemPreference();
 
   assert.equal(spawnCalls.length, 0);
 
@@ -340,14 +336,4 @@ test("no state path means no state argument", () => {
   manager.stop();
 
   assert.deepEqual(spawnCalls[0].args, ["--suppress-system-globe-action"]);
-});
-
-test("the listener is not started off macOS", () => {
-  const { GlobeKeyManager, spawnCalls } = loadManager();
-  setPlatform("win32");
-  const manager = new GlobeKeyManager({ preferenceStatePath: "/tmp/state.json" });
-
-  manager.start();
-
-  assert.equal(spawnCalls.length, 0);
 });

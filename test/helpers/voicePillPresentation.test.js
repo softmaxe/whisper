@@ -68,7 +68,6 @@ test("the speaking pill resolves right-origin modes onto one interpolable dock s
     resolveVoicePillDock({
       liveTranscriptOpen: true,
       liveTranscriptEntrancePhase: "horizontal",
-      assistantOpen: false,
       panelStartPosition: "bottom-right",
     }),
     "live-transcript-bottom-left"
@@ -77,19 +76,9 @@ test("the speaking pill resolves right-origin modes onto one interpolable dock s
     resolveVoicePillDock({
       liveTranscriptOpen: true,
       liveTranscriptEntrancePhase: "encapsulate",
-      assistantOpen: false,
       panelStartPosition: "bottom-right",
     }),
     "live-transcript-encapsulated-bottom-right"
-  );
-  assert.equal(
-    resolveVoicePillDock({
-      liveTranscriptOpen: false,
-      liveTranscriptEntrancePhase: "idle",
-      assistantOpen: true,
-      panelStartPosition: "bottom-right",
-    }),
-    "assistant-bottom-right"
   );
 });
 
@@ -100,7 +89,6 @@ test("a left-origin session keeps the speaking pill left while surfaces grow rig
     resolveVoicePillDock({
       liveTranscriptOpen: true,
       liveTranscriptEntrancePhase: "encapsulate",
-      assistantOpen: false,
       panelStartPosition: "bottom-left",
     }),
     "live-transcript-encapsulated-bottom-left"
@@ -110,21 +98,11 @@ test("a left-origin session keeps the speaking pill left while surfaces grow rig
       resolveVoicePillDock({
         liveTranscriptOpen: true,
         liveTranscriptEntrancePhase,
-        assistantOpen: false,
         panelStartPosition: "bottom-left",
       }),
       "live-transcript-bottom-left"
     );
   }
-  assert.equal(
-    resolveVoicePillDock({
-      liveTranscriptOpen: false,
-      liveTranscriptEntrancePhase: "idle",
-      assistantOpen: true,
-      panelStartPosition: "bottom-left",
-    }),
-    "assistant-bottom-left"
-  );
 });
 
 test("the idle pill keeps its configured resting dock", async () => {
@@ -134,7 +112,6 @@ test("the idle pill keeps its configured resting dock", async () => {
     resolveVoicePillDock({
       liveTranscriptOpen: false,
       liveTranscriptEntrancePhase: "idle",
-      assistantOpen: false,
       panelStartPosition: "center",
     }),
     "center"
@@ -146,7 +123,6 @@ test("Live Transcript restores stop and cancel interactions", async () => {
 
   assert.deepEqual(
     resolveVoicePillInteraction({
-      assistantMounted: false,
       liveTranscriptMounted: true,
       isRecording: true,
       isProcessing: false,
@@ -155,7 +131,6 @@ test("Live Transcript restores stop and cancel interactions", async () => {
   );
   assert.deepEqual(
     resolveVoicePillInteraction({
-      assistantMounted: false,
       liveTranscriptMounted: true,
       isRecording: false,
       isProcessing: true,
@@ -165,7 +140,6 @@ test("Live Transcript restores stop and cancel interactions", async () => {
   // The bare pill (no Live Transcript) exposes discard on hover, as before the panel.
   assert.deepEqual(
     resolveVoicePillInteraction({
-      assistantMounted: false,
       liveTranscriptMounted: false,
       isRecording: false,
       isProcessing: true,
@@ -175,7 +149,6 @@ test("Live Transcript restores stop and cancel interactions", async () => {
   );
   assert.deepEqual(
     resolveVoicePillInteraction({
-      assistantMounted: false,
       liveTranscriptMounted: false,
       isRecording: false,
       isProcessing: true,
@@ -193,7 +166,6 @@ test("a mounted Live Transcript can stop after the floating pill was previously 
       hasDragged: true,
       liveTranscriptMounted: true,
       isProcessing: false,
-      isAgentThinking: false,
     }),
     true
   );
@@ -202,7 +174,6 @@ test("a mounted Live Transcript can stop after the floating pill was previously 
       hasDragged: true,
       liveTranscriptMounted: false,
       isProcessing: false,
-      isAgentThinking: false,
     }),
     false
   );
@@ -221,7 +192,6 @@ test("a collapsed completed transcript leaves the normal pill interaction availa
 
   assert.deepEqual(
     resolveVoicePillInteraction({
-      assistantMounted: false,
       liveTranscriptMounted: false,
       isRecording: false,
       isProcessing: false,
@@ -237,7 +207,6 @@ test("the actual window side overrides a stale edge preference", async () => {
     resolveVoicePillDock({
       liveTranscriptOpen: false,
       liveTranscriptEntrancePhase: "idle",
-      assistantOpen: false,
       panelStartPosition: "bottom-right",
       horizontalDirection: "left",
     }),
@@ -247,7 +216,6 @@ test("the actual window side overrides a stale edge preference", async () => {
     resolveVoicePillDock({
       liveTranscriptOpen: false,
       liveTranscriptEntrancePhase: "idle",
-      assistantOpen: false,
       panelStartPosition: "bottom-left",
       horizontalDirection: "right",
     }),
@@ -326,10 +294,8 @@ test("regular dictation transcription contracts to the rotating thinking circle"
     resolveVoiceActivityPresentation({
       isRecording: false,
       isProcessing: true,
-      isAssistantVoice: false,
-      assistantThinking: false,
     }),
-    { activeState: "thinking", compactPill: false, isAgentThinking: false }
+    { activeState: "thinking", compactPill: false }
   );
 });
 
@@ -338,8 +304,6 @@ test("the voice panel core stays mounted but contentless while idle", async () =
 
   assert.deepEqual(
     resolveVoicePanelCorePresentation({
-      assistantOpen: false,
-      assistantMounted: false,
       liveTranscriptOpen: false,
       liveTranscriptMounted: false,
     }),
@@ -355,7 +319,6 @@ test("Live Transcript reopen belongs only to an active normal dictation", async 
       manuallyCollapsed: true,
       isRecording: true,
       isProcessing: false,
-      isAssistantVoice: false,
     }),
     true
   );
@@ -364,7 +327,6 @@ test("Live Transcript reopen belongs only to an active normal dictation", async 
       manuallyCollapsed: true,
       isRecording: false,
       isProcessing: true,
-      isAssistantVoice: false,
     }),
     true
   );
@@ -373,57 +335,6 @@ test("Live Transcript reopen belongs only to an active normal dictation", async 
       manuallyCollapsed: true,
       isRecording: false,
       isProcessing: false,
-      isAssistantVoice: false,
-    }),
-    false
-  );
-  assert.equal(
-    shouldOfferLiveTranscriptReopen({
-      manuallyCollapsed: true,
-      isRecording: true,
-      isProcessing: false,
-      isAssistantVoice: true,
-    }),
-    false
-  );
-});
-
-test("a collapsed transcript stays reopenable while its result is processing", async () => {
-  const { resolveCompanionPillInteractive } = await load();
-
-  assert.equal(
-    resolveCompanionPillInteractive({
-      mainProcessInteractive: true,
-      surfaceInteractive: true,
-      isProcessing: true,
-      canReopenLiveTranscript: true,
-    }),
-    true
-  );
-  assert.equal(
-    resolveCompanionPillInteractive({
-      mainProcessInteractive: true,
-      surfaceInteractive: true,
-      isProcessing: true,
-      canReopenLiveTranscript: false,
-    }),
-    false
-  );
-  assert.equal(
-    resolveCompanionPillInteractive({
-      mainProcessInteractive: false,
-      surfaceInteractive: true,
-      isProcessing: false,
-      canReopenLiveTranscript: true,
-    }),
-    false
-  );
-  assert.equal(
-    resolveCompanionPillInteractive({
-      mainProcessInteractive: true,
-      surfaceInteractive: false,
-      isProcessing: false,
-      canReopenLiveTranscript: false,
     }),
     false
   );

@@ -23,7 +23,6 @@ interface VoicePillProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"
   integratedWithPanel?: boolean;
   /** The cancel button's liquid skin owns the fused surface; go headless. */
   liquidFused?: boolean;
-  agentMode?: boolean;
   showExpandChevron?: boolean;
   isDragging?: boolean;
   horizontalDirection?: "left" | "right";
@@ -65,7 +64,6 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
     waveformOnlyWhileRecording = false,
     integratedWithPanel = false,
     liquidFused = false,
-    agentMode = false,
     showExpandChevron = false,
     isDragging = false,
     horizontalDirection = "right",
@@ -79,9 +77,8 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   const isProcessing = state === "processing";
   const isThinking = state === "thinking";
   const isUnavailable = state === "unavailable";
-  // One Signal glow (comet orbit over a breathing halo) serves both
-  // identities; only the palette differs. It lights for the real thinking
-  // state alone — glowing during the entrance or while listening would read
+  // The Signal glow (comet orbit over a breathing halo) lights for the real
+  // thinking state alone — glowing during the entrance or while listening would read
   // as work already in flight before any transcript exists.
   const showSignalGlow = !isUnavailable && isThinking;
   const isPanel = variant === "panel";
@@ -107,9 +104,8 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         className
       )}
       style={{
-        // Listening uses the same compact pill as the assistant panel. The
-        // previous wide recording bar made the control feel like a different
-        // surface and forced an unnecessary large window resize.
+        // Listening uses the compact pill. A wide recording bar would make the
+        // control feel like a different surface and force a large window resize.
         width: footprint.width,
         height: footprint.height,
         cursor: isProcessing || isThinking ? "not-allowed" : isDragging ? "grabbing" : "pointer",
@@ -123,8 +119,6 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
       data-horizontal-direction={horizontalDirection}
       data-integrated-with-panel={integratedWithPanel || undefined}
       data-liquid-fused={liquidFused || undefined}
-      data-agent-mode={agentMode || undefined}
-      data-agent-beam-active={(agentMode && isThinking) || undefined}
       data-expand-chevron={showExpandChevron || undefined}
       {...props}
     >
@@ -146,7 +140,6 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         >
           <VoiceIdentityIcon
             size={identitySize}
-            agentMode={agentMode}
             className={cn(
               "transition-[width,height] duration-200",
               state === "idle" && "text-foreground",
@@ -218,7 +211,6 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         aria-hidden="true"
         className="processing-signal-glow"
         data-active={showSignalGlow ? "true" : undefined}
-        data-agent={agentMode || undefined}
       >
         <span className="processing-signal-ring" />
       </span>

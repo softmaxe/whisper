@@ -2,8 +2,6 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const Module = require("node:module");
 
-let applyInputRegion;
-
 // Load the real WindowManager with the module surface it touches at require
 // time. setMainWindowInteractivity only reads `this.mainWindow`, so the tests
 // call it on a minimal receiver instead of constructing a whole manager.
@@ -25,14 +23,6 @@ Module._load = function loadWindowManagerWithStubs(request, parent, isMain) {
   }
   if (request === "./debugLogger") {
     return { warn: () => undefined, debug: () => undefined, info: () => undefined };
-  }
-  if (request === "./linuxWindowInputRegion") {
-    return {
-      createLinuxWindowInputRegion: () => ({
-        set: (region) => applyInputRegion(region),
-        stop: () => undefined,
-      }),
-    };
   }
   if (request === "./hotkeyManager") return class {};
   if (request === "./dragManager") return class {};
@@ -72,26 +62,20 @@ const fakeWindow = () => {
 
 // Hover in, hover out, hover in again — the sequence App.jsx drives from the
 // pill's mouseenter/mouseleave handlers.
-const hoverCycle = (platform, win = fakeWindow()) => {
-  const original = Object.getOwnPropertyDescriptor(process, "platform");
-  Object.defineProperty(process, "platform", { value: platform, configurable: true });
-  try {
-    const setInteractivity = WindowManager.prototype.setMainWindowInteractivity.bind({
-      mainWindow: win,
-    });
-    setInteractivity(true);
-    setInteractivity(false);
-    setInteractivity(true);
-  } finally {
-    Object.defineProperty(process, "platform", original);
-  }
+const hoverCycle = (win = fakeWindow()) => {
+  const setInteractivity = WindowManager.prototype.setMainWindowInteractivity.bind({
+    mainWindow: win,
+  });
+  setInteractivity(true);
+  setInteractivity(false);
+  setInteractivity(true);
   return win.calls;
 };
 
 const INTERACTIVE = { ignore: false, options: undefined };
 
-test("macOS still returns the pill to click-through on mouse-leave", () => {
-  assert.deepEqual(hoverCycle("darwin"), [
+test("the pill returns to click-through on mouse-leave", () => {
+  assert.deepEqual(hoverCycle(), [
     INTERACTIVE,
     { ignore: true, options: { forward: true } },
     INTERACTIVE,
@@ -102,5 +86,5 @@ test("a destroyed window is never touched", () => {
   const win = fakeWindow();
   win.isDestroyed = () => true;
 
-  assert.deepEqual(hoverCycle("linux", win), []);
+  assert.deepEqual(hoverCycle(win), []);
 });

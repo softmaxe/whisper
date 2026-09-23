@@ -82,27 +82,6 @@ function resolveReplacement(match: string, replacements: Map<string, string>): s
 }
 
 /**
- * Character ranges of every trigger occurrence, matched against `text` exactly
- * as given so the offsets index that same string. Wake-word detection uses
- * these to ignore an agent name that only appears because it opens a trigger
- * the user chose, such as "openwhispr review" (see `agentDetection`).
- */
-export function findSnippetTriggerRanges(
-  text: string,
-  snippets?: Snippet[] | null
-): SnippetTriggerRange[] {
-  if (!text) return [];
-  const matcher = getMatcher(snippets);
-  if (!matcher) return [];
-  return [...text.matchAll(matcher.regex)]
-    .filter((match) => resolveReplacement(match[0], matcher.replacements) !== undefined)
-    .map((match) => ({
-      start: match.index,
-      end: match.index + match[0].length,
-    }));
-}
-
-/**
  * Replace every spoken trigger with its saved text in a single pass.
  */
 export function expandSnippets(text: string, snippets?: Snippet[] | null): string {

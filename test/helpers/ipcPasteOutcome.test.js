@@ -85,7 +85,6 @@ test.after(() => {
 
 test("paste-text reports pasted only after the clipboard paste completes", async () => {
   const pastes = [];
-  target.windowManager = { isOnboardingDemoActive: () => false };
   target.clipboardManager = {
     pasteText: async (text, options) => {
       pastes.push({ text, options });
@@ -99,7 +98,6 @@ test("paste-text reports pasted only after the clipboard paste completes", async
 });
 
 test("paste-text preserves a clipboard-only fallback as not pasted", async () => {
-  target.windowManager = { isOnboardingDemoActive: () => false };
   target.clipboardManager = {
     pasteText: async () => ({ pasted: false }),
   };
@@ -129,7 +127,6 @@ test("paste-text does not schedule AutoLearn monitoring after a clipboard-only f
     activateTargetPid: async () => true,
     startMonitoring: (...args) => monitored.push(args),
   };
-  target.windowManager = { isOnboardingDemoActive: () => false };
   target.clipboardManager = {
     pasteText: async () => ({ pasted: false }),
   };
@@ -152,7 +149,6 @@ test(
     });
     const events = [];
     target._autoLearnEnabled = true;
-    target.windowManager = { isOnboardingDemoActive: () => false };
     target.textEditMonitor = {
       lastTargetPid: 42,
       activateTargetPid: async () => {
@@ -180,24 +176,11 @@ test(
   }
 );
 
-test("onboarding paste does not probe or touch the clipboard", async () => {
-  target.windowManager = { isOnboardingDemoActive: () => true };
-  target.clipboardManager = {
-    pasteText: () => assert.fail("demo already displays its transcript"),
-  };
-
-  assert.deepEqual(await handlers.get("paste-text")({ sender: { id: 1 } }, "demo text"), {
-    success: true,
-    pasted: false,
-  });
-});
-
 test(
   "macOS dictation still requires target confirmation when the monitor is unavailable",
   { skip: process.platform !== "darwin" },
   async () => {
     target.textEditMonitor = null;
-    target.windowManager = { isOnboardingDemoActive: () => false };
     target.clipboardManager = {
       pasteText: async (_text, options) => {
         assert.equal(typeof options.checkPasteTarget, "function");

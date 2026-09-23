@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, Cloud, Flame, Gauge, Loader2, Mic2 } from "./icons";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../hooks/useSettings";
-import { subscribeToAnalyticsRefresh } from "../services/AnalyticsService";
+import { subscribeToAnalyticsRefresh } from "../services/analyticsRefresh";
 import { buildAnalyticsActivityDays } from "../helpers/analytics";
-import { effectiveLocalHistoryEnabled } from "../stores/policyRules";
-import { usePolicyStore } from "../stores/policyStore";
 import type { AnalyticsDailyBucket, AnalyticsSummary } from "../types/electron";
 import { cn } from "./lib/utils";
 import { Tooltip } from "./ui/tooltip";
@@ -222,7 +220,7 @@ function YourUsage({ dataRetentionEnabled }: { dataRetentionEnabled: boolean }) 
     }
   }, []);
 
-  useEffect(() => subscribeToAnalyticsRefresh(load, false), [load]);
+  useEffect(() => subscribeToAnalyticsRefresh(load), [load]);
 
   // i18n.language, not the runtime default: the OS locale is not the language
   // the app is being read in, so a Japanese UI rendered 12.3K where 1.2万
@@ -327,10 +325,7 @@ function YourUsage({ dataRetentionEnabled }: { dataRetentionEnabled: boolean }) 
 
 export default function InsightsView() {
   const { t } = useTranslation();
-  const { dataRetentionEnabled: personalDataRetentionEnabled } = useSettings();
-  const dataRetentionEnabled = usePolicyStore((policyState) =>
-    effectiveLocalHistoryEnabled(policyState, personalDataRetentionEnabled)
-  );
+  const { dataRetentionEnabled } = useSettings();
 
   return (
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-6 py-6">

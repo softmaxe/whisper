@@ -11,8 +11,6 @@ const {
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export default class FakeAudioManager {
   constructor() {
-    this.voiceAgentRequested = false;
-    this.translationRequested = false;
     globalThis.__clipboardPersistenceAudioManager = this;
   }
   getState() {
@@ -29,9 +27,6 @@ export default class FakeAudioManager {
   }
   safePaste(...args) {
     return globalThis.__clipboardPersistencePaste(...args);
-  }
-  shouldUseStreaming() {
-    return false;
   }
   cleanup() {}
 }
@@ -148,7 +143,6 @@ async function mountCompletionHarness(
     snippets: [],
     useLocalWhisper: false,
     pauseMediaOnDictation: false,
-    voiceAgentScreenContext: false,
     ...settings,
   };
   globalThis.__clipboardPersistenceLogs = [];
@@ -279,7 +273,7 @@ test("clipboard-only unsuccessful bridge response is logged without cancelling p
   assert.deepEqual(harness.navigatorWrites, []);
 });
 
-test("clipboard-only delivery uses the main-process bridge for a streaming-capable result", async (t) => {
+test("clipboard-only delivery uses the main-process bridge", async (t) => {
   const harness = await mountCompletionHarness(t, {
     settings: { showTranscriptionPreview: true },
   });
@@ -289,7 +283,7 @@ test("clipboard-only delivery uses the main-process bridge for a streaming-capab
     text: "Final streaming text",
     rawText: "Raw streaming text",
     clientTranscriptionId: "client-streaming",
-    source: "deepgram-streaming",
+    source: "self-hosted",
   });
 
   assert.deepEqual(harness.bridgeWrites, ["Final streaming text"]);
@@ -416,13 +410,12 @@ for (const [failure, safePaste] of [
         success: true,
         text: "Final recoverable text",
         rawText: "raw recoverable text",
-        source: "deepgram-streaming",
+        source: "self-hosted",
       });
 
       assert.deepEqual(harness.recoveryPanels, [
         { text: "Final recoverable text", options: { copyFallback: "copy" } },
       ]);
-      assert.equal(harness.pastes[0][1].fromStreaming, true);
       assert.equal(harness.saves.length, 1);
       assert.deepEqual(harness.saves[0].slice(0, 2), [
         "Final recoverable text",

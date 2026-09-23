@@ -136,15 +136,12 @@ test("an empty delta touches nothing", (t) => {
   if (!db) return;
 
   db.setDictionary(["OpenWhispr", "Alice"]);
-  const synced = db.getPendingDictionary().find((row) => row.word === "Alice");
-  db.markDictionaryEntrySynced(synced.id, "cloud-alice");
+  const before = db.db.prepare("SELECT * FROM custom_dictionary ORDER BY id").all();
 
   const result = db.applyDictionaryChanges({});
   assert.deepEqual(result, { success: true, added: 0, removed: 0 });
 
-  // Still synced: an empty delta must not mark rows pending again.
-  const after = db.db.prepare("SELECT * FROM custom_dictionary WHERE word = 'Alice'").get();
-  assert.equal(after.sync_status, "synced");
+  assert.deepEqual(db.db.prepare("SELECT * FROM custom_dictionary ORDER BY id").all(), before);
   assert.deepEqual(db.getDictionary(), ["OpenWhispr", "Alice"]);
 });
 

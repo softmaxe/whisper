@@ -2,8 +2,6 @@ import { getCleanupSystemPrompt } from "../config/prompts";
 import { getSettings } from "../stores/settingsStore";
 import { resolveCleanupLanguage } from "../utils/chineseScript";
 import { getDictionaryHintWords } from "../utils/snippets";
-import type { InferenceScope } from "../config/inferenceScopes";
-import type { ScreenContextImage } from "../types/electron";
 
 export interface ReasoningConfig {
   maxTokens?: number;
@@ -11,18 +9,11 @@ export interface ReasoningConfig {
   contextSize?: number;
   systemPrompt?: string;
   lanUrl?: string;
-  baseUrl?: string;
   customApiKey?: string;
-  provider?: string;
   disableThinking?: boolean;
-  /** Screenshot attached to voice-agent requests when screen context is on. */
-  screenContext?: ScreenContextImage;
-  /** Suffix-free prompt used when a screenshot-carrying request is retried text-only. */
-  textOnlySystemPrompt?: string;
   language?: string;
   requireCompleteOutput?: boolean;
-  requiresAgent?: boolean;
-  inferenceScope?: InferenceScope;
+  inferenceScope?: "dictationCleanup";
 }
 
 export abstract class BaseReasoningService {

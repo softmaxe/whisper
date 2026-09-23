@@ -5,7 +5,6 @@ import { Button } from "./button";
 import { HotkeyInput } from "./HotkeyInput";
 import { parseHotkeyList, serializeHotkeyList } from "../../utils/hotkeys";
 import { normalizeHotkey } from "../../utils/hotkeyValidator";
-import { getPlatform } from "../../utils/platform";
 
 export interface HotkeyListInputProps {
   /** Comma-separated list of hotkeys (a single hotkey is just a one-item list). */
@@ -47,7 +46,6 @@ export function HotkeyListInput({
   const { t } = useTranslation();
   const [items, setItems] = useState<string[]>(() => parseHotkeyList(value));
   const [adding, setAdding] = useState(false);
-  const platform = getPlatform();
 
   // Adopt external changes to `value` (other windows, async revert on failure)
   // without clobbering an in-flight optimistic edit whose round-trip settles to
@@ -59,8 +57,7 @@ export function HotkeyListInput({
     });
   }, [value]);
 
-  const isSameHotkey = (a: string, b: string) =>
-    normalizeHotkey(a, platform) === normalizeHotkey(b, platform);
+  const isSameHotkey = (a: string, b: string) => normalizeHotkey(a) === normalizeHotkey(b);
 
   // Block binding the same hotkey twice within this slot (normalized, so alias
   // spellings collide too), then defer to the caller's cross-slot validation.

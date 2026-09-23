@@ -11,7 +11,6 @@ export interface ResolvePromptOptions {
   uiLanguage?: string;
   language?: string;
   customDictionary?: string[];
-  targetLanguageLabel?: string;
 }
 
 export function resolvePrompt(kind: PromptKind, opts: ResolvePromptOptions): string {
@@ -36,15 +35,6 @@ export function wrapCleanupTranscript(text: string): string {
   return `<transcript>\n${text}\n</transcript>\n\nOutput only the cleaned transcript.`;
 }
 
-// Appended to the dictation-agent prompt only when a screenshot is attached.
-export function appendScreenContextSuffix(prompt: string, uiLanguage?: string): string {
-  const locale = normalizeUiLanguage(uiLanguage || "en");
-  const suffix = i18n.getFixedT(locale, "prompts")("screenContextSuffix", {
-    defaultValue: enPrompts.screenContextSuffix,
-  });
-  return prompt + suffix;
-}
-
 export function appendDictionarySuffix(
   prompt: string,
   customDictionary?: string[],
@@ -61,10 +51,6 @@ export function appendDictionarySuffix(
 export function resolvePromptTemplate(template: string, opts: ResolvePromptOptions): string {
   const name = opts.agentName?.trim() || "Assistant";
   let prompt = template.replace(/\{\{agentName\}\}/g, name);
-
-  if (opts.targetLanguageLabel) {
-    prompt = prompt.replace(/\{\{targetLanguage\}\}/g, opts.targetLanguageLabel);
-  }
 
   const langInstruction = getLanguageInstruction(opts.language);
   if (langInstruction) prompt += "\n\n" + langInstruction;

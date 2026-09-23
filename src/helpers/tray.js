@@ -84,8 +84,6 @@ class TrayManager {
     return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized();
   }
 
-  // On Linux a window parked on another workspace still reports as visible, so
-  // the first click hides it and the next re-shows it on the current workspace.
   async toggleControlPanelFromTray() {
     if (this.isControlPanelVisible()) {
       this.windowManager?.hideControlPanelToTray();
@@ -162,9 +160,7 @@ class TrayManager {
 
       this.tray = new Tray(trayIcon);
 
-      if (process.platform === "darwin") {
-        this.tray.setIgnoreDoubleClickEvents(true);
-      }
+      this.tray.setIgnoreDoubleClickEvents(true);
 
       this.updateTrayMenu();
       this.setupTrayEventHandlers();
@@ -174,52 +170,25 @@ class TrayManager {
   }
 
   async loadTrayIcon() {
-    const platform = process.platform;
     const isDevelopment = process.env.NODE_ENV === "development";
+    const fileName = "iconTemplate@3x.png";
 
-    const candidatePaths = [];
-
-    if (platform === "darwin") {
-      if (isDevelopment) {
-        candidatePaths.push(path.join(__dirname, "..", "assets", "iconTemplate@3x.png"));
-      } else {
-        candidatePaths.push(
-          path.join(process.resourcesPath, "src", "assets", "iconTemplate@3x.png"),
-          path.join(process.resourcesPath, "assets", "iconTemplate@3x.png"),
-          path.join(
-            process.resourcesPath,
-            "app.asar.unpacked",
-            "src",
-            "assets",
-            "iconTemplate@3x.png"
-          ),
-          path.join(__dirname, "..", "..", "src", "assets", "iconTemplate@3x.png"),
-          path.join(app.getAppPath(), "src", "assets", "iconTemplate@3x.png")
-        );
-      }
-    } else {
-      const fileName = "icon.png";
-      if (isDevelopment) {
-        candidatePaths.push(path.join(__dirname, "..", "assets", fileName));
-      } else {
-        candidatePaths.push(
+    const candidatePaths = isDevelopment
+      ? [path.join(__dirname, "..", "assets", fileName)]
+      : [
           path.join(process.resourcesPath, "src", "assets", fileName),
           path.join(process.resourcesPath, "assets", fileName),
           path.join(process.resourcesPath, "app.asar.unpacked", "src", "assets", fileName),
           path.join(__dirname, "..", "..", "src", "assets", fileName),
-          path.join(app.getAppPath(), "src", "assets", fileName)
-        );
-      }
-    }
+          path.join(app.getAppPath(), "src", "assets", fileName),
+        ];
 
     for (const testPath of candidatePaths) {
       try {
         if (fs.existsSync(testPath)) {
           const icon = nativeImage.createFromPath(testPath);
           if (icon && !icon.isEmpty()) {
-            if (platform === "darwin") {
-              icon.setTemplateImage(true);
-            }
+            icon.setTemplateImage(true);
             debugLogger.debug("Using tray icon", { path: testPath }, "tray");
             return icon;
           }
@@ -329,12 +298,6 @@ class TrayManager {
   setupTrayEventHandlers() {
     if (!this.tray) {
       return;
-    }
-
-    if (process.platform !== "darwin") {
-      this.tray.on("click", () => {
-        void this.toggleControlPanelFromTray();
-      });
     }
 
     const tray = this.tray;

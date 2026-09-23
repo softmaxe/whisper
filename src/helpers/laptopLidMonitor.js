@@ -15,7 +15,6 @@ function parseLidState(line) {
 }
 
 function createLaptopLidMonitor({
-  platform = process.platform,
   spawnHelper = spawn,
   resolveBinary = () =>
     require("./binaryResolver").resolveBundledBinary("macos-mic-listener", "audio"),
@@ -131,13 +130,12 @@ function createLaptopLidMonitor({
   }
 
   function start() {
-    if (running || platform !== "darwin") return;
+    if (running) return;
     running = true;
     launch();
   }
 
   function getState() {
-    if (platform !== "darwin") return Promise.resolve(null);
     start();
     if (receivedState && now() - lastSampleAt < STALE_STATE_MS) {
       return Promise.resolve(state);

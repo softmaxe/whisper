@@ -50,10 +50,6 @@ export const PROVIDER_ICONS: Record<string, string> = {
   assemblyai: assemblyaiIcon,
 };
 
-export function getProviderIcon(provider: string): string | undefined {
-  return PROVIDER_ICONS[provider];
-}
-
 export const MONOCHROME_PROVIDERS = [
   "openai",
   "whisper",

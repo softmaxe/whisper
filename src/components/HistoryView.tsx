@@ -1,8 +1,6 @@
 import { Fragment, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useUiLocale } from "../hooks/useUiLocale";
-import { effectiveLocalHistoryEnabled } from "../stores/policyRules";
-import { usePolicyStore } from "../stores/policyStore";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { TranscriptionItem as TranscriptionItemType } from "../types/electron";
 import { formatDateGroup } from "../utils/dateFormatting";
@@ -45,10 +43,7 @@ export default function HistoryView({
 }: HistoryViewProps) {
   const { t } = useTranslation();
   const locale = useUiLocale();
-  const personalDataRetentionEnabled = useSettingsStore((s) => s.dataRetentionEnabled);
-  const dataRetentionEnabled = usePolicyStore((policyState) =>
-    effectiveLocalHistoryEnabled(policyState, personalDataRetentionEnabled)
-  );
+  const dataRetentionEnabled = useSettingsStore((s) => s.dataRetentionEnabled);
 
   const groupedHistory = useMemo(() => {
     if (history.length === 0) return [];

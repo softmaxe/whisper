@@ -6,7 +6,6 @@ interface ExpandingPanelShellProps extends Omit<HTMLAttributes<HTMLElement>, "ch
   measureWhenClosed?: boolean;
   anchor?: "bottom-left" | "bottom-right";
   stabilizeHeight?: boolean;
-  fillAvailableHeight?: boolean;
   preferredHeightCap?: number;
   measurementKey?: string | null;
   measurementRevision?: string | number | null;
@@ -23,7 +22,6 @@ export function ExpandingPanelShell({
   measureWhenClosed = false,
   anchor = "bottom-right",
   stabilizeHeight = false,
-  fillAvailableHeight = false,
   preferredHeightCap,
   measurementKey = null,
   measurementRevision = null,
@@ -161,8 +159,7 @@ export function ExpandingPanelShell({
     <section
       ref={shellRef}
       className={cn(
-        "expanding-panel-surface absolute inset-x-3 bottom-3 flex max-h-[calc(100%-1.5rem)] flex-col overflow-hidden",
-        fillAvailableHeight ? "h-[calc(100%-1.5rem)]" : "h-fit",
+        "expanding-panel-surface absolute inset-x-3 bottom-3 flex h-fit max-h-[calc(100%-1.5rem)] flex-col overflow-hidden",
         "rounded-3xl border border-border/50 bg-surface-0",
         "shadow-[var(--shadow-modal)]",
         anchor === "bottom-left"

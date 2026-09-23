@@ -1,15 +1,13 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useShallow } from "zustand/react/shallow";
 import {
   getDefaultPromptText,
   resolvePromptTemplate,
   wrapCleanupTranscript,
 } from "../../config/prompts";
 import { useDialogs } from "../../hooks/useDialogs";
-import { usePolicySnapshot } from "../../hooks/usePolicy";
 import ReasoningService from "../../services/ReasoningService";
-import { selectPolicyEffectiveSettings, useSettingsStore } from "../../stores/settingsStore";
+import { useSettingsStore } from "../../stores/settingsStore";
 import { useAgentName } from "../../utils/agentName";
 import { resolveCleanupLanguage } from "../../utils/chineseScript";
 import logger from "../../utils/logger";
@@ -33,10 +31,7 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
 
   const { alertDialog, showAlertDialog, hideAlertDialog } = useDialogs();
   const { agentName } = useAgentName();
-  const policyState = usePolicySnapshot();
-  const effectiveSettings = useSettingsStore(
-    useShallow((settings) => selectPolicyEffectiveSettings(settings, policyState))
-  );
+  const effectiveSettings = useSettingsStore((state) => state);
   const { uiLanguage, useCleanupModel, cleanupModel, cleanupRemoteUrl } = effectiveSettings;
   const customPrompt = useSettingsStore((s) => s.customPrompts.cleanup);
   const setCustomPrompt = useSettingsStore((s) => s.setCustomPrompt);
@@ -92,7 +87,6 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
         cleanupModel.trim(),
         agentName,
         {
-          provider: "lan",
           lanUrl: cleanupRemoteUrl.trim(),
           customApiKey: effectiveSettings.cleanupCustomApiKey,
           inferenceScope: "dictationCleanup",

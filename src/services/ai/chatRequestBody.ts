@@ -1,25 +1,13 @@
 import type { ReasoningConfig } from "../BaseReasoningService";
-import { getOpenAiApiConfig } from "../../models/ModelRegistry";
-import { detectEndpointDialect } from "./thinkingSuppressionDialects";
 import { getModelFamilyConstraints } from "./modelFamilyConstraints";
 import { applyThinkingSuppression } from "./thinkingSuppression";
 
 /**
- * Providers whose OpenAI-compat chat endpoints speak the legacy shape: always
- * `max_tokens`, always `temperature`. Groq's registry entries carry no
- * tokenParam and its ids don't match the OpenAI fallback heuristics; Tinfoil's
- * catalog is dynamic (models outside the registry must not fall through to
- * `max_completion_tokens`); local/lan are llama.cpp-style servers.
- */
-const LEGACY_CHAT_COMPLETIONS_PROVIDERS = new Set(["local", "lan", "groq", "tinfoil", "corti"]);
-
-/**
  * Single place that turns (model, provider, endpoint, config) into the
- * parameter set of an OpenAI-compatible chat-completions body: token-limit
- * param, temperature, family reasoning effort, and thinking suppression.
- * Callers own `model`/`messages`/`stream`; this owns every tunable param, so
- * a family or provider fact changed in the data tables reaches all transports
- * at once instead of one call site at a time (#1611).
+ * parameter set of an OpenAI-compatible chat-completions body: token limit,
+ * temperature, family reasoning effort, and thinking suppression. Self-hosted
+ * servers (llama.cpp, Ollama, vLLM) speak the legacy shape: always
+ * `max_tokens`, always `temperature`. Callers own `model`/`messages`/`stream`.
  */
 export function applyChatCompletionsParams(
   requestBody: Record<string, unknown>,
@@ -37,26 +25,15 @@ export function applyChatCompletionsParams(
     maxTokens: number;
   }
 ): void {
-  const providerKey = provider.toLowerCase();
   // No systemPrompt override means the default cleanup path: a deterministic
   // transform, so zero temperature.
   const defaultTemperature = config.systemPrompt ? 0.3 : 0;
+  requestBody.max_tokens = maxTokens;
+  requestBody.temperature = config.temperature ?? defaultTemperature;
 
-  if (LEGACY_CHAT_COMPLETIONS_PROVIDERS.has(providerKey)) {
-    requestBody.max_tokens = maxTokens;
-    requestBody.temperature = config.temperature ?? defaultTemperature;
-  } else {
-    // A known endpoint host knows its own request shape better than the model id does.
-    const apiConfig = detectEndpointDialect(endpoint) ?? getOpenAiApiConfig(model, providerKey);
-    requestBody[apiConfig.tokenParam] = maxTokens;
-    if (apiConfig.supportsTemperature) {
-      requestBody.temperature = config.temperature ?? defaultTemperature;
-    }
-  }
-
-  // Deterministic transforms (cleanup, selection edits) pin the family's
-  // preferred effort — see modelFamilyConstraints for the gpt-oss rationale.
-  // applyThinkingSuppression still wins when thinking is disabled by the user.
+  // Deterministic transforms (cleanup) pin the family's preferred effort — see
+  // modelFamilyConstraints for the gpt-oss rationale. applyThinkingSuppression
+  // still wins when thinking is disabled by the user.
   const familyEffort = getModelFamilyConstraints(model)?.reasoningEffort;
   if (familyEffort?.cleanupValue && (!config.systemPrompt || config.requireCompleteOutput)) {
     requestBody.reasoning_effort = familyEffort.cleanupValue;

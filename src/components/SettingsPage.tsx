@@ -16,20 +16,12 @@ import { AlertDialog, ConfirmDialog } from "./ui/dialog";
 
 import { useHotkeyModeInfo } from "../hooks/useHotkeyModeInfo";
 import { useHotkeyRegistration } from "../hooks/useHotkeyRegistration";
-import { usePolicySnapshot } from "../hooks/usePolicy";
 import { useTheme } from "../hooks/useTheme";
-import {
-  effectiveAudioRetentionDays,
-  effectiveLocalHistoryEnabled,
-  lockedLocalHistoryValue,
-  maxAudioRetentionDays,
-} from "../stores/policyRules";
 import type { ChineseScriptPreference } from "../types/electron";
 import { formatBytes } from "../utils/formatBytes";
 import { validateHotkeyForSlot } from "../utils/hotkeyValidation";
 import { formatHotkeyLabel } from "../utils/hotkeys";
 import logger from "../utils/logger";
-import { getCachedPlatform } from "../utils/platform";
 import InferenceConfigEditor from "./settings/InferenceConfigEditor";
 import { ActivationModeSelector } from "./ui/ActivationModeSelector";
 import { HotkeyListInput } from "./ui/HotkeyListInput";
@@ -119,7 +111,7 @@ function AiModelsSection({ useCleanupModel, setUseCleanupModel }: AiModelsSectio
         </SettingsPanelRow>
       </SettingsPanel>
 
-      {useCleanupModel && <InferenceConfigEditor scope="dictationCleanup" />}
+      {useCleanupModel && <InferenceConfigEditor />}
     </div>
   );
 }
@@ -187,18 +179,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     setSaveDiscardedTranscriptions,
   } = useSettings();
 
-  const settingsPolicyState = usePolicySnapshot();
-  const historyLockedByPolicy = lockedLocalHistoryValue(settingsPolicyState) !== null;
-  const effectiveDataRetentionEnabled = effectiveLocalHistoryEnabled(
-    settingsPolicyState,
-    dataRetentionEnabled
-  );
-  const audioRetentionCap = maxAudioRetentionDays(settingsPolicyState);
-  const enforcedAudioRetentionDays = effectiveAudioRetentionDays(
-    settingsPolicyState,
-    audioRetentionDays
-  );
-
   const { t } = useTranslation();
   const { toast } = useToast();
   const permissionsHook = usePermissions(showAlertDialog);
@@ -257,11 +237,11 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     [t]
   );
 
-  const { isUsingNativeShortcut, supportsPushToTalk, pushToTalkUnavailableReason } =
-    useHotkeyModeInfo("settings", dictationKey);
+  const { supportsPushToTalk, pushToTalkUnavailableReason } = useHotkeyModeInfo(
+    "settings",
+    dictationKey
+  );
   const [effectiveDefaultHotkey, setEffectiveDefaultHotkey] = useState<string | null>(null);
-
-  const platform = getCachedPlatform();
 
   const [autoStartEnabled, setAutoStartEnabled] = useState(false);
   const [autoStartNeedsApproval, setAutoStartNeedsApproval] = useState(false);
@@ -381,16 +361,14 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     </div>
                   </SettingsRow>
                 </SettingsPanelRow>
-                {platform === "darwin" && (
-                  <SettingsPanelRow>
-                    <SettingsRow
-                      label={t("settingsPage.general.appearance.showMenuBarIcon")}
-                      description={t("settingsPage.general.appearance.showMenuBarIconDescription")}
-                    >
-                      <Toggle checked={showMenuBarIcon} onChange={setShowMenuBarIcon} />
-                    </SettingsRow>
-                  </SettingsPanelRow>
-                )}
+                <SettingsPanelRow>
+                  <SettingsRow
+                    label={t("settingsPage.general.appearance.showMenuBarIcon")}
+                    description={t("settingsPage.general.appearance.showMenuBarIconDescription")}
+                  >
+                    <Toggle checked={showMenuBarIcon} onChange={setShowMenuBarIcon} />
+                  </SettingsRow>
+                </SettingsPanelRow>
               </SettingsPanel>
             </div>
 
@@ -667,7 +645,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     onChange={(list) => registerHotkey(list)}
                     validate={validateDictationHotkey}
                     disabled={isHotkeyRegistering}
-                    maxHotkeys={isUsingNativeShortcut ? 1 : undefined}
                     required
                     footerEnd={
                       effectiveDefaultHotkey &&
@@ -690,24 +667,22 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   />
                 </SettingsPanelRow>
 
-                {!isUsingNativeShortcut && (
-                  <SettingsPanelRow>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs text-muted-foreground/80">
-                        {t("settingsPage.general.hotkey.activationMode")}
-                      </span>
-                      <ActivationModeSelector
-                        value={activationMode}
-                        onChange={setActivationMode}
-                        pushDisabledReason={
-                          !supportsPushToTalk
-                            ? pushToTalkUnavailableReason || t("windows.pttUnavailable")
-                            : undefined
-                        }
-                      />
-                    </div>
-                  </SettingsPanelRow>
-                )}
+                <SettingsPanelRow>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground/80">
+                      {t("settingsPage.general.hotkey.activationMode")}
+                    </span>
+                    <ActivationModeSelector
+                      value={activationMode}
+                      onChange={setActivationMode}
+                      pushDisabledReason={
+                        !supportsPushToTalk
+                          ? pushToTalkUnavailableReason || t("windows.pttUnavailable")
+                          : undefined
+                      }
+                    />
+                  </div>
+                </SettingsPanelRow>
               </SettingsPanel>
             </div>
           </div>
@@ -734,29 +709,21 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     description={t("settingsPage.privacy.audioRetentionDescription")}
                   >
                     <select
-                      value={enforcedAudioRetentionDays}
-                      onChange={(e) => {
-                        const days = parseInt(e.target.value, 10);
-                        if (audioRetentionCap !== null && days > audioRetentionCap) return;
-                        setAudioRetentionDays(days);
-                      }}
+                      value={audioRetentionDays}
+                      onChange={(e) => setAudioRetentionDays(parseInt(e.target.value, 10))}
                       className={RETENTION_SELECT_CLASS}
                     >
                       <option value={0}>{t("settingsPage.privacy.audioRetentionDisabled")}</option>
-                      {enforcedAudioRetentionDays > 0 &&
-                        !RETENTION_DAY_OPTIONS.includes(enforcedAudioRetentionDays) && (
-                          <option value={enforcedAudioRetentionDays}>
+                      {audioRetentionDays > 0 &&
+                        !RETENTION_DAY_OPTIONS.includes(audioRetentionDays) && (
+                          <option value={audioRetentionDays}>
                             {t("settingsPage.privacy.retentionDays", {
-                              count: enforcedAudioRetentionDays,
+                              count: audioRetentionDays,
                             })}
                           </option>
                         )}
                       {RETENTION_DAY_OPTIONS.map((days) => (
-                        <option
-                          key={days}
-                          value={days}
-                          disabled={audioRetentionCap !== null && days > audioRetentionCap}
-                        >
+                        <option key={days} value={days}>
                           {t("settingsPage.privacy.retentionDays", { count: days })}
                         </option>
                       ))}
@@ -795,17 +762,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                 <SettingsPanelRow>
                   <SettingsRow
                     label={t("settingsPage.privacy.dataRetention")}
-                    description={
-                      historyLockedByPolicy
-                        ? t("common.managedByOrg")
-                        : t("settingsPage.privacy.dataRetentionDescription")
-                    }
+                    description={t("settingsPage.privacy.dataRetentionDescription")}
                   >
-                    <Toggle
-                      checked={effectiveDataRetentionEnabled}
-                      disabled={historyLockedByPolicy}
-                      onChange={setDataRetentionEnabled}
-                    />
+                    <Toggle checked={dataRetentionEnabled} onChange={setDataRetentionEnabled} />
                   </SettingsRow>
                 </SettingsPanelRow>
                 <SettingsPanelRow>
@@ -815,7 +774,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   >
                     <select
                       value={transcriptRetentionDays}
-                      disabled={!effectiveDataRetentionEnabled}
+                      disabled={!dataRetentionEnabled}
                       onChange={(e) => setTranscriptRetentionDays(parseInt(e.target.value, 10))}
                       className={RETENTION_SELECT_CLASS}
                     >
@@ -837,7 +796,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   >
                     <Toggle
                       checked={saveDiscardedTranscriptions}
-                      disabled={!effectiveDataRetentionEnabled || enforcedAudioRetentionDays === 0}
+                      disabled={!dataRetentionEnabled || audioRetentionDays === 0}
                       onChange={setSaveDiscardedTranscriptions}
                     />
                   </SettingsRow>
@@ -862,16 +821,14 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   buttonText={t("settingsPage.permissions.grantAccess")}
                 />
 
-                {platform === "darwin" && (
-                  <PermissionCard
-                    icon={Shield}
-                    title={t("settingsPage.permissions.accessibilityTitle")}
-                    description={t("settingsPage.permissions.accessibilityDescription")}
-                    granted={permissionsHook.accessibilityPermissionGranted}
-                    onRequest={permissionsHook.requestAccessibilityPermission}
-                    buttonText={t("settingsPage.permissions.grantAccess")}
-                  />
-                )}
+                <PermissionCard
+                  icon={Shield}
+                  title={t("settingsPage.permissions.accessibilityTitle")}
+                  description={t("settingsPage.permissions.accessibilityDescription")}
+                  granted={permissionsHook.accessibilityPermissionGranted}
+                  onRequest={permissionsHook.requestAccessibilityPermission}
+                  buttonText={t("settingsPage.permissions.grantAccess")}
+                />
               </div>
 
               {!permissionsHook.micPermissionGranted && permissionsHook.micPermissionError && (
@@ -882,32 +839,28 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                 />
               )}
 
-              {platform === "darwin" && (
-                <div className="mt-5">
-                  <p className="text-xs font-medium text-foreground mb-3">
-                    {t("settingsPage.permissions.troubleshootingTitle")}
-                  </p>
-                  <SettingsPanel>
-                    <SettingsPanelRow>
-                      <SettingsRow
-                        label={t("settingsPage.permissions.resetAccessibility.label")}
-                        description={t(
-                          "settingsPage.permissions.resetAccessibility.rowDescription"
-                        )}
+              <div className="mt-5">
+                <p className="text-xs font-medium text-foreground mb-3">
+                  {t("settingsPage.permissions.troubleshootingTitle")}
+                </p>
+                <SettingsPanel>
+                  <SettingsPanelRow>
+                    <SettingsRow
+                      label={t("settingsPage.permissions.resetAccessibility.label")}
+                      description={t("settingsPage.permissions.resetAccessibility.rowDescription")}
+                    >
+                      <Button
+                        onClick={resetAccessibilityPermissions}
+                        variant="ghost"
+                        size="sm"
+                        className="text-foreground/70 hover:text-foreground"
                       >
-                        <Button
-                          onClick={resetAccessibilityPermissions}
-                          variant="ghost"
-                          size="sm"
-                          className="text-foreground/70 hover:text-foreground"
-                        >
-                          {t("settingsPage.permissions.troubleshoot")}
-                        </Button>
-                      </SettingsRow>
-                    </SettingsPanelRow>
-                  </SettingsPanel>
-                </div>
-              )}
+                        {t("settingsPage.permissions.troubleshoot")}
+                      </Button>
+                    </SettingsRow>
+                  </SettingsPanelRow>
+                </SettingsPanel>
+              </div>
             </div>
           </div>
         );

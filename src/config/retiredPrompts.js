@@ -123,12 +123,7 @@ export const RETIRED_DEFAULT_PROMPT_HASHES = new Set([
 // bundles so a prompt change cannot land without updating the retired set.
 export const CURRENT_DEFAULT_PROMPT_HASHES = {
   "en/cleanupPrompt": "58ed65fbc679a7bac1483ef850c51ac7932a02d17fab9ca688f4d11f6aa9b7e6",
-  "en/fullPrompt": "9312644f8de56d874e0de9e18d610a3ed6afd0ca1b31411f02d021e012fee601",
-  "en/translatePrompt": "2acf77e82671cfb27f56210461369cca96da52d68597dd825bb5f3cf7fd4cd47",
   "zh-CN/cleanupPrompt": "c38d3f454a576f6d5c3a22294215283cfc04da7b370d7bdb7e1b123d6e89f055",
-  "zh-CN/fullPrompt": "9312644f8de56d874e0de9e18d610a3ed6afd0ca1b31411f02d021e012fee601",
-  "zh-CN/translatePrompt": "f1b9e55ad9e3ccf3982e741e5d2d291c1db7c0054f5a3a8996bc3ee02581f61b",
-  chatAgent: "ca35b88c4f8a0e1fd0b2b6efea1b066c70b772e6a55033e0fca731b2e74fbf06",
 };
 
 export async function hashPromptText(text) {

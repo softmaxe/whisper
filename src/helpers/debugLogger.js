@@ -31,8 +31,6 @@ const readArgLogLevel = () => {
   return null;
 };
 
-const hasConsoleLogOptIn = () => (process.argv || []).includes("--console-logs");
-
 class DebugLogger {
   constructor() {
     this.logLevel = this.resolveLogLevel();
@@ -42,7 +40,6 @@ class DebugLogger {
     this.logStream = null;
     this.fileLoggingEnabled = false;
     this.fileLoggingPending = this.debugMode; // Track if we need to initialize file logging later
-    this.consoleLoggingEnabled = this.resolveConsoleLogging();
 
     // IMPORTANT: Do NOT call initializeFileLogging() here!
     // It uses app.getPath() which is unsafe before app.whenReady().
@@ -112,11 +109,6 @@ class DebugLogger {
     }
 
     return "info";
-  }
-
-  resolveConsoleLogging() {
-    // Packaged Windows apps can inherit the launching shell's standard handles.
-    return process.platform !== "win32" || !app.isPackaged || hasConsoleLogOptIn();
   }
 
   refreshLogLevel() {
@@ -200,20 +192,18 @@ class DebugLogger {
     const metaText = this.formatMeta(meta);
     const logLine = metaText ? `${baseLine} ${metaText}\n` : `${baseLine}\n`;
 
-    if (this.consoleLoggingEnabled) {
-      const consoleFn =
-        normalized === "error" || normalized === "fatal"
-          ? console.error
-          : normalized === "warn"
-            ? console.warn
-            : console.log;
+    const consoleFn =
+      normalized === "error" || normalized === "fatal"
+        ? console.error
+        : normalized === "warn"
+          ? console.warn
+          : console.log;
 
-      if (meta !== undefined) {
-        // Pass the prefix as a %s arg, not as a format string. See CodeQL js/tainted-format-string.
-        consoleFn("%s", `${levelTag}${scopeTag}${sourceTag} ${message}`, meta);
-      } else {
-        consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`);
-      }
+    if (meta !== undefined) {
+      // Pass the prefix as a %s arg, not as a format string. See CodeQL js/tainted-format-string.
+      consoleFn("%s", `${levelTag}${scopeTag}${sourceTag} ${message}`, meta);
+    } else {
+      consoleFn(`${levelTag}${scopeTag}${sourceTag} ${message}`);
     }
 
     if (this.logStream) {
@@ -281,9 +271,7 @@ class DebugLogger {
         debugInfo.fileInfo = {
           size: stats.size,
           isFile: stats.isFile(),
-          // Skip X_OK check on Windows (not reliable)
-          isExecutable: process.platform !== "win32" ? !!(stats.mode & fs.constants.X_OK) : false,
-          executableCheckSkipped: process.platform === "win32",
+          isExecutable: !!(stats.mode & fs.constants.X_OK),
           permissions: stats.mode.toString(8),
           modified: stats.mtime,
         };
@@ -304,38 +292,20 @@ class DebugLogger {
       }
     }
 
-    // Platform-specific path checks
-    let possiblePaths = [];
-    if (process.platform === "win32") {
-      possiblePaths = [
-        ffmpegPath,
-        ffmpegPath?.replace(/app\.asar([/\\])/, "app.asar.unpacked$1"),
-        path.join(
-          process.resourcesPath || "",
-          "app.asar.unpacked",
-          "node_modules",
-          "ffmpeg-static",
-          "ffmpeg.exe"
-        ),
-        path.join(process.env.ProgramFiles || "C:\\Program Files", "ffmpeg", "bin", "ffmpeg.exe"),
-        "C:\\ffmpeg\\bin\\ffmpeg.exe",
-      ].filter(Boolean);
-    } else {
-      possiblePaths = [
-        ffmpegPath,
-        ffmpegPath?.replace("app.asar", "app.asar.unpacked"),
-        path.join(
-          process.resourcesPath || "",
-          "app.asar.unpacked",
-          "node_modules",
-          "ffmpeg-static",
-          "ffmpeg"
-        ),
-        "/usr/local/bin/ffmpeg",
-        "/opt/homebrew/bin/ffmpeg",
-        "/usr/bin/ffmpeg",
-      ].filter(Boolean);
-    }
+    const possiblePaths = [
+      ffmpegPath,
+      ffmpegPath?.replace("app.asar", "app.asar.unpacked"),
+      path.join(
+        process.resourcesPath || "",
+        "app.asar.unpacked",
+        "node_modules",
+        "ffmpeg-static",
+        "ffmpeg"
+      ),
+      "/usr/local/bin/ffmpeg",
+      "/opt/homebrew/bin/ffmpeg",
+      "/usr/bin/ffmpeg",
+    ].filter(Boolean);
 
     debugInfo.pathChecks = possiblePaths.map((p) => ({
       path: p,

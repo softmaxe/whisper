@@ -11,15 +11,11 @@ const {
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export default class FakeAudioManager {
   constructor() {
-    this.voiceAgentRequested = false;
-    this.translationRequested = false;
-    this.sttConfig = { success: true };
     this.pasteCalls = 0;
     globalThis.__cleanupFallbackManager = this;
   }
   setCallbacks(callbacks) { this.callbacks = callbacks; }
   getState() { return {}; }
-  shouldUseStreaming() { return false; }
   async safePaste() {
     this.pasteCalls += 1;
     return globalThis.__cleanupFallbackPasteOutcome?.pasted === true;

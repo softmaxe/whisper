@@ -5,59 +5,19 @@ const { app } = require("electron");
 const debugLogger = require("./debugLogger");
 const { normalizeUiLanguage } = require("./i18nMain");
 const secretCrypto = require("./secretCrypto");
-const { BYOK_API_KEYS } = require("../config/secretKeys");
-
-const SECRET_KEYS = [
-  ...BYOK_API_KEYS.map((k) => k.env),
-  "CORTI_CLIENT_ID",
-  "CORTI_CLIENT_SECRET",
-  "CUSTOM_TRANSCRIPTION_API_KEY",
-  "CUSTOM_CLEANUP_API_KEY",
-  "BEDROCK_ACCESS_KEY_ID",
-  "BEDROCK_SECRET_ACCESS_KEY",
-  "BEDROCK_SESSION_TOKEN",
-  "AZURE_OPENAI_API_KEY",
-  "VERTEX_API_KEY",
-];
+const SECRET_KEYS = ["CUSTOM_CLEANUP_API_KEY"];
 
 const SECRET_KEY_SET = new Set(SECRET_KEYS);
 
 const PERSISTED_KEYS = [
   ...SECRET_KEYS,
-  "LOCAL_TRANSCRIPTION_PROVIDER",
-  "PARAKEET_MODEL",
-  "DICTATION_LANGUAGE",
-  "LOCAL_WHISPER_MODEL",
-  "CLEANUP_PROVIDER",
-  "LOCAL_CLEANUP_MODEL",
-  "DICTATION_AGENT_PROVIDER",
-  "LOCAL_DICTATION_AGENT_MODEL",
-  "LLAMA_GPU_BACKEND",
-  "LLAMA_VULKAN_ENABLED",
   "DICTATION_KEY",
-  "VOICE_AGENT_KEY",
-  "TRANSLATION_KEY",
-  "MEETING_KEY",
   "ACTIVATION_MODE",
   "FLOATING_ICON_AUTO_HIDE",
   "PANEL_START_POSITION",
   "START_MINIMIZED",
   "SHOW_MENU_BAR_ICON",
   "UI_LANGUAGE",
-  "WHISPER_CUDA_ENABLED",
-  "WHISPER_VULKAN_ENABLED",
-  "WHISPER_VULKAN_DEVICE",
-  "WHISPER_GPU_FAILED",
-  "WHISPER_THREADS",
-  "TRANSCRIPTION_GPU_UUID",
-  "INTELLIGENCE_GPU_UUID",
-  "BEDROCK_REGION",
-  "BEDROCK_PROFILE",
-  "AZURE_OPENAI_ENDPOINT",
-  "AZURE_OPENAI_DEPLOYMENT",
-  "AZURE_OPENAI_API_VERSION",
-  "VERTEX_PROJECT",
-  "VERTEX_LOCATION",
 ];
 
 // Module-level so writes are serialized across all instances — hotkeyManager
@@ -264,30 +224,6 @@ class EnvironmentManager {
     return { success: true };
   }
 
-  getCortiClientId() {
-    return this._getKey("CORTI_CLIENT_ID");
-  }
-
-  saveCortiClientId(key) {
-    return this._saveKey("CORTI_CLIENT_ID", key);
-  }
-
-  getCortiClientSecret() {
-    return this._getKey("CORTI_CLIENT_SECRET");
-  }
-
-  saveCortiClientSecret(key) {
-    return this._saveKey("CORTI_CLIENT_SECRET", key);
-  }
-
-  getCustomTranscriptionKey() {
-    return this._getKey("CUSTOM_TRANSCRIPTION_API_KEY");
-  }
-
-  saveCustomTranscriptionKey(key) {
-    return this._saveKey("CUSTOM_TRANSCRIPTION_API_KEY", key);
-  }
-
   getCleanupCustomKey() {
     // TODO: drop CUSTOM_REASONING_API_KEY fallback after 2 releases.
     return this._getKey("CUSTOM_CLEANUP_API_KEY") || this._getKey("CUSTOM_REASONING_API_KEY");
@@ -299,127 +235,12 @@ class EnvironmentManager {
   }
 
   // Enterprise providers — AWS Bedrock
-  getBedrockRegion() {
-    return this._getKey("BEDROCK_REGION");
-  }
-  saveBedrockRegion(value) {
-    return this._saveKey("BEDROCK_REGION", value);
-  }
-  getBedrockProfile() {
-    return this._getKey("BEDROCK_PROFILE");
-  }
-  saveBedrockProfile(value) {
-    return this._saveKey("BEDROCK_PROFILE", value);
-  }
-  getBedrockAccessKeyId() {
-    return this._getKey("BEDROCK_ACCESS_KEY_ID");
-  }
-  saveBedrockAccessKeyId(key) {
-    return this._saveKey("BEDROCK_ACCESS_KEY_ID", key);
-  }
-  getBedrockSecretAccessKey() {
-    return this._getKey("BEDROCK_SECRET_ACCESS_KEY");
-  }
-  saveBedrockSecretAccessKey(key) {
-    return this._saveKey("BEDROCK_SECRET_ACCESS_KEY", key);
-  }
-  getBedrockSessionToken() {
-    return this._getKey("BEDROCK_SESSION_TOKEN");
-  }
-  saveBedrockSessionToken(key) {
-    return this._saveKey("BEDROCK_SESSION_TOKEN", key);
-  }
-
-  // Enterprise providers — Azure OpenAI
-  getAzureEndpoint() {
-    return this._getKey("AZURE_OPENAI_ENDPOINT");
-  }
-  saveAzureEndpoint(value) {
-    return this._saveKey("AZURE_OPENAI_ENDPOINT", value);
-  }
-  getAzureApiKey() {
-    return this._getKey("AZURE_OPENAI_API_KEY");
-  }
-  saveAzureApiKey(key) {
-    return this._saveKey("AZURE_OPENAI_API_KEY", key);
-  }
-  getAzureDeployment() {
-    return this._getKey("AZURE_OPENAI_DEPLOYMENT");
-  }
-  saveAzureDeployment(value) {
-    return this._saveKey("AZURE_OPENAI_DEPLOYMENT", value);
-  }
-  getAzureApiVersion() {
-    return this._getKey("AZURE_OPENAI_API_VERSION");
-  }
-  saveAzureApiVersion(value) {
-    return this._saveKey("AZURE_OPENAI_API_VERSION", value);
-  }
-
-  // Enterprise providers — GCP Vertex AI
-  getVertexProject() {
-    return this._getKey("VERTEX_PROJECT");
-  }
-  saveVertexProject(value) {
-    return this._saveKey("VERTEX_PROJECT", value);
-  }
-  getVertexLocation() {
-    return this._getKey("VERTEX_LOCATION");
-  }
-  saveVertexLocation(value) {
-    return this._saveKey("VERTEX_LOCATION", value);
-  }
-  getVertexApiKey() {
-    return this._getKey("VERTEX_API_KEY");
-  }
-  saveVertexApiKey(key) {
-    return this._saveKey("VERTEX_API_KEY", key);
-  }
-
   getDictationKey() {
     return this._getKey("DICTATION_KEY");
   }
 
   saveDictationKey(key) {
     const result = this._saveKey("DICTATION_KEY", key);
-    this.saveAllKeysToEnvFile().catch(() => {});
-    return result;
-  }
-
-  getVoiceAgentKey() {
-    const key = this._getKey("VOICE_AGENT_KEY");
-    if (key) return key;
-    // The chat-agent window is gone; its hotkey now opens the assistant by voice.
-    const legacy = this._getKey("CHAT_AGENT_KEY");
-    if (legacy) {
-      this.saveVoiceAgentKey(legacy);
-      delete process.env.CHAT_AGENT_KEY;
-    }
-    return legacy;
-  }
-
-  saveVoiceAgentKey(key) {
-    const result = this._saveKey("VOICE_AGENT_KEY", key);
-    this.saveAllKeysToEnvFile().catch(() => {});
-    return result;
-  }
-
-  getTranslationKey() {
-    return this._getKey("TRANSLATION_KEY");
-  }
-
-  saveTranslationKey(key) {
-    const result = this._saveKey("TRANSLATION_KEY", key);
-    this.saveAllKeysToEnvFile().catch(() => {});
-    return result;
-  }
-
-  getMeetingKey() {
-    return this._getKey("MEETING_KEY");
-  }
-
-  saveMeetingKey(key) {
-    const result = this._saveKey("MEETING_KEY", key);
     this.saveAllKeysToEnvFile().catch(() => {});
     return result;
   }
@@ -534,17 +355,6 @@ class EnvironmentManager {
     await fsPromises.writeFile(tmpPath, kept.join("\n"), "utf8");
     await fsPromises.rename(tmpPath, envPath);
   }
-}
-
-// Generate the uniform BYOK key accessors (getOpenAIKey/saveOpenAIKey/…) from
-// the shared manifest so each provider is defined in exactly one place.
-for (const k of BYOK_API_KEYS) {
-  EnvironmentManager.prototype[k.get] = function () {
-    return this._getKey(k.env);
-  };
-  EnvironmentManager.prototype[k.save] = function (key) {
-    return this._saveKey(k.env, key);
-  };
 }
 
 module.exports = EnvironmentManager;

@@ -17,24 +17,12 @@ const {
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export default class FakeAudioManager {
   constructor() {
-    this.voiceAgentRequested = false;
-    this.translationRequested = false;
-    this.sttConfig = { success: true };
   }
   getState() {
     return {};
   }
   setCallbacks() {}
-  setVoiceAgentRequested(value) {
-    this.voiceAgentRequested = value;
-  }
-  setAssistantSelectionContext() {}
-  setTranslationRequested(value) {
-    this.translationRequested = value;
-  }
-  shouldUseStreaming() {
-    return false;
-  }
+  resetRecordingRequest() {}
   prepareMicCapture() {}
   cancelPreparedMicCapture() {}
   cleanup() {}
@@ -63,14 +51,11 @@ test("a failed dictation start reports the lifecycle back to idle instead of sti
         // without "?.", so it must exist even though this test drives
         // startRecording() directly rather than through any of these events.
         onToggleDictation: noopDispose,
-        onToggleVoiceAgent: noopDispose,
-        onToggleTranslation: noopDispose,
         onStartDictation: noopDispose,
         onPrepareDictation: noopDispose,
         onCancelDictationPreparation: noopDispose,
         onStopDictation: noopDispose,
-        dictationLifecycleStateChanged: (state, inputKind) =>
-          reported.push(`${state}:${inputKind}`),
+        dictationLifecycleStateChanged: (state) => reported.push(state),
       },
     },
   });
@@ -112,5 +97,5 @@ test("a failed dictation start reports the lifecycle back to idle instead of sti
   });
 
   assert.equal(started, false);
-  assert.deepEqual(reported, ["preparing:dictation", "idle:dictation"]);
+  assert.deepEqual(reported, ["preparing", "idle"]);
 });

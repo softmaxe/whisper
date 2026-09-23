@@ -310,7 +310,6 @@ test("pasteMacOS restores clipboard after the short macOS delay on successful fa
 
   const result = await manager.pasteMacOS(originalClipboard, {
     expectedClipboardText: "dictated text",
-    fromStreaming: true,
   });
   await result.restoreComplete;
 
