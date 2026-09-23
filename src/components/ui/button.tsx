@@ -9,7 +9,7 @@ const buttonVariants = cva(
   [
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
     "rounded-full text-sm font-medium cursor-pointer select-none",
-    "transition-[background-color,border-color,color,transform] duration-200 ease-out",
+    "transition-[background-color,border-color,color,transform] duration-150 ease-out",
     "outline-none focus-visible:ring-2 focus-visible:ring-ring/30 focus-visible:ring-offset-1 focus-visible:ring-offset-background",
     "disabled:pointer-events-none disabled:opacity-50 disabled:cursor-not-allowed",
     "[&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 shrink-0",
@@ -23,7 +23,7 @@ const buttonVariants = cva(
           BRAND_GLASS_SURFACE,
           "hover:brightness-110",
           "active:brightness-95 active:scale-[0.985]",
-          "transition-[filter,transform] duration-200 ease-out",
+          "transition-[filter,transform] duration-150 ease-out",
         ].join(" "),
 
         // Success — uses design tokens
@@ -55,7 +55,7 @@ const buttonVariants = cva(
           "hover:bg-muted hover:border-border-hover",
           "active:scale-[0.985]",
           "dark:bg-surface-raised/90 dark:border-border-hover dark:hover:bg-surface-raised",
-          "transition-[background-color,border-color,color,transform] duration-200 ease-out",
+          "transition-[background-color,border-color,color,transform] duration-150 ease-out",
         ].join(" "),
 
         // Outline flat — transparent with thin border, no fill or shadow
@@ -104,7 +104,7 @@ const buttonVariants = cva(
           "hover:bg-surface-2/90 hover:border-border-hover hover:shadow",
           "active:scale-[0.985] active:shadow-sm",
           "dark:bg-surface-raised/80 dark:border-border-hover dark:hover:bg-surface-raised/95",
-          "transition-[background-color,border-color,color,transform] duration-200 ease-out",
+          "transition-[background-color,border-color,color,transform] duration-150 ease-out",
         ].join(" "),
       },
       size: {

@@ -1,5 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
+import { cn } from "../lib/utils";
+
+// Moving between adjacent triggers (e.g. chart bars) within this window shows
+// the next tooltip without replaying the entrance, so scanning feels instant.
+const WARM_TOOLTIP_WINDOW_MS = 300;
+let lastTooltipHiddenAt = 0;
 
 interface TooltipProps {
   children: React.ReactNode;
@@ -8,6 +14,7 @@ interface TooltipProps {
 
 export const Tooltip = ({ children, content }: TooltipProps) => {
   const [isVisible, setIsVisible] = useState(false);
+  const [skipEntrance, setSkipEntrance] = useState(false);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -49,8 +56,14 @@ export const Tooltip = ({ children, content }: TooltipProps) => {
       <div
         ref={triggerRef}
         className="relative inline-flex"
-        onMouseEnter={() => setIsVisible(true)}
-        onMouseLeave={() => setIsVisible(false)}
+        onMouseEnter={() => {
+          setSkipEntrance(Date.now() - lastTooltipHiddenAt < WARM_TOOLTIP_WINDOW_MS);
+          setIsVisible(true);
+        }}
+        onMouseLeave={() => {
+          lastTooltipHiddenAt = Date.now();
+          setIsVisible(false);
+        }}
       >
         {children}
       </div>
@@ -59,11 +72,16 @@ export const Tooltip = ({ children, content }: TooltipProps) => {
         createPortal(
           <div
             ref={tooltipRef}
-            className="fixed px-2.5 py-1.5 text-xs font-medium text-popover-foreground bg-popover border border-border rounded-md whitespace-nowrap z-[9999] shadow-lg animate-in fade-in-0 zoom-in-95 duration-150 pointer-events-none"
+            className={cn(
+              "fixed px-2.5 py-1.5 text-xs font-medium text-popover-foreground bg-popover border border-border rounded-md whitespace-nowrap z-[9999] shadow-lg pointer-events-none",
+              // Grow from the arrow; the entrance animates `transform`, so the
+              // placement offset lives on the separate `translate` property.
+              !skipEntrance && "origin-bottom animate-in fade-in-0 zoom-in-95 duration-150 ease-out"
+            )}
             style={{
               top: position.top,
               left: position.left,
-              transform: "translate(-50%, calc(-100% - 8px))",
+              translate: "-50% calc(-100% - 8px)",
             }}
           >
             {content}

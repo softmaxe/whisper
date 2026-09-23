@@ -507,7 +507,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
         </Suspense>
       )}
 
-      {/* Always mounted so the palette chunk is warm and Radix can play its exit animation. */}
+      {/* Always mounted so the palette chunk is warm when it opens. */}
       <Suspense fallback={null}>
         <CommandSearch
           open={showSearch}

@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Enter/exit utilities (animate-in, fade-in-0, zoom-in-95, …) used by the Radix
+   popovers and dialogs. */
+@import "tw-animate-css";
 /* Dictation window feature styles (voice pill, assistant/live-transcript panels). */
 @import "./styles/dictation-panel.css";
 
@@ -6,6 +9,10 @@
 
 @theme {
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Strong ease-out for UI enter/exit motion. Overrides Tailwind's default
+     (0, 0, 0.2, 1), which starts too slowly to feel responsive, so every
+     `ease-out` utility and animate-in/out recipe shares this curve. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   /* OpenWhispr Theme — registers color tokens with Tailwind v4.
      These are the light-mode defaults; .dark overrides them below. */
   /* Midpoint of the brand glass gradient (#5588F0 → #3466E2) so tints, rings and links match it. */
@@ -473,7 +480,7 @@ a:hover {
 /* Enter from the physical outer edge of the direction-aware toast stack. */
 .toast-enter {
   --toast-enter-x: 1rem;
-  animation: toast-enter 300ms ease-out;
+  animation: toast-enter 300ms var(--ease-out);
 }
 
 [dir="rtl"] .toast-enter {
@@ -498,12 +505,13 @@ a:hover {
   }
 }
 
+/* Scales instead of resizing so the countdown stays on the compositor. */
 @keyframes toast-progress {
   from {
-    width: 100%;
+    transform: scaleX(1);
   }
   to {
-    width: 0%;
+    transform: scaleX(0);
   }
 }
 
