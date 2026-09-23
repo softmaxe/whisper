@@ -9,13 +9,6 @@ on:
         required: false
         default: ""
         type: string
-    secrets:
-      WHISPER_SIGNING_CERTIFICATE:
-        description: Base64-encoded PKCS12 matching the pinned release certificate
-        required: false
-      WHISPER_SIGNING_PASSWORD:
-        description: Password for the release signing PKCS12
-        required: false
     outputs:
       version:
         value: ${{ jobs.build.outputs.version }}
@@ -34,6 +27,8 @@ jobs:
     name: Test and package macOS arm64
     runs-on: macos-15
     timeout-minutes: 45
+    # Signing secrets live in the release environment, which only v* tags can use.
+    environment: ${{ inputs.release-tag != '' && 'release' || '' }}
     outputs:
       version: ${{ steps.metadata.outputs.version }}
       archive: ${{ steps.metadata.outputs.archive }}
