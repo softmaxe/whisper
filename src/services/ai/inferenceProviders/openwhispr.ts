@@ -1,6 +1,6 @@
 import type { InferenceProvider } from "./types";
 import { INFERENCE_SCOPES } from "../../../config/inferenceScopes";
-import { withSessionRefresh } from "../../../lib/auth";
+import { withSessionRefresh } from "../../../lib/sessionRefresh";
 import { getSettings } from "../../../stores/settingsStore";
 import logger from "../../../utils/logger";
 

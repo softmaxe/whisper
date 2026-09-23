@@ -34,7 +34,7 @@ for (const enabled of [true, false]) {
     const vite = await createRendererServer(t, {
       cachePrefix: "whisper-upload-history-integration-test-",
       mockModules: {
-        "/lib/auth": "export const withSessionRefresh = (fn) => fn();",
+        "/lib/sessionRefresh": "export const withSessionRefresh = (fn) => fn();",
         "/services/managedTranscription":
           "export const getManagedTranscriptionResolution = () => null; export const isManagedTranscriptionActive = () => false;",
         "./managedTranscription":

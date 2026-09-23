@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Upload, FileAudio, X, AlertCircle, Settings, Loader2 } from "../icons";
 import { Button } from "../ui/button";
@@ -13,6 +13,7 @@ import { getBaseLanguageCode } from "../../utils/languageSupport";
 import { saveUploadTranscription } from "../../services/uploadNotes";
 import { UploadCompleteWarnings, UploadModelSettingsButton } from "./UploadAudioFeedback";
 import { isSupportedUploadFile } from "../../utils/uploadAudioFormats";
+import { setControlPanelHold } from "../../utils/controlPanelRetention";
 
 type UploadState = "idle" | "selected" | "transcribing" | "complete" | "error";
 
@@ -53,6 +54,12 @@ export default function UploadAudioView({
   const activeRequestIdRef = useRef<string | null>(null);
   const [skippedNotice, setSkippedNotice] = useState<string | null>(null);
   const batch = useBatchQueue();
+
+  // A selected file, a running request or its result exist only in this view.
+  useEffect(() => {
+    setControlPanelHold("upload", state !== "idle");
+    return () => setControlPanelHold("upload", false);
+  }, [state]);
   const remoteTranscriptionUrl = useSettingsStore((s) => s.remoteTranscriptionUrl);
   const remoteTranscriptionModel = useSettingsStore((s) => s.remoteTranscriptionModel);
   const customTranscriptionApiKey = useSettingsStore((s) => s.customTranscriptionApiKey);

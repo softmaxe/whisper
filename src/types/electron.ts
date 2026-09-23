@@ -1085,6 +1085,8 @@ declare global {
       // Basic window operations
       setOnboardingWindowMode?: (mode: "compact" | "expanded" | "restore") => Promise<boolean>;
       setOnboardingActive?: (active: boolean) => Promise<boolean>;
+      /** Keeps the hidden control panel renderer alive while it owns unfinished work. */
+      setControlPanelRetained?: (retained: boolean) => void;
       beginOnboardingDemo?: (session: { id: string; kind: OnboardingDemoKind }) => Promise<boolean>;
       endOnboardingDemo?: (id: string) => Promise<boolean>;
       stopOnboardingDemo?: (id: string) => Promise<boolean>;

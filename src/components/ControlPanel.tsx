@@ -29,6 +29,8 @@ import {
 } from "../helpers/translationChain";
 import { getAgentName } from "../utils/agentName";
 import { applyChineseScript, resolveChineseScriptTarget } from "../utils/chineseScript";
+import { setControlPanelHold } from "../utils/controlPanelRetention";
+import { onSettingsRequested } from "../utils/settingsRequests";
 import logger from "../utils/logger";
 import { isAccessibilitySkipped } from "../utils/permissions";
 import { getCachedPlatform } from "../utils/platform";
@@ -118,12 +120,12 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Settings may hold edits that have not been saved yet.
   useEffect(() => {
-    const cleanup = window.electronAPI?.onShowSettings?.(() => {
-      setShowSettings(true);
-    });
-    return () => cleanup?.();
-  }, []);
+    setControlPanelHold("settings", showSettings);
+  }, [showSettings]);
+
+  useEffect(() => onSettingsRequested(() => setShowSettings(true)), []);
 
   // When accessibility is missing on macOS, open the permissions settings page
   useEffect(() => {
@@ -243,6 +245,9 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
 
   const retryTranscription = useCallback(
     async (id: number, options?: { isRecover?: boolean }) => {
+      // Cleanup and translation for a retry run in this renderer.
+      const hold = `retry:${id}`;
+      setControlPanelHold(hold, true);
       try {
         const s = getSettings();
         const managed = getManagedTranscriptionResolution();
@@ -459,6 +464,8 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
           title: t("controlPanel.history.retryError"),
           variant: "destructive",
         });
+      } finally {
+        setControlPanelHold(hold, false);
       }
     },
     [toast, t, useCleanupModel]

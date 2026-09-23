@@ -1,4 +1,4 @@
-import { withSessionRefresh } from "../lib/auth";
+import { withSessionRefresh } from "../lib/sessionRefresh";
 import {
   resolveTranscriptionRoute,
   type ManagedTranscriptionResolution,

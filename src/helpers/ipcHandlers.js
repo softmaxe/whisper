@@ -1141,6 +1141,13 @@ class IPCHandlers {
       return this.windowManager.setOnboardingActive(active);
     });
 
+    ipcMain.on("control-panel-retained", (event, retained) => {
+      const controlPanel = this.windowManager.controlPanelWindow;
+      if (!controlPanel || controlPanel.isDestroyed()) return;
+      if (event.sender !== controlPanel.webContents) return;
+      this.windowManager.setControlPanelRetained(retained === true);
+    });
+
     ipcMain.handle("test-provider-connection", async (_event, config) => {
       if (config?.provider === "corti" && config?.scope === "transcription") {
         try {

@@ -4,6 +4,7 @@ import { transcribeFile } from "../services/fileTranscription";
 import type { FileTranscriptionConfig } from "../services/fileTranscription";
 import { transcriptionErrorKey } from "../components/notes/shared";
 import { saveUploadTranscription } from "../services/uploadNotes";
+import { setControlPanelHold } from "../utils/controlPanelRetention";
 
 export type QueueItemStatus = "queued" | "transcribing" | "done" | "error";
 
@@ -34,6 +35,12 @@ export const useBatchQueueStore = create<BatchQueueStoreState>()(() => ({
   queue: [],
   isProcessing: false,
 }));
+
+// Queued, running and finished items live only in this window, and finished
+// text stays copyable when History is disabled.
+useBatchQueueStore.subscribe((state) => {
+  setControlPanelHold("upload-batch", state.isProcessing || state.queue.length > 0);
+});
 
 // Self-hosted requests cannot be aborted through the original BYOK transport.
 // The run id discards late results while cancellation unlocks the UI immediately.
