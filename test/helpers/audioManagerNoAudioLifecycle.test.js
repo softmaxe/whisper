@@ -7,12 +7,9 @@ async function loadManagerClass(t) {
     cachePrefix: "openwhispr-no-audio-lifecycle-test-",
     settingsKey: "__noAudioLifecycleSettings",
     settings: {
-      useLocalWhisper: false,
       transcriptionMode: "self-hosted",
       remoteTranscriptionUrl: "http://localhost:8000/v1",
       remoteTranscriptionModel: "whisper-1",
-      cloudTranscriptionMode: "byok",
-      isSignedIn: false,
     },
   });
   return AudioManager;
@@ -24,10 +21,8 @@ function createManager(AudioManager, failure) {
   const manager = Object.assign(Object.create(AudioManager.prototype), {
     isProcessing: true,
     _localSpeechGateState: null,
-    pendingAssistantConversation: null,
-    pendingSelectionEdit: null,
     lastAudioBlob: {},
-    processWithOpenAIAPI: async () => {
+    processWithSelfHostedServer: async () => {
       throw failure;
     },
     onStateChange: (state) => order.push(state.isProcessing ? "processing" : "idle"),

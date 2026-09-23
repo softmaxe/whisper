@@ -8,12 +8,9 @@ async function loadManagerClass(t) {
     cachePrefix: "openwhispr-cancel-lifecycle-test-",
     settingsKey: "__cancelLifecycleSettings",
     settings: {
-      useLocalWhisper: false,
       transcriptionMode: "self-hosted",
       remoteTranscriptionUrl: "http://localhost:8000/v1",
       remoteTranscriptionModel: "whisper-1",
-      cloudTranscriptionMode: "byok",
-      isSignedIn: false,
     },
   });
   return { AudioManager, window };
@@ -25,24 +22,15 @@ function createManager(AudioManager, transcription) {
     isProcessing: true,
     _localSpeechGateState: null,
     _processingCancellationGeneration: 0,
-    _streamingStopPromise: null,
-    _streamingCancellationGeneration: 0,
     _activeTranscriptionAbortController: null,
-    pendingAssistantConversation: null,
-    pendingSelectionEdit: null,
     lastAudioBlob: {},
-    processWithOpenAIAPI: () => transcription.promise,
+    processWithSelfHostedServer: () => transcription.promise,
     onStateChange: (state) => calls.states.push(state.isProcessing ? "processing" : "idle"),
     onNoAudio: () => calls.noAudio++,
     onError: () => calls.errors++,
     onTranscriptionComplete: () => calls.completed++,
     saveFailedTranscription: () => calls.saved++,
   });
-  // The real implementation also aborts ReasoningService/IPC work; the test
-  // only needs the generation bump that marks the pipeline cancelled.
-  manager._requestStreamingCancellation = () => {
-    manager._streamingCancellationGeneration += 1;
-  };
   return { manager, calls };
 }
 
@@ -54,20 +42,15 @@ function createBatchFinalizationManager(AudioManager, merge) {
     isRecording: true,
     isProcessing: false,
     _processingCancellationGeneration: 0,
-    _streamingCancellationGeneration: 0,
-    _streamingStopPromise: null,
     _activeTranscriptionAbortController: null,
     _batchSegments: [],
     _receivedAudioData: true,
     _localSpeechGateState: null,
-    _streamingCommitActive: false,
     recordingMimeType: "audio/webm",
     recordingStartTime: Date.now(),
     lastAudioBlob: null,
     micRecovery: { stop() {} },
     teardownSpeechGate() {},
-    cleanupPreview: async () => null,
-    shouldShowPreviewCleanupState: () => false,
     mergeRecordedSegments: () => merge.promise,
     getLargestRecordedSegment: () => null,
     processAudio: async (_audioBlob, metadata) => {
@@ -76,9 +59,6 @@ function createBatchFinalizationManager(AudioManager, merge) {
     },
     onStateChange() {},
   });
-  manager._requestStreamingCancellation = () => {
-    manager._streamingCancellationGeneration += 1;
-  };
   return {
     manager,
     mergedBlob,
@@ -133,7 +113,7 @@ test("a cancelled older pipeline cannot publish or clear a newer pipeline", asyn
   const firstBlob = new Blob(["first"], { type: "audio/webm" });
   const secondBlob = new Blob(["second"], { type: "audio/webm" });
   const { manager } = createManager(AudioManager, firstTranscription);
-  manager.processWithOpenAIAPI = (audioBlob) =>
+  manager.processWithSelfHostedServer = (audioBlob) =>
     audioBlob === firstBlob ? firstTranscription.promise : secondTranscription.promise;
   manager.onTranscriptionComplete = (result) => completed.push(result.text);
 
@@ -172,26 +152,6 @@ test("batch processing carries its occurrence time into completion", async (t) =
   assert.equal(completion.analyticsOccurredAt, analyticsOccurredAt);
 });
 
-test("a cancelled current pipeline clears busy when its pending work settles", async (t) => {
-  const { AudioManager } = await loadManagerClass(t);
-  const transcription = deferred();
-  const { manager, calls } = createManager(AudioManager, transcription);
-  // Streaming finalization keeps the lifecycle busy while provider/model work
-  // is still settling instead of advertising an idle state prematurely.
-  manager._streamingStopPromise = Promise.resolve(true);
-
-  const run = manager.processAudio(new Blob(["audio"], { type: "audio/webm" }));
-  assert.equal(manager.cancelProcessing(), true);
-  assert.equal(manager.isProcessing, true, "cancel keeps busy until the owned work settles");
-
-  transcription.resolve({ success: true, text: "stale", source: "self-hosted", timings: {} });
-  await run;
-
-  assert.equal(manager.isProcessing, false);
-  assert.deepEqual(calls.states, ["idle"]);
-  assert.equal(calls.completed, 0);
-});
-
 test("a user cancel during batch transcription is not an error and saves nothing", async (t) => {
   const { AudioManager } = await loadManagerClass(t);
   const transcription = deferred();
@@ -211,44 +171,4 @@ test("a user cancel during batch transcription is not an error and saves nothing
   assert.equal(calls.saved, 0, "cancel must not write a failed-transcription row");
   assert.equal(calls.completed, 0);
   assert.deepEqual(calls.states, ["idle"]);
-});
-
-test("a cancel during batch processing dismisses the held live-transcript panel", async (t) => {
-  const { AudioManager, window } = await loadManagerClass(t);
-  const { manager } = createManager(AudioManager, deferred());
-  const dismissCalls = [];
-  window.electronAPI.dismissDictationPreview = () => {
-    dismissCalls.push(true);
-    return Promise.resolve({ success: true });
-  };
-  // hideDictationPreview must NOT be what this fix relies on — onError,
-  // which used to own that call, no longer runs for a cancel at all.
-  const hideCalls = [];
-  window.electronAPI.hideDictationPreview = () => {
-    hideCalls.push(true);
-    return Promise.resolve({ success: true });
-  };
-
-  assert.equal(manager.cancelProcessing(), true);
-
-  assert.equal(
-    dismissCalls.length,
-    1,
-    "a cancel must dismiss the held preview panel, not leave it open"
-  );
-  assert.equal(hideCalls.length, 0, "the fix must not depend on onError's hideDictationPreview");
-});
-
-test("cancelling when nothing is processing dismisses nothing", async (t) => {
-  const { AudioManager, window } = await loadManagerClass(t);
-  const { manager } = createManager(AudioManager, deferred());
-  manager.isProcessing = false;
-  const dismissCalls = [];
-  window.electronAPI.dismissDictationPreview = () => {
-    dismissCalls.push(true);
-    return Promise.resolve({ success: true });
-  };
-
-  assert.equal(manager.cancelProcessing(), false);
-  assert.equal(dismissCalls.length, 0);
 });

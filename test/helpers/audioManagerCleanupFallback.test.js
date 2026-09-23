@@ -14,8 +14,6 @@ test("cleanup failure details ride the raw result instead of notifying before pa
       cleanupProvider: "custom",
       cleanupMode: "self-hosted",
       cleanupDisableThinking: true,
-      useDictationAgent: false,
-      useDictationTranslation: false,
       preferredLanguage: "en",
       cleanupRemoteUrl: "http://localhost:8000/v1",
     },
@@ -23,28 +21,7 @@ test("cleanup failure details ride the raw result instead of notifying before pa
       "/stores/settingsStore": `
         export const getSettings = () => globalThis.__audioCleanupFallbackSettings;
         export const getEffectiveCleanupModel = () => "cleanup-model";
-        export const selectResolvedLLMConfig = () => ({
-          mode: "self-hosted",
-          provider: "custom",
-          model: "cleanup-model"
-        });
-        export const isCloudCleanupMode = () => false;
-        export const isCloudDictationAgentMode = () => false;
-        export const isCloudTranslationMode = () => false;
         export const useSettingsStore = { subscribe: () => () => {} };
-      `,
-      "/dictationAgentInference": `
-        export const resolveDictationAgentInference = () => ({
-          reachable: false, model: "", displayProvider: "none", config: {}
-        });
-        export const resolveDictationAgentVisionInference = () => ({
-          active: false, model: "", config: {}
-        });
-      `,
-      "/dictationTranslationInference": `
-        export const resolveDictationTranslationInference = () => ({
-          reachable: false, model: "", displayProvider: "none", config: {}
-        });
       `,
       "/stores/cleanupFailureStore": `
         export const recordCleanupFailure = (failure) => {
@@ -66,11 +43,7 @@ test("cleanup failure details ride the raw result instead of notifying before pa
     technicalDetails,
   });
   const manager = createManager({
-    voiceAgentRequested: false,
-    translationRequested: false,
     pendingCleanupFailure: null,
-    pendingAssistantConversation: null,
-    pendingSelectionEdit: null,
     isReasoningAvailable: async () => true,
     processWithReasoningModel: async () => {
       throw failure;

@@ -22,11 +22,6 @@ import ControlPanelTopBar from "./ControlPanelTopBar";
 import { AlertDialog, ConfirmDialog } from "./ui/dialog";
 import { useToast } from "./ui/useToast";
 
-import {
-  executeTranslationChain,
-  hasTextContent,
-  shouldRunTranslateStep,
-} from "../helpers/translationChain";
 import { getAgentName } from "../utils/agentName";
 import { applyChineseScript, resolveChineseScriptTarget } from "../utils/chineseScript";
 import { setControlPanelHold } from "../utils/controlPanelRetention";
@@ -38,6 +33,9 @@ import HistoryView from "./HistoryView";
 const SIDEBAR_WIDTH_PX = 192;
 
 const SettingsModal = React.lazy(() => import("./SettingsModal"));
+
+const hasTextContent = (value: unknown): value is string =>
+  typeof value === "string" && value.trim().length > 0;
 const InsightsView = React.lazy(() => import("./InsightsView"));
 const UploadAudioView = React.lazy(() => import("./notes/UploadAudioView"));
 const DictionaryView = React.lazy(() => import("./DictionaryView"));
@@ -242,7 +240,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
 
   const retryTranscription = useCallback(
     async (id: number, options?: { isRecover?: boolean }) => {
-      // Cleanup and translation for a retry run in this renderer.
+      // Cleanup for a retry runs in this renderer.
       const hold = `retry:${id}`;
       setControlPanelHold(hold, true);
       try {
@@ -282,103 +280,16 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
           const rawText = result.transcription.text;
           let finalTranscription = result.transcription;
 
-          // A translation dictation must re-run cleanup-then-translate on retry, not plain cleanup.
-          let handledTranslation = false;
-          let translationApplied = false;
-          if (result.transcription.route_kind === "translation") {
-            handledTranslation = true;
-            try {
-              const [
-                { default: ReasoningService },
-                { resolveReasoningRoute },
-                { getEffectiveCleanupModel, getSettings: getEffectiveSettings },
-              ] = await Promise.all([
-                import("../services/ReasoningService"),
-                import("../helpers/audioManager"),
-                import("../stores/settingsStore"),
-              ]);
-              const settings = getEffectiveSettings();
-              const agentName = getAgentName();
-              const route = resolveReasoningRoute(rawText, settings, agentName, false, true);
-              if (route.kind === "translation") {
-                const { text, translated } = await executeTranslationChain({
-                  text: rawText,
-                  cleanupReachable: route.cleanupReachable,
-                  runCleanup: (currentText: string) =>
-                    ReasoningService.processText(
-                      currentText,
-                      getEffectiveCleanupModel(),
-                      agentName,
-                      route.cleanupConfig
-                    ),
-                  runTranslate: (currentText: string) =>
-                    ReasoningService.processText(currentText, route.model, agentName, route.config),
-                  shouldTranslate: shouldRunTranslateStep(
-                    settings.translationSourceLanguage,
-                    settings.translationTargetLanguage
-                  ),
-                  onCleanupError: (cleanupError: Error & { messageKey?: string }) => {
-                    logger.warn(
-                      "Cleanup step failed in translation chain, translating raw transcript",
-                      { error: cleanupError.message },
-                      "transcription"
-                    );
-                    // The chain still translates the raw transcript, so say why cleanup
-                    // was dropped rather than reporting a clean success (#2091).
-                    toast({
-                      title: t("app.toasts.cleanupFailed.title"),
-                      description: cleanupError.messageKey
-                        ? t(cleanupError.messageKey)
-                        : cleanupError.message,
-                      variant: "destructive",
-                    });
-                  },
-                  onEmptyTranslate: () =>
-                    logger.warn(
-                      "Translation step returned empty text, keeping previous text",
-                      {},
-                      "transcription"
-                    ),
-                  onUnchangedTranslate: () =>
-                    logger.warn(
-                      "Translation step returned unchanged text, keeping source text",
-                      {},
-                      "transcription"
-                    ),
-                });
-                translationApplied = translated;
-                if (text !== rawText) {
-                  const updated = await window.electronAPI.updateTranscriptionText(
-                    id,
-                    text,
-                    rawText
-                  );
-                  if (updated.success && updated.transcription) {
-                    finalTranscription = updated.transcription;
-                  }
-                }
-              } else {
-                // Translation disabled/unreachable since recording — fall through to cleanup.
-                handledTranslation = false;
-              }
-            } catch {
-              // Reasoning failed — keep the raw STT result
-            }
-          }
-
           // Apply AI reasoning if enabled
-          if (!handledTranslation && useCleanupModel) {
+          if (useCleanupModel) {
             try {
-              const [
-                { default: ReasoningService },
-                { getEffectiveCleanupModel, isCloudCleanupMode, getSettings },
-              ] = await Promise.all([
-                import("../services/ReasoningService"),
-                import("../stores/settingsStore"),
-              ]);
+              const [{ default: ReasoningService }, { getEffectiveCleanupModel, getSettings }] =
+                await Promise.all([
+                  import("../services/ReasoningService"),
+                  import("../stores/settingsStore"),
+                ]);
               const model = getEffectiveCleanupModel();
-              const isCloud = isCloudCleanupMode();
-              if (model || isCloud) {
+              if (model) {
                 const agentName = getAgentName();
                 const reasonedText = await ReasoningService.processText(rawText, model, agentName, {
                   disableThinking: getSettings().cleanupDisableThinking,
@@ -408,21 +319,12 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
           }
 
           // Deterministic Chinese script pass, mirroring dictation (#975). Runs last so
-          // it covers the cleaned/translated text, or the raw transcript when neither ran.
-          // Same rule as audioManager.getEffectiveOutputLanguage: only a completed
-          // translate step moves the text into the target language, so anything else
-          // still has to be scripted as the language that was dictated.
+          // it covers the cleaned text, or the raw transcript when cleanup did not run.
           try {
-            const outputLanguage =
-              result.transcription.route_kind === "translation"
-                ? (translationApplied
-                    ? s.translationTargetLanguage
-                    : s.translationSourceLanguage) || "auto"
-                : s.preferredLanguage;
             const scripted = await applyChineseScript(
               finalTranscription.text,
               resolveChineseScriptTarget(
-                outputLanguage,
+                s.preferredLanguage,
                 s.chineseScriptPreference,
                 finalTranscription.text
               )

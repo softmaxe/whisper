@@ -72,7 +72,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
       : ipcRenderer.send("mac-accessibility-features-ready"),
   testProviderConnection: (config) => ipcRenderer.invoke("test-provider-connection", config),
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
-  captureSelectedText: (options) => ipcRenderer.invoke("capture-selected-text", options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
   captureDictationTarget: () => ipcRenderer.invoke("capture-dictation-target"),
@@ -325,7 +324,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "auth-token-state-changed",
     (callback) => (_event, state) => callback(state)
   ),
-  cancelCloudTranscription: () => ipcRenderer.send("cloud-transcribe-cancel"),
   cancelCloudReason: () => ipcRenderer.send("cloud-reason-cancel"),
   onWorkspacePolicyChanged: (callback) => {
     const listener = (_event, snapshot) => callback(snapshot);
@@ -334,90 +332,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
   onUploadTranscriptionProgress: registerListener(
     "upload-transcription-progress",
-    (callback) => (_event, data) => callback(data)
-  ),
-  assemblyAiStreamingSend: (audioBuffer) =>
-    ipcRenderer.send("assemblyai-streaming-send", audioBuffer),
-  assemblyAiStreamingForceEndpoint: () => ipcRenderer.send("assemblyai-streaming-force-endpoint"),
-  onAssemblyAiPartialTranscript: registerListener(
-    "assemblyai-partial-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onAssemblyAiFinalTranscript: registerListener(
-    "assemblyai-final-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onAssemblyAiError: registerListener(
-    "assemblyai-error",
-    (callback) => (_event, error) => callback(error)
-  ),
-  onAssemblyAiSessionEnd: registerListener(
-    "assemblyai-session-end",
-    (callback) => (_event, data) => callback(data)
-  ),
-  deepgramStreamingSend: (audioBuffer) => ipcRenderer.send("deepgram-streaming-send", audioBuffer),
-  deepgramStreamingFinalize: () => ipcRenderer.send("deepgram-streaming-finalize"),
-  onDeepgramPartialTranscript: registerListener(
-    "deepgram-partial-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onDeepgramFinalTranscript: registerListener(
-    "deepgram-final-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onDeepgramError: registerListener(
-    "deepgram-error",
-    (callback) => (_event, error) => callback(error)
-  ),
-  onDeepgramSessionEnd: registerListener(
-    "deepgram-session-end",
-    (callback) => (_event, data) => callback(data)
-  ),
-  geminiStreamingSend: (audioBuffer) => ipcRenderer.send("gemini-streaming-send", audioBuffer),
-  geminiStreamingFinalize: () => ipcRenderer.send("gemini-streaming-finalize"),
-  onGeminiPartialTranscript: registerListener(
-    "gemini-partial-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onGeminiFinalTranscript: registerListener(
-    "gemini-final-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onGeminiError: registerListener("gemini-error", (callback) => (_event, error) => callback(error)),
-  onGeminiSessionEnd: registerListener(
-    "gemini-session-end",
-    (callback) => (_event, data) => callback(data)
-  ),
-  cortiStreamingSend: (audioBuffer) => ipcRenderer.send("corti-streaming-send", audioBuffer),
-  cortiStreamingFinalize: () => ipcRenderer.send("corti-streaming-finalize"),
-  onCortiPartialTranscript: registerListener(
-    "corti-partial-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onCortiFinalTranscript: registerListener(
-    "corti-final-transcript",
-    (callback) => (_event, text) => callback(text)
-  ),
-  onCortiError: registerListener("corti-error", (callback) => (_event, error) => callback(error)),
-  onCortiSessionEnd: registerListener(
-    "corti-session-end",
-    (callback) => (_event, data) => callback(data)
-  ),
-  dictationRealtimeSend: (buffer) => ipcRenderer.send("dictation-realtime-send", buffer),
-  onDictationRealtimePartial: registerListener(
-    "dictation-realtime-partial",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onDictationRealtimeFinal: registerListener(
-    "dictation-realtime-final",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onDictationRealtimeError: registerListener(
-    "dictation-realtime-error",
-    (callback) => (_event, data) => callback(data)
-  ),
-  onDictationRealtimeSessionEnd: registerListener(
-    "dictation-realtime-session-end",
     (callback) => (_event, data) => callback(data)
   ),
 
@@ -512,7 +426,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
     (callback) => (_event, payload) => callback(payload)
   ),
   onPreviewHide: registerListener("preview-hide", (callback) => () => callback()),
-  sendDictationPreviewAudio: (data) => ipcRenderer.send("dictation-preview-audio", data),
   acquireRecordingLock: (pipeline) => ipcRenderer.invoke("acquire-recording-lock", pipeline),
   releaseRecordingLock: (pipeline) => ipcRenderer.invoke("release-recording-lock", pipeline),
 

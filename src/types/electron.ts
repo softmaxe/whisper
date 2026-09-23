@@ -1088,29 +1088,10 @@ declare global {
       pasteText: (
         text: string,
         options?: {
-          fromStreaming?: boolean;
           restoreClipboard?: boolean;
           allowClipboardFallback?: boolean;
         }
       ) => Promise<{ success: true; pasted: boolean }>;
-      captureSelectedText?: (options?: { probeEditable?: boolean }) => Promise<
-        | {
-            status: "selected";
-            sessionId: string;
-            text: string;
-            characterCount: number;
-          }
-        | {
-            status: "editable";
-            sessionId: string;
-          }
-        | {
-            status: "none" | "unavailable" | "target_changed" | "too_large";
-            code?: string;
-            characterCount?: number;
-            maxCharacters?: number;
-          }
-      >;
       hideWindow: () => Promise<void>;
       showDictationPanel: () => Promise<void>;
       captureDictationTarget?: () => Promise<{ success: boolean; pid: number | null }>;
@@ -2227,7 +2208,6 @@ declare global {
           limitReached?: boolean;
         } & PolicyFailureMetadata
       >;
-      cancelCloudTranscription?: () => void;
       cloudReason?: (
         text: string,
         opts: {
@@ -2419,8 +2399,6 @@ declare global {
           usedWarmConnection?: boolean;
         } & PolicyFailureMetadata
       >;
-      assemblyAiStreamingSend?: (audioBuffer: ArrayBuffer) => void;
-      assemblyAiStreamingForceEndpoint?: () => void;
       assemblyAiStreamingStop?: () => Promise<{
         success: boolean;
         text?: string;
@@ -2430,12 +2408,6 @@ declare global {
         isConnected: boolean;
         sessionId: string | null;
       }>;
-      onAssemblyAiPartialTranscript?: (callback: (text: string) => void) => () => void;
-      onAssemblyAiFinalTranscript?: (callback: (text: string) => void) => () => void;
-      onAssemblyAiError?: (callback: (error: string) => void) => () => void;
-      onAssemblyAiSessionEnd?: (
-        callback: (data: { audioDuration?: number; text?: string }) => void
-      ) => () => void;
 
       // Referral stats
       getReferralStats?: () => Promise<{
@@ -2608,8 +2580,6 @@ declare global {
           usedWarmConnection?: boolean;
         } & PolicyFailureMetadata
       >;
-      deepgramStreamingSend?: (audioBuffer: ArrayBuffer) => void;
-      deepgramStreamingFinalize?: () => void;
       deepgramStreamingStop?: () => Promise<{
         success: boolean;
         text?: string;
@@ -2619,12 +2589,6 @@ declare global {
         isConnected: boolean;
         sessionId: string | null;
       }>;
-      onDeepgramPartialTranscript?: (callback: (text: string) => void) => () => void;
-      onDeepgramFinalTranscript?: (callback: (text: string) => void) => () => void;
-      onDeepgramError?: (callback: (error: string) => void) => () => void;
-      onDeepgramSessionEnd?: (
-        callback: (data: { audioDuration?: number; text?: string }) => void
-      ) => () => void;
 
       // Gemini Live Streaming
       geminiStreamingWarmup?: (
@@ -2637,8 +2601,6 @@ declare global {
       ) => Promise<
         { success: boolean; usedWarmConnection?: boolean; error?: string } & PolicyFailureMetadata
       >;
-      geminiStreamingSend?: (audioBuffer: ArrayBuffer) => void;
-      geminiStreamingFinalize?: () => void;
       geminiStreamingStop?: () => Promise<{
         success: boolean;
         text?: string;
@@ -2647,10 +2609,6 @@ declare global {
         error?: string;
       }>;
       geminiStreamingStatus?: () => Promise<{ isConnected: boolean; isConnecting: boolean }>;
-      onGeminiPartialTranscript?: (callback: (text: string) => void) => () => void;
-      onGeminiFinalTranscript?: (callback: (text: string) => void) => () => void;
-      onGeminiError?: (callback: (error: string) => void) => () => void;
-      onGeminiSessionEnd?: (callback: (data: { text?: string }) => void) => () => void;
 
       // Corti streaming (BYOK)
       cortiStreamingWarmup?: (options?: {
@@ -2665,8 +2623,6 @@ declare global {
         language?: string;
         keyterms?: string[];
       }) => Promise<{ success: boolean } & PolicyFailureMetadata>;
-      cortiStreamingSend?: (audioBuffer: ArrayBuffer) => void;
-      cortiStreamingFinalize?: () => void;
       cortiStreamingStop?: () => Promise<{
         success: boolean;
         text?: string;
@@ -2675,10 +2631,6 @@ declare global {
         error?: string;
       }>;
       cortiStreamingStatus?: () => Promise<{ isConnected: boolean; sessionId: string | null }>;
-      onCortiPartialTranscript?: (callback: (text: string) => void) => () => void;
-      onCortiFinalTranscript?: (callback: (text: string) => void) => () => void;
-      onCortiError?: (callback: (error: string) => void) => () => void;
-      onCortiSessionEnd?: (callback: (data: { text?: string }) => void) => () => void;
 
       // Agent cloud streaming (event-based)
       startAgentStream?: (
@@ -2891,12 +2843,7 @@ declare global {
       dictationRealtimeStart?: (
         options: DictationRealtimeSessionOptions
       ) => Promise<{ success: boolean } & PolicyFailureMetadata>;
-      dictationRealtimeSend?: (buffer: ArrayBuffer) => void;
       dictationRealtimeStop?: () => Promise<{ success: boolean; text: string }>;
-      onDictationRealtimePartial?: (callback: (text: string) => void) => () => void;
-      onDictationRealtimeFinal?: (callback: (text: string) => void) => () => void;
-      onDictationRealtimeError?: (callback: (error: string) => void) => () => void;
-      onDictationRealtimeSessionEnd?: (callback: (data: { text: string }) => void) => () => void;
 
       // Microsoft Calendar
       mcalStartOAuth?: () => Promise<{ success: boolean; email?: string; error?: string }>;
@@ -2991,7 +2938,6 @@ declare global {
       updateDictationPreview?: (text: string) => Promise<{ success: boolean }>;
       completeDictationPreview?: (payload: { text?: string }) => Promise<{ success: boolean }>;
       hideDictationPreview?: () => Promise<{ success: boolean }>;
-      sendDictationPreviewAudio?: (data: ArrayBuffer) => void;
 
       // Sync operations
       getPendingNotes?: (spaceKind?: "private" | "team") => Promise<NoteItem[]>;

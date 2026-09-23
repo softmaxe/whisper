@@ -268,7 +268,7 @@ class ClipboardManager {
   async pasteMacOS(originalClipboard, options = {}) {
     const fastPasteBinary = this.resolveFastPasteBinary();
     const useFastPaste = !!fastPasteBinary;
-    const pasteDelay = options.fromStreaming ? (useFastPaste ? 15 : 50) : PASTE_DELAY_MS;
+    const pasteDelay = PASTE_DELAY_MS;
 
     return new Promise((resolve, reject) => {
       setTimeout(() => {

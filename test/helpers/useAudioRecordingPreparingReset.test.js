@@ -17,24 +17,12 @@ const {
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export default class FakeAudioManager {
   constructor() {
-    this.voiceAgentRequested = false;
-    this.translationRequested = false;
-    this.sttConfig = { success: true };
   }
   getState() {
     return {};
   }
   setCallbacks() {}
-  setVoiceAgentRequested(value) {
-    this.voiceAgentRequested = value;
-  }
-  setAssistantSelectionContext() {}
-  setTranslationRequested(value) {
-    this.translationRequested = value;
-  }
-  shouldUseStreaming() {
-    return false;
-  }
+  resetRecordingRequest() {}
   prepareMicCapture() {}
   cancelPreparedMicCapture() {}
   cleanup() {}
