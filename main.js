@@ -72,9 +72,6 @@ require("dotenv").config({
   override: false,
 });
 
-const OAUTH_PROTOCOL = "openwhispr-selfhosted";
-const protocolRegistered = false;
-
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -132,11 +129,9 @@ let trayManager = null;
 let globeKeyManager = null;
 let textEditMonitor = null;
 let ipcHandlers = null;
-let cliBridge = null;
 let globeKeyAlertShown = false;
 let macAccessibilityFeaturesReady = false;
 let startMacAccessibilityFeatures = null;
-let authBridgeServer = null;
 
 let wakeRewarmTimer = null;
 
@@ -189,16 +184,6 @@ function initializeCoreManagers() {
   windowManager = new WindowManager();
   hotkeyManager = windowManager.hotkeyManager;
   databaseManager = new DatabaseManager();
-  // Restore the last validated account scope before any window, IPC handler,
-  // or meeting flow can read or create notes. Offline launches keep the
-  // account's data visible; a stale or rotated credential fails the hash
-  // check and restores nothing.
-  const accountScopeBinding = require("./src/helpers/accountScopeBinding");
-  const bootAccountId = accountScopeBinding.resolveBootAccountScope({
-    token: require("./src/helpers/tokenStore").get(),
-    binding: accountScopeBinding.read(),
-  });
-  if (bootAccountId) databaseManager.setActiveAccountId(bootAccountId);
   clipboardManager = new ClipboardManager();
   textEditMonitor = new TextEditMonitor();
   windowManager.textEditMonitor = textEditMonitor;
@@ -211,8 +196,6 @@ function initializeCoreManagers() {
     windowManager,
     textEditMonitor,
     getTrayManager: () => trayManager,
-    oauthProtocolRegistered: protocolRegistered,
-    oauthProtocol: OAUTH_PROTOCOL,
   });
 }
 
@@ -249,18 +232,6 @@ function initializeDeferredManagers() {
     });
   });
 }
-
-// Deep links can arrive before windowManager exists (cold start) or before the
-// renderer has mounted its listener. The token is stashed here and the renderer
-// pulls it via `get-pending-invitation-token` on mount; the push below is a
-// best-effort fast path for an already-running app.
-let pendingInvitationDeepLinkToken = null;
-
-ipcMain.handle("get-pending-invitation-token", () => {
-  const token = pendingInvitationDeepLinkToken;
-  pendingInvitationDeepLinkToken = null;
-  return token;
-});
 
 // Main application startup
 async function startApp() {
@@ -701,27 +672,9 @@ async function startApp() {
   });
 }
 
-ipcMain.on("mac-accessibility-features-ready", (_event, expectedAccountScope) => {
-  if (expectedAccountScope) {
-    const accountScopeBinding = require("./src/helpers/accountScopeBinding");
-    const currentAccountScope = accountScopeBinding.resolveActiveAccountScope({
-      ...require("./src/helpers/tokenStore").getState(),
-      binding: accountScopeBinding.read(),
-    });
-    if (!accountScopeBinding.matchesActiveAccountScope(expectedAccountScope, currentAccountScope)) {
-      debugLogger.info("[Accessibility] Ignoring stale account-scoped readiness signal");
-      return;
-    }
-  }
+ipcMain.on("mac-accessibility-features-ready", () => {
   macAccessibilityFeaturesReady = true;
   startMacAccessibilityFeatures?.();
-});
-
-// Listen for usage limit reached from dictation overlay, forward to control panel
-ipcMain.on("limit-reached", (_event, data) => {
-  if (isLiveWindow(windowManager?.controlPanelWindow)) {
-    windowManager.controlPanelWindow.webContents.send("limit-reached", data);
-  }
 });
 
 // App event handlers
@@ -822,14 +775,6 @@ function performSyncTeardown() {
   if (wakeRewarmTimer) {
     clearTimeout(wakeRewarmTimer);
     wakeRewarmTimer = null;
-  }
-  if (authBridgeServer) {
-    authBridgeServer.close();
-    authBridgeServer = null;
-  }
-  if (cliBridge) {
-    cliBridge.stop().catch(() => {});
-    cliBridge = null;
   }
   if (hotkeyManager) {
     hotkeyManager.unregisterAll();

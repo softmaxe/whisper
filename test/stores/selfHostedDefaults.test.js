@@ -11,9 +11,6 @@ test("fresh installs use self-hosted servers and enable the menu bar icon", asyn
   });
   const { useSettingsStore } = await vite.ssrLoadModule("/stores/settingsStore.ts");
   const state = useSettingsStore.getState();
-  assert.equal(state.transcriptionMode, "self-hosted");
-  assert.equal(state.cleanupMode, "self-hosted");
-  assert.equal(state.useLocalWhisper, false);
   assert.equal(state.remoteTranscriptionUrl, "");
   assert.equal(state.remoteTranscriptionModel, "");
   assert.equal(state.cleanupRemoteUrl, "");

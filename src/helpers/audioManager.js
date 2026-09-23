@@ -30,12 +30,6 @@ import {
   PreparedMicCapture,
 } from "./preparedMicCapture";
 
-import {
-  effectiveAudioRetentionDays,
-  effectiveLocalHistoryEnabled,
-  isTranscriptionContextAllowed,
-} from "../stores/policyRules";
-import { usePolicyStore } from "../stores/policyStore";
 import { getAgentName } from "../utils/agentName";
 import {
   DICTIONARY_ECHO_CODE,
@@ -47,8 +41,7 @@ import { dictionaryPromptLimit, trimDictionaryPrompt } from "../utils/dictionary
 import { getDictionaryHintWords } from "../utils/snippets";
 import { isEmptyRecording } from "./recordingGuard";
 import { evaluateFinishedRecording, withSalvageWarning } from "./recordingValidation";
-import { resolveSelfHostedTranscriptionModel } from "./selfHostedTranscription";
-import { resolveByokModel, resolveTranscriptionRoute } from "./transcriptionRoute.ts";
+import { resolveTranscriptionRoute } from "./transcriptionRoute.ts";
 
 const REASONING_CACHE_TTL = 30000; // 30 seconds
 const RECORDING_TIMESLICE_MS = 250; // flush chunks periodically so short recordings still carry audio frames. See #871.
@@ -71,12 +64,8 @@ const micDeviceKey = (settings) =>
   `${settings.microphoneSelectionMode}|${settings.selectedMicDeviceId}`;
 
 function getEffectiveRetentionPreferences() {
-  const settings = getSettings();
-  const policyState = usePolicyStore.getState();
-  return {
-    dataRetentionEnabled: effectiveLocalHistoryEnabled(policyState, settings.dataRetentionEnabled),
-    audioRetentionDays: effectiveAudioRetentionDays(policyState, settings.audioRetentionDays),
-  };
+  const { dataRetentionEnabled, audioRetentionDays } = getSettings();
+  return { dataRetentionEnabled, audioRetentionDays };
 }
 
 // The cleanup request configuration, or null when no cleanup model is set.
@@ -286,10 +275,6 @@ class AudioManager {
     return settings.preferredLanguage;
   }
 
-  isRecordingAllowedByPolicy() {
-    return isTranscriptionContextAllowed(usePolicyStore.getState(), getSettings(), "dictation");
-  }
-
   selectMicrophoneForSession() {
     if (this._captureSession?.preparationExpired && !this.isRecording && !this._startInProgress) {
       this._endCaptureSession();
@@ -356,10 +341,6 @@ class AudioManager {
   // warmupMicDriver (#845): a raced warm-up never resolved before the
   // recording's own open, so it only ever added a concurrent double open.
   async prepareMicCapture(startupTrace = null) {
-    // Preparing opens the device, so it answers to the same policy as the
-    // recording it anticipates — otherwise a blocked user's key-down would
-    // still light the mic and buffer pre-roll.
-    if (!this.isRecordingAllowedByPolicy()) return null;
     // A start already awaiting the mic open leaves isRecording false for as long
     // as that open takes, so without this guard a second prepare would open the
     // device again and buffer a pre-roll no recording ever answers.
@@ -551,10 +532,6 @@ class AudioManager {
     let preparedAdopted = false;
     let session;
     try {
-      if (!this.isRecordingAllowedByPolicy()) {
-        logger.warn("Recording blocked by workspace policy", {}, "audio");
-        return false;
-      }
       if (
         this._startInProgress ||
         this.isRecording ||
@@ -998,7 +975,7 @@ class AudioManager {
     // whether to retain the discarded audio from the snapshot rather than live
     // manager state (which may already belong to a new recording).
     const shouldSave =
-      shouldSaveDiscardedRecording(getSettings(), durationSeconds, usePolicyStore.getState()) &&
+      shouldSaveDiscardedRecording(getSettings(), durationSeconds) &&
       (chunks.length > 0 || segments.length > 0);
     if (shouldSave) {
       // Assemble and save in the background — the merge crosses IPC into FFmpeg
@@ -1351,8 +1328,7 @@ class AudioManager {
     let requestController = null;
     const settings = getSettings();
     const language = getBaseLanguageCode(this.getEffectiveSttLanguage(settings));
-    const model = this.getTranscriptionModel();
-    const endpoint = this.getTranscriptionEndpoint(settings, model);
+    const { endpoint, model } = this.resolveTranscriptionTarget(settings);
 
     try {
       logger.debug(
@@ -1370,19 +1346,19 @@ class AudioManager {
       const mimeType = audioBlob.type || "audio/webm";
       const formData = new FormData();
       formData.append("file", audioBlob, `audio.${audioExtensionForMime(mimeType)}`);
-      formData.append("model", model);
+      if (model) formData.append("model", model);
       if (language) {
         formData.append("language", language);
       }
 
       // gpt-transcribe takes the dictionary on its own keywords[] channel (see
       // dictionaryKeywords), so its prompt carries only the Chinese script bias.
-      const usesKeywords = usesTranscriptionKeywords(model);
+      const usesKeywords = usesTranscriptionKeywords(model || "");
       const dictionary = this.getCustomDictionaryPrompt();
 
       // The cut is a request bound, not a priority rule: Whisper decoders read
       // the tail of whatever they are given (see dictionaryPromptCap).
-      const maxPromptChars = dictionaryPromptLimit({ provider: "self-hosted", endpoint, model });
+      const maxPromptChars = dictionaryPromptLimit({ endpoint, model: model || "" });
       const trimmedPrompt = trimDictionaryPrompt(
         this.getWhisperPrompt(settings, usesKeywords ? null : dictionary),
         maxPromptChars
@@ -1477,28 +1453,19 @@ class AudioManager {
   }
 
   getTranscriptionModel() {
-    const s = getSettings();
-    return (
-      resolveSelfHostedTranscriptionModel(s) ||
-      resolveByokModel(s.cloudTranscriptionProvider || "openai", s.cloudTranscriptionModel)
-    );
+    return (getSettings().remoteTranscriptionModel || "").trim() || null;
   }
 
-  getTranscriptionEndpoint(settings, model) {
-    const route = resolveTranscriptionRoute({
-      settings: { ...settings, transcriptionMode: "self-hosted", useLocalWhisper: false },
-      request: { model },
-    });
-    if (route.transport !== "http-batch" || route.provider !== "self-hosted") {
-      const error = new Error(
-        route.transport === "error" ? route.message : "Self-hosted transcription is not configured"
-      );
-      error.code = "CUSTOM_ENDPOINT_INVALID";
-      error.messageKey = "hooks.audioRecording.errorDescriptions.customEndpointInvalid";
-      throw error;
+  resolveTranscriptionTarget(settings) {
+    const route = resolveTranscriptionRoute({ settings });
+    if (route.transport === "error") {
+      throw Object.assign(new Error(route.message), {
+        code: route.code,
+        messageKey: route.messageKey,
+      });
     }
     logger.debug("STT endpoint resolved", { endpoint: route.endpoint }, "transcription");
-    return route.endpoint;
+    return { endpoint: route.endpoint, model: route.model };
   }
 
   async safePaste(text, options = {}) {

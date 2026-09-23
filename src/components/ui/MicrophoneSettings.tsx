@@ -7,7 +7,7 @@ import { RefreshCw, Mic } from "../icons";
 import { isBuiltInMicrophone } from "../../utils/audioDeviceUtils";
 import { resolveMicrophoneSelection } from "../../helpers/microphoneSelection";
 import { resolveMicDeviceSelection } from "../../helpers/micDeviceSelection";
-import type { MicrophoneSettings as MicrophonePreferences } from "../../hooks/useSettings";
+import type { MicrophoneSelectionMode } from "../../stores/settingsStore";
 
 interface AudioDevice {
   kind: "audioinput";
@@ -17,10 +17,10 @@ interface AudioDevice {
 }
 
 interface MicrophoneSettingsProps {
-  microphoneSelectionMode: MicrophonePreferences["microphoneSelectionMode"];
+  microphoneSelectionMode: MicrophoneSelectionMode;
   selectedMicDeviceId: string;
   selectedMicDeviceLabel: string;
-  onSelectionModeChange: (mode: MicrophonePreferences["microphoneSelectionMode"]) => void;
+  onSelectionModeChange: (mode: MicrophoneSelectionMode) => void;
   onDeviceSelect: (deviceId: string, label: string) => void;
 }
 

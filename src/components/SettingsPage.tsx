@@ -16,14 +16,7 @@ import { AlertDialog, ConfirmDialog } from "./ui/dialog";
 
 import { useHotkeyModeInfo } from "../hooks/useHotkeyModeInfo";
 import { useHotkeyRegistration } from "../hooks/useHotkeyRegistration";
-import { usePolicySnapshot } from "../hooks/usePolicy";
 import { useTheme } from "../hooks/useTheme";
-import {
-  effectiveAudioRetentionDays,
-  effectiveLocalHistoryEnabled,
-  lockedLocalHistoryValue,
-  maxAudioRetentionDays,
-} from "../stores/policyRules";
 import type { ChineseScriptPreference } from "../types/electron";
 import { formatBytes } from "../utils/formatBytes";
 import { validateHotkeyForSlot } from "../utils/hotkeyValidation";
@@ -118,7 +111,7 @@ function AiModelsSection({ useCleanupModel, setUseCleanupModel }: AiModelsSectio
         </SettingsPanelRow>
       </SettingsPanel>
 
-      {useCleanupModel && <InferenceConfigEditor scope="dictationCleanup" />}
+      {useCleanupModel && <InferenceConfigEditor />}
     </div>
   );
 }
@@ -185,18 +178,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     saveDiscardedTranscriptions,
     setSaveDiscardedTranscriptions,
   } = useSettings();
-
-  const settingsPolicyState = usePolicySnapshot();
-  const historyLockedByPolicy = lockedLocalHistoryValue(settingsPolicyState) !== null;
-  const effectiveDataRetentionEnabled = effectiveLocalHistoryEnabled(
-    settingsPolicyState,
-    dataRetentionEnabled
-  );
-  const audioRetentionCap = maxAudioRetentionDays(settingsPolicyState);
-  const enforcedAudioRetentionDays = effectiveAudioRetentionDays(
-    settingsPolicyState,
-    audioRetentionDays
-  );
 
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -728,29 +709,21 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                     description={t("settingsPage.privacy.audioRetentionDescription")}
                   >
                     <select
-                      value={enforcedAudioRetentionDays}
-                      onChange={(e) => {
-                        const days = parseInt(e.target.value, 10);
-                        if (audioRetentionCap !== null && days > audioRetentionCap) return;
-                        setAudioRetentionDays(days);
-                      }}
+                      value={audioRetentionDays}
+                      onChange={(e) => setAudioRetentionDays(parseInt(e.target.value, 10))}
                       className={RETENTION_SELECT_CLASS}
                     >
                       <option value={0}>{t("settingsPage.privacy.audioRetentionDisabled")}</option>
-                      {enforcedAudioRetentionDays > 0 &&
-                        !RETENTION_DAY_OPTIONS.includes(enforcedAudioRetentionDays) && (
-                          <option value={enforcedAudioRetentionDays}>
+                      {audioRetentionDays > 0 &&
+                        !RETENTION_DAY_OPTIONS.includes(audioRetentionDays) && (
+                          <option value={audioRetentionDays}>
                             {t("settingsPage.privacy.retentionDays", {
-                              count: enforcedAudioRetentionDays,
+                              count: audioRetentionDays,
                             })}
                           </option>
                         )}
                       {RETENTION_DAY_OPTIONS.map((days) => (
-                        <option
-                          key={days}
-                          value={days}
-                          disabled={audioRetentionCap !== null && days > audioRetentionCap}
-                        >
+                        <option key={days} value={days}>
                           {t("settingsPage.privacy.retentionDays", { count: days })}
                         </option>
                       ))}
@@ -789,17 +762,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                 <SettingsPanelRow>
                   <SettingsRow
                     label={t("settingsPage.privacy.dataRetention")}
-                    description={
-                      historyLockedByPolicy
-                        ? t("common.managedByOrg")
-                        : t("settingsPage.privacy.dataRetentionDescription")
-                    }
+                    description={t("settingsPage.privacy.dataRetentionDescription")}
                   >
-                    <Toggle
-                      checked={effectiveDataRetentionEnabled}
-                      disabled={historyLockedByPolicy}
-                      onChange={setDataRetentionEnabled}
-                    />
+                    <Toggle checked={dataRetentionEnabled} onChange={setDataRetentionEnabled} />
                   </SettingsRow>
                 </SettingsPanelRow>
                 <SettingsPanelRow>
@@ -809,7 +774,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   >
                     <select
                       value={transcriptRetentionDays}
-                      disabled={!effectiveDataRetentionEnabled}
+                      disabled={!dataRetentionEnabled}
                       onChange={(e) => setTranscriptRetentionDays(parseInt(e.target.value, 10))}
                       className={RETENTION_SELECT_CLASS}
                     >
@@ -831,7 +796,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   >
                     <Toggle
                       checked={saveDiscardedTranscriptions}
-                      disabled={!effectiveDataRetentionEnabled || enforcedAudioRetentionDays === 0}
+                      disabled={!dataRetentionEnabled || audioRetentionDays === 0}
                       onChange={setSaveDiscardedTranscriptions}
                     />
                   </SettingsRow>

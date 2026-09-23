@@ -95,11 +95,7 @@ export function processBatchQueue(transcribeOpts: TranscribeOptions): void {
   const run = ++runId;
   useBatchQueueStore.setState({ isProcessing: true });
 
-  const snapshotApiKey = transcribeOpts.transcription.getApiKey();
-  const transcription: FileTranscriptionConfig = {
-    ...transcribeOpts.transcription,
-    getApiKey: () => snapshotApiKey,
-  };
+  const { transcription } = transcribeOpts;
 
   const updateItem = (id: string, updates: Partial<QueueItem>) => {
     if (run !== runId) return;
@@ -112,11 +108,9 @@ export function processBatchQueue(transcribeOpts: TranscribeOptions): void {
       updateItem(item.id, { status: "transcribing", progress: 0 });
       const requestId = crypto.randomUUID();
       activeUploadRequestId = requestId;
-      const result = await transcribeFile(item.path, transcription, false, { requestId }).finally(
-        () => {
-          if (activeUploadRequestId === requestId) activeUploadRequestId = null;
-        }
-      );
+      const result = await transcribeFile(item.path, transcription).finally(() => {
+        if (activeUploadRequestId === requestId) activeUploadRequestId = null;
+      });
       if (run !== runId) return;
 
       if (!result.success || !result.text) {

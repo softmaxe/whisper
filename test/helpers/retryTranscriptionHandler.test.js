@@ -57,32 +57,10 @@ const electronStub = {
   MessageChannelMain: class {},
 };
 
-const cortiCalls = [];
-const tinfoilCalls = [];
-let cortiBehavior = async () => ({ text: "corti text" });
-
-// Kept installed for the whole file: the corti client is require()d lazily at
-// handler invocation time, not at module load.
+// Kept installed for the whole file so the handler module sees the stubs.
 Module._load = function loadWithMocks(request, parent, isMain) {
   if (request === "electron") return electronStub;
   if (parent?.filename === handlersModulePath) {
-    if (request === "./cortiTranscription") {
-      return {
-        transcribeAudio: async (opts) => {
-          cortiCalls.push(opts);
-          return cortiBehavior(opts);
-        },
-      };
-    }
-    if (request === "./tinfoilTranscription") {
-      return {
-        transcribeWithTinfoil: async (opts) => {
-          tinfoilCalls.push(opts);
-          return { text: "tinfoil text", model: "tinfoil-model" };
-        },
-        getTinfoilChatModels: () => [],
-      };
-    }
     if (request === "./windowBroadcast") {
       return { broadcastToWindows: () => {} };
     }
@@ -106,23 +84,12 @@ function anything() {
 function buildFakeThis() {
   const dbRows = new Map([[7, { id: 7, audio_duration_ms: 1200 }]]);
   const target = {
-    sessionId: "test-session",
     audioStorageManager: { getAudioBuffer: (id) => (id === 7 ? Buffer.from([1, 2, 3]) : null) },
     databaseManager: {
       updateTranscriptionText: (...args) => databaseWrites.push(["text", ...args]),
       updateTranscriptionStatus: (...args) => databaseWrites.push(["status", ...args]),
       updateTranscriptionAudio: (...args) => databaseWrites.push(["audio", ...args]),
       getTranscriptionById: (id) => dbRows.get(id),
-    },
-    environmentManager: {
-      getOpenAIKey: () => "sk-openai",
-      getGroqKey: () => "gk-groq",
-      getMistralKey: () => "mk-mistral",
-      getXaiKey: () => "xk-xai",
-      getTinfoilKey: () => "tk-tinfoil",
-      getCustomTranscriptionKey: () => "ck-custom",
-      getCortiClientId: () => "corti-id",
-      getCortiClientSecret: () => "corti-secret",
     },
   };
   return new Proxy(target, {
@@ -153,8 +120,8 @@ const uploadTempFile = pathNode.join(uploadTempDir, "audio.webm");
 test.after(() => fsNode.rmSync(uploadTempDir, { recursive: true, force: true }));
 
 const invokeUpload = (payload) => {
-  const uploadHandler = handlers.get("transcribe-audio-file-byok");
-  assert.ok(uploadHandler, "transcribe-audio-file-byok must be registered");
+  const uploadHandler = handlers.get("transcribe-audio-file");
+  assert.ok(uploadHandler, "transcribe-audio-file must be registered");
   fsNode.writeFileSync(uploadTempFile, Buffer.from([1, 2, 3, 4]));
   return uploadHandler({ sender: {} }, { filePath: uploadTempFile, ...payload });
 };
@@ -162,12 +129,7 @@ const invokeUpload = (payload) => {
 test("upload: a self-hosted Azure endpoint keeps its deployment URL", async () => {
   fetches.length = 0;
   const result = await invokeUpload({
-    apiKey: "",
-    baseUrl: "",
-    model: "",
-    provider: "custom",
     language: "",
-    transcriptionMode: "self-hosted",
     remoteTranscriptionUrl: "https://myorg.openai.azure.com",
     remoteTranscriptionModel: "my-deployment",
   });
@@ -178,15 +140,9 @@ test("upload: a self-hosted Azure endpoint keeps its deployment URL", async () =
   );
 });
 
-test("upload: a missing self-hosted endpoint never falls back to stale provider settings", async () => {
+test("upload: a missing self-hosted endpoint fails without a request", async () => {
   fetches.length = 0;
-  const result = await invokeUpload({
-    provider: "openai",
-    transcriptionMode: "providers",
-    baseUrl: "https://api.openai.com/v1",
-    model: "whisper-1",
-    remoteTranscriptionUrl: "",
-  });
+  const result = await invokeUpload({ remoteTranscriptionUrl: "" });
   assert.equal(result.success, false);
   assert.equal(fetches.length, 0);
 });
@@ -215,7 +171,6 @@ test("retry sends retained audio to the current self-hosted endpoint and updates
   fetches.length = 0;
   databaseWrites.length = 0;
   const result = await retryHandler({ sender: {} }, 7, {
-    transcriptionMode: "self-hosted",
     remoteTranscriptionUrl: "http://localhost:8000/v1",
     remoteTranscriptionModel: "test-asr",
     preferredLanguage: "zh-CN",
@@ -241,7 +196,6 @@ test("retry preserves History when the self-hosted request fails or retained aud
   fetchResponse = () => ({ ok: false, status: 503, text: async () => "ASR unavailable" });
   try {
     const settings = {
-      transcriptionMode: "self-hosted",
       remoteTranscriptionUrl: "http://localhost:8000/v1",
       remoteTranscriptionModel: "test-asr",
     };

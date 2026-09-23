@@ -66,11 +66,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setOnboardingWindowMode: (mode) => ipcRenderer.invoke("onboarding-set-window-mode", mode),
   setOnboardingActive: (active) => ipcRenderer.invoke("onboarding-set-active", active),
   setControlPanelRetained: (retained) => ipcRenderer.send("control-panel-retained", retained),
-  markMacAccessibilityFeaturesReady: (expectedAccountScope) =>
-    expectedAccountScope
-      ? ipcRenderer.send("mac-accessibility-features-ready", expectedAccountScope)
-      : ipcRenderer.send("mac-accessibility-features-ready"),
-  testProviderConnection: (config) => ipcRenderer.invoke("test-provider-connection", config),
+  markMacAccessibilityFeaturesReady: () => ipcRenderer.send("mac-accessibility-features-ready"),
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
@@ -152,14 +148,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   undoLearnedCorrections: (words) => ipcRenderer.invoke("undo-learned-corrections", words),
 
   exportDictionary: (words) => ipcRenderer.invoke("export-dictionary", words),
-  onActiveAccountScopeChanged: registerListener(
-    "active-account-scope-changed",
-    (callback) => (_event, scope) => callback(scope)
-  ),
   selectAudioFile: (options) => ipcRenderer.invoke("select-audio-file", options),
   cancelUploadTranscription: (requestId) =>
     ipcRenderer.invoke("cancel-upload-transcription", requestId),
-  transcribeAudioFileByok: (options) => ipcRenderer.invoke("transcribe-audio-file-byok", options),
+  transcribeAudioFile: (options) => ipcRenderer.invoke("transcribe-audio-file", options),
   getFileSize: (filePath) => ipcRenderer.invoke("get-file-size", filePath),
   getPathForFile: (file) => {
     const filePath = webUtils.getPathForFile(file);
@@ -237,9 +229,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   resizeDictationErrorWindowToContent: (surfaceHeight) =>
     ipcRenderer.invoke("resize-dictation-error-window-to-content", surfaceHeight),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
-  getPostMigrationState: () => ipcRenderer.invoke("get-post-migration-state"),
-  markBundleMigrated: () => ipcRenderer.invoke("mark-bundle-migrated"),
-  markBundleMigrationDismissed: () => ipcRenderer.invoke("mark-bundle-migration-dismissed"),
 
   // Update event listeners
   onUpdateAvailable: registerListener("update-available"),
@@ -262,9 +251,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   saveUiLanguage: (language) => ipcRenderer.invoke("save-ui-language", language),
   setUiLanguage: (language) => ipcRenderer.invoke("set-ui-language", language),
 
-  // Custom endpoint API keys
-  getCustomTranscriptionKey: () => ipcRenderer.invoke("get-custom-transcription-key"),
-  saveCustomTranscriptionKey: (key) => ipcRenderer.invoke("save-custom-transcription-key", key),
   getCleanupCustomKey: () => ipcRenderer.invoke("get-cleanup-custom-key"),
   saveCleanupCustomKey: (key) => ipcRenderer.invoke("save-cleanup-custom-key", key),
 
@@ -277,23 +263,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Activation mode persistence (file-based for reliable startup)
   getActivationMode: () => ipcRenderer.invoke("get-activation-mode"),
   saveActivationMode: (mode) => ipcRenderer.invoke("save-activation-mode", mode),
-  cancelEnterpriseReasoning: () => ipcRenderer.send("enterprise-reasoning-cancel"),
-  onEnterpriseStreamPart: registerListener(
-    "enterprise-stream-part",
-    (callback) => (_event, payload) => callback(payload)
-  ),
-  getManagedEnterpriseConfig: (accountId, workspaceId, expectedAuthGeneration, forceRefresh) =>
-    ipcRenderer.invoke(
-      "get-managed-enterprise-config",
-      accountId,
-      workspaceId,
-      expectedAuthGeneration,
-      forceRefresh
-    ),
-  onManagedEnterpriseConfigChanged: registerListener(
-    "managed-enterprise-config-changed",
-    (callback) => (_event, snapshot) => callback(snapshot)
-  ),
 
   getLogLevel: () => ipcRenderer.invoke("get-log-level"),
   log: (entry) => ipcRenderer.invoke("app-log", entry),
@@ -320,31 +289,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   toggleMediaPlayback: () => ipcRenderer.invoke("toggle-media-playback"),
   pauseMediaPlayback: () => ipcRenderer.invoke("pause-media-playback"),
   resumeMediaPlayback: () => ipcRenderer.invoke("resume-media-playback"),
-  onAuthTokenStateChanged: registerListener(
-    "auth-token-state-changed",
-    (callback) => (_event, state) => callback(state)
-  ),
-  cancelCloudReason: () => ipcRenderer.send("cloud-reason-cancel"),
-  onWorkspacePolicyChanged: (callback) => {
-    const listener = (_event, snapshot) => callback(snapshot);
-    ipcRenderer.on("workspace-policy-changed", listener);
-    return () => ipcRenderer.removeListener("workspace-policy-changed", listener);
-  },
   onUploadTranscriptionProgress: registerListener(
     "upload-transcription-progress",
     (callback) => (_event, data) => callback(data)
   ),
-
-  // Usage limit events (for showing UpgradePrompt in ControlPanel)
-  notifyLimitReached: (data) => ipcRenderer.send("limit-reached", data),
-  onLimitReached: registerListener("limit-reached", (callback) => (_event, data) => callback(data)),
-
-  // Workspace invitation deep link
-  onWorkspaceInvitationToken: registerListener(
-    "workspace-invitation-token",
-    (callback) => (_event, token) => callback(token)
-  ),
-  getPendingInvitationToken: () => ipcRenderer.invoke("get-pending-invitation-token"),
 
   // Globe key listener for hotkey capture (macOS only)
   onGlobeKeyPressed: (callback) => {
@@ -428,30 +376,4 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onPreviewHide: registerListener("preview-hide", (callback) => () => callback()),
   acquireRecordingLock: (pipeline) => ipcRenderer.invoke("acquire-recording-lock", pipeline),
   releaseRecordingLock: (pipeline) => ipcRenderer.invoke("release-recording-lock", pipeline),
-
-  // Agent cloud streaming (event-based for real-time chunks)
-  startAgentStream: (requestId, messages, opts) =>
-    ipcRenderer.send("cloud-agent-stream-start", requestId, messages, opts),
-  cancelAgentStream: (requestId) => ipcRenderer.send("cloud-agent-stream-cancel", requestId),
-  onAgentStreamChunk: registerListener(
-    "cloud-agent-stream-chunk",
-    (callback) => (_event, payload) => callback(payload)
-  ),
-  onAgentStreamError: registerListener(
-    "cloud-agent-stream-error",
-    (callback) => (_event, payload) => callback(payload)
-  ),
-  onAgentStreamEnd: registerListener(
-    "cloud-agent-stream-end",
-    (callback) => (_event, payload) => callback(payload)
-  ),
-  markSnippetSynced: (id, cloudId, serverUpdatedAt, expectedTrigger, expectedReplacement) =>
-    ipcRenderer.invoke(
-      "db-mark-snippet-synced",
-      id,
-      cloudId,
-      serverUpdatedAt,
-      expectedTrigger,
-      expectedReplacement
-    ),
 });

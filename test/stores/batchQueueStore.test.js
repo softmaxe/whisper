@@ -2,7 +2,13 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
-const options = { transcription: { getApiKey: () => "fixture-key" } };
+const options = {
+  transcription: {
+    remoteTranscriptionUrl: "http://localhost:8000/v1",
+    remoteTranscriptionModel: "",
+    language: "",
+  },
+};
 const file = (name) => ({ name, path: `/tmp/${name}`, sizeBytes: 1024 });
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -122,25 +128,22 @@ test("transcription and save failures leave later queue items runnable", async (
   assert.equal(items[2].warning, true);
 });
 
-test("batch snapshots credentials and includes files added during the run", async (t) => {
+test("batch uses one server config and includes files added during the run", async (t) => {
   let finish;
-  let key = "first-key";
-  const seenKeys = [];
-  const queue = await loadQueue(t, async (_path, config, diarize) => {
-    assert.equal(diarize, false);
-    seenKeys.push(config.getApiKey());
-    if (seenKeys.length === 1)
+  const seenUrls = [];
+  const queue = await loadQueue(t, async (_path, config) => {
+    seenUrls.push(config.remoteTranscriptionUrl);
+    if (seenUrls.length === 1)
       return new Promise((resolve) => {
         finish = resolve;
       });
     return { success: true, text: "Second transcript" };
   });
   queue.addFiles([file("first.wav")]);
-  queue.processBatchQueue({ transcription: { getApiKey: () => key } });
-  key = "changed-key";
+  queue.processBatchQueue(options);
   queue.addFiles([file("second.wav")]);
   finish({ success: true, text: "First transcript" });
   await waitForQueueCompletion(queue.useBatchQueueStore);
-  assert.deepEqual(seenKeys, ["first-key", "first-key"]);
+  assert.deepEqual(seenUrls, ["http://localhost:8000/v1", "http://localhost:8000/v1"]);
   assert.ok(queue.useBatchQueueStore.getState().queue.every((item) => item.status === "done"));
 });

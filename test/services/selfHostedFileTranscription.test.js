@@ -2,51 +2,48 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createRendererServer, installBrowserGlobals } = require("../lib/rendererTestHarness");
 
-function selfHostedConfig() {
-  return {
-    useLocalWhisper: false,
-    localTranscriptionProvider: "whisper",
-    whisperModel: "",
-    parakeetModel: "",
-    isOpenWhisprCloud: false,
-    getApiKey: () => "must-not-leak",
-    cloudTranscriptionProvider: "custom",
-    cloudTranscriptionBaseUrl: "",
-    cloudTranscriptionModel: "",
-    language: "en",
-    transcriptionMode: "self-hosted",
-  };
-}
-
-test("self-hosted file transcription bypasses stale Custom endpoint validation", async (t) => {
+async function loadTranscribeFile(t) {
   const { window } = installBrowserGlobals(t);
   const vite = await createRendererServer(t, {
     cachePrefix: "whisper-file-self-hosted-endpoint-test-",
-    mockModules: {
-      "/lib/sessionRefresh": "export const withSessionRefresh = (fn) => fn();",
-    },
   });
   const { transcribeFile } = await vite.ssrLoadModule("/services/fileTranscription.ts");
+  return { window, transcribeFile };
+}
 
+test("file transcription sends the self-hosted server settings to the main process", async (t) => {
+  const { window, transcribeFile } = await loadTranscribeFile(t);
   let receivedOptions = null;
-  window.electronAPI.transcribeAudioFileByok = async (options) => {
+  window.electronAPI.transcribeAudioFile = async (options) => {
     receivedOptions = options;
     return { success: true, text: "self-hosted" };
   };
 
-  const result = await transcribeFile(
-    "/tmp/audio.webm",
-    {
-      ...selfHostedConfig(),
-      transcriptionMode: "self-hosted",
-      remoteTranscriptionUrl: "http://192.168.1.20:9000/v1",
-      remoteTranscriptionModel: "whisper-large-v3",
-    },
-    false
-  );
+  const result = await transcribeFile("/tmp/audio.webm", {
+    remoteTranscriptionUrl: "http://192.168.1.20:9000/v1",
+    remoteTranscriptionModel: "whisper-large-v3",
+    language: "en",
+  });
 
   assert.equal(result.success, true);
-  assert.equal(receivedOptions.transcriptionMode, "self-hosted");
-  assert.equal(receivedOptions.remoteTranscriptionUrl, "http://192.168.1.20:9000/v1");
-  assert.equal(receivedOptions.remoteTranscriptionModel, "whisper-large-v3");
+  assert.deepEqual(receivedOptions, {
+    filePath: "/tmp/audio.webm",
+    language: "en",
+    remoteTranscriptionUrl: "http://192.168.1.20:9000/v1",
+    remoteTranscriptionModel: "whisper-large-v3",
+  });
+});
+
+test("a missing server URL fails before any IPC call", async (t) => {
+  const { window, transcribeFile } = await loadTranscribeFile(t);
+  window.electronAPI.transcribeAudioFile = async () => assert.fail("must not dispatch");
+
+  const result = await transcribeFile("/tmp/audio.webm", {
+    remoteTranscriptionUrl: "",
+    remoteTranscriptionModel: "",
+    language: "en",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.code, "CUSTOM_ENDPOINT_INVALID");
 });

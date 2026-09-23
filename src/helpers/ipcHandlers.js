@@ -1,47 +1,21 @@
-const { ipcMain, app, shell, BrowserWindow, systemPreferences, net, session } = require("electron");
+const { ipcMain, app, shell, systemPreferences, net } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const os = require("os");
-const crypto = require("crypto");
 const debugLogger = require("./debugLogger");
 const { UPLOAD_AUDIO_EXTENSIONS } = require("../constants/uploadAudioFormats.json");
 const { providerContentType, prepareProviderUpload } = require("./providerUploadAudio");
 const { ANALYTICS_HISTORY_BACKFILL_VERSION } = require("./analytics");
 
 const { broadcastToWindows } = require("./windowBroadcast");
-const { BYOK_API_KEYS } = require("../config/secretKeys");
-const tokenStore = require("./tokenStore");
-const accountScopeBinding = require("./accountScopeBinding");
-
-const { withPolicyRequestHeaders } = require("./policyRequestHeaders");
-
-const { createPolicyResponseError } = require("./policyResponseError");
 
 const { resolveSystemDefaultMicrophone } = require("./systemDefaultMicrophone");
 const { laptopLidMonitor } = require("./laptopLidMonitor");
-// The renderer's ModelRegistry is not main-loadable; the raw registry data is
-// packaged, and the route resolver only needs {id, baseUrl} per provider.
-const transcriptionProviderBaseUrls = () =>
-  require("../models/modelRegistryData.json").transcriptionProviders;
-// ipcMain.handle keeps only the message when a promise rejects, dropping custom
-// props — proxy handlers return {error, code, messageKey} so the renderer can
-// rebuild the error.
-
-// Analytics uploads cross two asynchronous boundaries: renderer -> main and
-// main -> cloud. Pin every local queue operation to the same authenticated
-// account generation so a delayed pass cannot adopt a replacement session.
-
 const autoStart = require("./autoStart");
 const { getRelaunchArgs } = require("./autoStartPolicy");
 
 const { changeLanguage } = require("./i18nMain");
 
-const { getCortiToken } = require("./cortiAuth");
-
-const { transcribeWithTinfoil } = require("./tinfoilTranscription");
-const { transcribeWithGemini } = require("./geminiTranscription");
 const AudioStorageManager = require("./audioStorage");
-const AgentStreamRequestRegistry = require("./agentStreamRequestRegistry");
 
 const { applySmartSpacing } = require("./smartSpacing");
 const { applyAutoLearnSetting } = require("./autoLearnSetting");
@@ -49,99 +23,10 @@ const {
   DEFAULT_RETENTION_SETTINGS,
   createRetentionSettingsHandler,
 } = require("./retentionSettings");
-
-const postMigrationDetector = require("./postMigrationDetector");
-
-// Meeting capture runs at 24 kHz (see meetingRecordingStore AudioContext); cloud
-// streaming providers must be told the true PCM rate or they misread the audio.
-
-// The realtime clients default to a 0.6 server-VAD threshold, raised in #630 to
-// keep mic ambient noise from opening turns. The system loopback channel's noise
-// floor is digital silence, so it keeps the original, more sensitive threshold —
-// at 0.6 quiet remote speech may never trip the VAD and the whole channel
-// transcribes to nothing.
-
-const MISTRAL_TRANSCRIPTION_URL = "https://api.mistral.ai/v1/audio/transcriptions";
-
-const XAI_STT_URL = "https://api.x.ai/v1/stt";
+const { createUploadCancelRegistry } = require("./uploadCancelRegistry");
 
 // Debounce delay: wait for user to stop typing before processing corrections
 const AUTO_LEARN_DEBOUNCE_MS = 1500;
-
-// Route caps vary by provider (Gemini's inline-base64 limit is the lowest), so
-// the message reports the cap that actually applied.
-const byokSizeCapError = (sizeCapBytes) =>
-  `File too large. Maximum size for bring-your-own-key is ${Math.floor(sizeCapBytes / (1024 * 1024))} MB.`;
-
-const CLOUD_INLINE_LIMIT = 4 * 1024 * 1024;
-// The enterprise "Test Connection" probe only needs one word back, but the
-// Azure Responses API rejects max_output_tokens below 16.
-
-const CLOUD_CHUNK_SEGMENT_SECONDS = 240;
-
-const { createAbortError } = require("./abortError");
-const { testProviderConnection } = require("./providerConnectionTest");
-const { createUploadCancelRegistry } = require("./uploadCancelRegistry");
-const { applyOpenWhisprOriginHeader } = require("./sessionHeaders");
-const {
-  CLOUD_UPLOAD_TIMEOUT_MS,
-  CLOUD_CHUNK_MAX_ATTEMPTS,
-  CLOUD_CHUNK_GLOBAL_CONCURRENCY,
-  CLOUD_CHUNK_MAX_TEARDOWN_REFUNDS,
-  CLOUD_CHUNK_MAX_LOSS_RATIO,
-  SILENT_CHUNK,
-  FATAL_CHUNK_CODES,
-  isTransientChunkError,
-  isNetworkLevelFailure,
-  isConnectionPoisoningFailure,
-  isTeardownCollateral,
-  summarizeChunkResults,
-  assembleChunkTranscript,
-  chunkRetryDelayMs,
-  abortableSleep,
-  createTeardownGate,
-  createUploadSlots,
-  withoutChunkAnalytics,
-} = require("./cloudChunkPolicy");
-
-// Chunk retries need their own connection pool: recovering a wedged chunk pool
-// must not abort an unrelated inline upload that has no collateral retry path.
-const CLOUD_CHUNK_UPLOAD_SESSION_PARTITION = "ow-cloud-chunk-uploads";
-const CLOUD_INLINE_UPLOAD_SESSION_PARTITION = "ow-cloud-uploads";
-const cloudUploadSlots = createUploadSlots(CLOUD_CHUNK_GLOBAL_CONCURRENCY);
-const shouldDropUploadPool = createTeardownGate();
-const cloudUploadSessions = new Map();
-
-function getCloudUploadSession(partition) {
-  if (!cloudUploadSessions.has(partition)) {
-    const uploadSession = session.fromPartition(partition);
-    applyOpenWhisprOriginHeader(uploadSession);
-    cloudUploadSessions.set(partition, uploadSession);
-  }
-  return cloudUploadSessions.get(partition);
-}
-
-function getChunkCloudUploadSession() {
-  return getCloudUploadSession(CLOUD_CHUNK_UPLOAD_SESSION_PARTITION);
-}
-
-function getInlineCloudUploadSession() {
-  return getCloudUploadSession(CLOUD_INLINE_UPLOAD_SESSION_PARTITION);
-}
-
-// Counts initiated pool drops so a chunk can tell whether its failure was
-// collateral from a teardown that happened while its body was on the wire.
-let uploadPoolTeardowns = 0;
-
-async function dropUploadConnections(force = false) {
-  if (!shouldDropUploadPool(force)) return;
-  uploadPoolTeardowns++;
-  try {
-    await getChunkCloudUploadSession().closeAllConnections();
-  } catch {
-    // pool teardown is best-effort
-  }
-}
 
 // Canonicalize allowed dirs so realpath'd inputs match on macOS (/var -> /private/var).
 // Deliberately narrow: user-picked paths anywhere else are approved individually via
@@ -242,230 +127,6 @@ async function postMultipart(
   }
 }
 
-function interpretTranscribeResponse(data) {
-  if (data.statusCode === 401) {
-    throw Object.assign(new Error("Session expired"), { code: "AUTH_EXPIRED" });
-  }
-  if (data.statusCode === 503) {
-    throw Object.assign(new Error("Request timed out"), { code: "SERVER_ERROR" });
-  }
-  if (data.statusCode === 429) {
-    throw Object.assign(new Error("Daily word limit reached"), {
-      code: "LIMIT_REACHED",
-      ...data.data,
-    });
-  }
-  if (data.statusCode === 422 && data.data?.code === "NO_SPEECH_DETECTED") {
-    throw Object.assign(new Error(data.data.error || "No speech detected in audio"), {
-      code: "NO_SPEECH_DETECTED",
-    });
-  }
-  if (data.statusCode !== 200) {
-    throw createPolicyResponseError(data.statusCode, data.data, `API error: ${data.statusCode}`);
-  }
-  return data.data;
-}
-
-async function chunkedCloudTranscribe({
-  buffer = null,
-  filePath = null,
-  apiUrl,
-  policyHeaders,
-  multipartFields = {},
-  onProgress,
-  signal,
-  segmentDuration = CLOUD_CHUNK_SEGMENT_SECONDS,
-}) {
-  const { splitAudioFile } = require("./ffmpegUtils");
-
-  // Aborted by the caller cancelling or by the first fatal chunk error, so a
-  // doomed job stops uploading its remaining chunks immediately.
-  const jobController = new AbortController();
-  const { signal: jobSignal } = jobController;
-  const abortJob = () => jobController.abort();
-  signal?.addEventListener("abort", abortJob, { once: true });
-  if (signal?.aborted) abortJob();
-
-  const jobId = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-  const chunkDir = path.join(os.tmpdir(), `ow-chunks-${jobId}`);
-  let tmpInputPath = null;
-
-  let inputPath = filePath;
-  if (!inputPath && buffer) {
-    tmpInputPath = path.join(os.tmpdir(), `ow-audio-${jobId}.webm`);
-    fs.writeFileSync(tmpInputPath, buffer);
-    inputPath = tmpInputPath;
-  }
-
-  fs.mkdirSync(chunkDir, { recursive: true });
-
-  try {
-    onProgress?.({ stage: "splitting", chunksTotal: 0, chunksCompleted: 0 });
-
-    const { chunkPaths, durationSeconds } = await splitAudioFile(inputPath, chunkDir, {
-      segmentDuration,
-      signal: jobSignal,
-    });
-    const totalChunks = chunkPaths.length;
-
-    onProgress?.({ stage: "transcribing", chunksTotal: totalChunks, chunksCompleted: 0 });
-
-    const url = new URL(`${apiUrl}/api/transcribe`);
-    const results = new Array(totalChunks).fill(null);
-    let fatalError = null;
-    let completedCount = 0;
-
-    const transcribeChunk = async (index) => {
-      let attempt = 1;
-      let teardownRefunds = CLOUD_CHUNK_MAX_TEARDOWN_REFUNDS;
-      while (true) {
-        if (jobSignal.aborted) throw createAbortError();
-
-        // Held only while a body is on the wire, so the backoff below never
-        // occupies a slot and queue time never eats the upload timeout.
-        const releaseSlot = await cloudUploadSlots.acquire(jobSignal);
-        const timeoutSignal = AbortSignal.timeout(CLOUD_UPLOAD_TIMEOUT_MS);
-        const teardownsAtStart = uploadPoolTeardowns;
-        let failure = null;
-        let timedOut = false;
-        let collateral = false;
-        try {
-          try {
-            const { body, boundary } = buildMultipartBody(
-              fs.readFileSync(chunkPaths[index]),
-              path.basename(chunkPaths[index]),
-              "audio/mpeg",
-              withoutChunkAnalytics(multipartFields)
-            );
-            const data = await postMultipart(url, body, boundary, policyHeaders, {
-              signal: AbortSignal.any([jobSignal, timeoutSignal]),
-              session: getChunkCloudUploadSession(),
-            });
-            results[index] = interpretTranscribeResponse(data);
-          } catch (err) {
-            failure = err;
-            timedOut = timeoutSignal.aborted;
-            collateral = isTeardownCollateral(err, {
-              timedOut,
-              teardownsDuringAttempt: uploadPoolTeardowns - teardownsAtStart,
-            });
-            // Drop the pool while still holding the slot — released first, a
-            // queued sibling is admitted onto the pool microseconds before
-            // closeAllConnections() kills it and burns an attempt it never
-            // owned. A fatal TLS/protocol alert proves the pool is poisoned,
-            // so that drop is forced through the cooldown gate.
-            if (!jobSignal.aborted && !collateral) {
-              const poisoned = isConnectionPoisoningFailure(err);
-              if (poisoned || isNetworkLevelFailure(err, { timedOut })) {
-                await dropUploadConnections(poisoned);
-              }
-            }
-          }
-        } finally {
-          releaseSlot();
-        }
-        if (!failure) break;
-
-        if (failure.code === "NO_SPEECH_DETECTED") {
-          results[index] = SILENT_CHUNK;
-          break;
-        }
-
-        if (jobSignal.aborted) throw createAbortError();
-        if (collateral && teardownRefunds > 0) {
-          teardownRefunds--;
-          debugLogger.warn(`Chunk ${index} attempt ${attempt} killed by pool teardown, refunded`, {
-            error: failure.message,
-          });
-          await abortableSleep(chunkRetryDelayMs(1), jobSignal);
-          continue;
-        }
-        if (attempt >= CLOUD_CHUNK_MAX_ATTEMPTS || !(timedOut || isTransientChunkError(failure))) {
-          throw failure;
-        }
-        debugLogger.warn(`Chunk ${index} attempt ${attempt} failed, retrying`, {
-          error: failure.message,
-          timedOut,
-        });
-        await abortableSleep(chunkRetryDelayMs(attempt), jobSignal);
-        attempt++;
-      }
-
-      completedCount++;
-      onProgress?.({
-        stage: "transcribing",
-        chunksTotal: totalChunks,
-        chunksCompleted: completedCount,
-      });
-    };
-
-    await Promise.all(
-      chunkPaths.map((_, index) =>
-        transcribeChunk(index).catch((err) => {
-          // Only aborts the job itself caused, reported once below. A chunk's
-          // own upload timeout also aborts, and that is a real failure.
-          if (jobSignal.aborted && err.name === "AbortError") return;
-          if (FATAL_CHUNK_CODES.has(err.code)) {
-            fatalError ??= err;
-            abortJob();
-            return;
-          }
-          debugLogger.warn(`Chunk ${index} failed`, { error: err.message, code: err.code });
-        })
-      )
-    );
-
-    if (signal?.aborted) {
-      throw Object.assign(createAbortError("Upload cancelled"), { code: "UPLOAD_CANCELLED" });
-    }
-    if (fatalError) throw fatalError;
-
-    const { responses, failedChunks: failed, silentChunks } = summarizeChunkResults(results);
-    if (responses.length === 0) {
-      if (silentChunks === totalChunks) {
-        throw Object.assign(new Error("No speech detected in audio"), {
-          code: "NO_SPEECH_DETECTED",
-        });
-      }
-      throw new Error("All chunks failed to transcribe");
-    }
-
-    if (failed / totalChunks > CLOUD_CHUNK_MAX_LOSS_RATIO) {
-      throw Object.assign(new Error(`${failed} of ${totalChunks} audio segments were lost`), {
-        code: "CHUNK_LOSS_EXCEEDED",
-      });
-    }
-
-    const text = assembleChunkTranscript(results, segmentDuration, durationSeconds);
-    return {
-      text,
-      responses,
-      lastResponse: responses[responses.length - 1],
-      ...(failed > 0
-        ? {
-            warning: `${failed} of ${totalChunks} chunks failed`,
-            failedChunks: failed,
-            totalChunks,
-          }
-        : {}),
-    };
-  } finally {
-    signal?.removeEventListener("abort", abortJob);
-    if (tmpInputPath) {
-      try {
-        fs.unlinkSync(tmpInputPath);
-      } catch {
-        // ignore
-      }
-    }
-    try {
-      fs.rmSync(chunkDir, { recursive: true, force: true });
-    } catch (cleanupErr) {
-      debugLogger.warn("Failed to cleanup chunk dir", { error: cleanupErr.message });
-    }
-  }
-}
-
 class IPCHandlers {
   constructor(managers) {
     this.environmentManager = managers.environmentManager;
@@ -474,27 +135,10 @@ class IPCHandlers {
     this.windowManager = managers.windowManager;
     this.textEditMonitor = managers.textEditMonitor;
     this.getTrayManager = managers.getTrayManager;
-    this.oauthProtocolRegistered = managers.oauthProtocolRegistered === true;
-    this.oauthProtocol = managers.oauthProtocol || "openwhispr";
-    this.sessionId = crypto.randomUUID();
     // requestId -> AbortControllers for in-flight audio-upload work (cloud
     // upload, or local transcription + diarization sharing one id), so a
     // cancel can abort the exact job.
     this._uploadCancelRegistry = createUploadCancelRegistry();
-    this._agentStreamRequests = new AgentStreamRequestRegistry();
-    this._cloudReasonRequests = new AgentStreamRequestRegistry();
-    this._cloudTranscriptionRequests = new AgentStreamRequestRegistry();
-    this._enterpriseReasoningRequests = new AgentStreamRequestRegistry();
-    this.assemblyAiStreaming = null;
-    this.deepgramStreaming = null;
-    this.geminiStreaming = null;
-    this.cortiStreaming = null;
-    this._dictationStreaming = null;
-    this._dictationConnectPromise = null;
-    this._dictationIdleTimer = null;
-    this._dictationPreviewEnabled = false;
-    this._meetingMicStreaming = null;
-    this._meetingSystemStreaming = null;
     this._hotkeyCaptureMode = false;
     this._autoLearnEnabled = true; // Default on, synced from renderer
     this._autoLearnDebounceTimer = null;
@@ -511,19 +155,6 @@ class IPCHandlers {
     // Warm the OS default mic answer before the first hotkey press.
     resolveSystemDefaultMicrophone();
     this.setupHandlers();
-    // Lives for the app's lifetime; IPCHandlers has no teardown path.
-    tokenStore.subscribe(({ generation, token }) => {
-      this.enterpriseIdentityManager?.clear();
-      if (!token) {
-        this.databaseManager.setActiveAccountId(null);
-        accountScopeBinding.clear();
-        broadcastToWindows("active-account-scope-changed", null);
-      }
-      broadcastToWindows("auth-token-state-changed", {
-        generation,
-        hasToken: Boolean(token),
-      });
-    });
   }
 
   // Reconstructing counters from the transcripts already on disk records exactly
@@ -535,22 +166,8 @@ class IPCHandlers {
     return this._retentionSettingsSynced && this._retentionSettings.dataRetentionEnabled;
   }
 
-  /** Whether a signed-in account is bound to this install. */
-  _hasActiveAccountScope() {
-    return Boolean(accountScopeBinding.read());
-  }
-
-  // The switch alone is not enough to start: a managed workspace can force local
-  // history off, and that policy arrives over the network while this scan takes
-  // milliseconds, so the renderer reports the permissive personal default until
-  // it lands. Waiting for the real answer is only possible where there is one --
-  // signed out the policy store stays idle forever and the user's own preference
-  // is the only authority there is. Mid-scan arrival needs no separate check:
-  // a policy that resolves "always_off" flips the switch, which the loop reads.
   _mayStartAnalyticsHistoryReconstruction() {
-    if (!this._canReconstructAnalyticsHistory()) return false;
-    if (this._retentionSettings.localHistoryPolicyResolved === true) return true;
-    return !this._hasActiveAccountScope();
+    return this._canReconstructAnalyticsHistory();
   }
 
   // Reconciliation is best-effort. Analytics reads await it so later-eligible
@@ -762,22 +379,6 @@ class IPCHandlers {
     }
   }
 
-  // Mints a Corti access token from stored BYOK credentials. Shared by the
-  // dictation streaming handlers and the meeting realtime-token resolver.
-  async _mintStoredCortiToken(options = {}) {
-    const clientId = this.environmentManager.getCortiClientId();
-    const clientSecret = this.environmentManager.getCortiClientSecret();
-    if (!clientId || !clientSecret) {
-      const err = new Error("No Corti credentials configured. Add them in Settings.");
-      err.code = "NO_API";
-      throw err;
-    }
-    const environment = options.environment || "us";
-    const tenant = (options.tenant || "").trim() || "base";
-    const token = await getCortiToken({ environment, tenant, clientId, clientSecret });
-    return { token, environment, tenant };
-  }
-
   setupHandlers() {
     ipcMain.handle("onboarding-set-window-mode", (_event, mode) =>
       this.windowManager.setOnboardingWindowMode(mode)
@@ -793,56 +394,6 @@ class IPCHandlers {
       if (!controlPanel || controlPanel.isDestroyed()) return;
       if (event.sender !== controlPanel.webContents) return;
       this.windowManager.setControlPanelRetained(retained === true);
-    });
-
-    ipcMain.handle("test-provider-connection", async (_event, config) => {
-      if (config?.provider === "corti" && config?.scope === "transcription") {
-        try {
-          const clientId = String(config.clientId || "").trim();
-          const clientSecret = String(config.clientSecret || "").trim();
-          if (clientId && clientSecret) {
-            await getCortiToken({
-              environment: config.environment || "us",
-              tenant: String(config.tenant || "").trim() || "base",
-              clientId,
-              clientSecret,
-            });
-          } else {
-            await this._mintStoredCortiToken({
-              environment: config.environment,
-              tenant: config.tenant,
-            });
-          }
-          return { success: true };
-        } catch (error) {
-          // errorCode is the machine-readable field the renderer maps to i18n;
-          // the English string stays for logs/back-compat. Only a response
-          // Corti actually sent counts as a rejection (getCortiToken prefixes
-          // those); a fetch that never reached it is a network problem, and
-          // reporting it as "credentials rejected" sends the user to re-type a
-          // key that was never the issue.
-          if (error?.name === "AbortError") {
-            return {
-              success: false,
-              errorCode: "timeout",
-              error: "The connection test timed out.",
-            };
-          }
-          if (!/^(Corti authentication failed|Invalid Corti)/.test(error?.message || "")) {
-            return {
-              success: false,
-              errorCode: "network",
-              error: "The provider could not be reached.",
-            };
-          }
-          return {
-            success: false,
-            errorCode: "credentialsRejected",
-            error: "Corti rejected these credentials.",
-          };
-        }
-      }
-      return testProviderConnection(config);
     });
 
     ipcMain.handle("hide-window", () => {
@@ -885,11 +436,6 @@ class IPCHandlers {
     ipcMain.handle("resize-dictation-error-window-to-content", (event, surfaceHeight) => {
       return this.windowManager.resizeDictationErrorWindowToContent(surfaceHeight);
     });
-
-    for (const k of BYOK_API_KEYS) {
-      ipcMain.handle(`get-${k.base}-key`, () => this.environmentManager[k.get]());
-      ipcMain.handle(`save-${k.base}-key`, (event, key) => this.environmentManager[k.save](key));
-    }
 
     ipcMain.handle("db-save-transcription", async (event, text, rawText, options) => {
       const result = this.databaseManager.saveTranscription(text, rawText, options);
@@ -1164,7 +710,7 @@ class IPCHandlers {
     });
 
     ipcMain.handle(
-      "transcribe-audio-file-byok",
+      "transcribe-audio-file",
       async (event, { filePath, language, remoteTranscriptionUrl, remoteTranscriptionModel }) => {
         const fs = require("fs");
         let cleanupUpload = null;
@@ -1177,12 +723,7 @@ class IPCHandlers {
 
           const { resolveTranscriptionRoute } = await import("./transcriptionRoute.ts");
           const route = resolveTranscriptionRoute({
-            settings: {
-              transcriptionMode: "self-hosted",
-              remoteTranscriptionUrl,
-              remoteTranscriptionModel,
-            },
-            providers: transcriptionProviderBaseUrls(),
+            settings: { remoteTranscriptionUrl, remoteTranscriptionModel },
             request: { effectiveLanguage: language || undefined },
           });
 
@@ -1217,7 +758,7 @@ class IPCHandlers {
           }
           return { success: true, text: data.data.text };
         } catch (error) {
-          debugLogger.error("BYOK audio file transcription error", { error: error.message });
+          debugLogger.error("Audio file transcription error", { error: error.message });
           return {
             success: false,
             error: error.message,
@@ -1565,14 +1106,6 @@ class IPCHandlers {
       }
     });
 
-    ipcMain.handle("get-custom-transcription-key", async () => {
-      return this.environmentManager.getCustomTranscriptionKey();
-    });
-
-    ipcMain.handle("save-custom-transcription-key", async (event, key) => {
-      return this.environmentManager.saveCustomTranscriptionKey(key);
-    });
-
     ipcMain.handle("get-cleanup-custom-key", async () => {
       return this.environmentManager.getCleanupCustomKey();
     });
@@ -1700,91 +1233,7 @@ class IPCHandlers {
       return { granted: status === "granted", status };
     });
 
-    // In production, VITE_* env vars aren't available in the main process because
-    // Vite only inlines them into the renderer bundle at build time. Load the
-    // runtime-env.json that the Vite build writes to src/dist/ as a fallback.
-    const runtimeEnv = (() => {
-      const fs = require("fs");
-      const envPath = path.join(__dirname, "..", "dist", "runtime-env.json");
-      try {
-        if (fs.existsSync(envPath)) return JSON.parse(fs.readFileSync(envPath, "utf8"));
-      } catch {}
-      return {};
-    })();
-
-    const getApiUrl = () =>
-      process.env.OPENWHISPR_API_URL ||
-      process.env.VITE_OPENWHISPR_API_URL ||
-      runtimeEnv.VITE_OPENWHISPR_API_URL ||
-      "";
-
-    const getAuthUrl = () =>
-      process.env.AUTH_URL ||
-      process.env.VITE_AUTH_URL ||
-      runtimeEnv.VITE_AUTH_URL ||
-      "https://auth.openwhispr.com";
-
-    const getSessionCookiesFromWindow = async (win) => {
-      const scopedUrls = [getAuthUrl(), getApiUrl()].filter(Boolean);
-      const cookiesByName = new Map();
-
-      for (const url of scopedUrls) {
-        try {
-          const scopedCookies = await win.webContents.session.cookies.get({ url });
-          for (const cookie of scopedCookies) {
-            if (!cookiesByName.has(cookie.name)) {
-              cookiesByName.set(cookie.name, cookie.value);
-            }
-          }
-        } catch (error) {
-          debugLogger.warn("Failed to read scoped auth cookies", {
-            url,
-            error: error.message,
-          });
-        }
-      }
-
-      // Fallback for older sessions where cookies are not URL-scoped as expected.
-      if (cookiesByName.size === 0) {
-        const allCookies = await win.webContents.session.cookies.get({});
-        for (const cookie of allCookies) {
-          if (!cookiesByName.has(cookie.name)) {
-            cookiesByName.set(cookie.name, cookie.value);
-          }
-        }
-      }
-
-      const cookieHeader = [...cookiesByName.entries()]
-        .map(([name, value]) => `${name}=${value}`)
-        .join("; ");
-
-      debugLogger.debug(
-        "Resolved auth cookies for cloud request",
-        {
-          cookieCount: cookiesByName.size,
-          scopedUrls,
-        },
-        "auth"
-      );
-
-      return cookieHeader;
-    };
-
-    // Bearer auth is preferred. Cookie fallback covers the brief window before
-    // main.js's startup migration bridge runs (or if it failed for this user).
-    const getAuthHeaderFromWindow = async (win) => {
-      const token = tokenStore.get();
-      if (token) return { Authorization: `Bearer ${token}` };
-      const cookieHeader = win ? await getSessionCookiesFromWindow(win) : "";
-      return cookieHeader ? { Cookie: cookieHeader } : {};
-    };
-
-    // Honors system proxy via Electron's net stack. useSessionCookies:false so
-    // Electron doesn't auto-attach jar cookies on top of our explicit headers.
-    const proxyFetch = (url, init = {}) => net.fetch(url, { ...init, useSessionCookies: false });
-    const withPolicyHeaders = (headers) => withPolicyRequestHeaders(headers, app.getVersion());
-
-    ipcMain.handle("retry-transcription", async (event, id, settings) => {
+    ipcMain.handle("retry-transcription", async (_event, id, settings) => {
       const buffer = this.audioStorageManager.getAudioBuffer(id);
       if (!buffer) return { success: false, error: "Audio file not found" };
       try {
@@ -1795,206 +1244,36 @@ class IPCHandlers {
             ? preferredLanguage.split("-")[0]
             : undefined;
         const { resolveTranscriptionRoute } = await import("./transcriptionRoute.ts");
-        // Renderer pre-flight owns policy; retry re-routes stored audio through
-        // whatever is selected NOW.
+        // Retry re-routes stored audio through whatever server is selected NOW.
         const route = resolveTranscriptionRoute({
           settings: settings || {},
-          providers: transcriptionProviderBaseUrls(),
-          managed: settings?.managed,
           request: { effectiveLanguage: language },
         });
-
-        // An error route is fatal unless OpenWhispr cloud is selected — a
-        // leftover BYOK misconfiguration must not block the cloud pipeline.
-        if (
-          route.transport === "error" &&
-          (settings?.transcriptionMode === "self-hosted" ||
-            settings?.cloudTranscriptionMode !== "openwhispr")
-        ) {
+        if (route.transport === "error") {
           const err = new Error(route.message);
           if (route.code) err.code = route.code;
           if (route.messageKey) err.messageKey = route.messageKey;
           throw err;
         }
 
-        if (route.transport === "managed") {
-          const text = await this.executeManagedTranscription(event, route, {
-            audioBuffer: buffer,
-            fileName: "audio.webm",
-            contentType: "audio/webm",
-          });
-          result = { text, source: "azure-managed", model: route.deployment };
-        } else if (route.transport === "http-batch" && route.provider === "self-hosted") {
-          const formData = new FormData();
-          formData.append("file", new Blob([buffer], { type: "audio/webm" }), "audio.webm");
-          if (route.model) {
-            formData.append("model", route.model);
-          }
-          if (route.language) {
-            formData.append("language", route.language);
-          }
+        const formData = new FormData();
+        formData.append("file", new Blob([buffer], { type: "audio/webm" }), "audio.webm");
+        if (route.model) formData.append("model", route.model);
+        if (route.language) formData.append("language", route.language);
 
-          const response = await proxyFetch(route.endpoint, {
-            method: "POST",
-            body: formData,
-          });
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Self-hosted API Error: ${response.status} ${errorText}`);
-          }
-          const data = await response.json();
-          if (data?.text) {
-            result = {
-              text: data.text,
-              source: "self-hosted",
-              model: route.model,
-            };
-          }
-        } else if (settings?.cloudTranscriptionMode === "openwhispr") {
-          const win = BrowserWindow.fromWebContents(event.sender);
-          if (win) {
-            const authHeader = await getAuthHeaderFromWindow(win);
-            if (Object.keys(authHeader).length) {
-              const apiUrl = getApiUrl();
-              if (apiUrl) {
-                const multipartFields = {
-                  language,
-                  clientType: "desktop",
-                  appVersion: app.getVersion(),
-                  sessionId: this.sessionId,
-                };
-                if (buffer.length > CLOUD_INLINE_LIMIT) {
-                  const { text } = await chunkedCloudTranscribe({
-                    buffer,
-                    apiUrl,
-                    policyHeaders: withPolicyHeaders(authHeader),
-                    multipartFields,
-                  });
-                  result = { text, source: "openwhispr", model: "cloud" };
-                } else {
-                  const { body, boundary } = buildMultipartBody(
-                    buffer,
-                    "audio.webm",
-                    "audio/webm",
-                    multipartFields
-                  );
-                  const url = new URL(`${apiUrl}/api/transcribe`);
-                  const data = await postMultipart(
-                    url,
-                    body,
-                    boundary,
-                    withPolicyHeaders(authHeader),
-                    {
-                      signal: AbortSignal.timeout(CLOUD_UPLOAD_TIMEOUT_MS),
-                      session: getInlineCloudUploadSession(),
-                    }
-                  );
-                  const responseData = interpretTranscribeResponse(data);
-                  result = {
-                    text: responseData.text,
-                    source: "openwhispr",
-                    model: "cloud",
-                  };
-                }
-              }
-            }
-          }
-        } else if (route.transport === "proxied" && route.provider === "tinfoil") {
-          // Attested transport, so this can't reuse the generic fetch below.
-          const { text, model } = await transcribeWithTinfoil({
-            audioBuffer: buffer,
-            fileName: "audio.webm",
-            contentType: "audio/webm",
-            language: route.language,
-            apiKey: this.environmentManager.getTinfoilKey(),
-          });
-          if (text) result = { text, source: "tinfoil", model };
-        } else if (route.transport === "proxied" && route.provider === "corti") {
-          // Corti uses OAuth + an interaction-based REST flow, so it can't use
-          // the generic fetch below.
-          const clientId = this.environmentManager.getCortiClientId();
-          const clientSecret = this.environmentManager.getCortiClientSecret();
-          if (!clientId || !clientSecret) {
-            throw new Error("Corti credentials not configured. Add them in Settings.");
-          }
-          const { transcribeAudio } = require("./cortiTranscription");
-          const { text } = await transcribeAudio({
-            environment: route.cortiEnvironment,
-            tenant: route.cortiTenant,
-            clientId,
-            clientSecret,
-            audioBuffer: buffer,
-            language: route.language,
-          });
-          if (text) result = { text, source: "corti", model: route.model };
-        } else if (route.transport === "proxied" && route.provider === "gemini") {
-          if (route.sizeCapBytes && buffer.byteLength > route.sizeCapBytes) {
-            throw new Error(byokSizeCapError(route.sizeCapBytes));
-          }
-          const { text } = await transcribeWithGemini({
-            audioBuffer: buffer,
-            model: route.model,
-            contentType: "audio/webm",
-            language: route.language,
-            apiKey: this.environmentManager.getGeminiKey(),
-          });
-          if (text) result = { text, source: "gemini", model: route.model };
-        } else {
-          // mistral/xai have no OpenAI-compatible endpoint — main talks to them
-          // directly; everything else consumes the route endpoint as-is.
-          const provider = route.provider;
-          const endpoint =
-            provider === "mistral"
-              ? MISTRAL_TRANSCRIPTION_URL
-              : provider === "xai"
-                ? XAI_STT_URL
-                : route.endpoint;
-          const apiKey =
-            provider === "mistral"
-              ? this.environmentManager.getMistralKey()
-              : provider === "xai"
-                ? this.environmentManager.getXaiKey()
-                : route.auth.keyRef === "custom"
-                  ? this.environmentManager.getCustomTranscriptionKey()
-                  : route.auth.keyRef === "groq"
-                    ? this.environmentManager.getGroqKey()
-                    : this.environmentManager.getOpenAIKey();
-          if (!apiKey && provider !== "custom") {
-            throw new Error(`${provider} API key not configured`);
-          }
-
-          const formData = new FormData();
-          formData.append("file", new Blob([buffer], { type: "audio/webm" }), "audio.webm");
-          if (provider === "xai") {
-            // xAI STT does not accept a model field; the route pre-filters language
-            if (route.language) {
-              formData.append("language", route.language);
-              formData.append("format", "true");
-            }
-          } else {
-            formData.append("model", route.model);
-            if (route.language) formData.append("language", route.language);
-          }
-          const headers = {};
-          if (provider === "mistral") {
-            headers["x-api-key"] = apiKey;
-          } else if (apiKey) {
-            if (route.transport === "http-batch" && route.auth.scheme === "azure-api-key") {
-              headers["api-key"] = apiKey;
-            } else {
-              headers.Authorization = `Bearer ${apiKey}`;
-            }
-          }
-
-          const response = await proxyFetch(endpoint, { method: "POST", headers, body: formData });
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`${provider} API Error: ${response.status} ${errorText}`);
-          }
-          const data = await response.json();
-          if (data?.text) {
-            result = { text: data.text, source: provider, model: route.model };
-          }
+        // Honors the system proxy via Electron's net stack.
+        const response = await net.fetch(route.endpoint, {
+          method: "POST",
+          body: formData,
+          useSessionCookies: false,
+        });
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Self-hosted API Error: ${response.status} ${errorText}`);
+        }
+        const data = await response.json();
+        if (data?.text) {
+          result = { text: data.text, source: "self-hosted", model: route.model };
         }
 
         if (!result?.text) {
@@ -2132,18 +1411,6 @@ class IPCHandlers {
 
     ipcMain.handle("get-app-version", async () => {
       return { version: app.getVersion() };
-    });
-
-    ipcMain.handle("get-post-migration-state", () => ({
-      justMigrated: postMigrationDetector.isReturningFromOldBundle(),
-    }));
-
-    ipcMain.handle("mark-bundle-migrated", () => {
-      postMigrationDetector.markBundleMigrated();
-    });
-
-    ipcMain.handle("mark-bundle-migration-dismissed", () => {
-      postMigrationDetector.markBundleMigrationDismissed();
     });
 
     ipcMain.handle("acquire-recording-lock", async (_event, pipeline) => {

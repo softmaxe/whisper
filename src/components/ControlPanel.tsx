@@ -4,9 +4,6 @@ import { useCollapsibleSidebar } from "../hooks/useCollapsibleSidebar";
 import { useDialogs } from "../hooks/useDialogs";
 import { useHotkey } from "../hooks/useHotkey";
 import { useSettings } from "../hooks/useSettings";
-import { getManagedTranscriptionResolution } from "../services/managedTranscription";
-import { isTranscriptionContextAllowed } from "../stores/policyRules";
-import { usePolicyStore } from "../stores/policyStore";
 import { getSettings } from "../stores/settingsStore";
 import {
   clearTranscriptions as clearStore,
@@ -245,34 +242,8 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
       setControlPanelHold(hold, true);
       try {
         const s = getSettings();
-        const managed = getManagedTranscriptionResolution();
-        if (managed?.kind === "error") {
-          toast({
-            title: managed.messageKey ? t(managed.messageKey) : managed.message,
-            variant: "destructive",
-          });
-          return;
-        }
-        if (!managed && !isTranscriptionContextAllowed(usePolicyStore.getState(), s, "dictation")) {
-          toast({ title: t("common.managedByOrg"), variant: "default" });
-          return;
-        }
         const result = await window.electronAPI.retryTranscription(id, {
-          managed,
-          useLocalWhisper: s.useLocalWhisper,
-          localTranscriptionProvider: s.localTranscriptionProvider,
-          cloudTranscriptionMode: s.cloudTranscriptionMode,
-          cloudTranscriptionProvider: s.cloudTranscriptionProvider,
-          cloudTranscriptionModel: s.cloudTranscriptionModel,
-          cloudTranscriptionBaseUrl: s.cloudTranscriptionBaseUrl,
-          cortiEnvironment: s.cortiEnvironment,
-          cortiTenant: s.cortiTenant,
-          parakeetModel: s.parakeetModel,
-          cohereModel: s.cohereModel,
-          whisperModel: s.whisperModel,
           preferredLanguage: s.preferredLanguage,
-          transcriptionMode: s.transcriptionMode,
-          remoteTranscriptionType: s.remoteTranscriptionType,
           remoteTranscriptionUrl: s.remoteTranscriptionUrl,
           remoteTranscriptionModel: s.remoteTranscriptionModel,
         });

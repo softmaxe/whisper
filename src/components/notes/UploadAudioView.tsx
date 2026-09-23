@@ -62,7 +62,6 @@ export default function UploadAudioView({
   }, [state]);
   const remoteTranscriptionUrl = useSettingsStore((s) => s.remoteTranscriptionUrl);
   const remoteTranscriptionModel = useSettingsStore((s) => s.remoteTranscriptionModel);
-  const customTranscriptionApiKey = useSettingsStore((s) => s.customTranscriptionApiKey);
   const preferredLanguage = useSettingsStore((s) => s.preferredLanguage);
   const providerReady = !!remoteTranscriptionUrl.trim();
 
@@ -72,20 +71,9 @@ export default function UploadAudioView({
   };
 
   const buildTranscriptionConfig = (): FileTranscriptionConfig => ({
-    useLocalWhisper: false,
-    localTranscriptionProvider: "whisper",
-    whisperModel: "",
-    parakeetModel: "",
-    cohereModel: "",
-    isOpenWhisprCloud: false,
-    getApiKey: () => customTranscriptionApiKey,
-    cloudTranscriptionProvider: "custom",
-    cloudTranscriptionBaseUrl: remoteTranscriptionUrl,
-    cloudTranscriptionModel: remoteTranscriptionModel,
-    language: getBaseLanguageCode(preferredLanguage) || "",
-    transcriptionMode: "self-hosted",
     remoteTranscriptionUrl,
     remoteTranscriptionModel,
+    language: getBaseLanguageCode(preferredLanguage) || "",
   });
 
   const handleBrowse = async () => {
@@ -187,9 +175,7 @@ export default function UploadAudioView({
     setSaveError(null);
 
     try {
-      const res = await transcribeFile(file.path, buildTranscriptionConfig(), false, {
-        requestId,
-      }).finally(() => {
+      const res = await transcribeFile(file.path, buildTranscriptionConfig()).finally(() => {
         if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
       });
       if (runId !== runIdRef.current) return;

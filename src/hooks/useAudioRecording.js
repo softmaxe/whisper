@@ -3,8 +3,6 @@ import { useTranslation } from "react-i18next";
 import AudioManager from "../helpers/audioManager";
 import { RecordingStartupTrace } from "../helpers/recordingStartupTrace";
 import { recordCleanupFailure } from "../stores/cleanupFailureStore";
-import { isTranscriptionContextAllowed } from "../stores/policyRules";
-import { usePolicyStore } from "../stores/policyStore";
 import { getSettings } from "../stores/settingsStore";
 import { playStartCue, playStopCue } from "../utils/dictationCues";
 import { canStartDictation } from "../utils/dictationReadiness";
@@ -81,10 +79,6 @@ export const useAudioRecording = (toast, options = {}) => {
       let startupTrace;
       try {
         if (!audioManagerRef.current) return false;
-        if (!isTranscriptionContextAllowed(usePolicyStore.getState(), getSettings(), "dictation")) {
-          toast({ title: t("common.managedByOrg"), variant: "default" });
-          return false;
-        }
 
         if (!canStartDictation(audioManagerRef.current.getState())) return false;
 
@@ -153,7 +147,7 @@ export const useAudioRecording = (toast, options = {}) => {
         }
       }
     },
-    [t, toast, dismissDictationError, reportLifecycle, getStartupTrace]
+    [dismissDictationError, reportLifecycle, getStartupTrace]
   );
 
   const performStopRecording = useCallback(async () => {
