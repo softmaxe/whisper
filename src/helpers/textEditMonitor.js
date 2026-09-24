@@ -8,8 +8,9 @@ const POLL_INTERVAL_MS = 500;
 const INITIAL_QUERY_DELAY_MS = 500; // Wait for paste to settle in target app
 const INITIAL_QUERY_RETRIES = 4; // Retry if AXValue is empty (paste not yet processed)
 const INITIAL_QUERY_RETRY_DELAY_MS = 300;
-const ACTIVATE_CONFIRM_RETRIES = 6; // Poll the frontmost app until activation lands
+const ACTIVATE_CONFIRM_RETRIES = 6; // Poll the focus owner until activation lands
 const ACTIVATE_CONFIRM_DELAY_MS = 25;
+const TARGET_PROBE_TIMEOUT_MS = 700;
 // One dictation triggers target captures from several call sites (hotkey press,
 // toggle path, recording start) within a few hundred ms; reuse the result
 // across that burst. Kept short so back-to-back dictations in different apps
@@ -79,10 +80,10 @@ class TextEditMonitor extends EventEmitter {
   }
 
   /**
-   * macOS: capture the active app's PID via NSWorkspace before the overlay steals focus.
+   * macOS: capture the Target app's PID before the overlay steals focus.
    * Must be called at hotkey press time, BEFORE showDictationPanel()/mainWindow.show().
-   * NSWorkspace.frontmostApplication correctly identifies the key window owner,
-   * ignoring panel-type windows like the OpenWhispr overlay.
+   * The Target app is the app holding keyboard focus, which differs from the
+   * menu bar app while a floating launcher such as Raycast is open.
    *
    * Resolves with the captured PID (or null). At most one lookup runs at a
    * time: concurrent calls share the in-flight lookup, so an older lookup can
@@ -99,7 +100,7 @@ class TextEditMonitor extends EventEmitter {
       return Promise.resolve(this.lastTargetPid);
     }
     this.lastTargetPid = null;
-    this._captureTargetPromise = this._readFrontmostPid().then((pid) => {
+    this._captureTargetPromise = this._readKeyboardFocusPid().then((pid) => {
       this._captureTargetPromise = null;
       this._lastCaptureAt = Date.now();
       this.lastTargetPid = pid;
@@ -107,6 +108,29 @@ class TextEditMonitor extends EventEmitter {
       return pid;
     });
     return this._captureTargetPromise;
+  }
+
+  /**
+   * macOS: resolve the PID of the app holding keyboard focus. The native helper
+   * asks Accessibility and itself falls back to the frontmost app; the osascript
+   * fallback here covers a missing helper or one that predates --focused-app.
+   */
+  async _readKeyboardFocusPid() {
+    const resolved = this.resolveBinary();
+    if (resolved) {
+      const pid = await this._probeTarget(
+        resolved.command,
+        [...resolved.args, "--focused-app"],
+        (line) => {
+          const match = line.match(/^FOCUSED_PID:(\d+)$/);
+          return match ? Number(match[1]) : null;
+        },
+        null,
+        TARGET_PROBE_TIMEOUT_MS
+      );
+      if (pid) return pid;
+    }
+    return this._readFrontmostPid();
   }
 
   /**
@@ -132,29 +156,46 @@ class TextEditMonitor extends EventEmitter {
    * macOS: request activation of the app with the given PID, bringing all its
    * windows forward (AllWindows|IgnoringOtherApps) so one becomes key. Scans
    * runningApplications because NSRunningApplication's PID lookup returns nil under JXA.
+   *
+   * Resolves false without activating an app that has no regular Dock presence:
+   * a floating launcher such as Raycast that lost keyboard focus has closed, and
+   * activating it could reopen the launcher and receive the paste.
    */
   _activateApp(pid) {
     return new Promise((resolve) => {
       const script = `
         ObjC.import("AppKit");
         const apps = $.NSWorkspace.sharedWorkspace.runningApplications;
+        let requested = false;
         for (let i = 0; i < apps.count; i++) {
           const a = apps.objectAtIndex(i);
-          if (a.processIdentifier === ${pid}) { a.activateWithOptions(3); break; }
+          if (a.processIdentifier === ${pid}) {
+            if (a.activationPolicy === $.NSApplicationActivationPolicyRegular) {
+              a.activateWithOptions(3);
+              requested = true;
+            }
+            break;
+          }
         }
+        requested ? "ACTIVATED" : "SKIPPED";
       `;
-      execFile("osascript", ["-l", "JavaScript", "-e", script], { timeout: 2000 }, () => resolve());
+      execFile(
+        "osascript",
+        ["-l", "JavaScript", "-e", script],
+        { timeout: 2000 },
+        (_error, stdout) => resolve(stdout?.trim() === "ACTIVATED")
+      );
     });
   }
 
   /**
-   * macOS: make the captured target app frontmost before pasting, so the global
-   * Cmd+V lands in its focused field (#668). Resolves true once the target is
-   * confirmed frontmost. If it is already frontmost we do nothing: re-activating
-   * an already-active Chromium app (e.g. Claude Desktop) drops its field's first
-   * responder — the focus loss this fixes — and skipping also avoids a needless
-   * activation round-trip. Otherwise we activate and poll until the OS reports the
-   * target frontmost.
+   * macOS: give the captured target app keyboard focus before pasting, so the
+   * global Cmd+V lands in its focused field (#668). Resolves true once the target
+   * is confirmed to hold keyboard focus. If it already does we do nothing:
+   * re-activating an already-active Chromium app (e.g. Claude Desktop) drops its
+   * field's first responder — the focus loss this fixes — and skipping also
+   * avoids a needless activation round-trip. Otherwise we activate and poll until
+   * the target holds keyboard focus.
    */
   async activateTargetPid() {
     if (!this.lastTargetPid) return false;
@@ -163,21 +204,24 @@ class TextEditMonitor extends EventEmitter {
 
   async activatePid(pid) {
     if (!pid) return false;
-    if ((await this._readFrontmostPid()) === pid) return true;
+    if ((await this._readKeyboardFocusPid()) === pid) return true;
 
-    await this._activateApp(pid);
+    if (!(await this._activateApp(pid))) {
+      debugLogger.debug("[TextEditMonitor] Target cannot be activated", { pid });
+      return false;
+    }
     for (let i = 0; i < ACTIVATE_CONFIRM_RETRIES; i++) {
       await new Promise((resolve) => setTimeout(resolve, ACTIVATE_CONFIRM_DELAY_MS));
-      if ((await this._readFrontmostPid()) === pid) {
+      if ((await this._readKeyboardFocusPid()) === pid) {
         debugLogger.debug("[TextEditMonitor] Activated target PID", { pid });
         return true;
       }
     }
-    debugLogger.debug("[TextEditMonitor] Target did not become frontmost", { pid });
+    debugLogger.debug("[TextEditMonitor] Target did not take keyboard focus", { pid });
     return false;
   }
 
-  async canPasteAtTarget(pid, timeoutMs = 700) {
+  async canPasteAtTarget(pid, timeoutMs = TARGET_PROBE_TIMEOUT_MS) {
     // Without capture metadata or a working probe, delivery is unconfirmed.
     // Dictation keeps the transcript available for manual copy in this case.
     if (!pid) return null;
@@ -232,7 +276,7 @@ class TextEditMonitor extends EventEmitter {
    * cursor. Cached over the same press-time burst as captureTargetPid, so the
    * dictation panel and the screen-context capture share one spawn.
    */
-  async getTargetWindowBounds(pid, timeoutMs = 700) {
+  async getTargetWindowBounds(pid, timeoutMs = TARGET_PROBE_TIMEOUT_MS) {
     if (!pid) return null;
     if (
       this._windowBounds?.pid === pid &&
