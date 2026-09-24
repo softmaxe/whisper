@@ -9,6 +9,13 @@ import { Archive, Loader2, Mic, Trash2 } from "./icons";
 import { cn } from "./lib/utils";
 import EmptyStateCard from "./ui/EmptyStateCard";
 import TranscriptionItem from "./ui/TranscriptionItem";
+// PROTOTYPE: date layout variants, remove once one wins.
+import {
+  PROTOTYPE_SAMPLE_HISTORY,
+  PROTOTYPE_VARIANTS,
+  PrototypeHistoryVariant,
+} from "./prototype/HistoryDateLayouts.prototype";
+import { PrototypeSwitcher, usePrototypeVariant } from "./prototype/PrototypeSwitcher";
 
 const EMPTY_PREVIEW_WIDTHS = ["w-full", "w-4/5", "w-3/5"];
 
@@ -27,7 +34,7 @@ interface HistoryViewProps {
 }
 
 export default function HistoryView({
-  history,
+  history: historyProp,
   isLoading,
   hotkey,
 
@@ -44,6 +51,10 @@ export default function HistoryView({
   const { t } = useTranslation();
   const locale = useUiLocale();
   const dataRetentionEnabled = useSettingsStore((s) => s.dataRetentionEnabled);
+  const [variant, selectVariant] = usePrototypeVariant(PROTOTYPE_VARIANTS);
+  // PROTOTYPE: a plain browser has no Electron history, so show sample rows there.
+  const history =
+    historyProp.length === 0 && !window.electronAPI ? PROTOTYPE_SAMPLE_HISTORY : historyProp;
 
   const groupedHistory = useMemo(() => {
     if (history.length === 0) return [];
@@ -141,6 +152,29 @@ export default function HistoryView({
                   </span>
                 </EmptyStateCard>
               </>
+            ) : variant !== "current" ? (
+              <PrototypeHistoryVariant
+                variant={variant}
+                items={history}
+                locale={locale}
+                labels={{
+                  today: t("controlPanel.history.dateGroups.today"),
+                  yesterday: t("controlPanel.history.dateGroups.yesterday"),
+                }}
+                onCopy={copyToClipboard}
+                actions={
+                  <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
+                    {discardedToggle}
+                    <button
+                      onClick={clearAllTranscriptions}
+                      className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] text-muted-foreground/70 hover:!text-destructive hover:!bg-destructive/8"
+                    >
+                      <Trash2 size={11} />
+                      <span>{t("controlPanel.history.clearAll")}</span>
+                    </button>
+                  </div>
+                }
+              />
             ) : (
               <div className="group">
                 {groupedHistory.map((group, index) => (
@@ -180,6 +214,7 @@ export default function HistoryView({
           </div>
         </div>
       </div>
+      <PrototypeSwitcher variants={PROTOTYPE_VARIANTS} current={variant} onSelect={selectVariant} />
     </div>
   );
 }
