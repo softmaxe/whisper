@@ -19,6 +19,12 @@ const flowBarCount = async () => {
 };
 
 const PANEL_RECORDING = { variant: "panel", integratedWithPanel: true };
+// The panel's own resting identity: the circle it collapses to between takes.
+const PANEL_IDLE = {
+  variant: "panel",
+  integratedWithPanel: true,
+  waveformOnlyWhileRecording: true,
+};
 
 // The pill's rendered footprints are a native-window contract (see
 // VOICE_PILL_FOOTPRINT); every footprint assertion derives from the exported
@@ -28,6 +34,8 @@ const pillFootprints = async () => {
   const asStyle = ({ width, height }) => new RegExp(`style="width:${width}px;height:${height}px`);
   return {
     idle: asStyle(VOICE_PILL_FOOTPRINT.idle),
+    sliver: asStyle(VOICE_PILL_FOOTPRINT.sliver),
+    peek: asStyle(VOICE_PILL_FOOTPRINT.peek),
     listening: asStyle(VOICE_PILL_FOOTPRINT.listening),
     panel: asStyle(VOICE_PILL_FOOTPRINT.panel),
   };
@@ -48,42 +56,73 @@ const renderPill = async (state, expanded, horizontalDirection = "right", overri
 test("thinking and recording keep the same persistent glow and pill roots", async () => {
   const thinking = await renderPill("thinking", false);
   const recording = await renderPill("recording", true);
+  const panelThinking = await renderPill("thinking", false, "right", PANEL_IDLE);
 
-  for (const markup of [thinking, recording]) {
+  for (const markup of [thinking, recording, panelThinking]) {
     assert.match(markup, /^<span class="voice-pill-glow-anchor"/);
     assert.match(markup, /class="processing-signal-glow"/);
     assert.match(markup, /voice-pill-control/);
   }
-  assert.match(thinking, /class="processing-signal-glow" data-active="true"/);
+  // The floating Flow bar thinks with its own bars; only the panel's circular
+  // identity still lights the Signal glow.
+  assert.doesNotMatch(thinking, /data-active/);
   assert.doesNotMatch(recording, /data-active/);
+  assert.match(panelThinking, /class="processing-signal-glow" data-active="true"/);
 });
 
 test("the pill renders exactly the footprints the native window ladder is sized around", async () => {
   const footprint = await pillFootprints();
-  const idle = await renderPill("idle", false);
+  const sliver = await renderPill("idle", false);
+  const peek = await renderPill("hover", false);
   const listening = await renderPill("recording", true);
   const panel = await renderPill("recording", true, "right", PANEL_RECORDING);
+  const panelIdle = await renderPill("idle", false, "right", PANEL_IDLE);
 
-  assert.match(idle, footprint.idle);
-  assert.doesNotMatch(idle, footprint.listening);
+  assert.match(sliver, footprint.sliver);
+  assert.match(peek, footprint.peek);
   assert.match(listening, footprint.listening);
   assert.doesNotMatch(listening, footprint.idle);
   assert.match(panel, footprint.panel);
+  assert.match(panelIdle, footprint.idle);
 });
 
-test("the floating listening pill is an always-black Flow bar without the identity", async () => {
-  const listening = await renderPill("recording", true);
-  const idle = await renderPill("idle", false);
+test("the floating pill is always-black Flow chrome without the identity in every state", async () => {
+  const panelIdle = await renderPill("idle", false, "right", PANEL_IDLE);
 
-  assert.match(listening, /data-flow-bar="true"/);
-  assert.doesNotMatch(idle, /data-flow-bar/);
-  // The ink chrome comes from .voice-pill-control[data-flow-bar], not the
-  // theme-driven STATE_APPEARANCE surface classes.
-  assert.doesNotMatch(listening, /voice-pill-control[^"\n]*bg-surface-1/);
-  // The identity slot collapses out of the flow instead of unmounting, so the
-  // logo can morph back when recording stops.
-  assert.match(listening, /voice-pill-identity-slot[^"\n]*" style="width:0;height:22px;opacity:0/);
-  assert.doesNotMatch(listening, /voice-pill-control[^"\n]*pr-1/);
+  for (const [state, expanded] of [
+    ["idle", false],
+    ["hover", false],
+    ["processing", false],
+    ["recording", true],
+    ["thinking", false],
+  ]) {
+    const markup = await renderPill(state, expanded);
+    assert.match(markup, /data-flow-bar="true"/, state);
+    // The ink chrome comes from .voice-pill-control[data-flow-bar], not the
+    // theme-driven STATE_APPEARANCE surface classes.
+    assert.doesNotMatch(markup, /voice-pill-control[^"\n]*bg-surface-/, state);
+    // The identity slot stays mounted but collapsed, so the panel layout can
+    // grow it back when Live Transcript takes the pill.
+    assert.match(markup, /voice-pill-identity-slot[^"\n]*" style="width:0;height:22px;opacity:0/);
+    assert.doesNotMatch(markup, /voice-pill-control[^"\n]*pr-1/);
+  }
+  assert.doesNotMatch(panelIdle, /data-flow-bar/);
+});
+
+test("the floating pill's bars say what it is doing", async () => {
+  const { FLOW_PEEK_OPACITY } = await import("../../src/components/dictation/waveformMath.ts");
+  const sliver = await renderPill("idle", false);
+  const peek = await renderPill("hover", false);
+  const warmUp = await renderPill("processing", false);
+  const thinking = await renderPill("thinking", false);
+
+  // The resting sliver is empty; hovering it previews dim dots.
+  assert.match(sliver, /voice-flow-waveform[^>]*opacity:0[;"]/);
+  assert.match(peek, new RegExp(`voice-flow-waveform[^>]*opacity:${FLOW_PEEK_OPACITY}[;"]`));
+  assert.doesNotMatch(peek, /data-motion/);
+  // Warm-up sweeps a light across the dots; thinking ripples a travelling wave.
+  assert.match(warmUp, /voice-flow-waveform[^>]*data-motion="sweep"[^>]*opacity:1/);
+  assert.match(thinking, /voice-flow-waveform[^>]*data-motion="wave"[^>]*opacity:1/);
 });
 
 test("a Flow bar that loses its microphone pulses resting dots under a visible ring", async () => {
@@ -95,15 +134,20 @@ test("a Flow bar that loses its microphone pulses resting dots under a visible r
   assert.doesNotMatch(unavailable, /border-foreground\/30/);
 });
 
-test("the Flow bar renders one symmetric bar set and hides it until the entrance reveals it", async () => {
+test("the Flow bar renders one symmetric bar set that goes live as soon as recording starts", async () => {
   const shown = await renderPill("recording", true);
-  const entering = await renderPill("recording", true, "right", { waveformVisible: false });
+  const entering = await renderPill("recording", false, "right", {
+    collapseToLogo: true,
+    waveformVisible: false,
+  });
   const count = await flowBarCount();
 
   assert.equal((shown.match(/voice-flow-bar"/g) || []).length, count);
   assert.doesNotMatch(shown, /w-0\.5 rounded-full bg-current/);
-  assert.match(shown, /voice-flow-waveform[^>]*opacity:1/);
-  assert.match(entering, /voice-flow-waveform[^>]*opacity:0/);
+  assert.match(shown, /voice-flow-waveform[^>]*data-motion="live"[^>]*opacity:1/);
+  // The entrance beats stage only the panel pill; the floating bar never makes
+  // a capturing microphone look like it is still warming up.
+  assert.match(entering, /voice-flow-waveform[^>]*data-motion="live"[^>]*opacity:1/);
 });
 
 test("the waveform stays to the right of the identity across docks and voice modes", async () => {
@@ -167,8 +211,8 @@ test("the compact panel pill transitions its logo into an expand chevron", async
   );
 });
 
-test("the idle pill keeps the logo at normal foreground strength", async () => {
-  const idle = await renderPill("idle", false);
+test("the panel's idle identity keeps the logo at normal foreground strength", async () => {
+  const idle = await renderPill("idle", false, "right", PANEL_IDLE);
 
   assert.match(idle, /border-border-hover[^"\n]*dark:border-border\/50/);
   assert.match(
@@ -177,15 +221,13 @@ test("the idle pill keeps the logo at normal foreground strength", async () => {
   );
 });
 
-test("the floating hover pill changes surface treatment without zooming", async () => {
+test("hovering the sliver grows it to the peek capsule without zooming", async () => {
   const footprint = await pillFootprints();
   const hovered = await renderPill("hover", false);
 
-  assert.match(hovered, /border-border-hover bg-surface-3 text-foreground/);
-  assert.match(hovered, /box-shadow:var\(--shadow-card-hover-subtle\)/);
+  assert.match(hovered, footprint.peek);
   assert.doesNotMatch(hovered, /style="[^"]*transform:/);
-  assert.match(hovered, footprint.idle);
-  assert.match(hovered, /<svg width="22" height="22"/);
+  assert.doesNotMatch(hovered, /--shadow-card-hover-subtle/);
 });
 
 test("the waveform pill keeps the normal compact logo footprint", async () => {
@@ -264,4 +306,49 @@ test("Flow bar heights rest as dots in silence and peak at the center while spea
   const center = FLOW_BAR_COUNT / 2;
   assert.ok(peak(center) > peak(0) * 2);
   assert.ok(peak(center - 1) > peak(FLOW_BAR_COUNT - 1) * 2);
+});
+
+test("the warm-up sweep carries one bright spot across the resting dots", async () => {
+  const { FLOW_BAR_COUNT, resolveFlowSweepOpacity } =
+    await import("../../src/components/dictation/waveformMath.ts");
+
+  const brightest = (now) => {
+    let best = 0;
+    for (let index = 1; index < FLOW_BAR_COUNT; index += 1) {
+      if (resolveFlowSweepOpacity(index, now) > resolveFlowSweepOpacity(best, now)) best = index;
+    }
+    return best;
+  };
+  for (let now = 0; now < 3000; now += 16) {
+    for (let index = 0; index < FLOW_BAR_COUNT; index += 1) {
+      const opacity = resolveFlowSweepOpacity(index, now);
+      assert.ok(opacity > 0.2 && opacity <= 1);
+    }
+  }
+  // Mid-pass the spot moves left to right.
+  const start = 300;
+  assert.ok(brightest(start + 140) > brightest(start));
+});
+
+test("the thinking wave travels left to right and stays well below speech height", async () => {
+  const { FLOW_BAR_COUNT, FLOW_WAVE_STEP_MS, resolveFlowWaveTarget } =
+    await import("../../src/components/dictation/waveformMath.ts");
+
+  let max = 0;
+  let min = 1;
+  for (let now = 0; now < 3000; now += 16) {
+    for (let index = 0; index < FLOW_BAR_COUNT; index += 1) {
+      const lane = resolveFlowWaveTarget(index, now);
+      max = Math.max(max, lane);
+      min = Math.min(min, lane);
+    }
+  }
+  assert.ok(min >= 0 && max <= 0.5);
+  assert.ok(max - min > 0.3);
+  // A bar repeats its left neighbour's height a moment later.
+  for (let index = 1; index < FLOW_BAR_COUNT; index += 1) {
+    const here = resolveFlowWaveTarget(index, 1000 + FLOW_WAVE_STEP_MS);
+    const neighbour = resolveFlowWaveTarget(index - 1, 1000);
+    assert.ok(Math.abs(here - neighbour) < 1e-9);
+  }
 });

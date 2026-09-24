@@ -52,3 +52,42 @@ export const resolveFlowBarTarget = (rms: number, index: number, nowMs: number) 
 
 export const resolveFlowBarHeight = (lane: number) =>
   FLOW_BAR_MIN_PX + lane * (FLOW_BAR_MAX_PX - FLOW_BAR_MIN_PX);
+
+// Hovering the resting sliver previews the bar set dimmed, so it reads as an
+// invitation rather than listening.
+export const FLOW_PEEK_OPACITY = 0.55;
+
+// Loading motions for the Flow bar while no speech is being captured. Both are
+// level-independent, so they can never be mistaken for the live waveform.
+
+// Mic warm-up: one bright spot sweeps left to right across resting dots,
+// running a few bars past each edge so the pass fades in and out.
+const FLOW_SWEEP_BAR_MS = 70;
+const FLOW_SWEEP_OVERRUN = 3;
+const FLOW_SWEEP_FLOOR = 0.28;
+const FLOW_SWEEP_SPREAD = 2.2;
+
+export const resolveFlowSweepOpacity = (index: number, nowMs: number) => {
+  const head =
+    ((nowMs / FLOW_SWEEP_BAR_MS) % (FLOW_BAR_COUNT + FLOW_SWEEP_OVERRUN * 2)) - FLOW_SWEEP_OVERRUN;
+  const distance = index - head;
+  return (
+    FLOW_SWEEP_FLOOR + (1 - FLOW_SWEEP_FLOOR) * Math.exp(-(distance * distance) / FLOW_SWEEP_SPREAD)
+  );
+};
+
+// Thinking: a low wave travels left to right, each bar repeating its left
+// neighbour FLOW_WAVE_STEP_MS later. Its crest stays well under speech height.
+const FLOW_WAVE_PERIOD_MS = 700;
+export const FLOW_WAVE_STEP_MS = 69;
+const FLOW_WAVE_CREST = 0.4;
+const FLOW_WAVE_OPACITY_FLOOR = 0.45;
+
+const flowWavePhase = (index: number, nowMs: number) =>
+  0.5 + 0.5 * Math.sin(((nowMs - index * FLOW_WAVE_STEP_MS) / FLOW_WAVE_PERIOD_MS) * 2 * Math.PI);
+
+export const resolveFlowWaveTarget = (index: number, nowMs: number) =>
+  FLOW_WAVE_CREST * flowWavePhase(index, nowMs);
+
+export const resolveFlowWaveOpacity = (index: number, nowMs: number) =>
+  FLOW_WAVE_OPACITY_FLOOR + (1 - FLOW_WAVE_OPACITY_FLOOR) * flowWavePhase(index, nowMs);

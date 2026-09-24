@@ -340,7 +340,7 @@ test("Live Transcript reopen belongs only to an active normal dictation", async 
   );
 });
 
-test("only the floating listening pill takes the Flow bar shape", async () => {
+test("the floating recording pill takes the listening Flow bar shape", async () => {
   const { resolveVoicePillShape } = await load();
 
   assert.equal(resolveVoicePillShape({ variant: "floating", state: "recording" }), "listening");
@@ -357,17 +357,30 @@ test("only the floating listening pill takes the Flow bar shape", async () => {
   );
 });
 
-test("idle, thinking, and the entrance's logo hold keep the circular identity", async () => {
+test("the floating pill rests as a slim sliver and stays a Flow bar through every active state", async () => {
   const { resolveVoicePillShape } = await load();
 
-  assert.equal(resolveVoicePillShape({ variant: "floating", state: "idle" }), "idle");
-  assert.equal(resolveVoicePillShape({ variant: "floating", state: "hover" }), "idle");
+  assert.equal(resolveVoicePillShape({ variant: "floating", state: "idle" }), "sliver");
+  assert.equal(resolveVoicePillShape({ variant: "floating", state: "hover" }), "peek");
+  // Mic warm-up, the entrance hold, thinking, and a lost microphone all keep
+  // the bar; the floating pill never returns to the circular identity.
+  for (const props of [
+    { state: "processing" },
+    { state: "recording", collapseToLogo: true },
+    { state: "thinking" },
+    { state: "thinking", expanded: true },
+    { state: "unavailable" },
+  ]) {
+    assert.equal(resolveVoicePillShape({ variant: "floating", ...props }), "listening");
+  }
+});
+
+test("the panel pill keeps the circular identity for thinking and the entrance hold", async () => {
+  const { resolveVoicePillShape } = await load();
+
+  assert.equal(resolveVoicePillShape({ variant: "panel", state: "thinking" }), "idle");
   assert.equal(
-    resolveVoicePillShape({ variant: "floating", state: "thinking", expanded: true }),
-    "idle"
-  );
-  assert.equal(
-    resolveVoicePillShape({ variant: "floating", state: "recording", collapseToLogo: true }),
+    resolveVoicePillShape({ variant: "panel", state: "recording", collapseToLogo: true }),
     "idle"
   );
 });

@@ -345,7 +345,9 @@ export default function App() {
       return "unavailable";
     if (isRecording) return "recording";
     if (isVisuallyProcessing) return "processing";
-    if (isHovered && !isRecording && !isVisuallyProcessing) return "hover";
+    // An open command menu holds the peek, so the menu anchored above it does
+    // not drop while the pointer crosses the gap to reach it.
+    if ((isHovered || isCommandMenuOpen) && !isRecording && !isVisuallyProcessing) return "hover";
     return "idle";
   };
 
@@ -418,7 +420,8 @@ export default function App() {
       ? "unavailable"
       : listeningEntrance.activeState || voiceActivity.activeState || micState;
   // The pill shape tracks the pill's footprint through the entrance phases
-  // (logo-collapsed thinking renders 40×40 even while recording). These are
+  // (the panel's logo-collapsed thinking renders 40×40 even while recording;
+  // the floating pill stays the Flow bar). These are
   // targets, not rendered sizes: the pill transitions between footprints over
   // GROW_TRANSITION, and the skin tweens its geometry to match
   // (usePillFootprintTween in LiquidCancelButton).
@@ -556,7 +559,7 @@ export default function App() {
             pillWidth={cancelPillFootprint.width}
             pillHeight={cancelPillFootprint.height}
             pillState={commonPillState}
-            flowBar={pillShape === "listening"}
+            flowBar={!panelOpen}
             ariaLabel={
               isRecording ? t("app.buttons.cancelRecording") : t("app.buttons.cancelProcessing")
             }

@@ -1,13 +1,27 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { cn } from "../lib/utils";
-import { FLOW_BAR_COUNT, resolveFlowBarHeight, resolveFlowBarTarget } from "./waveformMath";
+import {
+  FLOW_BAR_COUNT,
+  resolveFlowBarHeight,
+  resolveFlowBarTarget,
+  resolveFlowSweepOpacity,
+  resolveFlowWaveOpacity,
+  resolveFlowWaveTarget,
+} from "./waveformMath";
+
+/**
+ * What the bars are doing: following the live level, sweeping a light across
+ * resting dots while the microphone warms up, or rippling a travelling wave
+ * while the transcript is being made.
+ */
+export type FlowMotion = "live" | "sweep" | "wave";
 
 interface FlowWaveformProps {
   /** Returns the current input level (0..~1) or null when no signal source exists. */
   getLevel: () => number | null;
-  /** While true the bars follow the live level; false freezes the current shape. */
-  active: boolean;
-  /** Drops an inactive waveform back to dots, e.g. while the microphone reconnects. */
+  /** Null freezes the current shape. */
+  motion: FlowMotion | null;
+  /** Drops a frozen waveform back to plain dots, e.g. while the microphone reconnects. */
   resting?: boolean;
   className?: string;
   style?: CSSProperties;
@@ -21,33 +35,60 @@ const RISE = 0.45;
 const FALL = 0.16;
 const FRAME_MS = 1000 / 60;
 
+// Per motion: each bar's target lane (0..1) and opacity at a moment.
+const MOTION_BARS: Record<
+  FlowMotion,
+  {
+    target: (rms: number, index: number, now: number) => number;
+    opacity: (index: number, now: number) => number;
+  }
+> = {
+  live: { target: resolveFlowBarTarget, opacity: () => 1 },
+  sweep: { target: () => 0, opacity: resolveFlowSweepOpacity },
+  wave: {
+    target: (_rms, index, now) => resolveFlowWaveTarget(index, now),
+    opacity: resolveFlowWaveOpacity,
+  },
+};
+
 /**
- * The Flow bar's live waveform. Like PillWaveform it writes heights straight
- * to the DOM from a rAF loop, so listening never pays React re-render cost.
+ * The Flow bar's waveform. Like PillWaveform it writes heights straight to the
+ * DOM from a rAF loop, so listening never pays React re-render cost.
  */
 export function FlowWaveform({
   getLevel,
-  active,
+  motion,
   resting = false,
   className,
   style,
 }: FlowWaveformProps) {
   const barRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  // Lanes persist across motions so stopping eases the live shape into the
+  // thinking wave instead of snapping it to dots first.
+  const lanesRef = useRef<number[]>(new Array(FLOW_BAR_COUNT).fill(0));
 
   useEffect(() => {
+    const lanes = lanesRef.current;
+    const paintBar = (index: number, opacity: number) => {
+      const bar = barRefs.current[index];
+      if (!bar) return;
+      bar.style.height = `${resolveFlowBarHeight(lanes[index])}px`;
+      bar.style.opacity = String(opacity);
+    };
+
     // Stopping freezes the last shape so it fades out with the collapsing pill;
     // a lost signal must not keep showing the last syllable, so it rests.
-    if (!active) {
+    if (!motion) {
       if (resting) {
-        for (const bar of barRefs.current) {
-          if (bar) bar.style.height = `${resolveFlowBarHeight(0)}px`;
-        }
+        lanes.fill(0);
+        for (let i = 0; i < FLOW_BAR_COUNT; i += 1) paintBar(i, 1);
       }
       return;
     }
 
     // A new session swells from dots, never from the previous session's shape.
-    const heights = new Array(FLOW_BAR_COUNT).fill(0);
+    if (motion === "live") lanes.fill(0);
+    const bars = MOTION_BARS[motion];
     let frame = 0;
     let last = 0;
     const paint = (now: number) => {
@@ -55,23 +96,23 @@ export function FlowWaveform({
       // same speed as 60Hz ones.
       const frames = last ? Math.min(4, (now - last) / FRAME_MS) : 1;
       last = now;
-      const rms = getLevel() ?? 0;
+      const rms = motion === "live" ? (getLevel() ?? 0) : 0;
       for (let i = 0; i < FLOW_BAR_COUNT; i += 1) {
-        const target = resolveFlowBarTarget(rms, i, now);
-        const rate = target > heights[i] ? RISE : FALL;
-        heights[i] += (target - heights[i]) * (1 - Math.pow(1 - rate, frames));
-        const bar = barRefs.current[i];
-        if (bar) bar.style.height = `${resolveFlowBarHeight(heights[i])}px`;
+        const target = bars.target(rms, i, now);
+        const rate = target > lanes[i] ? RISE : FALL;
+        lanes[i] += (target - lanes[i]) * (1 - Math.pow(1 - rate, frames));
+        paintBar(i, bars.opacity(i, now));
       }
       frame = requestAnimationFrame(paint);
     };
     frame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(frame);
-  }, [active, resting, getLevel]);
+  }, [motion, resting, getLevel]);
 
   return (
     <div
       className={cn("voice-flow-waveform flex h-full items-center justify-center", className)}
+      data-motion={motion ?? undefined}
       style={{ gap: BAR_GAP_PX, ...style }}
       aria-hidden="true"
     >
