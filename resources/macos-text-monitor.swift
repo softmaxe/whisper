@@ -354,6 +354,11 @@ let pasteTargetMode = CommandLine.arguments.count >= 2 &&
     CommandLine.arguments[1] == "--paste-target"
 let windowBoundsMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--window-bounds"
+// System-wide AX queries fail with kAXErrorCannotComplete until the process
+// connects to the window server, which would silently reduce keyboardFocusPid()
+// to the frontmost app. Connect before any mode can query keyboard focus.
+_ = NSApplication.shared
+
 // Names the Target app at hotkey press time. Takes no PID: it reports which
 // app holds keyboard focus, so it runs before the PID argument is parsed.
 if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--focused-app" {
