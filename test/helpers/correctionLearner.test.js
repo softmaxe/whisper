@@ -93,6 +93,12 @@ test("Chinese grammar fixes and everyday word swaps are content edits, not vocab
   assert.deepEqual(extractCorrections("我觉得这个方案可以", "我认为这个方案可以", []), []);
 });
 
+test("fixing a single Chinese character is not learned, as documented in the README", () => {
+  // The segmenter splits an unknown name into characters, leaving only the
+  // changed one; without its reading, 山 -> 珊 looks like an ordinary edit.
+  assert.deepEqual(extractCorrections("我今天和张山一起吃饭", "我今天和张珊一起吃饭", []), []);
+});
+
 test("a rewritten Chinese sentence is not mistaken for corrections", () => {
   assert.deepEqual(extractCorrections("今天天气很好我们去公园", "明天下雨大家待在家里", []), []);
 });
