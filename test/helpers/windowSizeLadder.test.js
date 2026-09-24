@@ -3,14 +3,18 @@ const assert = require("node:assert/strict");
 
 const load = () => import("../../src/utils/windowSizeLadder.js");
 
-test("the recording window fits the compact listening pill footprint", async () => {
+test("the recording window fits the listening pill and its hover cancel", async () => {
   const { WINDOW_SIZES } = require("../../src/helpers/windowConfig");
-  const { VOICE_PILL_FOOTPRINT } = await import("../../src/helpers/voicePillPresentation.js");
+  const { VOICE_PILL_FOOTPRINT, VOICE_PILL_CANCEL } =
+    await import("../../src/helpers/voicePillPresentation.js");
 
-  // The RECORDING footprint exists to host the compact recording pill; the
-  // window must never shrink below what the pill renders.
-  assert.ok(WINDOW_SIZES.RECORDING.width >= VOICE_PILL_FOOTPRINT.recording.width);
-  assert.ok(WINDOW_SIZES.RECORDING.height >= VOICE_PILL_FOOTPRINT.recording.height);
+  // The RECORDING footprint exists to host the listening pill with the cancel
+  // control beside it; the window must never shrink below what they render.
+  const { listening } = VOICE_PILL_FOOTPRINT;
+  assert.ok(
+    WINDOW_SIZES.RECORDING.width >= listening.width + VOICE_PILL_CANCEL.gap + VOICE_PILL_CANCEL.size
+  );
+  assert.ok(WINDOW_SIZES.RECORDING.height >= listening.height);
 });
 
 test("dictation error windows share the assistant width and grow for the transcript action", () => {

@@ -172,6 +172,23 @@
   left: 0;
 }
 
+/* The floating listening pill is an always-black Flow bar in both themes.
+   Placed before the integrated and fused rules so a headless pill still drops
+   this chrome; the fused cancel skin mirrors it via [data-flow-bar] below.
+   The shadow stays inside the 12px dock inset so the window never clips it. */
+:root {
+  --voice-flow-ink: #0c0c0e;
+  --voice-flow-rim: rgb(255 255 255 / 0.16);
+  --voice-flow-shadow: 0 2px 6px rgb(0 0 0 / 0.28);
+}
+
+.voice-pill-control[data-flow-bar="true"] {
+  border-color: var(--voice-flow-rim);
+  background-color: var(--voice-flow-ink);
+  color: #fff;
+  box-shadow: var(--voice-flow-shadow);
+}
+
 .voice-pill-control[data-integrated-with-panel="true"] {
   border-color: transparent;
   background-color: transparent;
@@ -244,6 +261,16 @@
 /* Match the pill's shadow-card, which only exists in dark theme. */
 .dark .liquid-cancel-skin {
   filter: drop-shadow(0 1px 3px oklch(0 0 0 / 0.2));
+}
+
+/* Mirrors .voice-pill-control[data-flow-bar] — change together. */
+.liquid-cancel-skin[data-flow-bar="true"] {
+  filter: drop-shadow(var(--voice-flow-shadow));
+}
+
+.liquid-cancel-skin[data-flow-bar="true"] path {
+  fill: var(--voice-flow-ink);
+  stroke: var(--voice-flow-rim);
 }
 
 /* The Signal glow: a comet orbiting a breathing ambient halo around the

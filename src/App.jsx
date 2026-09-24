@@ -19,6 +19,7 @@ import {
   resolveVoicePanelCorePresentation,
   resolveVoicePillDock,
   resolveVoicePillInteraction,
+  resolveVoicePillShape,
   shouldActivateVoicePill,
   shouldOfferLiveTranscriptReopen,
   VOICE_PILL_FOOTPRINT,
@@ -384,14 +385,6 @@ export default function App() {
   // the classic bordered circle stays (with the same emergence motion).
   const [cancelSkinActive, setCancelSkinActive] = useState(false);
   const cancelFused = !liveTranscript.open;
-  // isCompactPill tracks the pill's footprint through the entrance phases
-  // (logo-collapsed thinking renders 40×40 even while recording). These are
-  // targets, not rendered sizes: the pill transitions between footprints over
-  // GROW_TRANSITION, and the skin tweens its geometry to match
-  // (usePillFootprintTween in LiquidCancelButton).
-  const cancelPillFootprint = isCompactPill
-    ? VOICE_PILL_FOOTPRINT.recording
-    : VOICE_PILL_FOOTPRINT.idle;
   const activateVoicePill = () => {
     if (!pillIsInteractive) return;
     if (canReopenLiveTranscript) {
@@ -424,6 +417,19 @@ export default function App() {
     micState === "unavailable"
       ? "unavailable"
       : listeningEntrance.activeState || voiceActivity.activeState || micState;
+  // The pill shape tracks the pill's footprint through the entrance phases
+  // (logo-collapsed thinking renders 40×40 even while recording). These are
+  // targets, not rendered sizes: the pill transitions between footprints over
+  // GROW_TRANSITION, and the skin tweens its geometry to match
+  // (usePillFootprintTween in LiquidCancelButton).
+  const pillShape = resolveVoicePillShape({
+    variant: panelOpen ? "panel" : "floating",
+    state: commonPillState,
+    expanded: !panelOpen && isCompactPill,
+    collapseToLogo: listeningEntrance.collapseToLogo,
+    waveformOnlyWhileRecording: panelMounted,
+  });
+  const cancelPillFootprint = VOICE_PILL_FOOTPRINT[pillShape];
   const voicePillDock = resolveVoicePillDock({
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptEntrancePhase: liveTranscript.entrancePhase,
@@ -550,6 +556,7 @@ export default function App() {
             pillWidth={cancelPillFootprint.width}
             pillHeight={cancelPillFootprint.height}
             pillState={commonPillState}
+            flowBar={pillShape === "listening"}
             ariaLabel={
               isRecording ? t("app.buttons.cancelRecording") : t("app.buttons.cancelProcessing")
             }

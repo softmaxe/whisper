@@ -339,3 +339,35 @@ test("Live Transcript reopen belongs only to an active normal dictation", async 
     false
   );
 });
+
+test("only the floating listening pill takes the Flow bar shape", async () => {
+  const { resolveVoicePillShape } = await load();
+
+  assert.equal(resolveVoicePillShape({ variant: "floating", state: "recording" }), "listening");
+  assert.equal(
+    resolveVoicePillShape({ variant: "floating", state: "recording", expanded: true }),
+    "listening"
+  );
+  // The Live Transcript footer keeps the identity + waveform compact pill.
+  assert.equal(resolveVoicePillShape({ variant: "panel", state: "recording" }), "panel");
+  assert.equal(resolveVoicePillShape({ variant: "panel", state: "idle" }), "panel");
+  assert.equal(
+    resolveVoicePillShape({ variant: "panel", state: "idle", waveformOnlyWhileRecording: true }),
+    "idle"
+  );
+});
+
+test("idle, thinking, and the entrance's logo hold keep the circular identity", async () => {
+  const { resolveVoicePillShape } = await load();
+
+  assert.equal(resolveVoicePillShape({ variant: "floating", state: "idle" }), "idle");
+  assert.equal(resolveVoicePillShape({ variant: "floating", state: "hover" }), "idle");
+  assert.equal(
+    resolveVoicePillShape({ variant: "floating", state: "thinking", expanded: true }),
+    "idle"
+  );
+  assert.equal(
+    resolveVoicePillShape({ variant: "floating", state: "recording", collapseToLogo: true }),
+    "idle"
+  );
+});

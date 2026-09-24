@@ -1,10 +1,12 @@
 import { forwardRef, type HTMLAttributes } from "react";
 import { ChevronUp } from "../icons";
 import { cn } from "../lib/utils";
+import { FlowWaveform } from "./FlowWaveform";
 import { PillWaveform } from "./PillWaveform";
 import { VoiceIdentityIcon } from "./VoiceIdentityIcon";
 import { RESTING_WAVE_SILHOUETTE, WAVEFORM_BAR_COUNT } from "./waveformMath";
 import {
+  resolveVoicePillShape,
   VOICE_PILL_FOOTPRINT,
   VOICE_PILL_GROW_TRANSITION,
 } from "../../helpers/voicePillPresentation";
@@ -35,14 +37,15 @@ const RESTING_WAVE_HEIGHTS = Array.from(
   (_, index) => RESTING_WAVE_SILHOUETTE[index % RESTING_WAVE_SILHOUETTE.length]
 );
 
-// Icon↔waveform spacing inside the compact pill. Together with the 98px
-// recording footprint and pr-1.5, centering lands the documented 6/12 edge
-// insets (VOICE_PILL_FOOTPRINT in voicePillPresentation.js).
+// Icon↔waveform spacing inside the compact panel pill. Together with the 98px
+// panel footprint and pr-1.5, centering lands the documented 6/12 edge insets
+// (VOICE_PILL_FOOTPRINT in voicePillPresentation.js).
 const COMPACT_CONTENT_GAP_PX = 6;
 
 // Mirrored by .liquid-cancel-skin[data-pill-state] in dictation-panel.css,
 // which redraws this chrome while the cancel skin owns the fused surface —
-// change together.
+// change together. The listening Flow bar skips these for its always-black
+// .voice-pill-control[data-flow-bar] chrome.
 const STATE_APPEARANCE: Record<VoicePillState, string> = {
   idle: "border-border-hover bg-surface-1 text-muted-foreground dark:border-border/50",
   hover: "border-border-hover bg-surface-3 text-foreground",
@@ -82,25 +85,34 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   // as work already in flight before any transcript exists.
   const showSignalGlow = !isUnavailable && isThinking;
   const isPanel = variant === "panel";
-  const collapseToIdentity = collapseToLogo || isThinking;
-  const showCompactPill =
-    !collapseToIdentity && (isRecording || expanded || (isPanel && !waveformOnlyWhileRecording));
-  const showDivider = showCompactPill && waveformVisible && !isRecording;
+  const shape = resolveVoicePillShape({
+    variant,
+    state,
+    expanded,
+    collapseToLogo,
+    waveformOnlyWhileRecording,
+  });
+  const showCompactPill = shape !== "idle";
+  // The floating pill listens as the icon-less Flow bar; the panel pill keeps
+  // its identity beside the scrolling waveform.
+  const flowBar = shape === "listening";
+  const panelCompact = shape === "panel";
+  const showDivider = panelCompact && waveformVisible && !isRecording;
   // The hidden divider's margins are what carry the compact pill's 6px
   // icon↔waveform gap; a visible divider keeps 4px flanking its 1px rule.
-  const dividerMargin = showCompactPill ? (showDivider ? 4 : COMPACT_CONTENT_GAP_PX / 2) : 0;
+  const dividerMargin = panelCompact ? (showDivider ? 4 : COMPACT_CONTENT_GAP_PX / 2) : 0;
   const identitySize = 22;
   const floatingHover = !isPanel && state === "hover";
-  const footprint = showCompactPill ? VOICE_PILL_FOOTPRINT.recording : VOICE_PILL_FOOTPRINT.idle;
+  const footprint = VOICE_PILL_FOOTPRINT[shape];
 
   const pill = (
     <div
       ref={ref}
       className={cn(
         "voice-pill-control relative flex items-center justify-center overflow-hidden rounded-full border",
-        showCompactPill && "pr-1.5",
+        panelCompact && "pr-1.5",
         "shadow-[var(--shadow-card)]",
-        STATE_APPEARANCE[state],
+        !flowBar && STATE_APPEARANCE[state],
         className
       )}
       style={{
@@ -117,6 +129,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         ...style,
       }}
       data-horizontal-direction={horizontalDirection}
+      data-flow-bar={flowBar || undefined}
       data-integrated-with-panel={integratedWithPanel || undefined}
       data-liquid-fused={liquidFused || undefined}
       data-expand-chevron={showExpandChevron || undefined}
@@ -128,8 +141,13 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
       />
 
       <span
-        className="voice-pill-identity-slot relative inline-block shrink-0 transition-[width,height] duration-200"
-        style={{ width: identitySize, height: identitySize }}
+        className="voice-pill-identity-slot relative inline-block shrink-0"
+        style={{
+          width: flowBar ? 0 : identitySize,
+          height: identitySize,
+          opacity: flowBar ? 0 : 1,
+          transition: `width ${VOICE_PILL_GROW_TRANSITION}, opacity 180ms ease-out`,
+        }}
         aria-hidden="true"
       >
         <span
@@ -169,38 +187,75 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
       />
 
       <div
-        className="voice-pill-waveform relative shrink-0 overflow-hidden text-foreground"
+        className={cn(
+          "voice-pill-waveform relative shrink-0 overflow-hidden",
+          isPanel && "text-foreground"
+        )}
         style={{
           width: showCompactPill ? 52 : 0,
           height: showCompactPill ? 24 : 32,
           transition: `width ${VOICE_PILL_GROW_TRANSITION}, height ${VOICE_PILL_GROW_TRANSITION}`,
         }}
       >
-        <div
-          className="absolute inset-0 flex items-center justify-center gap-0.75 transition-opacity duration-200 ease-out"
-          style={{ opacity: showCompactPill && waveformVisible && !isRecording ? 1 : 0 }}
-          aria-hidden="true"
-        >
-          {RESTING_WAVE_HEIGHTS.map((height, index) => (
-            <span
-              key={`${height}-${index}`}
-              className="w-0.5 rounded-full bg-current"
-              style={{ height }}
+        {!isPanel ? (
+          // Kept mounted while the pill collapses so the bars fade with it
+          // instead of vanishing mid-shrink.
+          <FlowWaveform
+            getLevel={getAudioLevel}
+            active={flowBar && isRecording}
+            resting={isUnavailable}
+            className={cn("absolute inset-0", isUnavailable && "animate-pulse")}
+            style={{
+              opacity: flowBar && waveformVisible && !showExpandChevron ? 1 : 0,
+              transition: "opacity 200ms ease-out",
+            }}
+          />
+        ) : (
+          <>
+            <div
+              className="absolute inset-0 flex items-center justify-center gap-0.75 transition-opacity duration-200 ease-out"
+              style={{ opacity: showCompactPill && waveformVisible && !isRecording ? 1 : 0 }}
+              aria-hidden="true"
+            >
+              {RESTING_WAVE_HEIGHTS.map((height, index) => (
+                <span
+                  key={`${height}-${index}`}
+                  className="w-0.5 rounded-full bg-current"
+                  style={{ height }}
+                />
+              ))}
+            </div>
+            <PillWaveform
+              getLevel={getAudioLevel}
+              active={isRecording}
+              className={cn(
+                "absolute inset-0 transition-opacity duration-200 ease-out",
+                showCompactPill && waveformVisible && isRecording ? "opacity-100" : "opacity-0"
+              )}
             />
-          ))}
-        </div>
-        <PillWaveform
-          getLevel={getAudioLevel}
-          active={isRecording}
-          className={cn(
-            "absolute inset-0 transition-opacity duration-200 ease-out",
-            showCompactPill && waveformVisible && isRecording ? "opacity-100" : "opacity-0"
-          )}
-        />
+          </>
+        )}
       </div>
 
+      {!isPanel && (
+        <ChevronUp
+          className={cn(
+            "voice-flow-chevron pointer-events-none absolute inset-0 m-auto size-5 transition-[opacity,transform] duration-200 ease-out",
+            flowBar && showExpandChevron
+              ? "scale-100 opacity-100"
+              : "translate-y-1 scale-75 opacity-0"
+          )}
+          strokeWidth={2}
+        />
+      )}
+
       {isUnavailable && (
-        <div className="pointer-events-none absolute inset-0 rounded-full border-2 border-foreground/30 animate-pulse" />
+        <div
+          className={cn(
+            "pointer-events-none absolute inset-0 rounded-full border-2 animate-pulse",
+            flowBar ? "border-white/30" : "border-foreground/30"
+          )}
+        />
       )}
     </div>
   );
