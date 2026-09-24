@@ -19,7 +19,7 @@ The interface above uses sample data.
 
 ## Features
 
-- Dictate with a global shortcut: hold it while you speak, or double-tap it for hands-free dictation. Shortcuts such as Command+C on the same key do not start dictation. Includes a recording pill, microphone selection, and automatic paste.
+- Dictate with a global shortcut: double-tap it for hands-free dictation, or switch to Hold mode and hold it while you speak. Shortcuts such as Command+C on the same key do not start dictation. Includes a recording pill, microphone selection, and automatic paste.
 - Connect self-hosted speech recognition and text cleanup services, with editable cleanup prompts.
 - Keep a custom dictionary, learn from corrections, and expand spoken shortcuts with Snippets.
 - Search, copy, delete, and retry local History entries, with configurable audio retention.
@@ -51,7 +51,7 @@ Releases use a persistent self-signed certificate and are not notarized. macOS m
 
 1. Open **Settings → Speech-to-Text** and enter your ASR server URL and model. The server must support an OpenAI-compatible `/audio/transcriptions` endpoint. Include `/v1` in the URL if your server requires it.
 2. Configure your text cleanup server and prompt in **Settings → Text cleanup**. It uses `/v1/chat/completions`.
-3. Grant microphone access for recording and Accessibility access for automatic paste. Choose your shortcut in **Settings → Hotkeys**.
+3. Grant microphone access for recording and Accessibility access for automatic paste. Choose your shortcut and activation mode in **Settings → Hotkeys**.
 4. Focus a text field and use the shortcut to dictate. To transcribe existing files, open **Upload**.
 
 Upload uses the same ASR settings and saves raw transcripts to History. It skips text cleanup and Snippets, does not retain source audio, and does not count toward Insights. Results remain copyable when History is disabled.
