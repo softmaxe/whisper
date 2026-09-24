@@ -94,7 +94,7 @@
     "model": "Model",
     "loading": "Loading...",
     "hold": "Hold",
-    "tap": "Tap",
+    "tap": "Double-tap",
     "close": "Close",
     "save": "Save"
   },
@@ -468,6 +468,8 @@
       },
       "hotkey": {
         "activationMode": "Activation Mode",
+        "activationModeHoldDescription": "Hold the hotkey while you speak and release it to finish.",
+        "activationModeTapDescription": "Double-tap the hotkey to start hands-free dictation, then press it once to finish. Key combinations start and stop with a single press.",
         "description": "The key combination that starts and stops voice dictation",
         "resetToDefault": "Reset to {{hotkey}}",
         "title": "Dictation Hotkey"

@@ -112,6 +112,7 @@ const autoStart = require("./src/helpers/autoStart");
 const IPCHandlers = require("./src/helpers/ipcHandlers");
 
 const GlobeKeyManager = require("./src/helpers/globeKeyManager");
+const { createHotkeyGesture } = require("./src/helpers/hotkeyGesture");
 
 const TextEditMonitor = require("./src/helpers/textEditMonitor");
 
@@ -334,121 +335,50 @@ async function startApp() {
   await trayManager.setVisible(environmentManager.getMenuBarIconVisible());
 
   const { isGlobeLikeHotkey, isMouseButtonHotkey } = require("./src/helpers/hotkeyManager");
-  let globeKeyDownTime = 0;
-  let globeKeyIsRecording = false;
-  let globeLastStopTime = 0;
-  const MIN_HOLD_DURATION_MS = 150;
-  const POST_STOP_COOLDOWN_MS = 300;
 
-  globeKeyManager.on("globe-down", async () => {
-    const currentHotkey = hotkeyManager.getCurrentHotkey && hotkeyManager.getCurrentHotkey();
-    const mainWindowLive = isLiveWindow(windowManager.mainWindow);
-    debugLogger?.debug("[Globe] globe-down received", {
-      currentHotkey,
-      mainWindowLive,
-      activationMode: mainWindowLive ? windowManager.getActivationMode() : "n/a",
-    });
+  // Globe/Fn, right-side modifiers, and mouse buttons report their own presses
+  // and releases, so one gesture decides what each press does: Hold mode holds
+  // to talk, Tap mode starts Hands-free dictation on a Double tap.
+  const nativeHotkeyGesture = createHotkeyGesture({
+    getActivationMode: () => windowManager.getActivationMode(),
+    isDictationActive: () => windowManager.isDictationActive(),
+    isDictationProcessing: () => windowManager.isDictationProcessing(),
+    start: () => windowManager.sendStartDictation(),
+    stop: () => windowManager.sendStopDictation(),
+    cancel: () => windowManager.sendCancelDictation(),
+  });
 
+  const pressNativeHotkey = (key) => {
+    if (!isLiveWindow(windowManager.mainWindow)) return;
+    if (hotkeyManager.isInListeningMode()) return;
+    nativeHotkeyGesture.press(key);
+  };
+
+  globeKeyManager.on("globe-down", () => {
     // Forward to control panel for hotkey capture
     if (isLiveWindow(windowManager.controlPanelWindow)) {
       windowManager.controlPanelWindow.webContents.send("globe-key-pressed");
     }
-
-    // Handle dictation if Globe/Fn is one of the dictation hotkeys
-    const dictationUsesGlobe = hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey);
-    if (dictationUsesGlobe) {
-      if (mainWindowLive && windowManager.isDictationProcessing()) {
-        debugLogger?.debug("[Globe] Ignored — dictation processing");
-      } else if (mainWindowLive) {
-        const acceptedAt = performance.timeOrigin + performance.now();
-        // Capture target app PID BEFORE showing the overlay
-        if (textEditMonitor) textEditMonitor.captureTargetPid();
-        const activationMode = windowManager.getActivationMode();
-        if (activationMode === "push") {
-          const now = Date.now();
-          if (now - globeLastStopTime < POST_STOP_COOLDOWN_MS) {
-            debugLogger?.debug("[Globe] Ignored — cooldown active");
-            return;
-          }
-          const startupRequest = windowManager.createRecordingStartupRequest(acceptedAt);
-          windowManager.showDictationPanel();
-          windowManager.sendPrepareDictation({ startupRequest });
-          const pressTime = now;
-          globeKeyDownTime = pressTime;
-          globeKeyIsRecording = false;
-          setTimeout(async () => {
-            if (globeKeyDownTime === pressTime && !globeKeyIsRecording) {
-              globeKeyIsRecording = true;
-              debugLogger?.debug("[Globe] Starting dictation (push hold)");
-              windowManager.sendStartDictation();
-            }
-          }, MIN_HOLD_DURATION_MS);
-        } else {
-          windowManager.sendToggleDictation(acceptedAt);
-        }
-      } else {
-        debugLogger?.debug("[Globe] Ignored — mainWindow not live");
-      }
-    }
-    if (!dictationUsesGlobe) {
-      debugLogger?.debug("[Globe] Ignored — hotkey is not GLOBE", { currentHotkey });
+    if (hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey)) {
+      pressNativeHotkey("GLOBE");
     }
   });
 
-  globeKeyManager.on("globe-up", async () => {
-    debugLogger?.debug("[Globe] globe-up received", { wasRecording: globeKeyIsRecording });
-
+  globeKeyManager.on("globe-up", () => {
     // Forward to control panel for hotkey capture (Fn key released)
     if (isLiveWindow(windowManager.controlPanelWindow)) {
       windowManager.controlPanelWindow.webContents.send("globe-key-released");
     }
-
-    if (hotkeyManager.getSlotHotkeys("dictation").some(isGlobeLikeHotkey)) {
-      const activationMode = windowManager.getActivationMode();
-      if (activationMode === "push") {
-        if (globeKeyDownTime === 0 && !globeKeyIsRecording) {
-          // The press was ignored (dictation was processing); releasing it
-          // must not cancel preparation or hide the thinking pill.
-          debugLogger?.debug("[Globe] Release without a registered press — ignored");
-        } else {
-          globeKeyDownTime = 0;
-          globeLastStopTime = Date.now();
-          if (globeKeyIsRecording) {
-            globeKeyIsRecording = false;
-            debugLogger?.debug("[Globe] Stopping dictation (push release)");
-            windowManager.sendStopDictation();
-          } else {
-            windowManager.sendCancelDictationPreparation();
-            windowManager.hideDictationPanel();
-          }
-        }
-      }
-    }
+    nativeHotkeyGesture.release("GLOBE");
 
     // Fn release also stops compound push-to-talk for Fn+F-key hotkeys
     windowManager.handleMacPushModifierUp("fn");
   });
 
-  // Another key was pressed while Fn was held — user is using Fn as a
-  // navigation modifier (Fn+Arrow → Home, Fn+Backspace → Forward Delete, etc.).
-  // Cancel any bare-Fn push-to-talk in progress instead of transcribing noise.
-  // Only the bare-Fn path uses globeKeyDownTime/globeKeyIsRecording, so compound
-  // Fn-hotkey push-to-talk and tap mode are untouched.
-  globeKeyManager.on("globe-interrupted", () => {
-    if (globeKeyDownTime === 0 && !globeKeyIsRecording) {
-      return;
-    }
-    const wasRecording = globeKeyIsRecording;
-    debugLogger?.debug("[Globe] Fn+key interrupted push-to-talk", { wasRecording });
-    globeKeyDownTime = 0;
-    globeKeyIsRecording = false;
-    globeLastStopTime = Date.now();
-    if (wasRecording) {
-      windowManager.sendCancelDictation();
-    } else {
-      windowManager.sendCancelDictationPreparation();
-      windowManager.hideDictationPanel();
-    }
+  // Command+C, Fn+Arrow, Command-click: the held key was a modifier, not a
+  // Dictation hotkey press.
+  globeKeyManager.on("hotkey-interrupted", () => {
+    nativeHotkeyGesture.interrupt();
   });
 
   globeKeyManager.on("modifier-up", (modifier) => {
@@ -457,66 +387,14 @@ async function startApp() {
     }
   });
 
-  // Right-side single modifier handling (e.g., RightOption as hotkey)
-  let rightModDownTime = 0;
-  let rightModIsRecording = false;
-  let rightModLastStopTime = 0;
-  let rightModActiveKey = null;
-
-  globeKeyManager.on("right-modifier-down", async (modifier) => {
-    if (!hotkeyManager.slotHasHotkey("dictation", modifier)) return;
-    if (!isLiveWindow(windowManager.mainWindow)) return;
-    if (windowManager.isDictationProcessing()) return;
-
-    const acceptedAt = performance.timeOrigin + performance.now();
-    const activationMode = windowManager.getActivationMode();
-    if (textEditMonitor) textEditMonitor.captureTargetPid();
-    if (activationMode === "push") {
-      if (rightModActiveKey && rightModActiveKey !== modifier) return;
-      const now = Date.now();
-      if (now - rightModLastStopTime < POST_STOP_COOLDOWN_MS) return;
-      const startupRequest = windowManager.createRecordingStartupRequest(acceptedAt);
-      windowManager.showDictationPanel();
-      windowManager.sendPrepareDictation({ startupRequest });
-      const pressTime = now;
-      rightModActiveKey = modifier;
-      rightModDownTime = pressTime;
-      rightModIsRecording = false;
-      setTimeout(() => {
-        if (rightModDownTime === pressTime && !rightModIsRecording) {
-          rightModIsRecording = true;
-          windowManager.sendStartDictation();
-        }
-      }, MIN_HOLD_DURATION_MS);
-    } else {
-      windowManager.sendToggleDictation(acceptedAt);
+  globeKeyManager.on("right-modifier-down", (modifier) => {
+    if (hotkeyManager.slotHasHotkey("dictation", modifier)) {
+      pressNativeHotkey(modifier);
     }
   });
 
-  globeKeyManager.on("right-modifier-up", async (modifier) => {
-    if (hotkeyManager.slotHasHotkey("dictation", modifier)) {
-      if (!isLiveWindow(windowManager.mainWindow)) return;
-
-      const activationMode = windowManager.getActivationMode();
-      if (activationMode === "push" && (!rightModActiveKey || rightModActiveKey === modifier)) {
-        if (rightModDownTime === 0 && !rightModIsRecording) {
-          // The press was ignored (dictation was processing); releasing it
-          // must not cancel preparation or hide the thinking pill.
-          debugLogger?.debug("[RightMod] Release without a registered press — ignored");
-        } else {
-          rightModActiveKey = null;
-          rightModDownTime = 0;
-          rightModLastStopTime = Date.now();
-          if (rightModIsRecording) {
-            rightModIsRecording = false;
-            windowManager.sendStopDictation();
-          } else {
-            windowManager.sendCancelDictationPreparation();
-            windowManager.hideDictationPanel();
-          }
-        }
-      }
-    }
+  globeKeyManager.on("right-modifier-up", (modifier) => {
+    nativeHotkeyGesture.release(modifier);
 
     const rightModToBase = {
       RightCommand: "command",
@@ -538,74 +416,15 @@ async function startApp() {
   };
 
   // Mouse Button 4/5 handling (e.g., Logitech MX Master side buttons)
-  let mouseButtonDownTime = 0;
-  let mouseButtonIsRecording = false;
-  let mouseButtonLastStopTime = 0;
-  let mouseButtonActiveButton = null;
-
-  globeKeyManager.on("mouse-button-down", async (button) => {
-    if (hotkeyManager.isInListeningMode && hotkeyManager.isInListeningMode()) return;
+  globeKeyManager.on("mouse-button-down", (button) => {
     if (!isMouseButtonHotkey(button)) return;
-
-    if (!hotkeyManager.slotHasHotkey("dictation", button)) return;
-    if (!isLiveWindow(windowManager.mainWindow)) return;
-    if (windowManager.isDictationProcessing()) return;
-
-    const acceptedAt = performance.timeOrigin + performance.now();
-    const activationMode = windowManager.getActivationMode();
-    if (textEditMonitor) textEditMonitor.captureTargetPid();
-
-    if (activationMode === "push") {
-      if (mouseButtonActiveButton && mouseButtonActiveButton !== button) return;
-      const now = Date.now();
-      if (now - mouseButtonLastStopTime < POST_STOP_COOLDOWN_MS) return;
-      const startupRequest = windowManager.createRecordingStartupRequest(acceptedAt);
-      windowManager.showDictationPanel();
-      windowManager.sendPrepareDictation({ startupRequest });
-      const pressTime = now;
-      mouseButtonActiveButton = button;
-      mouseButtonDownTime = pressTime;
-      mouseButtonIsRecording = false;
-      setTimeout(() => {
-        if (mouseButtonDownTime === pressTime && !mouseButtonIsRecording) {
-          mouseButtonIsRecording = true;
-          windowManager.sendStartDictation();
-        }
-      }, MIN_HOLD_DURATION_MS);
-    } else {
-      windowManager.sendToggleDictation(acceptedAt);
+    if (hotkeyManager.slotHasHotkey("dictation", button)) {
+      pressNativeHotkey(button);
     }
   });
 
-  globeKeyManager.on("mouse-button-up", async (button) => {
-    if (hotkeyManager.isInListeningMode && hotkeyManager.isInListeningMode()) return;
-    if (!isMouseButtonHotkey(button)) return;
-
-    if (!hotkeyManager.slotHasHotkey("dictation", button)) return;
-    if (!isLiveWindow(windowManager.mainWindow)) return;
-
-    const activationMode = windowManager.getActivationMode();
-    if (
-      activationMode === "push" &&
-      (!mouseButtonActiveButton || mouseButtonActiveButton === button)
-    ) {
-      if (mouseButtonDownTime === 0 && !mouseButtonIsRecording) {
-        // The press was ignored (dictation was processing); releasing it
-        // must not cancel preparation or hide the thinking pill.
-        debugLogger?.debug("[MouseButton] Release without a registered press — ignored");
-      } else {
-        mouseButtonActiveButton = null;
-        mouseButtonDownTime = 0;
-        mouseButtonLastStopTime = Date.now();
-        if (mouseButtonIsRecording) {
-          mouseButtonIsRecording = false;
-          windowManager.sendStopDictation();
-        } else {
-          windowManager.sendCancelDictationPreparation();
-          windowManager.hideDictationPanel();
-        }
-      }
-    }
+  globeKeyManager.on("mouse-button-up", (button) => {
+    nativeHotkeyGesture.release(button);
   });
 
   // If accessibility is missing, notify the normal control panel after the
@@ -649,15 +468,7 @@ async function startApp() {
 
   // Reset native key state when hotkey changes
   ipcMain.on("hotkey-changed", (_event, _newHotkey) => {
-    globeKeyDownTime = 0;
-    globeKeyIsRecording = false;
-    globeLastStopTime = 0;
-    rightModDownTime = 0;
-    rightModIsRecording = false;
-    rightModLastStopTime = 0;
-    mouseButtonDownTime = 0;
-    mouseButtonIsRecording = false;
-    mouseButtonLastStopTime = 0;
+    nativeHotkeyGesture.reset();
     syncMacNativeHotkeyConfiguration();
   });
 }

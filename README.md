@@ -19,7 +19,7 @@ The interface above uses sample data.
 
 ## Features
 
-- Dictate with a global shortcut, a recording pill, microphone selection, and automatic paste.
+- Dictate with a global shortcut: hold it while you speak, or double-tap it for hands-free dictation. Shortcuts such as Command+C on the same key do not start dictation. Includes a recording pill, microphone selection, and automatic paste.
 - Connect self-hosted speech recognition and text cleanup services, with editable cleanup prompts.
 - Keep a custom dictionary, learn from corrections, and expand spoken shortcuts with Snippets.
 - Search, copy, delete, and retry local History entries, with configurable audio retention.

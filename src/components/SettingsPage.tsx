@@ -682,6 +682,11 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                       }
                     />
                   </div>
+                  <p className="mt-2 text-xs text-muted-foreground/70">
+                    {activationMode === "push"
+                      ? t("settingsPage.general.hotkey.activationModeHoldDescription")
+                      : t("settingsPage.general.hotkey.activationModeTapDescription")}
+                  </p>
                 </SettingsPanelRow>
               </SettingsPanel>
             </div>

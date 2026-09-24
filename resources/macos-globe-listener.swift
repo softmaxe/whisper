@@ -2,8 +2,12 @@ import Cocoa
 import Darwin
 
 var fnIsDown = false
-var fnInterrupted = false
+// Hotkey candidates currently held: "fn", right-side modifiers, and suppressed
+// mouse buttons. Any other key or mouse button pressed while one is held turns
+// that press into part of a shortcut, which JS reads as HOTKEY_INTERRUPTED.
+var heldTriggers: Set<String> = []
 var lastModifierFlags: NSEvent.ModifierFlags = []
+var lastDeviceModifiers: UInt64 = 0
 var suppressedMouseButtons: Set<String> = []
 
 struct ListenerConfig: Decodable {
@@ -194,12 +198,26 @@ if launchOptions.restoreLeftoverPreferenceOnly {
     exit(0)
 }
 
-let rightModifiers: [(UInt16, NSEvent.ModifierFlags, String)] = [
-    (61, .option, "RightOption"),
-    (54, .command, "RightCommand"),
-    (62, .control, "RightControl"),
-    (60, .shift, "RightShift"),
+// Device-dependent modifier bits (NX_DEVICE*KEYMASK in IOLLEvent.h) tell the
+// left and right keys apart; the generic .command flag stays set while either
+// Command key is down.
+let rightModifiers: [(UInt16, UInt64, String)] = [
+    (61, 0x0040, "RightOption"),
+    (54, 0x0010, "RightCommand"),
+    (62, 0x2000, "RightControl"),
+    (60, 0x0004, "RightShift"),
 ]
+
+// Both sides of Control, Shift, Command, and Option. Caps Lock is left out.
+let deviceModifierKeysMask: UInt64 = 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x2000
+
+// Sent before a newly pressed key is recorded, so only presses already held
+// become part of the shortcut.
+func interruptHeldTriggers() {
+    if !heldTriggers.isEmpty {
+        emit("HOTKEY_INTERRUPTED")
+    }
+}
 
 let modifierMask: NSEvent.ModifierFlags = [.control, .command, .option, .shift]
 
@@ -227,8 +245,19 @@ func emitMouseEvent(_ type: CGEventType, _ event: CGEvent) -> Bool {
     let buttonNumber = Int(event.getIntegerValueField(.mouseEventButtonNumber))
     guard let buttonName = mouseButtonName(buttonNumber) else { return false }
 
-    emit(type == .otherMouseDown ? "MOUSE_BUTTON_DOWN:\(buttonName)" : "MOUSE_BUTTON_UP:\(buttonName)")
-    return suppressedMouseButtons.contains(buttonName)
+    let suppressed = suppressedMouseButtons.contains(buttonName)
+    if type == .otherMouseDown {
+        // Suppressed buttons never reach the global click monitor below.
+        if suppressed {
+            interruptHeldTriggers()
+            heldTriggers.insert(buttonName)
+        }
+        emit("MOUSE_BUTTON_DOWN:\(buttonName)")
+    } else {
+        heldTriggers.remove(buttonName)
+        emit("MOUSE_BUTTON_UP:\(buttonName)")
+    }
+    return suppressed
 }
 
 let mouseEventMask =
@@ -261,6 +290,8 @@ func updateMouseEventTap() {
         eventsOfInterest: CGEventMask(mouseEventMask),
         callback: { _, type, event, _ in
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                // Releases may have been dropped while the tap was off.
+                heldTriggers.subtract(suppressedMouseButtons)
                 if let mouseEventTapPort {
                     CGEvent.tapEnable(tap: mouseEventTapPort, enable: true)
                 }
@@ -288,23 +319,38 @@ func updateMouseEventTap() {
 guard let monitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { event in
     let flags = event.modifierFlags
     let containsFn = flags.contains(.function)
+    let deviceModifiers = UInt64(flags.rawValue) & deviceModifierKeysMask
+    let pressedModifiers = deviceModifiers & ~lastDeviceModifiers
+    lastDeviceModifiers = deviceModifiers
 
     if containsFn && !fnIsDown {
+        interruptHeldTriggers()
         fnIsDown = true
-        fnInterrupted = false
+        heldTriggers.insert("fn")
         emit("FN_DOWN")
     } else if !containsFn && fnIsDown {
         fnIsDown = false
-        fnInterrupted = false
+        heldTriggers.remove("fn")
         emit("FN_UP")
     }
 
-    let keyCode = event.keyCode
-    for (code, flag, name) in rightModifiers {
-        if keyCode == code {
-            emit(flags.contains(flag) ? "RIGHT_MOD_DOWN:\(name)" : "RIGHT_MOD_UP:\(name)")
-            break
+    var rightModifierChanged = false
+    for (code, mask, name) in rightModifiers where event.keyCode == code {
+        rightModifierChanged = true
+        if deviceModifiers & mask != 0 {
+            interruptHeldTriggers()
+            heldTriggers.insert(name)
+            emit("RIGHT_MOD_DOWN:\(name)")
+        } else {
+            heldTriggers.remove(name)
+            emit("RIGHT_MOD_UP:\(name)")
         }
+    }
+
+    // Any other modifier pressed during a hold, such as Shift joining Command,
+    // makes the held key part of a shortcut. Releases do not.
+    if !rightModifierChanged && pressedModifiers != 0 {
+        interruptHeldTriggers()
     }
 
     let currentModifiers = flags.intersection(modifierMask)
@@ -323,13 +369,18 @@ guard let monitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, h
     exit(1)
 }
 
-// Detect another key pressed while Fn is held (e.g. Fn+Arrow → Home) so the
-// JS side can cancel an in-progress bare-Fn push-to-talk instead of transcribing noise.
-let keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { _ in
-    if fnIsDown && !fnInterrupted {
-        fnInterrupted = true
-        emit("FN_INTERRUPTED")
+// Another key or a click during a hold, such as Command+C, Fn+Arrow, or
+// Command-click, means the held key is being used as a modifier.
+let keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+    if !event.isARepeat {
+        interruptHeldTriggers()
     }
+}
+
+let clickMonitor = NSEvent.addGlobalMonitorForEvents(
+    matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+) { _ in
+    interruptHeldTriggers()
 }
 
 func shutdownListener() -> Never {
@@ -337,6 +388,9 @@ func shutdownListener() -> Never {
     NSEvent.removeMonitor(monitor)
     if let keyMonitor {
         NSEvent.removeMonitor(keyMonitor)
+    }
+    if let clickMonitor {
+        NSEvent.removeMonitor(clickMonitor)
     }
     if let mouseEventTapPort {
         CGEvent.tapEnable(tap: mouseEventTapPort, enable: false)

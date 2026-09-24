@@ -16,6 +16,7 @@ const {
   normalizeDictationLifecycle,
   shouldIgnoreDictationHotkey,
   isDictationRecording,
+  isDictationActive,
 } = require("./dictationLifecycle");
 const { DEV_SERVER_PORT } = DevServerManager;
 const DRAG_MOVE_TOLERANCE_PX = 2;
@@ -610,6 +611,10 @@ class WindowManager {
 
   isDictationProcessing() {
     return shouldIgnoreDictationHotkey(this._dictationLifecycleState);
+  }
+
+  isDictationActive() {
+    return isDictationActive(this._dictationLifecycleState);
   }
 
   // A Tap mode key combination: the renderer owns the real recording state and
