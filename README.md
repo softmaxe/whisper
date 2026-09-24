@@ -56,6 +56,8 @@ Releases use a persistent self-signed certificate and are not notarized. macOS m
 
 Upload uses the same ASR settings and saves raw transcripts to History. It skips text cleanup and Snippets, does not retain source audio, and does not count toward Insights. Results remain copyable when History is disabled.
 
+After an automatic paste, Whisper watches the text field for 30 seconds and adds corrected names and terms to Dictionary. Fixing a single Chinese character, such as 张山 → 张珊, is not learned because it cannot be told apart from an ordinary edit; add such names to Dictionary manually.
+
 Processing stays on your Mac only when your servers run locally. Local and private-network hosts can use HTTP; public hosts require HTTPS. See [Data and permissions](docs/data-and-permissions.md), or use the [custom ASR shim](examples/custom-asr-shim/) for other server APIs.
 
 ## Development
