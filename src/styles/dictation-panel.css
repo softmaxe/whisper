@@ -172,7 +172,7 @@
   left: 0;
 }
 
-/* The floating listening pill is an always-black Flow bar in both themes.
+/* The floating pill (sliver, peek, and Flow bar) is always black in both themes.
    Placed before the integrated and fused rules so a headless pill still drops
    this chrome; the fused cancel skin mirrors it via [data-flow-bar] below.
    The shadow stays inside the 12px dock inset so the window never clips it. */
@@ -231,8 +231,9 @@
 
 /* The skin's chrome mirrors VoicePill's STATE_APPEARANCE border/background
    classes for every state it can replace — change together. Hover matters: a
-   de-fusing skin lingers over a hovered pill for its 280ms collapse, and
-   hover is the one state on surface-3. Fill and stroke transition at the
+   de-fusing skin lingers over a hovered pill for its 280ms collapse, and the
+   panel's hover is the one state on surface-3 (the floating peek takes the
+   [data-flow-bar] ink below). Fill and stroke transition at the
    pill's own 220ms so a state flip under the skin (recording → thinking)
    shades over instead of popping. */
 .liquid-cancel-skin path {
@@ -282,9 +283,24 @@
   border-radius: 9999px;
 }
 
+/* The 10px sliver is too thin to find by pointer; an invisible margin catches
+   the hover that grows it into the clickable peek capsule. The peek keeps the
+   same margin: it grows only up and inward from the sliver's anchored edges,
+   so without it a pointer just below or outside the sliver would unhover the
+   peek it just opened and flicker. It sits under the pill so a click on the
+   capsule still reaches the control, and stays inside the 12px dock inset
+   (WINDOW_SIZES in windowConfig.js). */
+.voice-pill-glow-anchor[data-shape="sliver"]::after,
+.voice-pill-glow-anchor[data-shape="peek"]::after {
+  content: "";
+  position: absolute;
+  inset: -10px -8px;
+  z-index: -1;
+}
+
 /* The orbit animates the conic gradients' start angle instead of rotating
-   the layers, so the same glow tracks the circular thinking pill and the
-   expanded recording capsule alike. */
+   the layers, so the glow would track a capsule as well as the panel's
+   circular thinking identity, the one shape that lights it today. */
 @property --signal-angle {
   syntax: "<angle>";
   initial-value: 0deg;
@@ -448,7 +464,8 @@
 }
 
 /* Floating docks keep the pill 12px inside the window so the Signal glow's
-   halo and the hover tooltip have click-through headroom instead of clipping
+   halo (panel identity only), the sliver's hover margin, and the hover
+   tooltip have click-through headroom instead of clipping
    at the window bounds. Sized with WINDOW_SIZES in windowConfig.js — change
    together. */
 .voice-pill-position-bottom-right {

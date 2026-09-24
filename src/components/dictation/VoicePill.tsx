@@ -1,10 +1,10 @@
 import { forwardRef, type HTMLAttributes } from "react";
 import { ChevronUp } from "../icons";
 import { cn } from "../lib/utils";
-import { FlowWaveform } from "./FlowWaveform";
+import { FlowWaveform, type FlowMotion } from "./FlowWaveform";
 import { PillWaveform } from "./PillWaveform";
 import { VoiceIdentityIcon } from "./VoiceIdentityIcon";
-import { RESTING_WAVE_SILHOUETTE, WAVEFORM_BAR_COUNT } from "./waveformMath";
+import { FLOW_PEEK_OPACITY, RESTING_WAVE_SILHOUETTE, WAVEFORM_BAR_COUNT } from "./waveformMath";
 import {
   resolveVoicePillShape,
   VOICE_PILL_FOOTPRINT,
@@ -44,7 +44,7 @@ const COMPACT_CONTENT_GAP_PX = 6;
 
 // Mirrored by .liquid-cancel-skin[data-pill-state] in dictation-panel.css,
 // which redraws this chrome while the cancel skin owns the fused surface —
-// change together. The listening Flow bar skips these for its always-black
+// change together. The floating pill skips these for its always-black
 // .voice-pill-control[data-flow-bar] chrome.
 const STATE_APPEARANCE: Record<VoicePillState, string> = {
   idle: "border-border-hover bg-surface-1 text-muted-foreground dark:border-border/50",
@@ -80,11 +80,12 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   const isProcessing = state === "processing";
   const isThinking = state === "thinking";
   const isUnavailable = state === "unavailable";
-  // The Signal glow (comet orbit over a breathing halo) lights for the real
-  // thinking state alone — glowing during the entrance or while listening would read
-  // as work already in flight before any transcript exists.
-  const showSignalGlow = !isUnavailable && isThinking;
   const isPanel = variant === "panel";
+  // The Signal glow (comet orbit over a breathing halo) lights for the panel
+  // identity's thinking state alone — glowing during the entrance or while
+  // listening would read as work already in flight before any transcript
+  // exists. The floating Flow bar thinks with its own travelling wave.
+  const showSignalGlow = isPanel && !isUnavailable && isThinking;
   const shape = resolveVoicePillShape({
     variant,
     state,
@@ -93,16 +94,29 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
     waveformOnlyWhileRecording,
   });
   const showCompactPill = shape !== "idle";
-  // The floating pill listens as the icon-less Flow bar; the panel pill keeps
-  // its identity beside the scrolling waveform.
-  const flowBar = shape === "listening";
+  // The floating pill is the icon-less Flow bar in every shape — sliver, peek,
+  // and listening; the panel pill keeps its identity beside the scrolling
+  // waveform.
+  const flowBar = !isPanel;
+  // Warm-up sweeps resting dots; the waveform goes live the moment recording
+  // starts (the entrance beats only stage the panel pill); thinking ripples a
+  // wave; the sliver, peek, and a lost microphone hold still.
+  const flowMotion: FlowMotion | null =
+    shape !== "listening" || isUnavailable
+      ? null
+      : isThinking
+        ? "wave"
+        : isRecording
+          ? "live"
+          : "sweep";
+  const flowOpacity =
+    shape === "sliver" || showExpandChevron ? 0 : shape === "peek" ? FLOW_PEEK_OPACITY : 1;
   const panelCompact = shape === "panel";
   const showDivider = panelCompact && waveformVisible && !isRecording;
   // The hidden divider's margins are what carry the compact pill's 6px
   // icon↔waveform gap; a visible divider keeps 4px flanking its 1px rule.
   const dividerMargin = panelCompact ? (showDivider ? 4 : COMPACT_CONTENT_GAP_PX / 2) : 0;
   const identitySize = 22;
-  const floatingHover = !isPanel && state === "hover";
   const footprint = VOICE_PILL_FOOTPRINT[shape];
 
   const pill = (
@@ -121,10 +135,6 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         width: footprint.width,
         height: footprint.height,
         cursor: isProcessing || isThinking ? "not-allowed" : isDragging ? "grabbing" : "pointer",
-        // Yields to the fused rule's `box-shadow: none` while the liquid skin
-        // owns the chrome — an inline shadow would outrank it and paint a
-        // phantom capsule when a de-fusing skin lingers over a hovered pill.
-        boxShadow: floatingHover && !liquidFused ? "var(--shadow-card-hover-subtle)" : undefined,
         transition: `width ${VOICE_PILL_GROW_TRANSITION}, height ${VOICE_PILL_GROW_TRANSITION}, padding-left ${VOICE_PILL_GROW_TRANSITION}, padding-right ${VOICE_PILL_GROW_TRANSITION}, background-color 220ms ease-out, border-color 220ms ease-out, box-shadow 220ms ease-out`,
         ...style,
       }}
@@ -137,7 +147,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
     >
       <div
         className="pointer-events-none absolute inset-0 bg-gradient-to-br from-foreground/10 to-transparent transition-opacity duration-200 ease-out"
-        style={{ opacity: state === "hover" ? 0.72 : 0 }}
+        style={{ opacity: state === "hover" && !flowBar ? 0.72 : 0 }}
       />
 
       <span
@@ -202,12 +212,15 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
           // instead of vanishing mid-shrink.
           <FlowWaveform
             getLevel={getAudioLevel}
-            active={flowBar && isRecording}
-            resting={isUnavailable}
+            motion={flowMotion}
+            resting={isUnavailable || shape === "peek"}
             className={cn("absolute inset-0", isUnavailable && "animate-pulse")}
             style={{
-              opacity: flowBar && waveformVisible && !showExpandChevron ? 1 : 0,
-              transition: "opacity 200ms ease-out",
+              opacity: flowOpacity,
+              // Content fades out fast as the bar shrinks to the sliver, and in
+              // only once the capsule has mostly grown around it.
+              transition:
+                flowOpacity > 0 ? "opacity 200ms ease-out 120ms" : "opacity 120ms ease-out",
             }}
           />
         ) : (
@@ -241,9 +254,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         <ChevronUp
           className={cn(
             "voice-flow-chevron pointer-events-none absolute inset-0 m-auto size-5 transition-[opacity,transform] duration-200 ease-out",
-            flowBar && showExpandChevron
-              ? "scale-100 opacity-100"
-              : "translate-y-1 scale-75 opacity-0"
+            showExpandChevron ? "scale-100 opacity-100" : "translate-y-1 scale-75 opacity-0"
           )}
           strokeWidth={2}
         />
@@ -261,7 +272,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   );
 
   return (
-    <span className="voice-pill-glow-anchor">
+    <span className="voice-pill-glow-anchor" data-shape={shape}>
       <span
         aria-hidden="true"
         className="processing-signal-glow"

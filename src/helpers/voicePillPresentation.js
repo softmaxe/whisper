@@ -8,10 +8,17 @@ export { LIVE_TRANSCRIPT_SURFACE_LIMITS };
 // listening pill and its hover cancel, so these values and that window size
 // may only change together.
 export const VOICE_PILL_FOOTPRINT = Object.freeze({
+  // The panel's circular identity, between takes inside the Live Transcript
+  // footer.
   idle: Object.freeze({ width: 40, height: 40 }),
+  // The floating pill at rest: an empty black sliver, like Wispr Flow's.
+  sliver: Object.freeze({ width: 38, height: 10 }),
+  // Hovering the sliver previews the bar set as dim dots: 6px of air either
+  // side of the 52px bar set.
+  peek: Object.freeze({ width: 64, height: 22 }),
   // The floating Flow bar: 16px of air either side of the 52px bar set. At
   // least 2 × VOICE_PILL_CANCEL radius tall, so the swallowed cancel skin
-  // stays inside the capsule.
+  // stays inside the capsule. Also the largest floating footprint.
   listening: Object.freeze({ width: 84, height: 30 }),
   // Inside the Live Transcript footer. 98 = 6px edge inset + 22px icon + 6px
   // gap + 52px waveform + 12px edge inset (the waveform side keeps extra air;
@@ -20,9 +27,10 @@ export const VOICE_PILL_FOOTPRINT = Object.freeze({
 });
 
 /**
- * Which footprint the pill renders. The floating pill only leaves its
- * circular identity to listen, as the icon-less Flow bar; the Live Transcript
- * footer keeps the identity beside its waveform.
+ * Which footprint the pill renders. The floating pill rests as the sliver,
+ * peeks on hover, and is the Flow bar through every active state — warm-up,
+ * listening, and thinking alike. The Live Transcript footer keeps the circular
+ * identity beside its waveform.
  */
 export function resolveVoicePillShape({
   variant,
@@ -31,12 +39,15 @@ export function resolveVoicePillShape({
   collapseToLogo = false,
   waveformOnlyWhileRecording = false,
 }) {
+  if (variant !== "panel") {
+    if (state === "idle") return "sliver";
+    if (state === "hover") return "peek";
+    return "listening";
+  }
   const collapseToIdentity = collapseToLogo || state === "thinking";
   const compact =
-    !collapseToIdentity &&
-    (state === "recording" || expanded || (variant === "panel" && !waveformOnlyWhileRecording));
-  if (!compact) return "idle";
-  return variant === "panel" ? "panel" : "listening";
+    !collapseToIdentity && (state === "recording" || expanded || !waveformOnlyWhileRecording);
+  return compact ? "panel" : "idle";
 }
 
 // The hover cancel control that emerges beside the pill (px). Same contract:
@@ -48,7 +59,8 @@ export const LISTENING_ENTRANCE_TIMING = Object.freeze({
   // A short hold that reads as an acknowledged press before the control
   // changes shape. It was 420ms when it also had to hide the native window
   // grow; BASE and RECORDING now share one box (windowConfig.js), so the
-  // floating pill's hold is purely the design beat.
+  // hold is purely the design beat. Only the panel pill plays these beats;
+  // the floating Flow bar has no logo to hold and goes live immediately.
   thinkingMs: 260,
   expansionMs: 300,
   // Hold the finished footprint briefly so the waveform reveal cannot be
