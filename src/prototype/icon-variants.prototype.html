@@ -1,0 +1,1154 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throwaway. Not part of the app build; delete once a direction wins.
+  Question: which app icon / logo system fits the always-black Flow bar (#73),
+  and how should the idle pill, menu bar glyph and in-app lockup follow it?
+  Five icon systems, switchable via ?variant=A..E, the ← → keys, or the bottom bar.
+  Run: open src/prototype/icon-variants.prototype.html
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Icon Variants Prototype</title>
+    <style>
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("../assets/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+        font-weight: 400;
+      }
+      @font-face {
+        font-family: "JetBrains Mono";
+        src: url("../assets/fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2") format("woff2");
+        font-weight: 600;
+      }
+      :root {
+        --ink: #0c0c0e;
+        --rim: rgb(255 255 255 / 0.16);
+        --blue: #4577e9;
+        --page: #efefec;
+        --card: #ffffff;
+        --text: #1b1b1d;
+        --muted: #6b6b70;
+        --line: #e0e0dc;
+        --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+        --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--page);
+        color: var(--text);
+        font-family: var(--sans);
+        padding: 20px 16px 96px;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+        display: grid;
+        gap: 16px;
+      }
+      header.top {
+        display: flex;
+        gap: 24px;
+        align-items: flex-start;
+        justify-content: space-between;
+        flex-wrap: wrap;
+      }
+      .kicker {
+        font: 600 11px/1 var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      h1 {
+        margin: 8px 0 6px;
+        font-size: 26px;
+        letter-spacing: -0.01em;
+      }
+      .pitch {
+        margin: 0;
+        max-width: 640px;
+        color: #3a3a3e;
+        line-height: 1.5;
+      }
+      .controls {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .seg {
+        display: inline-flex;
+        background: #e3e3df;
+        border-radius: 9px;
+        padding: 3px;
+      }
+      .seg button {
+        border: 0;
+        background: transparent;
+        padding: 6px 10px;
+        border-radius: 7px;
+        font: 500 12px var(--sans);
+        color: #444;
+        cursor: pointer;
+      }
+      .seg button[aria-pressed="true"] {
+        background: #fff;
+        color: #111;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px;
+      }
+      .card h2 {
+        margin: 0 0 12px;
+        font: 600 11px/1 var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1.6fr 1fr;
+        gap: 16px;
+      }
+      @media (max-width: 900px) {
+        .grid2 {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      /* ---------- fake macOS desktop ---------- */
+      .desktop {
+        position: relative;
+        height: 420px;
+        border-radius: 12px;
+        overflow: hidden;
+        transition: background 300ms;
+      }
+      .desktop[data-theme="light"] {
+        background:
+          radial-gradient(120% 90% at 20% 10%, #f6e7d6 0%, transparent 60%),
+          radial-gradient(90% 80% at 90% 30%, #cfe0f6 0%, transparent 60%),
+          linear-gradient(180deg, #e9e4dc, #d8dde6);
+      }
+      .desktop[data-theme="dark"] {
+        background:
+          radial-gradient(120% 90% at 20% 10%, #2a2140 0%, transparent 60%),
+          radial-gradient(90% 80% at 90% 30%, #13304a 0%, transparent 60%),
+          linear-gradient(180deg, #121217, #0b0e14);
+      }
+      .menubar {
+        height: 26px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 16px;
+        padding: 0 14px;
+        font: 500 13px var(--sans);
+        backdrop-filter: blur(20px);
+      }
+      .desktop[data-theme="light"] .menubar {
+        background: rgb(255 255 255 / 0.45);
+        color: #111;
+      }
+      .desktop[data-theme="dark"] .menubar {
+        background: rgb(0 0 0 / 0.35);
+        color: #f2f2f2;
+      }
+      .menubar .left {
+        margin-right: auto;
+        display: flex;
+        gap: 18px;
+      }
+      .menubar .ours {
+        display: grid;
+        place-items: center;
+        width: 26px;
+        height: 22px;
+        border-radius: 5px;
+      }
+      .menubar .ours:hover {
+        background: rgb(127 127 127 / 0.25);
+      }
+      .mb-ph {
+        width: 16px;
+        height: 11px;
+        border-radius: 3px;
+        border: 1.5px solid currentColor;
+        opacity: 0.85;
+      }
+      .mb-ph.round {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+      }
+      .window {
+        position: absolute;
+        left: 48px;
+        top: 64px;
+        width: 420px;
+        height: 220px;
+        border-radius: 12px;
+        box-shadow: 0 20px 50px rgb(0 0 0 / 0.25);
+        padding: 44px 22px 18px;
+        font: 14px/1.6 var(--sans);
+      }
+      .desktop[data-theme="light"] .window {
+        background: #fbfbfa;
+        color: #222;
+      }
+      .desktop[data-theme="dark"] .window {
+        background: #1e1e21;
+        color: #ddd;
+      }
+      .window::before {
+        content: "";
+        position: absolute;
+        left: 14px;
+        top: 14px;
+        width: 50px;
+        height: 12px;
+        background:
+          radial-gradient(circle at 6px 6px, #ff5f57 5.5px, transparent 6px),
+          radial-gradient(circle at 25px 6px, #febc2e 5.5px, transparent 6px),
+          radial-gradient(circle at 44px 6px, #28c840 5.5px, transparent 6px);
+      }
+      .caret-blink {
+        display: inline-block;
+        width: 2px;
+        height: 1.1em;
+        vertical-align: -0.15em;
+        background: var(--blue);
+        animation: blink 1s steps(2) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+      .dock {
+        position: absolute;
+        left: 50%;
+        bottom: 10px;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 8px;
+        padding: 7px 9px;
+        border-radius: 20px;
+        backdrop-filter: blur(24px);
+        border: 1px solid rgb(255 255 255 / 0.25);
+      }
+      .desktop[data-theme="light"] .dock {
+        background: rgb(255 255 255 / 0.35);
+      }
+      .desktop[data-theme="dark"] .dock {
+        background: rgb(40 40 46 / 0.45);
+      }
+      .dock .slot {
+        width: 50px;
+        height: 50px;
+        position: relative;
+      }
+      .dock .slot.ph div {
+        width: 100%;
+        height: 100%;
+        border-radius: 12px;
+      }
+      .dock .slot.ours::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -5px;
+        width: 4px;
+        height: 4px;
+        margin-left: -2px;
+        border-radius: 50%;
+        background: currentColor;
+        opacity: 0.6;
+      }
+      .desktop[data-theme="light"] .dock .slot.ours::after {
+        color: #222;
+      }
+      .desktop[data-theme="dark"] .dock .slot.ours::after {
+        color: #eee;
+      }
+
+      /* ---------- the pill (mirrors VoicePill footprints) ---------- */
+      .pill-dock {
+        position: absolute;
+        right: 22px;
+        bottom: 86px;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+      }
+      .pill {
+        position: relative;
+        width: 40px;
+        height: 40px;
+        border-radius: 999px;
+        border: 1px solid;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        cursor: pointer;
+        transition:
+          width 300ms cubic-bezier(0.2, 0, 0, 1),
+          height 300ms cubic-bezier(0.2, 0, 0, 1),
+          background-color 220ms ease-out,
+          border-color 220ms ease-out,
+          box-shadow 220ms ease-out,
+          transform 160ms ease-out;
+      }
+      .pill[data-state="listening"] {
+        width: 84px;
+        height: 30px;
+      }
+      .pill[data-state="hover"] {
+        transform: scale(1.04);
+      }
+      .pill .glyph,
+      .pill .bars {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 200ms ease-out;
+      }
+      .pill .bars {
+        gap: 3px;
+        opacity: 0;
+      }
+      .pill[data-state="listening"] .bars {
+        opacity: 1;
+        transition-delay: 300ms;
+      }
+      .pill[data-state="listening"] .glyph {
+        opacity: 0;
+      }
+      .pill .bars span {
+        width: 2.5px;
+        height: 3px;
+        border-radius: 99px;
+        background: currentColor;
+      }
+      .pill .bars .fcaret {
+        width: 2px;
+        height: 16px;
+        border-radius: 1px;
+        margin-left: 3px;
+        animation: blink 1s steps(2) infinite;
+      }
+      .pill-glow {
+        position: absolute;
+        inset: -6px;
+        border-radius: 999px;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 240ms;
+      }
+      .pill-glow[data-on="true"] {
+        opacity: 1;
+        animation: breathe 1.6s ease-in-out infinite;
+      }
+      @keyframes breathe {
+        50% {
+          transform: scale(1.08);
+          opacity: 0.55;
+        }
+      }
+      .glyph.pulse {
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse {
+        50% {
+          opacity: 0.45;
+        }
+      }
+
+      /* ---------- icon sizes ---------- */
+      .sizes {
+        display: flex;
+        gap: 18px;
+        align-items: flex-end;
+        flex-wrap: wrap;
+      }
+      .sizes figure {
+        margin: 0;
+        display: grid;
+        justify-items: center;
+        gap: 6px;
+      }
+      .sizes figcaption {
+        font: 11px var(--mono);
+        color: var(--muted);
+      }
+      .icon-shadow {
+        filter: drop-shadow(0 3px 6px rgb(0 0 0 / 0.18));
+      }
+      .strip {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .strip > div {
+        flex: 1 1 200px;
+        border-radius: 10px;
+        padding: 14px;
+        display: flex;
+        gap: 14px;
+        align-items: center;
+        justify-content: center;
+        min-height: 72px;
+      }
+      .strip .l {
+        background: #f3f1ec;
+        color: #111;
+      }
+      .strip .d {
+        background: #151518;
+        color: #f2f2f2;
+      }
+      .strip .mid {
+        background: #7a8594;
+        color: #fff;
+      }
+
+      /* ---------- app sidebar lockup (matches overview screenshot chrome) ---------- */
+      .app {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        border-radius: 12px;
+        overflow: hidden;
+        font-family: var(--mono);
+        font-size: 13px;
+        min-height: 230px;
+      }
+      .app[data-theme="dark"] {
+        background: #161618;
+        color: #e8e8ea;
+      }
+      .app[data-theme="light"] {
+        background: #f4f4f2;
+        color: #1c1c1e;
+      }
+      .app aside {
+        padding: 14px 10px;
+        display: grid;
+        align-content: start;
+        gap: 4px;
+      }
+      .lockup {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 8px 14px;
+        font-weight: 600;
+        font-size: 14px;
+        letter-spacing: -0.01em;
+      }
+      .nav {
+        padding: 7px 8px;
+        border-radius: 7px;
+        opacity: 0.85;
+      }
+      .nav.on {
+        opacity: 1;
+      }
+      .app[data-theme="dark"] .nav.on {
+        background: #1f2333;
+      }
+      .app[data-theme="light"] .nav.on {
+        background: #e3e7f3;
+      }
+      .app main {
+        margin: 8px 8px 8px 0;
+        border-radius: 10px;
+        padding: 14px 16px;
+        line-height: 1.6;
+      }
+      .app[data-theme="dark"] main {
+        background: #1c1c1f;
+        border: 1px solid #2a2a2e;
+      }
+      .app[data-theme="light"] main {
+        background: #fff;
+        border: 1px solid #e3e3df;
+      }
+      .muted {
+        opacity: 0.55;
+      }
+
+      ul.notes {
+        margin: 0;
+        padding-left: 18px;
+        line-height: 1.55;
+        font-size: 14px;
+      }
+      ul.notes li + li {
+        margin-top: 4px;
+      }
+      .tag {
+        display: inline-block;
+        font: 600 10px/1 var(--mono);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding: 4px 6px;
+        border-radius: 5px;
+        margin-right: 6px;
+      }
+      .tag.pro {
+        background: #e4f1e6;
+        color: #1f6a33;
+      }
+      .tag.con {
+        background: #f7e6e2;
+        color: #8a2d1b;
+      }
+      .spec {
+        font: 12px/1.7 var(--mono);
+        color: #3a3a3e;
+        margin-top: 12px;
+        border-top: 1px dashed var(--line);
+        padding-top: 10px;
+      }
+
+      /* ---------- prototype switcher (not part of the design) ---------- */
+      .switcher {
+        position: fixed;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 5px;
+        border-radius: 999px;
+        background: #ff3d7f;
+        color: #fff;
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.28);
+        font: 600 13px var(--sans);
+        z-index: 10;
+        max-width: calc(100vw - 32px);
+      }
+      .switcher button {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 0;
+        background: rgb(255 255 255 / 0.2);
+        color: #fff;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .switcher .label {
+        padding: 0 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="top">
+        <div>
+          <div class="kicker">
+            Prototype · icon system <span id="vkey"></span> / 5 · throwaway
+          </div>
+          <h1 id="vname"></h1>
+          <p class="pitch" id="vpitch"></p>
+        </div>
+        <div class="controls">
+          <div class="seg" id="themeSeg">
+            <button data-v="light">Light</button><button data-v="dark">Dark</button>
+          </div>
+          <div class="seg" id="stateSeg">
+            <button data-v="auto">Auto</button><button data-v="idle">Idle</button
+            ><button data-v="hover">Hover</button><button data-v="listening">Listening</button
+            ><button data-v="thinking">Thinking</button>
+          </div>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>In context · menu bar, Dock, recording pill (bottom-right)</h2>
+        <div class="desktop" id="desktop">
+          <div class="menubar">
+            <div class="left"><b></b><span>Notes</span><span>File</span><span>Edit</span></div>
+            <span class="ours" id="mbGlyph" title="Whisper menu bar icon"></span>
+            <span class="mb-ph"></span><span class="mb-ph round"></span>
+            <span>Fri 25 Sep 10:42</span>
+          </div>
+          <div class="window">
+            Today’s plan: finish the interface design, review user feedback, and update the
+            project documentation<span class="caret-blink"></span>
+          </div>
+          <div class="pill-dock">
+            <span style="position: relative; display: inline-flex">
+              <span class="pill-glow" id="glow"></span>
+              <div class="pill" id="pill">
+                <span class="glyph" id="pillGlyph"></span>
+                <span class="bars" id="bars"></span>
+              </div>
+            </span>
+          </div>
+          <div class="dock" id="dock"></div>
+        </div>
+      </section>
+
+      <div class="grid2">
+        <section class="card">
+          <h2>App icon · 256 / 128 / 64 / 32 / 16 &nbsp;·&nbsp; current for reference</h2>
+          <div class="sizes" id="sizes"></div>
+          <h2 style="margin-top: 20px">Menu bar template glyph · 18pt on light / tinted / dark</h2>
+          <div class="strip" id="glyphStrip"></div>
+          <h2 style="margin-top: 20px">Pill states side by side · light & dark</h2>
+          <div class="strip" id="pillStrip"></div>
+        </section>
+        <section class="card">
+          <h2>Why / risks</h2>
+          <ul class="notes" id="notes"></ul>
+          <div class="spec" id="spec"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>In-app lockup · sidebar brand</h2>
+        <div class="strip" style="gap: 12px">
+          <div class="app" data-theme="dark" style="padding: 0; flex: 1 1 420px">
+            <aside class="lockupHost"></aside>
+            <main>
+              <span class="muted">10:42 AM</span><br />Speak your thoughts. Whisper turns your
+              voice into clear text.
+            </main>
+          </div>
+          <div class="app" data-theme="light" style="padding: 0; flex: 1 1 420px">
+            <aside class="lockupHost"></aside>
+            <main>
+              <span class="muted">10:42 AM</span><br />Speak your thoughts. Whisper turns your
+              voice into clear text.
+            </main>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="switcher" role="toolbar" aria-label="Prototype variant switcher">
+      <button id="prev" aria-label="Previous variant">←</button>
+      <span class="label" id="swLabel"></span>
+      <button id="next" aria-label="Next variant">→</button>
+    </div>
+
+    <script>
+      const INK = "#0c0c0e";
+      const BLUE = "#4577e9";
+      const BODY = 'x="8" y="8" width="84" height="84" rx="19"';
+
+      // ---- shared SVG helpers ----
+      const svg = (vb, size, inner, extra = "") =>
+        `<svg viewBox="${vb}" width="${size}" height="${size}" fill="none" ${extra}>${inner}</svg>`;
+      const vbars = (xs, hs, cy, w, color) =>
+        xs
+          .map(
+            (x, i) =>
+              `<line x1="${x}" y1="${cy - hs[i] / 2}" x2="${x}" y2="${cy + hs[i] / 2}" stroke="${color}" stroke-width="${w}" stroke-linecap="round"/>`
+          )
+          .join("");
+
+      let uid = 0;
+      const VARIANTS = {
+        A: {
+          name: "Flow Capsule",
+          pitch:
+            "The logo is the product: a black capsule holding the waveform. Idle pill goes black too, so every surface — Dock, menu bar, pill — is the same object at different sizes.",
+          pros: [
+            "Strongest link to #73: the icon literally previews the listening bar.",
+            "Black idle pill ends the theme-following grey circle; one surface, one colour.",
+            "Scales down well — a filled capsule survives at 16px.",
+          ],
+          cons: [
+            "Idle pill turns black on light desktops: more visually present when you are not dictating.",
+            "Light app icon is less distinctive in a Dock full of white icons.",
+          ],
+          spec: [
+            "App icon: #F7F7F5→#E7E7E3 body, #0C0C0E capsule, 5 white bars (6/11/15/11/6)",
+            "Idle pill: #0C0C0E + white rim 16%, 3 white bars",
+            "Listening: unchanged (#73)",
+            "Menu glyph: filled capsule, bars knocked out",
+          ],
+          idle: { theme: false, bg: INK, fg: "#fff", rim: "rgb(255 255 255 / 0.16)" },
+          flow: { bars: 10 },
+          appIcon(size) {
+            const g = `a${uid++}`;
+            return svg(
+              "0 0 100 100",
+              size,
+              `<defs><linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f7f7f5"/><stop offset="1" stop-color="#e5e5e1"/></linearGradient></defs>
+              <rect ${BODY} fill="url(#${g})"/><rect ${BODY} stroke="rgb(0 0 0 / .08)"/>
+              <rect x="17" y="37" width="66" height="26" rx="13" fill="${INK}"/>
+              ${vbars([36, 43, 50, 57, 64], [6, 11, 15, 11, 6], 50, 3.4, "#fff")}`
+            );
+          },
+          glyph(size) {
+            const m = `m${uid++}`;
+            return svg(
+              "0 0 18 18",
+              size,
+              `<mask id="${m}"><rect width="18" height="18" fill="#fff"/>${vbars([6, 9, 12], [2.5, 4.5, 2.5], 9, 1.5, "#000")}</mask>
+              <rect x="1" y="4.5" width="16" height="9" rx="4.5" fill="currentColor" mask="url(#${m})"/>`
+            );
+          },
+          idleGlyph: (size) =>
+            svg("0 0 24 24", size, vbars([8, 12, 16], [6, 11, 6], 12, 2.2, "currentColor")),
+        },
+
+        B: {
+          name: "Resting Dots",
+          pitch:
+            "The Flow bar before you speak is a row of dots; the logo is that moment with one voice rising. Quiet, typographic, almost no ornament.",
+          pros: [
+            "Most restrained option — closest to Wispr Flow's calm feel.",
+            "Dots → bar mirrors the actual animation (bars swell from 3px dots).",
+            "Black Dock icon stands out without a brand colour.",
+          ],
+          cons: [
+            "At 16px the menu glyph can read as an ellipsis “…” / more-menu.",
+            "Least ownable; many voice apps use dot rows.",
+          ],
+          spec: [
+            "App icon: #1A1A1E→#0C0C0E body, 4 white dots r4 + centre pill 8×30",
+            "Idle pill: #0C0C0E, dot · pill · dot",
+            "Listening: unchanged; resting bars stay at 3px dots",
+            "Menu glyph: 2 dots · pill · 2 dots",
+          ],
+          idle: { theme: false, bg: INK, fg: "#fff", rim: "rgb(255 255 255 / 0.16)" },
+          flow: { bars: 10 },
+          appIcon(size) {
+            const g = `b${uid++}`;
+            const dot = (x) => `<circle cx="${x}" cy="50" r="4.2" fill="#fff"/>`;
+            return svg(
+              "0 0 100 100",
+              size,
+              `<defs><linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#232327"/><stop offset="1" stop-color="#0c0c0e"/></linearGradient></defs>
+              <rect ${BODY} fill="url(#${g})"/><rect ${BODY} stroke="rgb(255 255 255 / .1)"/>
+              ${dot(26)}${dot(38)}<rect x="46" y="35" width="8.4" height="30" rx="4.2" fill="#fff"/>${dot(62)}${dot(74)}`
+            );
+          },
+          glyph: (size) =>
+            svg(
+              "0 0 18 18",
+              size,
+              `<circle cx="2.6" cy="9" r="1.35" fill="currentColor"/><circle cx="5.8" cy="9" r="1.35" fill="currentColor"/>
+              <rect x="7.6" y="3.5" width="2.8" height="11" rx="1.4" fill="currentColor"/>
+              <circle cx="12.2" cy="9" r="1.35" fill="currentColor"/><circle cx="15.4" cy="9" r="1.35" fill="currentColor"/>`
+            ),
+          idleGlyph: (size) =>
+            svg(
+              "0 0 24 24",
+              size,
+              `<circle cx="7" cy="12" r="1.7" fill="currentColor"/><rect x="10.4" y="5.5" width="3.2" height="13" rx="1.6" fill="currentColor"/><circle cx="17" cy="12" r="1.7" fill="currentColor"/>`
+            ),
+        },
+
+        C: {
+          name: "Wave → Caret",
+          pitch:
+            "Voice becomes text: rising bars end in a blue text caret. The listening bar gains the caret at its tail, so it says “this will be typed where your cursor is”.",
+          pros: [
+            "Only option that explains what the app does (dictation into the Target app).",
+            "Keeps brand blue as a single accent instead of a whole blue icon.",
+            "Caret gives the Flow bar a meaningful second element, not decoration.",
+          ],
+          cons: [
+            "Changes the #73 listening bar (8 bars + caret) — touches the pill footprint contract.",
+            "Two-colour glyph can’t survive as a template icon; the menu bar version loses the blue.",
+          ],
+          spec: [
+            "App icon: paper #FBFAF7 body, ink bars 16/28/40, #4577E9 I-beam caret",
+            "Idle pill: theme surface (as today), ink bars + blue caret",
+            "Listening: 8 bars + 2×16 blinking caret, same 84×30",
+            "Menu glyph: bars + caret, monochrome",
+          ],
+          idle: { theme: true },
+          flow: { bars: 8, caret: BLUE },
+          appIcon(size) {
+            return svg(
+              "0 0 100 100",
+              size,
+              `<rect ${BODY} fill="#fbfaf7"/><rect ${BODY} stroke="rgb(0 0 0 / .08)"/>
+              ${vbars([27, 38, 49], [16, 28, 40], 50, 7, INK)}
+              <path d="M68 29v42M62 29h12M62 71h12" stroke="${BLUE}" stroke-width="5" stroke-linecap="round"/>`
+            );
+          },
+          glyph: (size) =>
+            svg(
+              "0 0 18 18",
+              size,
+              `${vbars([2.5, 5.5, 8.5], [4, 7, 10], 9, 1.6, "currentColor")}<path d="M13.5 3.5v11M11.5 3.5h4M11.5 14.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`
+            ),
+          idleGlyph: (size) =>
+            svg(
+              "0 0 24 24",
+              size,
+              `${vbars([5, 9, 13], [5, 9, 13], 12, 2.2, "currentColor")}<path d="M18.5 5.5v13M16.5 5.5h4M16.5 18.5h4" stroke="${BLUE}" stroke-width="2" stroke-linecap="round"/>`
+            ),
+        },
+
+        D: {
+          name: "W Monogram",
+          pitch:
+            "A single rounded stroke that is both a “W” and a sound wave. A wordmark-led identity: the capsule UI stays neutral, the letter carries the brand.",
+          pros: [
+            "Most ownable and name-bearing; works in README, Homebrew, favicon.",
+            "Stroke weight matches the Flow bar’s round caps, so it sits well on the black pill.",
+            "Easy to render as a template glyph at any size.",
+          ],
+          cons: [
+            "Doesn’t describe the capsule; the link to #73 is only colour and stroke.",
+            "Zig-zag W is a common mark — needs care to not look generic.",
+          ],
+          spec: [
+            "App icon: #1A1A1E→#0C0C0E body, white W stroke 9, round joins",
+            "Idle pill: #0C0C0E, white W",
+            "Listening: unchanged",
+            "Menu glyph: W stroke 1.8",
+          ],
+          idle: { theme: false, bg: INK, fg: "#fff", rim: "rgb(255 255 255 / 0.16)" },
+          flow: { bars: 10 },
+          appIcon(size) {
+            const g = `d${uid++}`;
+            return svg(
+              "0 0 100 100",
+              size,
+              `<defs><linearGradient id="${g}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#26262b"/><stop offset="1" stop-color="#0c0c0e"/></linearGradient></defs>
+              <rect ${BODY} fill="url(#${g})"/><rect ${BODY} stroke="rgb(255 255 255 / .1)"/>
+              <polyline points="25,36 37.5,65 50,43 62.5,65 75,36" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>`
+            );
+          },
+          glyph: (size) =>
+            svg(
+              "0 0 18 18",
+              size,
+              `<polyline points="2.5,5 6.2,13 9,8 11.8,13 15.5,5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`
+            ),
+          idleGlyph: (size) =>
+            svg(
+              "0 0 24 24",
+              size,
+              `<polyline points="4.5,8 8.5,16.5 12,10.5 15.5,16.5 19.5,8" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>`
+            ),
+        },
+
+        E: {
+          name: "Stadium Ring (evolution)",
+          pitch:
+            "Keep today’s identity — blue glass, ring, three bars — but stretch the ring into a capsule. Lowest-risk: existing users still recognise it, it just learns the new shape.",
+          pros: [
+            "Continuity with 1.0.x icon, Homebrew listing and screenshots.",
+            "Idle pill keeps following the system theme; only listening goes black.",
+            "Brand blue stays for the Signal glow and primary buttons.",
+          ],
+          cons: [
+            "Blue icon + black listening bar = two visual languages side by side.",
+            "Still reads as inherited from OpenWhispr.",
+          ],
+          spec: [
+            "App icon: gradient #5588F0→#3466E2, white stadium stroke 6.5, bars 10/18/10",
+            "Idle pill: theme surface (unchanged), stadium glyph",
+            "Listening: unchanged (#73)",
+            "Menu glyph: stadium outline + 3 bars",
+          ],
+          idle: { theme: true },
+          flow: { bars: 10 },
+          appIcon(size) {
+            const g = `e${uid++}`;
+            return svg(
+              "0 0 100 100",
+              size,
+              `<defs><linearGradient id="${g}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5588f0"/><stop offset="1" stop-color="#3466e2"/></linearGradient></defs>
+              <rect ${BODY} fill="url(#${g})"/>
+              <rect x="19" y="33" width="62" height="34" rx="17" stroke="#fff" stroke-width="6.5"/>
+              ${vbars([39, 50, 61], [10, 18, 10], 50, 6, "#fff")}`
+            );
+          },
+          glyph: (size) =>
+            svg(
+              "0 0 18 18",
+              size,
+              `<rect x="1.5" y="4.5" width="15" height="9" rx="4.5" stroke="currentColor" stroke-width="1.5"/>${vbars([6.5, 9, 11.5], [1.5, 3.5, 1.5], 9, 1.4, "currentColor")}`
+            ),
+          idleGlyph: (size) =>
+            svg(
+              "0 0 24 24",
+              size,
+              `<rect x="2" y="6" width="20" height="12" rx="6" stroke="currentColor" stroke-width="2"/>${vbars([8.5, 12, 15.5], [2, 5, 2], 12, 2, "currentColor")}`
+            ),
+        },
+      };
+      const KEYS = Object.keys(VARIANTS);
+
+      // ---- state ----
+      const params = new URLSearchParams(location.search);
+      let key = KEYS.includes(params.get("variant")) ? params.get("variant") : "A";
+      let theme = params.get("theme") === "dark" ? "dark" : "light";
+      let stateMode = "auto";
+      let pillState = "idle";
+
+      const $ = (id) => document.getElementById(id);
+
+      function idleColors(v, t) {
+        if (!v.idle.theme) return v.idle;
+        return t === "dark"
+          ? { bg: "#1e1e21", fg: "#e8e8ea", rim: "rgb(255 255 255 / 0.14)" }
+          : { bg: "#ffffff", fg: "#1c1c1e", rim: "rgb(0 0 0 / 0.14)" };
+      }
+
+      function paintPill(el, glyphEl, v, t, state) {
+        const listening = state === "listening";
+        const c = listening ? { bg: INK, fg: "#fff", rim: "rgb(255 255 255 / 0.16)" } : idleColors(v, t);
+        el.dataset.state = state;
+        el.style.background = state === "hover" && v.idle.theme ? (t === "dark" ? "#2a2a2e" : "#f1f1f1") : c.bg;
+        el.style.color = c.fg;
+        el.style.borderColor = c.rim;
+        el.style.boxShadow = listening ? "0 2px 6px rgb(0 0 0 / .28)" : "0 2px 8px rgb(0 0 0 / .18)";
+        glyphEl.classList.toggle("pulse", state === "thinking");
+      }
+
+      function buildBars(v) {
+        const bars = $("bars");
+        bars.innerHTML = "";
+        for (let i = 0; i < v.flow.bars; i++) bars.appendChild(document.createElement("span"));
+        if (v.flow.caret) {
+          const c = document.createElement("span");
+          c.className = "fcaret";
+          c.style.background = v.flow.caret;
+          bars.appendChild(c);
+        }
+      }
+
+      function staticPill(v, t, state) {
+        // A frozen pill for the side-by-side strip.
+        const wrap = document.createElement("span");
+        wrap.style.cssText = "position:relative;display:inline-flex";
+        const p = document.createElement("div");
+        p.className = "pill";
+        p.style.cursor = "default";
+        const g = document.createElement("span");
+        g.className = "glyph";
+        g.innerHTML = v.idleGlyph(22);
+        const b = document.createElement("span");
+        b.className = "bars";
+        const env = [0.35, 0.55, 0.75, 0.92, 1, 1, 0.92, 0.75, 0.55, 0.35];
+        for (let i = 0; i < v.flow.bars; i++) {
+          const s = document.createElement("span");
+          s.style.height = 3 + 15 * env[Math.round((i * 9) / (v.flow.bars - 1))] * 0.8 + "px";
+          b.appendChild(s);
+        }
+        if (v.flow.caret) {
+          const c = document.createElement("span");
+          c.className = "fcaret";
+          c.style.background = v.flow.caret;
+          b.appendChild(c);
+        }
+        p.append(g, b);
+        paintPill(p, g, v, t, state);
+        if (state === "thinking") {
+          const glow = document.createElement("span");
+          glow.className = "pill-glow";
+          glow.dataset.on = "true";
+          glow.style.boxShadow = `0 0 0 2px ${BLUE}, 0 0 18px 4px rgb(69 119 233 / .55)`;
+          wrap.appendChild(glow);
+        }
+        wrap.appendChild(p);
+        return wrap;
+      }
+
+      const PH_DOCK = [
+        "linear-gradient(135deg,#8fd3f4,#5a8dee)",
+        "linear-gradient(135deg,#fdfbfb,#dcdcdc)",
+        "linear-gradient(135deg,#ffd36e,#f59e0b)",
+        "linear-gradient(135deg,#a3e4a0,#3aa15a)",
+        "linear-gradient(135deg,#3d3d44,#18181b)",
+      ];
+
+      function render() {
+        const v = VARIANTS[key];
+        $("vkey").textContent = key;
+        $("vname").textContent = v.name;
+        $("vpitch").textContent = v.pitch;
+        $("swLabel").textContent = `${key} · ${v.name}`;
+        document.title = `Icon Variants ${key}`;
+
+        $("desktop").dataset.theme = theme;
+        document.querySelectorAll("#themeSeg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === theme));
+        document.querySelectorAll("#stateSeg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === stateMode));
+
+        $("mbGlyph").innerHTML = v.glyph(17);
+        const dock = $("dock");
+        dock.innerHTML = "";
+        PH_DOCK.forEach((bg, i) => {
+          if (i === 3) {
+            const s = document.createElement("div");
+            s.className = "slot ours";
+            s.innerHTML = v.appIcon(50);
+            dock.appendChild(s);
+          }
+          const s = document.createElement("div");
+          s.className = "slot ph";
+          s.innerHTML = `<div style="background:${bg}"></div>`;
+          dock.appendChild(s);
+        });
+
+        $("pillGlyph").innerHTML = v.idleGlyph(22);
+        buildBars(v);
+        applyPillState();
+
+        $("sizes").innerHTML =
+          [256, 128, 64, 32, 16]
+            .map((s) => `<figure><div class="icon-shadow">${v.appIcon(s)}</div><figcaption>${s}</figcaption></figure>`)
+            .join("") +
+          `<figure style="margin-left:auto;opacity:.75"><img src="../assets/icon.png" width="64" height="64" alt=""><figcaption>current</figcaption></figure>`;
+
+        $("glyphStrip").innerHTML = ["l", "mid", "d"]
+          .map((c) => `<div class="${c}">${v.glyph(18)}${v.glyph(36)}</div>`)
+          .join("");
+
+        const ps = $("pillStrip");
+        ps.innerHTML = "";
+        ["light", "dark"].forEach((t) => {
+          const d = document.createElement("div");
+          d.className = t === "light" ? "l" : "d";
+          ["idle", "listening", "thinking"].forEach((st) => d.appendChild(staticPill(v, t, st)));
+          ps.appendChild(d);
+        });
+
+        $("notes").innerHTML =
+          v.pros.map((p) => `<li><span class="tag pro">+</span>${p}</li>`).join("") +
+          v.cons.map((p) => `<li><span class="tag con">−</span>${p}</li>`).join("");
+        $("spec").innerHTML = v.spec.map((s) => `· ${s}`).join("<br>");
+
+        document.querySelectorAll(".lockupHost").forEach((host) => {
+          const dark = host.parentElement.dataset.theme === "dark";
+          host.innerHTML =
+            `<div class="lockup">${v.appIcon(22)}<span>Whisper</span></div>` +
+            ["Home", "Insights", "Upload", "Dictionary"]
+              .map((n, i) => `<div class="nav${i === 0 ? " on" : ""}">${n}</div>`)
+              .join("");
+          host.style.color = dark ? "#e8e8ea" : "#1c1c1e";
+        });
+      }
+
+      function applyPillState() {
+        const v = VARIANTS[key];
+        paintPill($("pill"), $("pillGlyph"), v, theme, pillState);
+        const glow = $("glow");
+        glow.dataset.on = pillState === "thinking" ? "true" : "false";
+        glow.style.boxShadow = `0 0 0 2px ${BLUE}, 0 0 18px 4px rgb(69 119 233 / .55)`;
+      }
+
+      function go(delta) {
+        key = KEYS[(KEYS.indexOf(key) + delta + KEYS.length) % KEYS.length];
+        const p = new URLSearchParams(location.search);
+        p.set("variant", key);
+        history.replaceState(null, "", `?${p}`);
+        render();
+      }
+
+      // ---- waveform, mirroring waveformMath.ts (envelope + per-bar drift) ----
+      const ENV = [0.35, 0.55, 0.75, 0.92, 1, 1, 0.92, 0.75, 0.55, 0.35];
+      const heights = new Array(12).fill(0);
+      let last = 0;
+      function tick(now) {
+        const frames = last ? Math.min(4, (now - last) / 16.67) : 1;
+        last = now;
+        const spans = $("bars").querySelectorAll("span:not(.fcaret)");
+        const n = spans.length;
+        // Fake speech: syllable-ish bursts with pauses.
+        const phrase = 0.5 + 0.5 * Math.sin(now / 900);
+        const syll = (0.25 + 0.75 * Math.abs(Math.sin(now / 150))) * (0.25 + 0.75 * phrase);
+        const rms = pillState === "listening" ? syll : 0;
+        spans.forEach((bar, i) => {
+          const e = ENV[Math.round((i * 9) / Math.max(1, n - 1))];
+          const phase = now * 0.012 * (1 + i * 0.37) + i * 1.7;
+          const drift = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(phase));
+          const target = rms * e * drift;
+          const rate = target > heights[i] ? 0.45 : 0.16;
+          heights[i] += (target - heights[i]) * (1 - Math.pow(1 - rate, frames));
+          bar.style.height = 3 + heights[i] * 15 + "px";
+        });
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+
+      // ---- auto state cycle ----
+      const CYCLE = [
+        ["idle", 1600],
+        ["hover", 700],
+        ["listening", 3800],
+        ["thinking", 1400],
+      ];
+      let ci = 0;
+      let timer = null;
+      function runCycle() {
+        clearTimeout(timer);
+        if (stateMode !== "auto") return;
+        const [s, ms] = CYCLE[ci % CYCLE.length];
+        pillState = s;
+        applyPillState();
+        ci += 1;
+        timer = setTimeout(runCycle, ms);
+      }
+
+      // ---- wiring ----
+      $("prev").onclick = () => go(-1);
+      $("next").onclick = () => go(1);
+      addEventListener("keydown", (e) => {
+        const t = e.target;
+        if (t.closest && t.closest("input, textarea, [contenteditable]")) return;
+        if (e.key === "ArrowLeft") go(-1);
+        if (e.key === "ArrowRight") go(1);
+      });
+      document.querySelectorAll("#themeSeg button").forEach(
+        (b) =>
+          (b.onclick = () => {
+            theme = b.dataset.v;
+            render();
+          })
+      );
+      document.querySelectorAll("#stateSeg button").forEach(
+        (b) =>
+          (b.onclick = () => {
+            stateMode = b.dataset.v;
+            if (stateMode === "auto") {
+              ci = 0;
+              render();
+              runCycle();
+            } else {
+              clearTimeout(timer);
+              pillState = stateMode;
+              render();
+            }
+          })
+      );
+      $("pill").onclick = () => {
+        stateMode = "manual";
+        clearTimeout(timer);
+        pillState = pillState === "listening" ? "thinking" : "listening";
+        render();
+      };
+
+      render();
+      runCycle();
+    </script>
+  </body>
+</html>
