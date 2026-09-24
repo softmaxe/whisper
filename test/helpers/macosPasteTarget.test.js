@@ -18,6 +18,10 @@ test(
     assert.ok(start >= 0 && end > start);
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), "openwhispr-paste-target-"));
     t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+    const electronApp = path.join(directory, "Electron App.app");
+    fs.mkdirSync(path.join(electronApp, "Contents/Frameworks/Electron Framework.framework"), {
+      recursive: true,
+    });
     const harness = path.join(directory, "main.swift");
     const binary = path.join(directory, "paste-target-test");
     // Compile the actual probe with AX responses supplied by a fake application.
@@ -43,11 +47,14 @@ final class MockWorkspace {
 }
 enum NSWorkspace { static let shared = MockWorkspace() }
 var runningBundles: [pid_t: String] = [:]
+var runningBundleURLs: [pid_t: URL] = [:]
 final class NSRunningApplication {
     let bundleIdentifier: String?
+    let bundleURL: URL?
     init?(processIdentifier: pid_t) {
         guard let bundle = runningBundles[processIdentifier] else { return nil }
         bundleIdentifier = bundle
+        bundleURL = runningBundleURLs[processIdentifier]
     }
 }
 // Keyboard focus is reported by the system-wide element, separately from the
@@ -150,7 +157,7 @@ func pasteMenu(enabled: Bool, modifiers: Int = 0, command: String = "V") -> AXUI
 }
 func configure(
     _ focused: AXUIElement?, menu: AXUIElement? = nil,
-    bundleIdentifier: String = "com.example.editor"
+    bundleIdentifier: String = "com.example.editor", bundleURL: URL? = nil
 ) {
     application = AXUIElement()
     application.attributes[kAXFocusedUIElementAttribute] = focused
@@ -165,6 +172,7 @@ func configure(
         processIdentifier: 42, bundleIdentifier: bundleIdentifier
     )
     runningBundles = [42: bundleIdentifier]
+    runningBundleURLs = bundleURL.map { [42: $0] } ?? [:]
     focusedApplicationPid = 42
     ProcessInfo.processInfo.time = 0
     ProcessInfo.processInfo.step = 0
@@ -329,6 +337,27 @@ for browser in [
     switchOnRead = true
     expect(browser + " rich editor loses app focus", .notPasteable)
 }
+
+// Electron apps such as Claude desktop embed Chromium: their Paste menu stays
+// enabled while a page container has focus, exactly as in a browser.
+let electronURL = URL(fileURLWithPath: ${JSON.stringify(electronApp)})
+let electron = "com.anthropic.claudefordesktop"
+for role in ["AXGroup", "AXWebArea", "AXWindow", "AXScrollArea", "AXButton"] {
+    configure(element(role), menu: pasteMenu(enabled: true), bundleIdentifier: electron,
+              bundleURL: electronURL)
+    expect("Electron page without an input cursor", .notPasteable)
+}
+configure(nil, menu: pasteMenu(enabled: true), bundleIdentifier: electron, bundleURL: electronURL)
+expect("Electron dormant AX with enabled Paste", .notPasteable)
+configure(element("AXTextArea", writable: true), bundleIdentifier: electron, bundleURL: electronURL)
+expect("Electron focused input", .pasteable)
+let electronEditor = element("AXGroup")
+electronEditor.attributes["AXEditable"] = true as NSNumber
+configure(electronEditor, bundleIdentifier: electron, bundleURL: electronURL)
+expect("Electron rich editor", .pasteable)
+configure(element("AXGroup"), menu: pasteMenu(enabled: true), bundleIdentifier: electron,
+          bundleURL: URL(fileURLWithPath: "/nonexistent/Native.app"))
+expect("native app keeps the Paste menu fallback", .pasteable)
 
 let coldEditor = element("AXTextArea", writable: true)
 configure(nil, bundleIdentifier: "com.brave.Browser")
