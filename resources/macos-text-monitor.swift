@@ -263,16 +263,26 @@ func keyboardFocusPid() -> pid_t? {
     return NSWorkspace.shared.frontmostApplication?.processIdentifier
 }
 
+// Electron apps such as Claude desktop embed Chromium and keep its always
+// enabled Paste menu, so a page container with focus looks pasteable.
+func isElectronApp(_ application: NSRunningApplication?) -> Bool {
+    guard let bundleURL = application?.bundleURL else { return false }
+    let framework = bundleURL.appendingPathComponent("Contents/Frameworks/Electron Framework.framework")
+    return FileManager.default.fileExists(atPath: framework.path)
+}
+
 func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
     guard keyboardFocusPid() == targetPid else { return .notPasteable }
-    let bundleIdentifier = NSRunningApplication(processIdentifier: targetPid)?.bundleIdentifier ?? ""
+    let application = NSRunningApplication(processIdentifier: targetPid)
+    let bundleIdentifier = application?.bundleIdentifier ?? ""
     // Include browser release channels such as Brave beta/nightly and Chrome
     // Canary. An unavailable AX tree must use manual copy instead of a menu guess.
     let isBrowser = [
         "com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.brave.Browser",
         "com.google.Chrome", "org.chromium.Chromium", "com.microsoft.edgemac",
         "org.mozilla.firefox", "company.thebrowser.Browser"
-    ].contains { bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".") }
+    ].contains { bundleIdentifier == $0 || bundleIdentifier.hasPrefix($0 + ".") } ||
+        isElectronApp(application)
     let requiresWritableTextField = isBrowser || bundleIdentifier == "com.apple.finder"
     guard AXIsProcessTrusted() else {
         return requiresWritableTextField ? .notPasteable : .unknown
