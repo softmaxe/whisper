@@ -46,6 +46,7 @@
     "quality-check": "npm run lint && npm run typecheck && npm run i18n:check && npm test",
     "i18n:check": "node scripts/check-i18n.js",
     "preview": "cd src && vite preview",
+    "prototype:voice-pill": "cd src && vite --port 5190 --open /prototype-voice-pill.html",
     "clean": "node cleanup.js"
   },
   "keywords": [
