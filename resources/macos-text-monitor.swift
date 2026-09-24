@@ -281,6 +281,41 @@ func readCurrentValue() -> String? {
     return str
 }
 
+func resolveFocusedElement(_ appElement: AXUIElement, pid: pid_t, maxRetries: Int = 5) -> AXUIElement? {
+    for attempt in 1...maxRetries {
+        var elementValue: AnyObject?
+        let elementResult = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &elementValue
+        )
+
+        if elementResult == .success, let element = elementValue {
+            if attempt > 1 {
+                writeError("Got focused element on attempt \(attempt)")
+            }
+            return (element as! AXUIElement)
+        }
+        writeError("Attempt \(attempt)/\(maxRetries): Cannot get focused element for PID \(pid) (error: \(elementResult.rawValue))")
+
+        // Chromium and Electron apps (Claude, Codex) keep their AX tree dormant
+        // until a client reads it, answering -25212 for the focused element
+        // indefinitely. Wake it once with the same read-only walk the paste
+        // probe uses; native apps resolve on the first attempt and skip this.
+        if attempt == 1 {
+            _ = pasteTargetAttribute(appElement, kAXRoleAttribute)
+            prepareBrowserAccessibility(appElement, deadline: ProcessInfo.processInfo.systemUptime + 0.3)
+            // The walk shortens the messaging timeout; restore the default.
+            AXUIElementSetMessagingTimeout(appElement, 0)
+        }
+
+        if attempt < maxRetries {
+            Thread.sleep(forTimeInterval: 0.3)
+        }
+    }
+    return nil
+}
+
 func observerCallback(
     _ observer: AXObserver,
     _ element: AXUIElement,
@@ -367,33 +402,7 @@ if !selectionReadMode && !editableTargetMode, let line = readLine(strippingNewli
 // Target the specific application by PID (passed from the Electron host
 // which captures it BEFORE the overlay steals focus).
 let appElement = AXUIElementCreateApplication(monitoredPid)
-let maxRetries = 5
-var focusedElement: AXUIElement? = nil
-
-for attempt in 1...maxRetries {
-    var elementValue: AnyObject?
-    let elementResult = AXUIElementCopyAttributeValue(
-        appElement,
-        kAXFocusedUIElementAttribute as CFString,
-        &elementValue
-    )
-
-    if elementResult == .success, let element = elementValue {
-        focusedElement = (element as! AXUIElement)
-        if attempt > 1 {
-            writeError("Got focused element on attempt \(attempt)")
-        }
-        break
-    } else {
-        writeError("Attempt \(attempt)/\(maxRetries): Cannot get focused element for PID \(monitoredPid) (error: \(elementResult.rawValue))")
-    }
-
-    if attempt < maxRetries {
-        Thread.sleep(forTimeInterval: 0.3)
-    }
-}
-
-guard let resolvedElement = focusedElement else {
+guard let resolvedElement = resolveFocusedElement(appElement, pid: monitoredPid) else {
     writeOutput("NO_ELEMENT")
     exit(1)
 }
