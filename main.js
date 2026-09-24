@@ -330,6 +330,8 @@ async function startApp() {
   // The tray's listen item is a toggle, so it has to rebuild when dictation
   // starts or stops.
   windowManager.onDictationStateChanged = () => trayManager.updateTrayMenu();
+  windowManager.onMainWindowReplaced = (mainWindow) =>
+    trayManager.setWindows(mainWindow, windowManager.controlPanelWindow);
   trayManager.setCreateControlPanelCallback(() => windowManager.createControlPanelWindow());
   await trayManager.setVisible(environmentManager.getMenuBarIconVisible());
 

@@ -33,6 +33,9 @@ const {
 // A hidden control panel still holds a full renderer process. Keep it briefly
 // so reopening right away stays instant, then release it.
 const CONTROL_PANEL_RELEASE_DELAY_MS = 60_000;
+// Electron raises "show" on macOS when a shown window becomes visible on
+// screen, normally within a few frames of showInactive().
+const MAIN_WINDOW_ON_SCREEN_TIMEOUT_MS = 500;
 const { centeredBounds, clampedBounds } = require("./onboardingWindowBounds");
 const { createHotkeyRepeatGate } = require("./hotkeyRepeatGate");
 
@@ -69,6 +72,14 @@ class WindowManager {
     this._activeHorizontalDirection = null;
     this._isDictatingToggle = false;
     this._dictationLifecycleState = DICTATION_LIFECYCLE.IDLE;
+    // Follows Electron's macOS "show"/"hide", which report the window server's
+    // occlusion state and so trail showInactive()/hide().
+    this._mainWindowOnScreen = false;
+    this._mainWindowOnScreenWatch = null;
+    this._mainWindowStranded = false;
+    this._replacingMainWindow = false;
+    // Set by main.js so the tray follows a replaced dictation window.
+    this.onMainWindowReplaced = null;
 
     app.on("before-quit", () => {
       this.isQuitting = true;
@@ -77,6 +88,12 @@ class WindowManager {
   }
 
   async createMainWindow() {
+    await this._createMainWindowSurface();
+    await this.initializeHotkey();
+    MenuManager.setupMainMenu(() => this.openSettings());
+  }
+
+  async _createMainWindowSurface() {
     const cursorPos = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursorPos);
     const position = WindowPositionUtil.getMainWindowPosition(
@@ -127,9 +144,7 @@ class WindowManager {
     });
 
     await this.loadMainWindow();
-    await this.initializeHotkey();
     this.dragManager.setTargetWindow(this.mainWindow);
-    MenuManager.setupMainMenu(() => this.openSettings());
   }
 
   setMainWindowInteractivity(shouldCapture) {
@@ -601,6 +616,7 @@ class WindowManager {
     this._dictationLifecycleState = nextState;
     this._isDictatingToggle = isDictationRecording(nextState);
     this.onDictationStateChanged?.();
+    if (nextState === DICTATION_LIFECYCLE.IDLE) void this._replaceStrandedMainWindowWhenIdle();
   }
 
   // The tray's listen item is a toggle over this state, like the pill's.
@@ -1072,6 +1088,9 @@ class WindowManager {
       this.mainWindow.restore();
     }
     if (!this.mainWindow.isVisible()) {
+      // A window shown again before its hide reached the screen never left it
+      // and raises no "show".
+      if (!this._mainWindowOnScreen) this._expectMainWindowOnScreen();
       if (typeof this.mainWindow.showInactive === "function") {
         this.mainWindow.showInactive();
       } else {
@@ -1080,6 +1099,67 @@ class WindowManager {
     }
     if (focus) {
       this.mainWindow.focus();
+    }
+  }
+
+  // macOS can drop the panel's all-Spaces membership (seen after a clamshell
+  // sleep) while AppKit still reports it, so re-applying it is a no-op. The
+  // window is then ordered onto a Space the user is not on: isVisible() is
+  // true but it never reaches the screen, and dictation runs without its pill.
+  // Only a new native window recovers.
+  _expectMainWindowOnScreen() {
+    this._clearMainWindowOnScreenWatch();
+    const window = this.mainWindow;
+    const settle = () => this._clearMainWindowOnScreenWatch();
+    const timer = setTimeout(() => {
+      this._clearMainWindowOnScreenWatch();
+      if (window !== this.mainWindow || window.isDestroyed() || !window.isVisible()) return;
+      debugLogger.warn("Dictation panel did not reach the screen", undefined, "window");
+      this._mainWindowStranded = true;
+      void this._replaceStrandedMainWindowWhenIdle();
+    }, MAIN_WINDOW_ON_SCREEN_TIMEOUT_MS);
+    window.once("show", settle);
+    window.once("hide", settle);
+    this._mainWindowOnScreenWatch = () => {
+      clearTimeout(timer);
+      window.removeListener("show", settle);
+      window.removeListener("hide", settle);
+    };
+  }
+
+  _clearMainWindowOnScreenWatch() {
+    const dispose = this._mainWindowOnScreenWatch;
+    this._mainWindowOnScreenWatch = null;
+    dispose?.();
+  }
+
+  // The dictation renderer owns recording and paste, so the window is only
+  // replaced between dictations. The hotkey registration stays in place.
+  async _replaceStrandedMainWindowWhenIdle() {
+    if (
+      !this._mainWindowStranded ||
+      this._replacingMainWindow ||
+      this._dictationLifecycleState !== DICTATION_LIFECYCLE.IDLE ||
+      this.macCompoundPushState
+    ) {
+      return;
+    }
+    this._mainWindowStranded = false;
+    this._replacingMainWindow = true;
+    try {
+      debugLogger.warn("Replacing the dictation panel window", undefined, "window");
+      this.mainWindow?.destroy();
+      await this._createMainWindowSurface();
+      this.hotkeyManager.mainWindow = this.mainWindow;
+      this.onMainWindowReplaced?.(this.mainWindow);
+    } catch (error) {
+      debugLogger.error(
+        "Failed to replace the dictation panel window",
+        { error: error.message },
+        "window"
+      );
+    } finally {
+      this._replacingMainWindow = false;
     }
   }
 
@@ -1308,6 +1388,8 @@ class WindowManager {
     if (!this.mainWindow) {
       return;
     }
+    const window = this.mainWindow;
+    this._mainWindowOnScreen = false;
 
     // Safety timeout: force show the window if ready-to-show doesn't fire within 10 seconds
     const showTimeout = setTimeout(() => {
@@ -1330,7 +1412,12 @@ class WindowManager {
     });
 
     this.mainWindow.on("show", () => {
+      if (window === this.mainWindow) this._mainWindowOnScreen = true;
       this.enforceMainWindowOnTop();
+    });
+
+    this.mainWindow.on("hide", () => {
+      if (window === this.mainWindow) this._mainWindowOnScreen = false;
     });
 
     this.mainWindow.on("focus", () => {
