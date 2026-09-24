@@ -1,6 +1,6 @@
 # Assets
 
-Whisper uses application artwork and provider icons inherited from OpenWhispr.
+Whisper uses its own W monogram for the app and menu bar icons, and provider icons inherited from OpenWhispr.
 
 - `icon.icns` is the macOS app icon.
 - `openwhispr.icon/` is the Icon Composer source for `scripts/compile-macos-icon.js`. The source asset keeps its upstream name.
