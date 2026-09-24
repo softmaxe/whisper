@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 // Mirrors of the shared pill contract, pinned against it below so these
 // fixtures can never drift from the geometry the component actually renders.
-const PILL = { w: 98, h: 36 };
+const PILL = { w: 84, h: 30 };
 const R = 14;
 const GAP = 8;
 const SIZE = 28;
@@ -13,7 +13,7 @@ test("the fusion fixtures still match the shared pill contract", async () => {
     "../../src/helpers/voicePillPresentation.js"
   );
   assert.deepEqual(
-    { w: VOICE_PILL_FOOTPRINT.recording.width, h: VOICE_PILL_FOOTPRINT.recording.height },
+    { w: VOICE_PILL_FOOTPRINT.listening.width, h: VOICE_PILL_FOOTPRINT.listening.height },
     PILL
   );
   assert.equal(VOICE_PILL_CANCEL.size, SIZE);
@@ -53,12 +53,12 @@ test("swallowed cancel stays pill-shaped at in-between footprints", async () => 
     "../../src/components/dictation/liquidFusion.ts"
   );
   // The skin tweens through these while the pill's own width/height
-  // transition runs (40×40 idle ⇄ 98×36 recording), so the t=0 tangency must
+  // transition runs (40×40 idle ⇄ 84×30 listening), so the t=0 tangency must
   // hold for every in-between capsule, not just the resting footprints.
   for (const pill of [
-    { w: 55, h: 39 },
-    { w: 69, h: 38 },
-    { w: 84, h: 37 },
+    { w: 51, h: 37.5 },
+    { w: 62, h: 35 },
+    { w: 73, h: 32.5 },
   ]) {
     const out = traceFusedOutline(
       { pill, circle: { cx: pill.w - R, cy: pill.h / 2, r: R } },

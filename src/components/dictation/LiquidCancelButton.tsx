@@ -107,6 +107,8 @@ interface LiquidCancelButtonProps {
   /** The pill state the skin replaces; keys the skin's stroke/fill to the
    *  pill's own chrome via .liquid-cancel-skin[data-pill-state] CSS. */
   pillState: VoicePillState;
+  /** The pill is the always-black Flow bar; the skin and glyph follow it. */
+  flowBar?: boolean;
   ariaLabel: string;
   onCancel: () => void;
   /** Fires when the fused skin starts/stops owning the pill surface, so the
@@ -120,6 +122,7 @@ export function LiquidCancelButton({
   pillWidth,
   pillHeight,
   pillState,
+  flowBar = false,
   ariaLabel,
   onCancel,
   onFusedSkinChange,
@@ -183,6 +186,7 @@ export function LiquidCancelButton({
           aria-hidden="true"
           className="liquid-cancel-skin absolute"
           data-pill-state={pillState}
+          data-flow-bar={flowBar || undefined}
           viewBox={`${outline.minX} ${outline.minY} ${outline.width} ${outline.height}`}
           style={{
             left: outline.minX - pillSize.w,
@@ -210,6 +214,7 @@ export function LiquidCancelButton({
         className={cn(
           "absolute right-0 top-0 flex items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40",
           !fused && "border border-border/55 bg-surface-2 shadow-sm hover:bg-surface-3",
+          fused && flowBar && "text-white/70 hover:text-white",
           !buttonInteractive && "pointer-events-none"
         )}
         style={{

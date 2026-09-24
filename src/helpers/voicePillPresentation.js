@@ -2,16 +2,42 @@ import { LIVE_TRANSCRIPT_SURFACE_LIMITS } from "./voiceSurfaceGeometry.mjs";
 
 export { LIVE_TRANSCRIPT_SURFACE_LIMITS };
 
-// The pill's two rendered footprints (px). This is a real cross-process
-// contract: WINDOW_SIZES.RECORDING in src/helpers/windowConfig.js sizes the
-// native overlay window around the compact recording pill, so these values
-// and that window size may only change together.
+// The pill's rendered footprints (px), keyed by resolveVoicePillShape. This is
+// a real cross-process contract: WINDOW_SIZES.RECORDING in
+// src/helpers/windowConfig.js sizes the native overlay window around the
+// listening pill and its hover cancel, so these values and that window size
+// may only change together.
 export const VOICE_PILL_FOOTPRINT = Object.freeze({
   idle: Object.freeze({ width: 40, height: 40 }),
-  // 98 = 6px edge inset + 22px icon + 6px gap + 52px waveform + 12px edge
-  // inset (the waveform side keeps extra air; insets include the 1px border).
-  recording: Object.freeze({ width: 98, height: 36 }),
+  // The floating Flow bar: 16px of air either side of the 52px bar set. At
+  // least 2 × VOICE_PILL_CANCEL radius tall, so the swallowed cancel skin
+  // stays inside the capsule.
+  listening: Object.freeze({ width: 84, height: 30 }),
+  // Inside the Live Transcript footer. 98 = 6px edge inset + 22px icon + 6px
+  // gap + 52px waveform + 12px edge inset (the waveform side keeps extra air;
+  // insets include the 1px border).
+  panel: Object.freeze({ width: 98, height: 36 }),
 });
+
+/**
+ * Which footprint the pill renders. The floating pill only leaves its
+ * circular identity to listen, as the icon-less Flow bar; the Live Transcript
+ * footer keeps the identity beside its waveform.
+ */
+export function resolveVoicePillShape({
+  variant,
+  state,
+  expanded = false,
+  collapseToLogo = false,
+  waveformOnlyWhileRecording = false,
+}) {
+  const collapseToIdentity = collapseToLogo || state === "thinking";
+  const compact =
+    !collapseToIdentity &&
+    (state === "recording" || expanded || (variant === "panel" && !waveformOnlyWhileRecording));
+  if (!compact) return "idle";
+  return variant === "panel" ? "panel" : "listening";
+}
 
 // The hover cancel control that emerges beside the pill (px). Same contract:
 // WINDOW_SIZES.RECORDING must fit pill + gap + cancel inside its dock insets,
@@ -30,7 +56,7 @@ export const LISTENING_ENTRANCE_TIMING = Object.freeze({
   waveformDelayMs: 100,
 });
 
-// The pill's morph between the two VOICE_PILL_FOOTPRINT boxes. The cancel
+// The pill's morph between VOICE_PILL_FOOTPRINT boxes. The cancel
 // skin tweens its capsule geometry against the same duration and curve
 // (usePillFootprintTween), so a fused outline never drifts off the real pill —
 // one definition keeps them from diverging.
