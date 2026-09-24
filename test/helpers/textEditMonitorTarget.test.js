@@ -11,9 +11,9 @@ test("activateTargetPid resolves false when no target PID was captured", async (
 
 test("activateTargetPid resolves false for an unmapped PID", async () => {
   const m = new TextEditMonitor();
-  // Non-darwin short-circuits; darwin can't make a non-existent PID frontmost,
-  // so the confirm poll times out. Both resolve quickly to false rather than
-  // reporting a target that was never frontmost as active.
+  // Non-darwin short-circuits; darwin finds no app to activate for a
+  // non-existent PID. Both resolve quickly to false rather than reporting a
+  // target that never held keyboard focus as active.
   m.lastTargetPid = 99999999;
   const start = Date.now();
   const result = await m.activateTargetPid();

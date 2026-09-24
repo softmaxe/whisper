@@ -32,6 +32,7 @@ final class AXUIElement: NSObject {
     var attributes: [String: AnyObject] = [:]
     var writable: Set<String> = []
     var unavailable = false
+    var pid: pid_t = 0
 }
 struct MockApplication {
     let processIdentifier: pid_t
@@ -41,6 +42,23 @@ final class MockWorkspace {
     var frontmostApplication: MockApplication? = MockApplication(processIdentifier: 42)
 }
 enum NSWorkspace { static let shared = MockWorkspace() }
+var runningBundles: [pid_t: String] = [:]
+final class NSRunningApplication {
+    let bundleIdentifier: String?
+    init?(processIdentifier: pid_t) {
+        guard let bundle = runningBundles[processIdentifier] else { return nil }
+        bundleIdentifier = bundle
+    }
+}
+// Keyboard focus is reported by the system-wide element, separately from the
+// menu bar app, so floating launchers can hold focus over another app.
+let systemWide = AXUIElement()
+var focusedApplicationPid: pid_t? = 42
+func AXUIElementCreateSystemWide() -> AXUIElement { systemWide }
+func AXUIElementGetPid(_ element: AXUIElement, _ pid: UnsafeMutablePointer<pid_t>) -> AXError {
+    pid.pointee = element.pid
+    return .success
+}
 final class MockClock {
     var time = 0.0
     var step = 0.0
@@ -67,15 +85,25 @@ func AXUIElementCreateApplication(_ pid: pid_t) -> AXUIElement { application }
 func AXUIElementGetTypeID() -> CFTypeID { CFGetTypeID(AXUIElement()) }
 @discardableResult
 func AXUIElementSetMessagingTimeout(_ element: AXUIElement, _ timeout: Float) -> AXError {
+    guard element !== systemWide else { fatalError("System-wide timeout is process-global") }
     guard timeout > 0 && timeout <= 0.1 else { fatalError("Unbounded AX query") }
     return .success
 }
 func AXUIElementCopyAttributeValue(
     _ element: AXUIElement, _ attribute: CFString, _ value: UnsafeMutablePointer<AnyObject?>
 ) -> AXError {
+    if element === systemWide {
+        guard attribute as String == kAXFocusedApplicationAttribute,
+              let pid = focusedApplicationPid else { return .noValue }
+        let focused = AXUIElement()
+        focused.pid = pid
+        value.pointee = focused
+        return .success
+    }
     reads += 1
     if switchOnRead {
         NSWorkspace.shared.frontmostApplication = MockApplication(processIdentifier: 99)
+        focusedApplicationPid = 99
     }
     if element.unavailable { return .cannotComplete }
     if attribute as String == kAXRoleAttribute { onRoleRead?(element) }
@@ -136,11 +164,13 @@ func configure(
     NSWorkspace.shared.frontmostApplication = MockApplication(
         processIdentifier: 42, bundleIdentifier: bundleIdentifier
     )
+    runningBundles = [42: bundleIdentifier]
+    focusedApplicationPid = 42
     ProcessInfo.processInfo.time = 0
     ProcessInfo.processInfo.step = 0
 }
-func expect(_ name: String, _ expected: PasteTargetStatus) {
-    let actual = pasteTargetStatus(for: 42)
+func expect(_ name: String, _ expected: PasteTargetStatus, target: pid_t = 42) {
+    let actual = pasteTargetStatus(for: target)
     guard actual == expected else {
         fatalError(name + ": expected " + expected.rawValue + ", got " + actual.rawValue)
     }
@@ -391,6 +421,7 @@ for bundle in ["com.mitchellh.ghostty", "com.mitchellh.ghostty.debug"] {
     guard reads == 0 else { fatalError("Untrusted Ghostty probe queried AX") }
     configure(terminal, bundleIdentifier: bundle)
     NSWorkspace.shared.frontmostApplication = MockApplication(processIdentifier: 99)
+    focusedApplicationPid = 99
     expect("Ghostty is not the active app", .notPasteable)
     configure(terminal, bundleIdentifier: bundle)
     switchOnRead = true
@@ -440,8 +471,35 @@ expect("missing Accessibility trust", .unknown)
 guard reads == 0 else { fatalError("Untrusted helper queried AX") }
 configure(element("AXTextField", writable: true))
 NSWorkspace.shared.frontmostApplication = MockApplication(processIdentifier: 99)
+focusedApplicationPid = 99
 expect("different active app", .notPasteable)
 guard reads == 0 else { fatalError("Inactive target queried AX") }
+
+// Raycast's launcher is a floating panel: it holds keyboard focus while the
+// app behind it (here Brave) still owns the menu bar.
+let launcherSearch = element("AXTextField", writable: true)
+configure(launcherSearch, bundleIdentifier: "com.raycast.macos")
+NSWorkspace.shared.frontmostApplication = MockApplication(
+    processIdentifier: 7, bundleIdentifier: "com.brave.Browser"
+)
+runningBundles[7] = "com.brave.Browser"
+expect("launcher search field holding keyboard focus", .pasteable)
+guard keyboardFocusPid() == 42 else { fatalError("Keyboard focus did not name the launcher") }
+expect("menu bar app behind a launcher", .notPasteable, target: 7)
+configure(launcherSearch, bundleIdentifier: "com.raycast.macos")
+focusedApplicationPid = 7
+expect("launcher closed before paste", .notPasteable)
+
+configure(element("AXTextField", writable: true))
+focusedApplicationPid = nil
+expect("unavailable keyboard focus falls back to the active app", .pasteable)
+guard keyboardFocusPid() == 42 else { fatalError("Keyboard focus ignored the active app") }
+NSWorkspace.shared.frontmostApplication = MockApplication(processIdentifier: 99)
+expect("fallback still rejects an inactive target", .notPasteable)
+guard keyboardFocusPid() == 99 else { fatalError("Keyboard focus fallback changed") }
+configure(element("AXTextField", writable: true))
+trusted = false
+guard keyboardFocusPid() == 42 else { fatalError("Untrusted keyboard focus must use the active app") }
 configure(element("AXTextField", writable: true))
 switchOnRead = true
 expect("focus changed during AX probe", .notPasteable)

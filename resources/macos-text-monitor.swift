@@ -245,12 +245,27 @@ func focusedPasteTargetStatus(
     return .unknown
 }
 
-func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
-    guard let application = NSWorkspace.shared.frontmostApplication,
-          application.processIdentifier == targetPid else {
-        return .notPasteable
+// The app that receives keystrokes. A floating launcher such as Raycast holds
+// keyboard focus while the app behind it still owns the menu bar, so the
+// frontmost application is only a fallback when AX cannot name the owner.
+// Reads the system-wide element directly: a messaging timeout set on it would
+// become this process's global AX timeout.
+func keyboardFocusPid() -> pid_t? {
+    let systemWide: AXUIElement = AXUIElementCreateSystemWide()
+    var focused: AnyObject?
+    var pid: pid_t = 0
+    if AXIsProcessTrusted(),
+       AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &focused) == .success,
+       let application = pasteTargetElement(focused),
+       AXUIElementGetPid(application, &pid) == .success, pid > 0 {
+        return pid
     }
-    let bundleIdentifier = application.bundleIdentifier ?? ""
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier
+}
+
+func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
+    guard keyboardFocusPid() == targetPid else { return .notPasteable }
+    let bundleIdentifier = NSRunningApplication(processIdentifier: targetPid)?.bundleIdentifier ?? ""
     // Include browser release channels such as Brave beta/nightly and Chrome
     // Canary. An unavailable AX tree must use manual copy instead of a menu guess.
     let isBrowser = [
@@ -267,9 +282,7 @@ func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
         AXUIElementCreateApplication(targetPid), requiresWritableTextField: requiresWritableTextField,
         isBrowser: isBrowser, bundleIdentifier: bundleIdentifier
     )
-    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid else {
-        return .notPasteable
-    }
+    guard keyboardFocusPid() == targetPid else { return .notPasteable }
     return status
 }
 
@@ -332,6 +345,7 @@ func observerCallback(
 //        macos-text-monitor --editable-target <pid>
 //        macos-text-monitor --paste-target <pid>
 //        macos-text-monitor --window-bounds <pid>
+//        macos-text-monitor --focused-app
 let selectionReadMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--selected-text"
 let editableTargetMode = CommandLine.arguments.count >= 3 &&
@@ -340,12 +354,23 @@ let pasteTargetMode = CommandLine.arguments.count >= 2 &&
     CommandLine.arguments[1] == "--paste-target"
 let windowBoundsMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--window-bounds"
+// Names the Target app at hotkey press time. Takes no PID: it reports which
+// app holds keyboard focus, so it runs before the PID argument is parsed.
+if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--focused-app" {
+    guard let pid = keyboardFocusPid() else {
+        writeOutput("UNKNOWN")
+        exit(1)
+    }
+    writeOutput("FOCUSED_PID:\(pid)")
+    exit(0)
+}
+
 let pidArgumentIndex = selectionReadMode || editableTargetMode || pasteTargetMode || windowBoundsMode ? 2 : 1
 
 guard CommandLine.arguments.count > pidArgumentIndex,
       let targetPid = Int32(CommandLine.arguments[pidArgumentIndex]),
       targetPid > 0 else {
-    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--paste-target|--window-bounds] <pid>")
+    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--paste-target|--window-bounds] <pid> | --focused-app")
     writeOutput(pasteTargetMode ? "UNKNOWN" : "NO_ELEMENT")
     exit(1)
 }
