@@ -19,9 +19,16 @@ function isDictationRecording(state) {
   return normalizeDictationLifecycle(state) === DICTATION_LIFECYCLE.RECORDING;
 }
 
+// Opening the microphone or recording: a hotkey press now ends Dictation.
+function isDictationActive(state) {
+  const lifecycle = normalizeDictationLifecycle(state);
+  return lifecycle === DICTATION_LIFECYCLE.PREPARING || lifecycle === DICTATION_LIFECYCLE.RECORDING;
+}
+
 module.exports = {
   DICTATION_LIFECYCLE,
   normalizeDictationLifecycle,
   shouldIgnoreDictationHotkey,
   isDictationRecording,
+  isDictationActive,
 };

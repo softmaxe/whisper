@@ -94,7 +94,7 @@
     "model": "模型",
     "loading": "加载中...",
     "hold": "按住",
-    "tap": "点按",
+    "tap": "双击",
     "close": "关闭",
     "save": "保存"
   },
@@ -468,6 +468,8 @@
       },
       "hotkey": {
         "activationMode": "激活模式",
+        "activationModeHoldDescription": "按住快捷键说话，松开即结束。",
+        "activationModeTapDescription": "双击快捷键开始免提听写，再按一下结束。组合键按一下即可开始或结束。",
         "description": "用于开始和停止语音听写的组合键",
         "resetToDefault": "重置为 {{hotkey}}",
         "title": "听写快捷键"

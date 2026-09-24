@@ -16,6 +16,7 @@ const {
   normalizeDictationLifecycle,
   shouldIgnoreDictationHotkey,
   isDictationRecording,
+  isDictationActive,
 } = require("./dictationLifecycle");
 const { DEV_SERVER_PORT } = DevServerManager;
 const DRAG_MOVE_TOLERANCE_PX = 2;
@@ -626,6 +627,40 @@ class WindowManager {
 
   isDictationProcessing() {
     return shouldIgnoreDictationHotkey(this._dictationLifecycleState);
+  }
+
+  isDictationActive() {
+    return isDictationActive(this._dictationLifecycleState);
+  }
+
+  // A Tap mode key combination: the renderer owns the real recording state and
+  // may decline the toggle (mic error, Esc cancel), so each press captures the
+  // paste target and the start guess only pre-warms the mic.
+  sendToggleDictation() {
+    if (this._onboardingActive) return;
+    if (this.hotkeyManager.isInListeningMode()) {
+      return;
+    }
+    if (shouldIgnoreDictationHotkey(this._dictationLifecycleState)) {
+      return;
+    }
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      const isStarting = !this._isDictatingToggle;
+      const startupRequest = isStarting ? this.createRecordingStartupRequest() : undefined;
+      const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+      if (!isStarting) {
+        this._mainWindowPlacementCoordinator.cancelPending();
+      }
+      this.showDictationPanel({ reposition: isStarting, targetPidPromise });
+      if (isStarting) {
+        this.sendPrepareDictation({ startupRequest });
+      }
+      this._preparedStartupRequest = null;
+      this.mainWindow.webContents.send(
+        "toggle-dictation",
+        startupRequest ? { startupRequest } : undefined
+      );
+    }
   }
 
   sendStartDictation() {

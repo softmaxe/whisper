@@ -337,3 +337,25 @@ test("no state path means no state argument", () => {
 
   assert.deepEqual(spawnCalls[0].args, ["--suppress-system-globe-action"]);
 });
+
+test("listener output becomes hotkey press, release, and interruption events", () => {
+  const { GlobeKeyManager, spawnCalls } = loadManager();
+  const manager = new GlobeKeyManager();
+  const events = [];
+  for (const name of ["right-modifier-down", "right-modifier-up", "hotkey-interrupted"]) {
+    manager.on(name, (...args) => events.push([name, ...args]));
+  }
+
+  manager.start();
+  spawnCalls[0].child.stdout.emit(
+    "data",
+    "RIGHT_MOD_DOWN:RightCommand\nHOTKEY_INTERRUPTED\nRIGHT_MOD_UP:RightCommand\n"
+  );
+  manager.stop();
+
+  assert.deepEqual(events, [
+    ["right-modifier-down", "RightCommand"],
+    ["hotkey-interrupted"],
+    ["right-modifier-up", "RightCommand"],
+  ]);
+});
