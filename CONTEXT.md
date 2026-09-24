@@ -27,3 +27,30 @@ The app selected to receive the text produced by a dictation session.
 **Automatic paste**:
 Insertion of the completed dictation text into the target app without a manual
 paste command.
+
+**Dictation hotkey**:
+The key, key combination, or mouse button the user assigns to start and stop
+Dictation.
+
+**Clean press**:
+A press of the Dictation hotkey released without any other key, including
+another modifier, or mouse button pressed in between. A press interrupted this
+way is void: it neither starts nor stops Dictation, and cancels any Dictation it
+started.
+
+**Double tap**:
+Two short Clean presses of the Dictation hotkey in quick succession.
+
+**Hold mode**:
+The activation mode in which Dictation lasts while the Dictation hotkey is held
+and ends when it is released.
+_Avoid_: Push-to-talk
+
+**Tap mode**:
+The activation mode in which a Double tap starts Hands-free dictation and the
+next Clean press ends it. A Dictation hotkey that combines several keys starts
+and ends Dictation with a single press instead.
+
+**Hands-free dictation**:
+Dictation that continues after the Dictation hotkey is released, until the next
+Clean press or cancellation.
