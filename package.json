@@ -1,6 +1,6 @@
 {
   "name": "whisper",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "description": "macOS dictation with self-hosted speech recognition and text cleanup",
   "main": "main.js",
   "private": true,
