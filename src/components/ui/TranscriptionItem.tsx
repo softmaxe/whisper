@@ -139,181 +139,183 @@ export default function TranscriptionItem({
   return (
     <div
       className={cn(
-        "group/row px-4 py-3 transition-colors duration-150",
+        "group/row flex gap-4 rounded-xl px-3 py-2.5 transition-colors duration-150",
         isFailed
           ? "bg-destructive/5"
           : isDiscarded
             ? "bg-muted/20 opacity-80"
-            : "hover:bg-muted/20 dark:hover:bg-white/2",
-        // Translation rows get a 2px primary accent; ps-[14px] keeps text aligned with the other rows.
-        item.route_kind === "translation" && "border-s-2 border-s-primary/70 ps-[14px]"
+            : "hover:bg-muted/30 dark:hover:bg-white/3",
+        // Translation rows get a 2px primary accent; ps-2.5 keeps the time aligned with the other rows.
+        item.route_kind === "translation" && "rounded-s-none border-s-2 border-s-primary/70 ps-2.5"
       )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-xs tabular-nums text-muted-foreground">{formattedTime}</span>
-        <div
-          className={cn(
-            "-me-1.5 flex items-center gap-1 transition-opacity duration-150",
-            // Actions surface on hover, keyboard focus, or while the menu is open; failed and
-            // discarded rows keep them visible because recovery is the point of the row.
-            isTranscribed &&
-              "opacity-0 group-hover/row:opacity-100 has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100"
-          )}
-        >
-          {isTranscribed && (
-            <Tooltip content={t("controlPanel.history.copyText")}>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => onCopy(item.text)}
-                className={ACTION_BUTTON_CLASS}
-              >
-                <Copy size={13} />
-              </Button>
-            </Tooltip>
-          )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                disabled={isRetrying}
-                aria-label={t("controlPanel.history.moreActions")}
-                className={ACTION_BUTTON_CLASS}
-              >
-                {isRetrying ? (
-                  <Loader2 size={13} className="animate-spin" />
-                ) : (
-                  <MoreVertical size={13} />
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {menuActions.map(({ key, icon: Icon, label, onSelect, destructive }) => (
-                <DropdownMenuItem
-                  key={key}
-                  onSelect={onSelect}
-                  className={cn(
-                    "gap-2.5",
-                    destructive && "text-destructive focus:bg-destructive/8 focus:text-destructive"
-                  )}
-                >
-                  <Icon size={14} className="shrink-0 opacity-70" />
-                  {label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-
-      <div className="mt-1.5">
-        {isFailed ? (
-          <div className="flex items-start gap-2">
-            <AlertCircle size={14} className="mt-0.5 shrink-0 text-destructive" />
-            <div className="min-w-0">
-              <p className="text-sm font-medium text-destructive">
-                {t("controlPanel.history.transcriptionFailed")}
-              </p>
-              {item.error_message && (
-                <p className="mt-0.5 text-xs leading-relaxed wrap-break-word text-muted-foreground">
-                  {item.error_message}
+      {/* The time sits in a fixed gutter so every entry's text starts on the same edge. */}
+      <span className="w-16 shrink-0 whitespace-nowrap pt-1 text-xs tabular-nums text-muted-foreground/70">
+        {formattedTime}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div>
+          {isFailed ? (
+            <div className="flex items-start gap-2">
+              <AlertCircle size={14} className="mt-0.5 shrink-0 text-destructive" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-destructive">
+                  {t("controlPanel.history.transcriptionFailed")}
                 </p>
-              )}
-              {isConfigError && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {hasAudio ? (
-                    <>
+                {item.error_message && (
+                  <p className="mt-0.5 text-xs leading-relaxed wrap-break-word text-muted-foreground">
+                    {item.error_message}
+                  </p>
+                )}
+                {isConfigError && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {hasAudio ? (
+                      <>
+                        <button
+                          onClick={() => onOpenSettings?.()}
+                          className="cursor-pointer text-primary hover:underline"
+                        >
+                          {t("controlPanel.history.failedCtaSettings")}
+                        </button>{" "}
+                        {t("controlPanel.history.failedCtaAndRetry")}
+                      </>
+                    ) : (
                       <button
                         onClick={() => onOpenSettings?.()}
                         className="cursor-pointer text-primary hover:underline"
                       >
-                        {t("controlPanel.history.failedCtaSettings")}
-                      </button>{" "}
-                      {t("controlPanel.history.failedCtaAndRetry")}
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => onOpenSettings?.()}
-                      className="cursor-pointer text-primary hover:underline"
+                        {t("controlPanel.history.failedCtaSettingsOnly")}
+                      </button>
+                    )}
+                  </p>
+                )}
+                {isLimitError && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("controlPanel.history.failedLimitReached")}
+                  </p>
+                )}
+                {isOfflineError && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("controlPanel.history.failedOffline")}
+                  </p>
+                )}
+              </div>
+            </div>
+          ) : isDiscarded ? (
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                {t("controlPanel.history.discarded.badge")}
+              </span>
+              <span className="truncate text-sm text-muted-foreground">
+                {discardedDuration
+                  ? t("controlPanel.history.discarded.recordingWithDuration", {
+                      duration: discardedDuration,
+                    })
+                  : t("controlPanel.history.discarded.recording")}
+              </span>
+            </div>
+          ) : (
+            <p
+              dir="auto"
+              className="text-base leading-normal wrap-break-word whitespace-pre-wrap text-foreground"
+            >
+              {item.text}
+            </p>
+          )}
+        </div>
+
+        {isTranscribed && rawText !== null && (
+          <div
+            inert={!isExpanded}
+            className={cn(
+              "grid transition-[grid-template-rows] duration-200",
+              isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div className="mt-2 border-t border-border/70 pt-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {t("controlPanel.history.rawTranscript")}
+                  </span>
+                  <Tooltip content={t("controlPanel.history.copyRawTranscript")}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => onCopy(rawText)}
+                      className="h-5 w-5 rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
                     >
-                      {t("controlPanel.history.failedCtaSettingsOnly")}
-                    </button>
-                  )}
+                      <Copy size={10} />
+                    </Button>
+                  </Tooltip>
+                </div>
+                <p dir="auto" className="mt-1 text-xs leading-relaxed text-muted-foreground/80">
+                  {rawText}
                 </p>
-              )}
-              {isLimitError && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("controlPanel.history.failedLimitReached")}
-                </p>
-              )}
-              {isOfflineError && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {t("controlPanel.history.failedOffline")}
-                </p>
-              )}
+                {rawText === item.text && (
+                  <p className="mt-1 text-[10px] italic text-muted-foreground/70">
+                    {t("controlPanel.history.noAiProcessing")}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-        ) : isDiscarded ? (
-          <div className="flex items-center gap-2">
-            <span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              {t("controlPanel.history.discarded.badge")}
-            </span>
-            <span className="truncate text-sm text-muted-foreground">
-              {discardedDuration
-                ? t("controlPanel.history.discarded.recordingWithDuration", {
-                    duration: discardedDuration,
-                  })
-                : t("controlPanel.history.discarded.recording")}
-            </span>
-          </div>
-        ) : (
-          <p
-            dir="auto"
-            className="text-base leading-normal wrap-break-word whitespace-pre-wrap text-foreground"
-          >
-            {item.text}
-          </p>
         )}
       </div>
-
-      {isTranscribed && rawText !== null && (
-        <div
-          inert={!isExpanded}
-          className={cn(
-            "grid transition-[grid-template-rows] duration-200",
-            isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-          )}
-        >
-          <div className="min-h-0 overflow-hidden">
-            <div className="mt-2 border-t border-border/70 pt-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                  {t("controlPanel.history.rawTranscript")}
-                </span>
-                <Tooltip content={t("controlPanel.history.copyRawTranscript")}>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={() => onCopy(rawText)}
-                    className="h-5 w-5 rounded-sm text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
-                  >
-                    <Copy size={10} />
-                  </Button>
-                </Tooltip>
-              </div>
-              <p dir="auto" className="mt-1 text-xs leading-relaxed text-muted-foreground/80">
-                {rawText}
-              </p>
-              {rawText === item.text && (
-                <p className="mt-1 text-[10px] italic text-muted-foreground/70">
-                  {t("controlPanel.history.noAiProcessing")}
-                </p>
+      <div
+        className={cn(
+          "-me-1.5 -mt-0.5 flex shrink-0 items-start gap-1 transition-opacity duration-150",
+          // Actions surface on hover, keyboard focus, or while the menu is open; failed and
+          // discarded rows keep them visible because recovery is the point of the row.
+          isTranscribed &&
+            "opacity-0 group-hover/row:opacity-100 has-[:focus-visible]:opacity-100 has-[[data-state=open]]:opacity-100"
+        )}
+      >
+        {isTranscribed && (
+          <Tooltip content={t("controlPanel.history.copyText")}>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => onCopy(item.text)}
+              className={ACTION_BUTTON_CLASS}
+            >
+              <Copy size={13} />
+            </Button>
+          </Tooltip>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              disabled={isRetrying}
+              aria-label={t("controlPanel.history.moreActions")}
+              className={ACTION_BUTTON_CLASS}
+            >
+              {isRetrying ? (
+                <Loader2 size={13} className="animate-spin" />
+              ) : (
+                <MoreVertical size={13} />
               )}
-            </div>
-          </div>
-        </div>
-      )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {menuActions.map(({ key, icon: Icon, label, onSelect, destructive }) => (
+              <DropdownMenuItem
+                key={key}
+                onSelect={onSelect}
+                className={cn(
+                  "gap-2.5",
+                  destructive && "text-destructive focus:bg-destructive/8 focus:text-destructive"
+                )}
+              >
+                <Icon size={14} className="shrink-0 opacity-70" />
+                {label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }

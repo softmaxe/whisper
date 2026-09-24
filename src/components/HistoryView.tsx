@@ -144,9 +144,12 @@ export default function HistoryView({
             ) : (
               <div className="group">
                 {groupedHistory.map((group, index) => (
-                  <div key={group.label} className={index > 0 ? "mt-6" : ""}>
-                    <div className="sticky -top-1 z-10 -mx-4 px-4 pt-2 pb-2.5 bg-background flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">{group.label}</span>
+                  <div key={group.label} className={index > 0 ? "mt-8" : ""}>
+                    <div className="sticky -top-1 z-10 -mx-4 px-4 pt-2 pb-2 bg-background flex items-center gap-3">
+                      <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                        {group.label}
+                      </span>
+                      <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
                       {index === 0 && (
                         <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
                           {discardedToggle}
@@ -160,7 +163,7 @@ export default function HistoryView({
                         </div>
                       )}
                     </div>
-                    <div className="relative z-0 overflow-clip rounded-2xl border border-border/70 bg-card/50 divide-y divide-border/60 dark:border-white/10 dark:bg-surface-2/60">
+                    <div className="relative z-0 -mx-3 space-y-0.5">
                       {group.items.map((item) => (
                         <TranscriptionItem
                           key={item.id}
