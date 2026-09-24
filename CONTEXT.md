@@ -22,7 +22,9 @@ waveform, and transcription progress.
 _Avoid_: Status bar, menu bar icon
 
 **Target app**:
-The app selected to receive the text produced by a dictation session.
+The app selected to receive the text produced by a dictation session: the app
+that holds keyboard focus when the Dictation hotkey is pressed. It can differ
+from the app shown in the menu bar, as with a floating launcher such as Raycast.
 
 **Automatic paste**:
 Insertion of the completed dictation text into the target app without a manual
