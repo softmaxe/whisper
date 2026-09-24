@@ -46,6 +46,7 @@
     "quality-check": "npm run lint && npm run typecheck && npm run i18n:check && npm test",
     "i18n:check": "node scripts/check-i18n.js",
     "preview": "cd src && vite preview",
+    "prototype:preload-icon": "cd src && vite --port 5191 --open /prototype-preload-icon.html",
     "clean": "node cleanup.js"
   },
   "keywords": [
