@@ -147,3 +147,21 @@ test("a failed activation-mode change preserves the cached mode", async () => {
   assert.equal(await manager.setActivationModeCache("push"), false);
   assert.equal(manager.getActivationMode(), "tap");
 });
+
+test("a Tap mode key combination starts Dictation, and pressing it again ends it", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const startMessages = manager.mainWindow.messages.map(({ channel }) => channel);
+  assert.deepEqual(startMessages, ["prepare-dictation", "toggle-dictation"]);
+  assert.ok(manager.mainWindow.messages[1].payload.startupRequest.requestId);
+
+  manager.mainWindow.messages.length = 0;
+  manager.setDictationLifecycleState("recording");
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  assert.deepEqual(manager.mainWindow.messages, [
+    { channel: "toggle-dictation", payload: undefined },
+  ]);
+});
