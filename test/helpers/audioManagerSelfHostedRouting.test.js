@@ -54,7 +54,6 @@ test("self-hosted audio goes to the configured endpoint", async (t) => {
 
   const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
   setSettings({
-    transcriptionMode: "self-hosted",
     remoteTranscriptionUrl: "https://stt.internal.example.com",
   });
   const result = await manager.processWithSelfHostedServer(audioBlob);
@@ -72,7 +71,7 @@ test("a missing self-hosted URL fails closed instead of reaching a hosted provid
   const manager = createManager();
   const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
 
-  setSettings({ transcriptionMode: "self-hosted", remoteTranscriptionUrl: "" });
+  setSettings({ remoteTranscriptionUrl: "" });
   await assert.rejects(manager.processWithSelfHostedServer(audioBlob), {
     code: "CUSTOM_ENDPOINT_INVALID",
   });

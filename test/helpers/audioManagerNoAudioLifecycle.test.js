@@ -7,7 +7,6 @@ async function loadManagerClass(t) {
     cachePrefix: "openwhispr-no-audio-lifecycle-test-",
     settingsKey: "__noAudioLifecycleSettings",
     settings: {
-      transcriptionMode: "self-hosted",
       remoteTranscriptionUrl: "http://localhost:8000/v1",
       remoteTranscriptionModel: "whisper-1",
     },

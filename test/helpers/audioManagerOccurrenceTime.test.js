@@ -20,7 +20,6 @@ test("self-hosted dictation records spoken words and duration before saving Hist
   setSettings({
     dataRetentionEnabled: true,
     audioRetentionDays: 0,
-    transcriptionMode: "self-hosted",
   });
   const occurredAt = new Date(2026, 3, 1, 12).toISOString();
   const events = [];

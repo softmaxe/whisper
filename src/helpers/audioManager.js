@@ -1495,7 +1495,7 @@ class AudioManager {
         occurredAt: occurredAt.toISOString(),
         localDate: localDateKey(occurredAt),
         spokenDurationMs: metadata.durationMs || null,
-        mode: resolveAnalyticsMode(getSettings(), metadata.provider),
+        mode: resolveAnalyticsMode(metadata.provider),
         provider: metadata.provider || null,
         model: metadata.model || null,
       });
