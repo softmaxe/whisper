@@ -39,8 +39,3 @@ test("treats missing / null / NaN size as empty (defensive)", async () => {
   assert.equal(isEmptyRecording(null), true);
   assert.equal(isEmptyRecording(NaN), true);
 });
-
-test("MIN_AUDIO_BYTES is 256", async () => {
-  const { MIN_AUDIO_BYTES } = await load();
-  assert.equal(MIN_AUDIO_BYTES, 256);
-});

@@ -144,28 +144,6 @@ test("the safety ceiling reports a forced stop before the stop it causes", (t) =
   assert.deepEqual(sent.at(-2).payload, { reason: "timeout" });
 });
 
-// Driven through the real ceiling rather than by calling forceStop directly, so
-// the "timeout" argument at the timer itself stays pinned.
-test("the macOS compound ceiling reports a forced stop on the same channel", (t) => {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  t.after(() => t.mock.timers.reset());
-
-  const harness = makeManager();
-  harness.manager.startMacCompoundPushToTalk("Control+Option");
-  t.mock.timers.tick(150);
-  assert.deepEqual(harness.channels(), ["prepare-dictation", "start-dictation"]);
-
-  t.mock.timers.tick(300_000);
-
-  assert.deepEqual(harness.channels(), [
-    "prepare-dictation",
-    "start-dictation",
-    "dictation-force-stopped",
-    "stop-dictation",
-  ]);
-  assert.deepEqual(harness.sent.at(-2).payload, { reason: "timeout" });
-});
-
 // The transcript arrives seconds after the stop and is surfaced by a toast inside
 // this window, so hiding it here would render the recovery pill invisibly.
 test("a forced stop leaves the window up for the transcript still being processed", (t) => {

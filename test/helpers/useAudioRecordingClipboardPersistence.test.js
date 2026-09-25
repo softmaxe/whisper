@@ -36,7 +36,6 @@ const SETTINGS_STORE_SOURCE = `
 export const getSettings = () => globalThis.__clipboardPersistenceSettings;
 `;
 
-
 const LOGGER_SOURCE = `
 const record = (level, message, meta, scope) => {
   globalThis.__clipboardPersistenceLogs.push({ level, message, meta, scope });
@@ -195,71 +194,45 @@ async function mountCompletionHarness(
   };
 }
 
-test("clipboard-only rejection cannot cancel non-preview transcription persistence", async (t) => {
-  const harness = await mountCompletionHarness(t, {
-    writeClipboard: async () => {
+for (const [failure, writeClipboard] of [
+  [
+    "rejection",
+    async () => {
       throw new Error("main-process clipboard rejected");
     },
+  ],
+  ["unsuccessful bridge response", async () => ({ success: false })],
+]) {
+  test(`clipboard-only ${failure} is logged without cancelling persistence`, async (t) => {
+    const harness = await mountCompletionHarness(t, { writeClipboard });
+
+    await harness.complete({
+      success: true,
+      text: "Final non-preview text",
+      rawText: "Raw non-preview text",
+      clientTranscriptionId: "client-non-preview",
+      source: "openai",
+    });
+
+    assert.deepEqual(harness.saves, [
+      [
+        "Final non-preview text",
+        "Raw non-preview text",
+        { clientTranscriptionId: "client-non-preview" },
+      ],
+    ]);
+    assert.ok(
+      harness.logs.some(
+        ({ level, message, meta, scope }) =>
+          level === "warn" &&
+          message === "Failed to keep transcription in clipboard" &&
+          meta.delivery === "clipboard-only" &&
+          scope === "clipboard"
+      )
+    );
+    assert.deepEqual(harness.navigatorWrites, []);
   });
-
-  await harness.complete({
-    success: true,
-    text: "Final non-preview text",
-    rawText: "Raw non-preview text",
-    clientTranscriptionId: "client-non-preview",
-    source: "openai",
-  });
-
-  assert.deepEqual(harness.saves, [
-    [
-      "Final non-preview text",
-      "Raw non-preview text",
-      { clientTranscriptionId: "client-non-preview" },
-    ],
-  ]);
-  assert.ok(
-    harness.logs.some(
-      ({ level, message, meta, scope }) =>
-        level === "warn" &&
-        message === "Failed to keep transcription in clipboard" &&
-        meta.delivery === "clipboard-only" &&
-        scope === "clipboard"
-    )
-  );
-  assert.deepEqual(harness.navigatorWrites, []);
-});
-
-test("clipboard-only unsuccessful bridge response is logged without cancelling persistence", async (t) => {
-  const harness = await mountCompletionHarness(t, {
-    writeClipboard: async () => ({ success: false }),
-  });
-
-  await harness.complete({
-    success: true,
-    text: "Text with an unsuccessful clipboard response",
-    rawText: "Raw text with an unsuccessful clipboard response",
-    clientTranscriptionId: "client-clipboard-unsuccessful",
-    source: "openai",
-  });
-
-  assert.deepEqual(harness.saves, [
-    [
-      "Text with an unsuccessful clipboard response",
-      "Raw text with an unsuccessful clipboard response",
-      { clientTranscriptionId: "client-clipboard-unsuccessful" },
-    ],
-  ]);
-  assert.ok(
-    harness.logs.some(
-      ({ level, message, meta, scope }) =>
-        level === "warn" &&
-        message === "Failed to keep transcription in clipboard" &&
-        meta.delivery === "clipboard-only" &&
-        scope === "clipboard"
-    )
-  );
-  assert.deepEqual(harness.navigatorWrites, []);
-});
+}
 
 test("clipboard-only delivery uses the main-process bridge", async (t) => {
   const harness = await mountCompletionHarness(t, {
