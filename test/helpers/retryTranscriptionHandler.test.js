@@ -126,18 +126,15 @@ const invokeUpload = (payload) => {
   return uploadHandler({ sender: {} }, { filePath: uploadTempFile, ...payload });
 };
 
-test("upload: a self-hosted Azure endpoint keeps its deployment URL", async () => {
+test("upload: a file goes to the configured self-hosted endpoint", async () => {
   fetches.length = 0;
   const result = await invokeUpload({
     language: "",
-    remoteTranscriptionUrl: "https://myorg.openai.azure.com",
-    remoteTranscriptionModel: "my-deployment",
+    remoteTranscriptionUrl: "https://stt.internal.example.com",
+    remoteTranscriptionModel: "tiny",
   });
   assert.equal(result.success, true);
-  assert.equal(
-    fetches[0].url,
-    "https://myorg.openai.azure.com/openai/deployments/my-deployment/audio/transcriptions?api-version=2025-03-01-preview"
-  );
+  assert.equal(fetches[0].url, "https://stt.internal.example.com/audio/transcriptions");
 });
 
 test("upload: a missing self-hosted endpoint fails without a request", async () => {

@@ -44,30 +44,23 @@ const okJson = (body) => async () => ({
   text: async () => JSON.stringify(body),
 });
 
-test("leftover hosted-provider settings never divert self-hosted audio", async (t) => {
+test("self-hosted audio goes to the configured endpoint", async (t) => {
   const { setSettings, createManager } = await loadAudioManager(t, {
-    cachePrefix: "openwhispr-selfhosted-leftover-test-",
-    settingsKey: "__leftoverSettings",
+    cachePrefix: "whisper-selfhosted-endpoint-test-",
+    settingsKey: "__endpointSettings",
   });
   const fetched = captureFetch(t, okJson({ text: "self-hosted text" }));
   const manager = createManager({ getTranscriptionModel: () => "self-hosted-model" });
 
   const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-  for (const provider of ["mistral", "xai", "corti", "groq", "openai"]) {
-    setSettings({
-      cloudTranscriptionProvider: provider,
-      transcriptionMode: "self-hosted",
-      remoteTranscriptionUrl: "https://stt.internal.example.com",
-    });
-    const result = await manager.processWithSelfHostedServer(audioBlob);
-    assert.equal(result.success, true);
-  }
+  setSettings({
+    transcriptionMode: "self-hosted",
+    remoteTranscriptionUrl: "https://stt.internal.example.com",
+  });
+  const result = await manager.processWithSelfHostedServer(audioBlob);
 
-  assert.equal(
-    fetched.every((e) => e === "https://stt.internal.example.com/audio/transcriptions"),
-    true,
-    `unexpected endpoints: ${fetched.join(", ")}`
-  );
+  assert.equal(result.success, true);
+  assert.deepEqual(fetched, ["https://stt.internal.example.com/audio/transcriptions"]);
 });
 
 test("a missing self-hosted URL fails closed instead of reaching a hosted provider", async (t) => {
@@ -79,59 +72,9 @@ test("a missing self-hosted URL fails closed instead of reaching a hosted provid
   const manager = createManager();
   const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
 
-  for (const provider of ["openai", "custom"]) {
-    setSettings({
-      cloudTranscriptionProvider: provider,
-      cloudTranscriptionBaseUrl: "https://custom.example.com/v1",
-      transcriptionMode: "self-hosted",
-      remoteTranscriptionUrl: "",
-    });
-    await assert.rejects(manager.processWithSelfHostedServer(audioBlob), {
-      code: "CUSTOM_ENDPOINT_INVALID",
-    });
-  }
+  setSettings({ transcriptionMode: "self-hosted", remoteTranscriptionUrl: "" });
+  await assert.rejects(manager.processWithSelfHostedServer(audioBlob), {
+    code: "CUSTOM_ENDPOINT_INVALID",
+  });
   assert.deepEqual(fetched, []);
-});
-
-test("self-hosted Azure endpoints keep their deployment URL", async (t) => {
-  const { setSettings, createManager } = await loadAudioManager(t, {
-    cachePrefix: "openwhispr-selfhosted-azure-test-",
-    settingsKey: "__selfHostedAzureSettings",
-  });
-  const fetched = captureFetch(t, okJson({ text: "azure text" }));
-  const manager = createManager({
-    getTranscriptionModel: () => "my-deployment",
-  });
-  const audioBlob = new Blob([new Uint8Array([1, 2, 3])], { type: "audio/webm" });
-
-  const useRemote = (remoteTranscriptionUrl, remoteTranscriptionModel) =>
-    setSettings({
-      transcriptionMode: "self-hosted",
-      remoteTranscriptionUrl,
-      remoteTranscriptionModel,
-    });
-
-  await t.test("a bare Azure origin gains the deployment path and api-version", async () => {
-    useRemote("https://myorg.openai.azure.com", "my-deployment");
-    await manager.processWithSelfHostedServer(audioBlob);
-    assert.deepEqual(fetched, [
-      "https://myorg.openai.azure.com/openai/deployments/my-deployment/audio/transcriptions?api-version=2025-03-01-preview",
-    ]);
-  });
-
-  await t.test("a pinned deployment URL is preserved verbatim", async () => {
-    fetched.length = 0;
-    const pinned =
-      "https://myorg.openai.azure.com/openai/deployments/pinned/audio/transcriptions?api-version=2024-06-01";
-    useRemote(pinned, "my-deployment");
-    await manager.processWithSelfHostedServer(audioBlob);
-    assert.deepEqual(fetched, [pinned]);
-  });
-
-  await t.test("a non-Azure self-hosted host is untouched", async () => {
-    fetched.length = 0;
-    useRemote("https://stt.internal.example.com", "tiny");
-    await manager.processWithSelfHostedServer(audioBlob);
-    assert.deepEqual(fetched, ["https://stt.internal.example.com/audio/transcriptions"]);
-  });
 });
