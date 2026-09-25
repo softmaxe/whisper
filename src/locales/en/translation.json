@@ -747,7 +747,7 @@
   },
   "commandSearch": {
     "title": "Search",
-    "description": "Search across notes and transcripts",
+    "description": "Search transcripts",
     "sections": {
       "transcripts": "Transcripts"
     },

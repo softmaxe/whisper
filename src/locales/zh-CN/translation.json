@@ -747,7 +747,7 @@
   },
   "commandSearch": {
     "title": "搜索",
-    "description": "搜索笔记和转录",
+    "description": "搜索转录",
     "sections": {
       "transcripts": "转录"
     },

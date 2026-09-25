@@ -2,43 +2,18 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useUiLocale } from "../hooks/useUiLocale";
-import type { NoteItem, SpaceItem, TranscriptionItem } from "../types/electron.js";
+import type { TranscriptionItem } from "../types/electron.js";
 import { formatRelativeTime } from "../utils/dateFormatting";
 import { Mic, Search } from "./icons";
 import { cn } from "./lib/utils";
 import { useDismissGuard } from "./ui/useDismissGuard";
 
-interface ConversationResult {
-  id: number;
-  title: string;
-  last_message?: string;
-  updated_at: string;
-}
-
-interface JumpTarget {
-  key: string;
-  spaceId: number;
-  folderId: number | null;
-  label: string;
-  space: SpaceItem | undefined;
-}
-
 export interface CommandSearchProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  mode?: "all" | "conversations";
   transcriptions?: TranscriptionItem[];
-  onNoteSelect?: (noteId: number, folderId: number | null, spaceId?: number) => void;
-  onContainerSelect?: (spaceId: number, folderId: number | null) => void;
   onTranscriptSelect?: (transcriptId: number) => void;
-  onConversationSelect?: (conversationId: number) => void;
 }
-
-type FlatItem =
-  | { kind: "container"; target: JumpTarget }
-  | { kind: "note"; note: NoteItem }
-  | { kind: "transcript"; transcript: TranscriptionItem }
-  | { kind: "conversation"; conversation: ConversationResult };
 
 export default function CommandSearch({
   open,
@@ -75,14 +50,9 @@ export default function CommandSearch({
     return slice.slice(0, 5);
   }, [transcriptions, query]);
 
-  const flatItems = useMemo<FlatItem[]>(
-    () => filteredTranscripts.map((transcript) => ({ kind: "transcript", transcript })),
-    [filteredTranscripts]
-  );
-
-  const selectItem = useCallback(
-    (item: FlatItem) => {
-      if (item.kind === "transcript") onTranscriptSelect?.(item.transcript.id);
+  const selectTranscript = useCallback(
+    (transcript: TranscriptionItem) => {
+      onTranscriptSelect?.(transcript.id);
       onOpenChange(false);
     },
     [onTranscriptSelect, onOpenChange]
@@ -92,17 +62,17 @@ export default function CommandSearch({
     (e: React.KeyboardEvent<HTMLInputElement>) => {
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIndex((i) => Math.min(i + 1, flatItems.length - 1));
+        setSelectedIndex((i) => Math.min(i + 1, filteredTranscripts.length - 1));
       } else if (e.key === "ArrowUp") {
         e.preventDefault();
         setSelectedIndex((i) => Math.max(i - 1, 0));
       } else if (e.key === "Enter") {
         e.preventDefault();
-        const item = flatItems[selectedIndex];
-        if (item) selectItem(item);
+        const transcript = filteredTranscripts[selectedIndex];
+        if (transcript) selectTranscript(transcript);
       }
     },
-    [flatItems, selectedIndex, selectItem]
+    [filteredTranscripts, selectedIndex, selectTranscript]
   );
 
   useEffect(() => {
@@ -110,7 +80,7 @@ export default function CommandSearch({
     el?.scrollIntoView({ block: "nearest" });
   }, [selectedIndex]);
 
-  const hasResults = flatItems.length > 0;
+  const hasResults = filteredTranscripts.length > 0;
   const { registerContent, shouldBlockDismiss } = useDismissGuard<HTMLDivElement>();
 
   return (
@@ -186,23 +156,18 @@ export default function CommandSearch({
                       icon={<Mic size={11} />}
                       label={t("commandSearch.sections.transcripts")}
                     />
-                    {filteredTranscripts.map((transcript) => {
-                      const idx = flatItems.findIndex(
-                        (fi) => fi.kind === "transcript" && fi.transcript.id === transcript.id
-                      );
-                      return (
-                        <TranscriptRow
-                          key={transcript.id}
-                          transcript={transcript}
-                          idx={idx}
-                          isSelected={selectedIndex === idx}
-                          onSelect={() => selectItem({ kind: "transcript", transcript })}
-                          onHover={() => setSelectedIndex(idx)}
-                          t={t}
-                          locale={locale}
-                        />
-                      );
-                    })}
+                    {filteredTranscripts.map((transcript, idx) => (
+                      <TranscriptRow
+                        key={transcript.id}
+                        transcript={transcript}
+                        idx={idx}
+                        isSelected={selectedIndex === idx}
+                        onSelect={() => selectTranscript(transcript)}
+                        onHover={() => setSelectedIndex(idx)}
+                        t={t}
+                        locale={locale}
+                      />
+                    ))}
                   </div>
                 )}
               </>
