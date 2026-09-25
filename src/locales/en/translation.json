@@ -599,13 +599,6 @@
     "loadError": "Insights couldn't be read from this device."
   },
   "notes": {
-    "folders": {
-      "defaults": {
-        "personal": "Personal",
-        "meetings": "Meetings",
-        "videos": "Videos"
-      }
-    },
     "list": {
       "timeNow": "now",
       "minutesAgo": "{{count}}m",
@@ -657,10 +650,6 @@
       "transcriptLabel": "Transcript",
       "copyFullText": "Copy full text",
       "viewInHistory": "View in history"
-    },
-    "empty": {
-      "title": "No notes here yet",
-      "emptyFolder": "No notes in this folder"
     }
   },
   "dictionary": {

@@ -88,7 +88,6 @@ export interface NoteItem {
   transcript: string | null;
   calendar_event_id: string | null;
   participants: string | null;
-  diarization_enabled: number | null;
   expected_speaker_count: number | null;
   cloud_id: string | null;
   is_shared: number;
@@ -112,23 +111,6 @@ export interface NoteItem {
   // Computed by getNoteByClientId while a parent folder DELETE awaits its
   // server result. Held notes stay hidden and must not be pulled/queued alone.
   folder_delete_pending?: number;
-  // 1 while a cloud-backed row that left a team space still owes its scope
-  // retraction push (D6); cleared when the row settles.
-  left_team?: number;
-}
-
-export interface FolderItem {
-  id: number;
-  name: string;
-  is_default: number;
-  sort_order: number;
-  space_id: number;
-  created_at: string;
-  updated_at: string;
-  client_folder_id: string;
-  cloud_id: string | null;
-  sync_status: "synced" | "pending" | "error";
-  deleted_at: string | null;
   // 1 while a cloud-backed row that left a team space still owes its scope
   // retraction push (D6); cleared when the row settles.
   left_team?: number;
