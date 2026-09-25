@@ -96,11 +96,11 @@ test("formatDateGroup returns empty string for nullish or invalid date input", a
   assert.equal(formatDateGroup(new Date(NaN), t), "");
 });
 
-test("history group fallback dates use the explicit Arabic locale", async (t2) => {
+test("history group fallback dates use the explicit Chinese locale", async (t2) => {
   const { formatDateGroup } = await load();
   t2.mock.timers.enable({ apis: ["Date"], now: NOON_JUNE_15 });
 
-  assert.equal(formatDateGroup(new Date(2024, 0, 10, 12), t, "ar"), "10 يناير 2024");
+  assert.equal(formatDateGroup(new Date(2024, 0, 10, 12), t, "zh-CN"), "2024年1月10日");
 });
 
 test("history group fallback dates retain their English output with an explicit locale", async (t2) => {
@@ -108,5 +108,5 @@ test("history group fallback dates retain their English output with an explicit 
   t2.mock.timers.enable({ apis: ["Date"], now: NOON_JUNE_15 });
 
   assert.equal(formatDateGroup(new Date(2024, 0, 10, 12), t, "en"), "Jan 10, 2024");
-  assert.equal(formatDateGroup(new Date(2024, 5, 15, 8), t, "ar"), "Today");
+  assert.equal(formatDateGroup(new Date(2024, 5, 15, 8), t, "zh-CN"), "Today");
 });

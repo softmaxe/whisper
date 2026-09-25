@@ -396,14 +396,8 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
         />
         <div
           className={`absolute inset-y-0 start-0 z-30 transition-transform duration-300 ease-out ${
-            !sidebarCollapsed || sidebarPeek
-              ? "translate-x-0"
-              : "ltr:-translate-x-full rtl:translate-x-full"
-          }${
-            sidebarCollapsed && sidebarPeek
-              ? " shadow-[10px_0_40px_-18px_rgba(0,0,0,0.2)] rtl:shadow-[-10px_0_40px_-18px_rgba(0,0,0,0.2)]"
-              : ""
-          }`}
+            !sidebarCollapsed || sidebarPeek ? "translate-x-0" : "-translate-x-full"
+          }${sidebarCollapsed && sidebarPeek ? " shadow-[10px_0_40px_-18px_rgba(0,0,0,0.2)]" : ""}`}
           onMouseEnter={sidebarCollapsed ? showSidebarPeek : undefined}
           onMouseLeave={sidebarCollapsed ? hideSidebarPeek : undefined}
         >

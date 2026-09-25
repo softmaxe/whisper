@@ -1,14 +1,12 @@
 interface DocumentLanguageSource {
   language: string;
   resolvedLanguage?: string;
-  dir(language?: string): "ltr" | "rtl";
   on(event: "languageChanged", listener: (language: string) => void): unknown;
   off(event: "languageChanged", listener: (language: string) => void): unknown;
 }
 
 interface DocumentLanguageRoot {
   lang: string;
-  dir: string;
 }
 
 interface HotModule {
@@ -22,7 +20,6 @@ export function bindDocumentLanguage(
 ): () => void {
   const sync = (language: string) => {
     root.lang = language;
-    root.dir = i18n.dir(language);
   };
   const handleLanguageChanged = (language: string) => sync(language);
 

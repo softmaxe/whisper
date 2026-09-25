@@ -8,7 +8,6 @@ function createI18n(language) {
   return {
     language,
     resolvedLanguage: language,
-    dir: (value) => (value.toLowerCase().startsWith("ar") ? "rtl" : "ltr"),
     on(event, listener) {
       assert.equal(event, "languageChanged");
       listeners.add(listener);
@@ -26,16 +25,16 @@ function createI18n(language) {
   };
 }
 
-test("document language binding initializes and updates both lang and dir", async () => {
+test("document language binding initializes and updates lang", async () => {
   const { bindDocumentLanguage } = await load();
-  const i18n = createI18n("ar");
-  const root = { lang: "", dir: "" };
+  const i18n = createI18n("zh-CN");
+  const root = { lang: "" };
 
   const dispose = bindDocumentLanguage(i18n, root);
-  assert.deepEqual(root, { lang: "ar", dir: "rtl" });
+  assert.deepEqual(root, { lang: "zh-CN" });
 
-  i18n.emit("en-US");
-  assert.deepEqual(root, { lang: "en-US", dir: "ltr" });
+  i18n.emit("en");
+  assert.deepEqual(root, { lang: "en" });
 
   dispose();
   assert.equal(i18n.listenerCount(), 0);
@@ -44,7 +43,7 @@ test("document language binding initializes and updates both lang and dir", asyn
 test("HMR disposal removes the exact language listener and remains idempotent", async () => {
   const { bindDocumentLanguage } = await load();
   const i18n = createI18n("en");
-  const root = { lang: "", dir: "" };
+  const root = { lang: "" };
   let hotDispose;
   const hot = {
     dispose(callback) {
@@ -59,6 +58,6 @@ test("HMR disposal removes the exact language listener and remains idempotent", 
   hotDispose();
   dispose();
   assert.equal(i18n.listenerCount(), 0);
-  i18n.emit("ar");
-  assert.deepEqual(root, { lang: "en", dir: "ltr" });
+  i18n.emit("zh-CN");
+  assert.deepEqual(root, { lang: "en" });
 });

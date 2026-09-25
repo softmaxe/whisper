@@ -7,7 +7,7 @@ import { cn } from "./lib/utils";
 const noDragStyle = { WebkitAppRegion: "no-drag" } as React.CSSProperties;
 
 const toggleIconClass =
-  "text-foreground/60 group-hover:text-foreground/75 dark:text-foreground/50 dark:group-hover:text-foreground/65 transition-colors duration-150 rtl:scale-x-[-1]";
+  "text-foreground/60 group-hover:text-foreground/75 dark:text-foreground/50 dark:group-hover:text-foreground/65 transition-colors duration-150";
 
 interface ControlPanelTopBarProps {
   title: string;
@@ -46,7 +46,7 @@ export default function ControlPanelTopBar({
         // Eased with the sidebar spacer so the toggle glides instead of jumping when the
         // clearance switches; a jump would drag it back under the cursor and re-trigger peek.
         "transition-[padding] duration-300 ease-out",
-        clearTrafficLights && "ltr:ps-[76px]"
+        clearTrafficLights && "ps-[76px]"
       )}
       style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
     >

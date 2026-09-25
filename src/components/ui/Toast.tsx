@@ -356,7 +356,7 @@ const Toast: React.FC<
         "rounded-[5px]",
         "transition-[opacity,transform] duration-200 ease-out",
         isExiting
-          ? "opacity-0 translate-x-2 rtl:-translate-x-2 scale-[0.98]"
+          ? "opacity-0 translate-x-2 scale-[0.98]"
           : "toast-enter opacity-100 translate-x-0 scale-100"
       )}
       onMouseEnter={handleMouseEnter}
@@ -445,7 +445,7 @@ const Toast: React.FC<
       {duration > 0 && !isExiting && (
         <div className="absolute bottom-0 start-0.5 end-0 h-px overflow-hidden">
           <div
-            className={cn("h-full origin-left rtl:origin-right", config.progressClass)}
+            className={cn("h-full origin-left", config.progressClass)}
             style={{
               animation: `toast-progress ${duration}ms linear forwards`,
               animationPlayState: timerPaused ? "paused" : "running",

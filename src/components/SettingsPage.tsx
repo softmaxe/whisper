@@ -6,7 +6,6 @@ import { usePermissions } from "../hooks/usePermissions";
 import { useSettings } from "../hooks/useSettings";
 import SelfHostedPanel from "./SelfHostedPanel";
 import { AlertTriangle, Mic, Monitor, Moon, Shield, Sun } from "./icons";
-import { BIDI_VALUE_TOKEN, BidiInterpolatedText } from "./ui/BidiInterpolatedText";
 import MicPermissionWarning from "./ui/MicPermissionWarning";
 import MicrophoneSettings from "./ui/MicrophoneSettings";
 import PermissionCard from "./ui/PermissionCard";
@@ -655,12 +654,9 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                           disabled={isHotkeyRegistering}
                           className="text-xs text-muted-foreground/70 hover:text-foreground transition-colors disabled:opacity-50"
                         >
-                          <BidiInterpolatedText
-                            text={t("settingsPage.general.hotkey.resetToDefault", {
-                              hotkey: BIDI_VALUE_TOKEN,
-                            })}
-                            value={formatHotkeyLabel(effectiveDefaultHotkey)}
-                          />
+                          {t("settingsPage.general.hotkey.resetToDefault", {
+                            hotkey: formatHotkeyLabel(effectiveDefaultHotkey),
+                          })}
                         </button>
                       ) : null
                     }

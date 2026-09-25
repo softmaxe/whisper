@@ -51,7 +51,7 @@ export function ActivationModeSelector({
     <div className={`relative grid grid-cols-2 transition-colors duration-200 ${styles.track}`}>
       <div
         className={`absolute inset-y-[var(--inset)] start-[var(--inset)] w-[calc(50%-var(--inset))] transition-transform duration-200 ease-out ${styles.indicator} ${
-          value === "push" ? "translate-x-full rtl:-translate-x-full" : "translate-x-0"
+          value === "push" ? "translate-x-full" : "translate-x-0"
         }`}
         style={{ "--inset": variant === "onboarding" ? "4px" : "2px" } as React.CSSProperties}
       />

@@ -368,14 +368,10 @@ a:hover {
     0 2px 8px -2px oklch(0 0 0 / 0.3);
 }
 
-/* Enter from the physical outer edge of the direction-aware toast stack. */
+/* Enter from the outer edge of the toast stack. */
 .toast-enter {
   --toast-enter-x: 1rem;
   animation: toast-enter 300ms var(--ease-out);
-}
-
-[dir="rtl"] .toast-enter {
-  --toast-enter-x: -1rem;
 }
 
 @keyframes toast-enter {
