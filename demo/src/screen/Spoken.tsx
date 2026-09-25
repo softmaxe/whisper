@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCurrentFrame } from "remotion";
 import type { Token } from "../copy.ts";
 import { ramp } from "../lib/anim.ts";
@@ -100,13 +101,7 @@ export function Spoken({
 }
 
 /** Floating layer that holds the Recording pill at the bottom center of the screen. */
-export function PillDock({
-  children,
-  bottom = 116,
-}: {
-  children: React.ReactNode;
-  bottom?: number;
-}) {
+export function PillDock({ children, bottom = 116 }: { children: ReactNode; bottom?: number }) {
   return (
     <div
       style={{

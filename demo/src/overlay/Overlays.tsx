@@ -1,11 +1,20 @@
 import type { ReactNode } from "react";
 import { useCurrentFrame } from "remotion";
-import { easeOut, ramp } from "../lib/anim.ts";
+import { beats, easeOut, ramp } from "../lib/anim.ts";
 import { useCopy } from "../lib/copy-context.tsx";
 import { INK } from "../theme.ts";
 
 /** Frames a single key press stays down. */
 const PRESS_FRAMES = 4;
+
+/**
+ * Key presses for a Double tap at `tap` and the Clean press that ends the
+ * Hands-free dictation at `stop`, with the frame the pill starts listening.
+ */
+export function doubleTap(tap: number, stop: number) {
+  const taps = [tap, tap + Math.round(beats(0.35))];
+  return { presses: [...taps, stop - 2], listenAt: taps[1] + 2 };
+}
 
 /** 0..1 depth of the key at `frame` for presses at `taps` (held until `release`). */
 export function keyDepth(frame: number, taps: number[], release?: number) {

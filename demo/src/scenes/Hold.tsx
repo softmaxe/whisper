@@ -6,10 +6,10 @@ import { Editor } from "../screen/Apps.tsx";
 import { Desktop } from "../screen/Desktop.tsx";
 import { FlowPill } from "../screen/FlowPill.tsx";
 import { PillDock, Spoken } from "../screen/Spoken.tsx";
-import { cueFrame, sceneFrames } from "../timeline.ts";
+import { sceneCues, sceneFrames } from "../timeline.ts";
 import { World } from "../world/World.tsx";
 
-const cue = (name: Parameters<typeof cueFrame<"hold">>[1]) => cueFrame("hold", name);
+const cue = sceneCues("hold");
 
 /** 3:05, back at the office: Hold mode drops a comment into code. */
 export function Hold() {

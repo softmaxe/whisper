@@ -4,10 +4,10 @@ import { useCopy } from "../lib/copy-context.tsx";
 import { Caption, ClockChip } from "../overlay/Overlays.tsx";
 import { Desktop } from "../screen/Desktop.tsx";
 import { DraggedFiles, UploadPage, WhisperShell } from "../screen/WhisperApp.tsx";
-import { cueFrame, sceneFrames } from "../timeline.ts";
+import { sceneCues, sceneFrames } from "../timeline.ts";
 import { World } from "../world/World.tsx";
 
-const cue = (name: Parameters<typeof cueFrame<"upload">>[1]) => cueFrame("upload", name);
+const cue = sceneCues("upload");
 
 /** 6:40, living room: the day's recordings transcribe in a batch. */
 export function Upload() {

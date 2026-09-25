@@ -3,10 +3,10 @@ import { ramp } from "../lib/anim.ts";
 import { useCopy } from "../lib/copy-context.tsx";
 import { Desktop } from "../screen/Desktop.tsx";
 import { SettingsPage, WhisperShell } from "../screen/WhisperApp.tsx";
-import { cueFrame } from "../timeline.ts";
+import { sceneCues } from "../timeline.ts";
 import { World } from "../world/World.tsx";
 
-const cue = (name: Parameters<typeof cueFrame<"settings">>[1]) => cueFrame("settings", name);
+const cue = sceneCues("settings");
 
 /** A glimpse of Settings: the speech and cleanup servers are the user's own. */
 export function Settings() {

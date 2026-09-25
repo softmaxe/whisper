@@ -4,9 +4,9 @@ import { useCopy } from "../lib/copy-context.tsx";
 import { graphemes } from "../lib/text.ts";
 import { KeyCap } from "../overlay/Overlays.tsx";
 import { FlowPill } from "../screen/FlowPill.tsx";
-import { cueFrame } from "../timeline.ts";
+import { sceneCues } from "../timeline.ts";
 
-const cue = (name: Parameters<typeof cueFrame<"intro">>[1]) => cueFrame("intro", name);
+const cue = sceneCues("intro");
 
 function Bokeh() {
   const frame = useCurrentFrame();
@@ -77,7 +77,7 @@ export function Intro() {
           opacity: split,
         }}
       >
-        <FlowPill listenAt={cue("pill")} stopAt={10000} doneAt={10000} scale={4.2} />
+        <FlowPill listenAt={cue("pill")} stopAt={Infinity} doneAt={Infinity} scale={4.2} />
       </div>
       <div
         style={{

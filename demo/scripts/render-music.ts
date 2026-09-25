@@ -308,7 +308,7 @@ async function main() {
     ...["-t", DURATION.toFixed(3), "-c:a", "pcm_f32le", premaster],
   ]);
   const target = "I=-16:TP=-1.5:LRA=18";
-  const measured = spawnSync(
+  const measure = spawnSync(
     "ffmpeg",
     [
       "-hide_banner",
@@ -321,7 +321,9 @@ async function main() {
       "-",
     ],
     { encoding: "utf8" }
-  ).stderr;
+  );
+  if (measure.status !== 0) throw new Error(`ffmpeg loudness pass failed: ${measure.stderr}`);
+  const measured = measure.stderr;
   const stats = JSON.parse(
     measured.slice(measured.lastIndexOf("{"), measured.lastIndexOf("}") + 1)
   );

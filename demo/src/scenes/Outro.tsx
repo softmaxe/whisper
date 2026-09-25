@@ -5,10 +5,10 @@ import { revealText } from "../lib/text.ts";
 import { Desktop } from "../screen/Desktop.tsx";
 import { InsightsPage, WhisperShell } from "../screen/WhisperApp.tsx";
 import { MONO } from "../theme.ts";
-import { cueFrame } from "../timeline.ts";
+import { sceneCues } from "../timeline.ts";
 import { World } from "../world/World.tsx";
 
-const cue = (name: Parameters<typeof cueFrame<"outro">>[1]) => cueFrame("outro", name);
+const cue = sceneCues("outro");
 
 /** The camera pulls back, the day is done, and the install command types out. */
 export function Outro() {

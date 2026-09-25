@@ -1,4 +1,4 @@
-import { interpolate, useCurrentFrame } from "remotion";
+import { useCurrentFrame } from "remotion";
 import {
   FLOW_BAR_COUNT,
   resolveFlowBarHeight,
@@ -7,25 +7,26 @@ import {
   resolveFlowWaveOpacity,
   resolveFlowWaveTarget,
 } from "../../../src/components/dictation/waveformMath";
-import { pillEase, speechLevel } from "../lib/anim.ts";
+import { pillEase, ramp, speechLevel } from "../lib/anim.ts";
 import { APP } from "../theme.ts";
+import { FPS } from "../timeline.ts";
 
 // Footprints from VOICE_PILL_FOOTPRINT (src/helpers/voicePillPresentation.js).
 const SLIVER = { width: 38, height: 10 };
 const LISTENING = { width: 84, height: 30 };
-const GROW_FRAMES = 9; // 300ms expansion
-const WARMUP_FRAMES = 6; // the sweep before the microphone is ready
+const GROW_FRAMES = Math.round(0.3 * FPS); // LISTENING_ENTRANCE_TIMING.expansionMs
+const WARMUP_FRAMES = Math.round(0.2 * FPS); // the sweep before the microphone is ready
 const RISE = 0.45;
 const FALL = 0.16;
 const BAR_WIDTH = 2.5;
 const BAR_GAP = 3;
-const MS_PER_FRAME = 1000 / 30;
+const MS_PER_FRAME = 1000 / FPS;
 
 interface FlowPillProps {
   /** Local frames: listening starts, speech stops (thinking), text lands (rest). */
   listenAt: number;
-  stopAt: number;
-  doneAt: number;
+  stopAt?: number;
+  doneAt?: number;
   /** Visual magnification so the pill reads at video size. */
   scale?: number;
   /** The Hold mode press glows the rim while the key is down. */
@@ -46,26 +47,25 @@ function lanesAt(frame: number, listenAt: number, stopAt: number) {
           ? resolveFlowBarTarget(speechLevel(f), i, now)
           : 0;
       const rate = target > lanes[i] ? RISE : FALL;
-      // Two 60fps easing steps per 30fps frame.
-      lanes[i] += (target - lanes[i]) * (1 - Math.pow(1 - rate, 2));
+      // RISE and FALL are per 60fps frame, as in FlowWaveform.
+      lanes[i] += (target - lanes[i]) * (1 - Math.pow(1 - rate, 60 / FPS));
     }
   }
   return lanes;
 }
 
-/** The floating Flow bar: a black capsule whose bars follow the voice. */
-export function FlowPill({ listenAt, stopAt, doneAt, scale = 2.2, held = false }: FlowPillProps) {
+/** The floating Recording pill: a black capsule whose bars follow the voice. */
+export function FlowPill({
+  listenAt,
+  stopAt = Infinity,
+  doneAt = Infinity,
+  scale = 2.2,
+  held = false,
+}: FlowPillProps) {
   const frame = useCurrentFrame();
-  const grow = interpolate(frame, [listenAt, listenAt + GROW_FRAMES], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: pillEase,
-  });
-  const shrink = interpolate(frame, [doneAt, doneAt + GROW_FRAMES], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: pillEase,
-  });
+  const grow = ramp(frame, listenAt, GROW_FRAMES, pillEase);
+  // A pill that never stops has no finite shrink range to interpolate.
+  const shrink = frame < doneAt ? 0 : ramp(frame, doneAt, GROW_FRAMES, pillEase);
   const open = grow * (1 - shrink);
   const width = SLIVER.width + (LISTENING.width - SLIVER.width) * open;
   const height = SLIVER.height + (LISTENING.height - SLIVER.height) * open;

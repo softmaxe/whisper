@@ -4,10 +4,10 @@ import { useCopy } from "../lib/copy-context.tsx";
 import { Caption, ClockChip } from "../overlay/Overlays.tsx";
 import { Desktop } from "../screen/Desktop.tsx";
 import { HistoryPage, InsightsPage, WhisperShell } from "../screen/WhisperApp.tsx";
-import { cueFrame, sceneFrames } from "../timeline.ts";
+import { sceneCues, sceneFrames } from "../timeline.ts";
 import { World } from "../world/World.tsx";
 
-const cue = (name: Parameters<typeof cueFrame<"night">>[1]) => cueFrame("night", name);
+const cue = sceneCues("night");
 
 /** 10:20, bedroom: the day in History, found with ⌘K, then Insights. */
 export function Night() {

@@ -1,3 +1,5 @@
+import type { Lang, Token } from "../copy.ts";
+
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /** User-perceived characters, so CJK text and emoji reveal whole. */
@@ -15,9 +17,9 @@ export function revealText(text: string, progress: number) {
  * A sentence as the words a listener hears arrive: English by words, Chinese
  * in two-character beats with embedded Latin words kept whole.
  */
-export function spokenTokens(text: string, lang: "en" | "zh-CN"): { text: string }[] {
+export function spokenTokens(text: string, lang: Lang): Token[] {
   if (lang === "en") return text.split(" ").map((word) => ({ text: word }));
-  const tokens: { text: string }[] = [];
+  const tokens: Token[] = [];
   for (const part of text.match(/[A-Za-z0-9.:/-]+|[^A-Za-z0-9.:/-]+/g) ?? []) {
     if (/^[A-Za-z0-9.:/-]+$/.test(part)) {
       tokens.push({ text: part });

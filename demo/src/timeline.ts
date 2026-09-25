@@ -8,7 +8,7 @@ export const HEIGHT = 1080;
 
 export const BPM = 76;
 export const BEATS_PER_BAR = 4;
-/** Where beat 0 falls in the audio track. Negative values skip a lead-in. */
+/** Where beat 0 falls in the audio track; the lead-in before it is skipped. */
 export const MUSIC_OFFSET_SECONDS = 0;
 export const SECONDS_PER_BEAT = 60 / BPM;
 
@@ -78,3 +78,9 @@ export const cueBeat = <Id extends SceneId>(id: Id, cue: CueName<Id>) =>
 /** Frame of a scene cue relative to the scene start, for use inside a Sequence. */
 export const cueFrame = <Id extends SceneId>(id: Id, cue: CueName<Id>) =>
   beatToFrame(cueBeat(id, cue)) - sceneFrames(id).from;
+
+/** A scene's cue frames by name, for use inside that scene. */
+export const sceneCues =
+  <Id extends SceneId>(id: Id) =>
+  (cue: CueName<Id>) =>
+    cueFrame(id, cue);
