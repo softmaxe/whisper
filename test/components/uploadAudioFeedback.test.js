@@ -95,7 +95,6 @@ test("the completed upload stays quiet when nothing went wrong", async (t) => {
   const markup = renderToStaticMarkup(
     createElement(UploadCompleteWarnings, {
       partialWarning: null,
-      diarizationWarning: false,
       t: (key) => key,
     })
   );
@@ -139,6 +138,5 @@ for (const saved of [true, false]) {
       assert.match(markup, /controlPanel\.history\.dataRetentionDisabled/);
       assert.doesNotMatch(markup, /controlPanel\.history\.sectionTitle/);
     }
-    assert.doesNotMatch(markup, /notes\.upload\.openNote/);
   });
 }

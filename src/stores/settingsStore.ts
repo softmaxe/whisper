@@ -155,7 +155,7 @@ function migrateMicrophoneSelectionMode() {
   const mode: MicrophoneSelectionMode =
     legacyBuiltIn === "true"
       ? "built-in"
-      : selectedDeviceId && !["default", "communications"].includes(selectedDeviceId)
+      : selectedDeviceId && selectedDeviceId !== "default"
         ? "specific"
         : "auto";
   localStorage.setItem("microphoneSelectionMode", mode);

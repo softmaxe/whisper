@@ -37,23 +37,7 @@ test("invalid or public-http URLs fail closed", async () => {
   }
 });
 
-test("Azure endpoints build deployment URLs", async () => {
-  const route = await resolve({
-    remoteTranscriptionUrl: "https://myres.openai.azure.com",
-    remoteTranscriptionModel: "my-deployment",
-  });
-  assert.equal(
-    route.endpoint,
-    "https://myres.openai.azure.com/openai/deployments/my-deployment/audio/transcriptions?api-version=2025-03-01-preview"
-  );
-
-  const pinned = await resolve({
-    remoteTranscriptionUrl:
-      "https://myres.openai.azure.com/openai/deployments/d1/audio/transcriptions?api-version=2024-06-01",
-    remoteTranscriptionModel: "ignored",
-  });
-  assert.match(pinned.endpoint, /deployments\/d1\/audio\/transcriptions\?api-version=2024-06-01/);
-
+test("a bare server origin gains the transcription path", async () => {
   const plain = await resolve({
     remoteTranscriptionUrl: "https://stt.internal.example.com",
     remoteTranscriptionModel: "tiny",

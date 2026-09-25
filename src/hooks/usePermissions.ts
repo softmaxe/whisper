@@ -27,10 +27,6 @@ export interface UsePermissionsProps {
   showAlertDialog: (dialog: { title: string; description?: string }) => void;
 }
 
-interface UsePermissionsOptions {
-  macAccessibilityChecksEnabled?: boolean;
-}
-
 const stopTracks = (stream?: MediaStream) => {
   try {
     stream?.getTracks?.().forEach((track) => track.stop());
@@ -72,8 +68,7 @@ const describeMicError = (error: unknown, t: TFunction): string => {
 };
 
 export const usePermissions = (
-  showAlertDialog?: UsePermissionsProps["showAlertDialog"],
-  { macAccessibilityChecksEnabled = true }: UsePermissionsOptions = {}
+  showAlertDialog?: UsePermissionsProps["showAlertDialog"]
 ): UsePermissionsReturn => {
   const { t } = useTranslation();
   const [micPermissionGranted, setMicPermissionGranted] = useLocalStorage(
@@ -219,18 +214,16 @@ export const usePermissions = (
     });
   }, [setMicPermissionGranted]);
 
-  // On macOS, re-validate accessibility permission once this screen is allowed
-  // to touch protected features, overriding stale localStorage values.
+  // Re-validate accessibility permission on mount, overriding stale
+  // localStorage values.
   useEffect(() => {
-    if (!macAccessibilityChecksEnabled) return;
     window.electronAPI?.checkAccessibilityPermission?.(true).then((granted) => {
       setAccessibilityPermissionGranted(granted);
     });
-  }, [macAccessibilityChecksEnabled, setAccessibilityPermissionGranted]);
+  }, [setAccessibilityPermissionGranted]);
 
   // Poll for accessibility permission changes on macOS (e.g. user grants in System Settings)
   useEffect(() => {
-    if (!macAccessibilityChecksEnabled) return;
     if (accessibilityPermissionGranted) {
       setAccessibilityTroubleshooting(false);
       accessibilityPollCount.current = 0;
@@ -254,11 +247,7 @@ export const usePermissions = (
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [
-    accessibilityPermissionGranted,
-    macAccessibilityChecksEnabled,
-    setAccessibilityPermissionGranted,
-  ]);
+  }, [accessibilityPermissionGranted, setAccessibilityPermissionGranted]);
 
   return {
     micPermissionGranted,

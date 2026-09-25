@@ -876,7 +876,6 @@ class IPCHandlers {
 
       if (enabled) {
         // Entering capture mode — unregister ALL slots so none intercept keypresses.
-        // Dictation is always active; meeting and agent may or may not be set.
         const allSlots = hotkeyManager.slots;
         for (const [slot, info] of allSlots) {
           // Native-listener entries (null accelerator) have no accelerator.
@@ -909,25 +908,6 @@ class IPCHandlers {
                 `[IPC] Failed to re-register globalShortcut "${accelerator}" after capture mode`
               );
             }
-          }
-        }
-
-        // Re-register non-dictation slots (meeting, agent) that were unregistered on capture enter
-        for (const [slot, info] of hotkeyManager.slots) {
-          const hotkeys = info?.hotkeys || [];
-          if (slot === "dictation" || slot === "cancel" || hotkeys.length === 0 || !info?.callback)
-            continue;
-          debugLogger.log(
-            `[IPC] Re-registering slot "${slot}" ("${hotkeys.join(", ")}") after capture mode`
-          );
-          const result = await hotkeyManager
-            .registerSlot(slot, hotkeys, info.callback)
-            .catch((err) => {
-              debugLogger.warn(`[IPC] Failed to re-register slot "${slot}":`, err.message);
-              return { success: false };
-            });
-          if (!result.success) {
-            debugLogger.warn(`[IPC] Slot "${slot}" was not restored after capture`);
           }
         }
       }

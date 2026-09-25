@@ -16,13 +16,9 @@ async function renderMenu(t, props) {
     createElement(mod.PillCommandMenu, {
       buttonRef: { current: null },
       isRecording: false,
-      agentAllowed: true,
-      meetingAllowed: true,
       isHovered: false,
       setWindowInteractivity: () => {},
       onToggleListening: () => {},
-      onAskAssistant: () => {},
-      onStartMeeting: () => {},
       onHide: () => {},
       onClose: () => {},
       ...props,
@@ -30,12 +26,10 @@ async function renderMenu(t, props) {
   );
 }
 
-test("the command menu keeps listening and hiding without assistant or meeting actions", async (t) => {
+test("the command menu offers listening and hiding", async (t) => {
   const idleMarkup = await renderMenu(t, { isRecording: false });
   assert.match(idleMarkup, /startListening/);
   assert.match(idleMarkup, /hideForNow/);
-  assert.doesNotMatch(idleMarkup, /askAssistant|startMeetingRecording/);
   const recordingMarkup = await renderMenu(t, { isRecording: true });
   assert.match(recordingMarkup, /stopListening/);
-  assert.doesNotMatch(recordingMarkup, /askAssistant|startMeetingRecording/);
 });

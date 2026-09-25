@@ -8,7 +8,7 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-test("macOS accessibility checks follow the onboarding feature gate", async (t) => {
+test("accessibility permission is re-checked on mount and polled until granted", async (t) => {
   let root = null;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
@@ -52,7 +52,7 @@ test("macOS accessibility checks follow the onboarding feature gate", async (t) 
   });
 
   const vite = await createRendererServer(t, {
-    cachePrefix: "openwhispr-permissions-accessibility-gate-",
+    cachePrefix: "whisper-permissions-accessibility-polling-",
     noExternal: ["react-i18next"],
     mockModules: {
       "react-i18next": `
@@ -63,31 +63,20 @@ test("macOS accessibility checks follow the onboarding feature gate", async (t) 
   });
   const { usePermissions } = await vite.ssrLoadModule("/hooks/usePermissions.ts");
 
-  let macAccessibilityChecksEnabled = false;
   function Harness() {
-    usePermissions(undefined, { macAccessibilityChecksEnabled });
+    usePermissions();
     return null;
   }
 
   root = createRoot(container);
-  const render = async () => {
-    await React.act(async () => {
-      root.render(React.createElement(Harness));
-      await Promise.resolve();
-    });
-  };
-
-  await render();
-  assert.equal(accessibilityChecks, 0);
-  assert.equal(activeIntervals.size, 0);
-
-  macAccessibilityChecksEnabled = true;
-  await render();
+  await React.act(async () => {
+    root.render(React.createElement(Harness));
+    await Promise.resolve();
+  });
   assert.equal(accessibilityChecks, 1);
   assert.equal(activeIntervals.size, 1);
 
-  macAccessibilityChecksEnabled = false;
-  await render();
-  assert.equal(accessibilityChecks, 1);
+  await React.act(async () => root.unmount());
+  root = null;
   assert.equal(activeIntervals.size, 0);
 });

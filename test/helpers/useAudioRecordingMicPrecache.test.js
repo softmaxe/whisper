@@ -8,9 +8,8 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-// Counts cacheMicrophoneDeviceId() calls. The electronAPI stub below omits
-// getSttConfig, so the streaming warm-up (which also calls it) never runs and
-// the single call must come from the mount effect.
+// Counts cacheMicrophoneDeviceId() calls; the single call must come from the
+// mount effect.
 const FAKE_AUDIO_MANAGER_SOURCE = `
 export const micPrecache = { calls: 0 };
 export default class FakeAudioManager {
@@ -26,7 +25,7 @@ export default class FakeAudioManager {
 }
 `;
 
-test("the mount effect pre-caches the microphone device id when streaming is off", async (t) => {
+test("the mount effect pre-caches the microphone device id", async (t) => {
   let root = null;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
@@ -37,8 +36,6 @@ test("the mount effect pre-caches the microphone device id when streaming is off
     window: {
       electronAPI: {
         onToggleDictation: noopDispose,
-        onToggleVoiceAgent: noopDispose,
-        onToggleTranslation: noopDispose,
         onStartDictation: noopDispose,
         onPrepareDictation: noopDispose,
         onCancelDictationPreparation: noopDispose,
@@ -59,7 +56,7 @@ test("the mount effect pre-caches the microphone device id when streaming is off
   const { micPrecache } = await vite.ssrLoadModule("/helpers/audioManager");
 
   function Harness() {
-    useAudioRecording(() => {}, { onDemoEvent: () => {} });
+    useAudioRecording(() => {}, {});
     return null;
   }
 

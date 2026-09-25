@@ -41,36 +41,35 @@ test.beforeEach(() => {
 test("unregisterSlot releases every accelerator the slot registered", async () => {
   const manager = new HotkeyManager();
 
-  // Only Windows diverts modifier-only combos to the native listener, so
-  // everywhere else globalShortcut owns "Control+Alt" and must release it.
-  await manager.registerSlot("meeting", "F7,Control+Alt", noop, { atomic: true });
+  // globalShortcut owns the modifier-only "Control+Alt" and must release it.
+  await manager.registerSlot("dictation", "F7,Control+Alt", noop, { atomic: true });
 
-  manager.unregisterSlot("meeting");
+  manager.unregisterSlot("dictation");
 
   assert.deepEqual([...registered.keys()], []);
-  assert.deepEqual(manager.getSlotHotkeys("meeting"), []);
+  assert.deepEqual(manager.getSlotHotkeys("dictation"), []);
 });
 
 test("a combo freed by unregisterSlot can be registered again", async () => {
   const manager = new HotkeyManager();
 
-  await manager.registerSlot("meeting", "Control+Alt", noop, { atomic: true });
-  manager.unregisterSlot("meeting");
+  await manager.registerSlot("dictation", "Control+Alt", noop, { atomic: true });
+  manager.unregisterSlot("dictation");
 
-  const reregistered = await manager.registerSlot("meeting", "Control+Alt", noop, { atomic: true });
+  const reregistered = await manager.registerSlot("dictation", "Control+Alt", noop, { atomic: true });
   assert.equal(reregistered.success, true);
-  assert.deepEqual(manager.getSlotHotkeys("meeting"), ["Control+Alt"]);
+  assert.deepEqual(manager.getSlotHotkeys("dictation"), ["Control+Alt"]);
 });
 
 test("unregisterSlot never releases an accelerator the slot does not own", async () => {
   const manager = new HotkeyManager();
 
-  await manager.registerSlot("meeting", "F7", noop, { atomic: true });
+  await manager.registerSlot("dictation", "F7", noop, { atomic: true });
   await manager.registerSlot("cancel", "F8", noop, { atomic: true });
-  // Linux registration defensively unregisters first; only teardown is under test.
+  // Registration may release accelerators too; only teardown is under test.
   unregisterCalls.length = 0;
 
-  manager.unregisterSlot("meeting");
+  manager.unregisterSlot("dictation");
 
   assert.deepEqual(unregisterCalls, ["F7"]);
   assert.deepEqual([...registered.keys()], ["F8"]);
@@ -92,11 +91,11 @@ test("unregisterSlot skips hotkeys a native listener owns", async () => {
 test("unregisterSlot on an already-cleared slot is a no-op", async () => {
   const manager = new HotkeyManager();
 
-  await manager.registerSlot("meeting", "F7", noop, { atomic: true });
-  manager.unregisterSlot("meeting");
+  await manager.registerSlot("dictation", "F7", noop, { atomic: true });
+  manager.unregisterSlot("dictation");
   unregisterCalls.length = 0;
 
-  manager.unregisterSlot("meeting");
+  manager.unregisterSlot("dictation");
 
   assert.deepEqual(unregisterCalls, []);
 });

@@ -23,15 +23,11 @@ export function defaultFolderDisplayName(
 // Transcription error codes → notes.upload.* i18n keys. Codes absent here fall
 // back to the raw main-process message.
 const TRANSCRIPTION_ERROR_KEYS: Record<string, string> = {
-  NO_SPEECH_DETECTED: "noSpeechDetected",
-  CHUNK_LOSS_EXCEEDED: "chunkLossExceeded",
   CUSTOM_ENDPOINT_INVALID: "customEndpointInvalid",
-  STREAMING_ONLY_PROVIDER: "streamingOnlyProvider",
 };
 
-// A coded failure arrives either as a returned result (BYOK, local) or as a
-// thrown error — OpenWhispr Cloud rethrows it through withSessionRefresh — so
-// every call site resolves the key from whichever shape it is holding.
+// Call sites pass either a returned result or a caught error, so the key is
+// resolved from whichever shape they hold.
 export function transcriptionErrorKey(failure: unknown): string | undefined {
   const code = (failure as { code?: string } | null | undefined)?.code;
   return code ? TRANSCRIPTION_ERROR_KEYS[code] : undefined;

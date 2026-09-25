@@ -7,12 +7,11 @@ const {
 } = require("../../src/helpers/navigationGuard.js");
 
 const PACKAGED_APP_URL =
-  "file:///Applications/OpenWhispr.app/Contents/Resources/app.asar/src/dist/index.html";
+  "file:///Applications/Whisper.app/Contents/Resources/app.asar/src/dist/index.html";
 
 test("packaged app: the window's own reload is allowed regardless of query or hash", () => {
-  // location.reload() fires will-navigate with the window's own URL —
-  // sign-out, restart-onboarding, account deletion, and the ErrorBoundary
-  // reload all break if this is blocked.
+  // location.reload() fires will-navigate with the window's own URL, so the
+  // ErrorBoundary reload breaks if this is blocked.
   assert.equal(isAllowedAppNavigation(`${PACKAGED_APP_URL}?panel=true`, PACKAGED_APP_URL), true);
   assert.equal(isAllowedAppNavigation(PACKAGED_APP_URL, PACKAGED_APP_URL), true);
   assert.equal(

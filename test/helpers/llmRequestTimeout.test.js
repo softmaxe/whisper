@@ -3,12 +3,11 @@ const assert = require("node:assert/strict");
 
 const load = () => import("../../src/helpers/llmRequestTimeout.js");
 
-test("non-streaming LLM requests use the fixed 30-second timeout", async () => {
+test("LLM requests use the fixed 30-second timeout", async () => {
   const { getLlmRequestTimeoutSeconds } = await load();
 
   assert.equal(typeof getLlmRequestTimeoutSeconds, "function");
   assert.equal(getLlmRequestTimeoutSeconds(), 30);
-  assert.equal(getLlmRequestTimeoutSeconds({ scope: "dictationCleanup" }), 30);
 });
 
 test("a deadline error carries the timeout code and the seconds it waited", async () => {

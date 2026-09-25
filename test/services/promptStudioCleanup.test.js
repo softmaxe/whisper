@@ -69,7 +69,6 @@ async function loadPromptStudio(t) {
           return { t: (key, values) => values?.error ? key + ": " + values.error : key };
         }
       `,
-      "zustand/react/shallow": "export const useShallow = (selector) => selector;",
       "/ui/button": "export function Button() {}",
       "./button": "export function Button() {}",
       "./textarea": "export function Textarea() {}",
@@ -96,7 +95,6 @@ async function loadPromptStudio(t) {
           };
         }
       `,
-      "/hooks/usePolicy": "export const usePolicySnapshot = () => ({});",
       "/utils/agentName": `export const useAgentName = () => ({ agentName: "Whisper" });`,
       "/services/ReasoningService": `
         export default {
@@ -112,7 +110,6 @@ async function loadPromptStudio(t) {
       "/stores/settingsStore": `
         export const useSettingsStore = (selector) => selector(globalThis.__promptStudioCleanup.state);
         useSettingsStore.getState = () => globalThis.__promptStudioCleanup.state;
-        export const selectPolicyEffectiveSettings = (state) => state;
       `,
       "/utils/snippets": "export const getDictionaryHintWords = (state) => state.dictionary;",
       "/i18n": `

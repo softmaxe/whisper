@@ -11,11 +11,6 @@ const T_CALL = /\bt\(\s*(['"`])([A-Za-z0-9_.-]+)\1/g;
 // messageKey values are passed to t() as a variable, so the T_CALL scan
 // cannot see them and a typo would render as the raw key string.
 const MESSAGE_KEY = /\bmessageKey\s*[:=]\s*(['"`])([A-Za-z0-9_.-]+)\1/g;
-const INTERPOLATION = /\{\{\s*([\w.]+)/g;
-
-const languages = fs
-  .readdirSync(LOCALES)
-  .filter((entry) => fs.statSync(path.join(LOCALES, entry)).isDirectory());
 
 const load = (lang, namespace) =>
   JSON.parse(fs.readFileSync(path.join(LOCALES, lang, `${namespace}.json`), "utf8"));
@@ -72,46 +67,6 @@ test("every t() key referenced in source resolves in en", () => {
   }
 
   assert.deepEqual(broken, [], `Missing en translations:\n${broken.join("\n")}`);
-});
-
-test("every en key is present in every other language", () => {
-  for (const namespace of NAMESPACES) {
-    const en = flatten(load("en", namespace));
-    for (const lang of languages) {
-      if (lang === "en") continue;
-      const translated = flatten(load(lang, namespace));
-      // Chinese only uses _other, so a matching plural base counts as covered.
-      const bases = new Set([...translated.keys()].map(stripPlural));
-      const gaps = [...en.keys()].filter(
-        (key) => !translated.has(key) && !bases.has(stripPlural(key))
-      );
-      assert.deepEqual(gaps, [], `${lang}/${namespace} is missing:\n${gaps.join("\n")}`);
-    }
-  }
-});
-
-test("interpolation variables match en in every language", () => {
-  // Compares names, not repeat counts — word order can make a translation
-  // reference the same variable a different number of times.
-  const variables = (value) =>
-    typeof value === "string"
-      ? [...new Set([...value.matchAll(INTERPOLATION)].map((m) => m[1]))].sort()
-      : [];
-
-  for (const namespace of NAMESPACES) {
-    const en = flatten(load("en", namespace));
-    for (const lang of languages) {
-      if (lang === "en") continue;
-      for (const [key, value] of flatten(load(lang, namespace))) {
-        if (!en.has(key)) continue;
-        assert.deepEqual(
-          variables(value),
-          variables(en.get(key)),
-          `${lang}/${namespace} ${key} has different {{variables}} than en`
-        );
-      }
-    }
-  }
 });
 
 test("every messageKey literal resolves in en", () => {

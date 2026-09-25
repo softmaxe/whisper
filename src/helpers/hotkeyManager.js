@@ -182,12 +182,6 @@ class HotkeyManager extends EventEmitter {
     slot.accelerators = [];
   }
 
-  // Primary (first) hotkey for a slot — back-compat for callers that expect a
-  // single value.
-  getSlotHotkey(slotName) {
-    return this.slots.get(slotName)?.hotkeys?.[0] ?? null;
-  }
-
   // Full list of hotkeys bound to a slot.
   getSlotHotkeys(slotName) {
     return [...(this.slots.get(slotName)?.hotkeys ?? [])];
@@ -197,15 +191,6 @@ class HotkeyManager extends EventEmitter {
   slotHasHotkey(slotName, key) {
     if (!key) return false;
     return (this.slots.get(slotName)?.hotkeys ?? []).includes(key);
-  }
-
-  // Name of the slot that owns `key`, or null. First match wins.
-  findSlotByHotkey(key) {
-    if (!key) return null;
-    for (const [slotName, slot] of this.slots) {
-      if ((slot.hotkeys ?? []).includes(key)) return slotName;
-    }
-    return null;
   }
 
   supportsPushToTalk(hotkey = this.currentHotkey) {

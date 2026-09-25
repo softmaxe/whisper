@@ -40,7 +40,7 @@ test("auto excludes aliases and uses the system default only when no preferred i
   const builtIn = mic("macbook", "MacBook Pro Microphone");
   const alias = mic("default", "Default - MacBook Pro Microphone");
   const result = resolveMicrophoneSelection(
-    [alias, mic("communications", "Communications - USB Microphone"), builtIn],
+    [alias, builtIn],
     { microphoneSelectionMode: "auto" },
     null,
     true
@@ -163,37 +163,18 @@ test("legacy microphone preferences retain their behavior", async () => {
   assert.equal(getMicrophoneSelectionMode({ preferBuiltInMic: false }), "system");
 });
 
-test("system mode ignores Chromium's Windows 'communications' alias when matching the native default", async () => {
+test("system mode accepts the one physical input whose label contains the native name", async () => {
   const { isCacheableMicrophoneResolution, resolveMicrophoneSelection } =
     await import("../../src/helpers/microphoneSelection.js");
-  const expected = mic("9f2c1e5a7b3d", "Microphone (Realtek(R) Audio)");
+  const expected = mic("7a1b", "Jabra Evolve2 65 Microphone");
   const result = resolveMicrophoneSelection(
     [
-      mic("default", "Default - Microphone (Realtek(R) Audio)"),
-      mic("communications", "Communications - Microphone (Realtek(R) Audio)"),
+      mic("default", "Default - Jabra Evolve2 65 Microphone"),
+      mic("macbook", "MacBook Pro Microphone (Built-in)"),
       expected,
     ],
     { microphoneSelectionMode: "system" },
-    { name: "Microphone (Realtek(R) Audio)" }
-  );
-
-  assert.equal(result.device, expected);
-  assert.equal(result.status, "native-exact");
-  assert.equal(isCacheableMicrophoneResolution(result), true);
-});
-
-test("system mode ignores the alias when the native name is only contained in the Chromium label", async () => {
-  const { isCacheableMicrophoneResolution, resolveMicrophoneSelection } =
-    await import("../../src/helpers/microphoneSelection.js");
-  const expected = mic("9f2c1e5a7b3d", "Microphone (Realtek(R) Audio)");
-  const result = resolveMicrophoneSelection(
-    [
-      mic("default", "Default - Microphone (Realtek(R) Audio)"),
-      mic("communications", "Communications - Microphone (Realtek(R) Audio)"),
-      expected,
-    ],
-    { microphoneSelectionMode: "system" },
-    { name: "Realtek(R) Audio" }
+    { name: "Jabra Evolve2 65" }
   );
 
   assert.equal(result.device, expected);
@@ -201,13 +182,12 @@ test("system mode ignores the alias when the native name is only contained in th
   assert.equal(isCacheableMicrophoneResolution(result), true);
 });
 
-test("built-in mode pins the physical built-in device, not Chromium's Windows aliases", async () => {
+test("built-in mode pins the physical built-in device, not Chromium's default alias", async () => {
   const { resolveMicrophoneSelection } = await import("../../src/helpers/microphoneSelection.js");
-  const expected = mic("9f2c1e5a7b3d", "Microphone Array (Realtek(R) Audio)");
+  const expected = mic("macbook", "MacBook Pro Microphone (Built-in)");
   const result = resolveMicrophoneSelection(
     [
-      mic("default", "Default - Microphone Array (Realtek(R) Audio)"),
-      mic("communications", "Communications - Microphone Array (Realtek(R) Audio)"),
+      mic("default", "Default - MacBook Pro Microphone (Built-in)"),
       expected,
       mic("7a1b", "Jabra Evolve2 65"),
     ],

@@ -289,11 +289,7 @@ class AudioManager {
       });
       const deviceId = resolution.device?.deviceId;
       // A label alone cannot establish that a changed ID is the same physical input.
-      if (
-        !deviceId ||
-        ["default", "communications"].includes(deviceId) ||
-        resolution.status === "remapped"
-      ) {
+      if (!deviceId || deviceId === "default" || resolution.status === "remapped") {
         const error = new Error("Selected microphone is unavailable");
         error.name = "MicUnusableError";
         throw error;

@@ -3,10 +3,10 @@ import { resolveMicDeviceSelection } from "./micDeviceSelection";
 
 export const MICROPHONE_SELECTION_MODES = ["auto", "system", "built-in", "specific"];
 
-// Chromium lists the Windows default input twice ("default" and the
-// "communications" role alias) under the device's own label. They are aliases,
-// not candidates: matching them makes every Windows mic tie with itself.
-const CHROMIUM_ALIAS_DEVICE_IDS = new Set(["default", "communications"]);
+// Chromium lists the system default input again as "default" under the
+// device's own label. It is an alias, not a candidate: matching it makes the
+// default mic tie with itself.
+const CHROMIUM_ALIAS_DEVICE_IDS = new Set(["default"]);
 
 export function getMicrophoneSelectionMode(settings = {}) {
   if (MICROPHONE_SELECTION_MODES.includes(settings.microphoneSelectionMode)) {
@@ -21,7 +21,7 @@ export function getMicrophoneSelectionMode(settings = {}) {
 export function normalizeMicrophoneLabel(label = "") {
   return String(label)
     .normalize("NFKC")
-    .replace(/^\s*(?:default|communications)\s*-\s*/i, "")
+    .replace(/^\s*default\s*-\s*/i, "")
     .replace(/\s*\((?:built[ -]?in|default)\)\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim()
