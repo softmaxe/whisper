@@ -45,7 +45,7 @@ for (const [name, stored, expected] of [
   ["legacy device", { selectedMicDeviceId: "iphone" }, "specific"],
   ["legacy built-in preference", { preferBuiltInMic: "true" }, "built-in"],
   ["explicit built-in preference", { microphoneSelectionMode: "built-in" }, "built-in"],
-  ["communications alias", { selectedMicDeviceId: "communications" }, "auto"],
+  ["default alias", { selectedMicDeviceId: "default" }, "auto"],
 ]) {
   test(`migration preserves ${name}`, async (t) => {
     const { storage, useSettingsStore } = await loadStore(t, stored);

@@ -17,7 +17,7 @@ const builtIn = {
   label: "MacBook Pro Microphone (Built-in)",
 };
 const iphone = { kind: "audioinput", deviceId: "iphone", label: "Rui's iPhone Microphone" };
-const aliases = ["default", "communications"].map((deviceId) => ({ ...builtIn, deviceId }));
+const alias = { ...builtIn, deviceId: "default" };
 
 function elements(node) {
   if (Array.isArray(node)) return node.flatMap(elements);
@@ -27,7 +27,7 @@ function elements(node) {
 
 async function mountSettings(
   t,
-  { devices = [...aliases, builtIn, iphone], props = {}, getLid = async () => false } = {}
+  { devices = [alias, builtIn, iphone], props = {}, getLid = async () => false } = {}
 ) {
   let root;
   t.after(async () => {
@@ -139,9 +139,9 @@ test("Auto display follows lid changes and a phone arriving while closed", async
   assert.equal(view.status(), `Preferred: ${builtIn.label}`);
   await view.lidChanged(true);
   assert.equal(view.status(), `Preferred: ${iphone.label}`);
-  await view.devicesChanged([...aliases, builtIn]);
+  await view.devicesChanged([alias, builtIn]);
   assert.equal(view.status(), `Preferred: ${builtIn.label}`);
-  await view.devicesChanged([...aliases, builtIn, iphone]);
+  await view.devicesChanged([alias, builtIn, iphone]);
   assert.equal(view.status(), `Preferred: ${iphone.label}`);
   await view.lidChanged(false);
   assert.equal(view.status(), `Preferred: ${builtIn.label}`);
@@ -184,7 +184,7 @@ test("manual phone selection stays fixed when the lid changes and remembers a di
   await view.lidChanged(false);
   assert.equal(view.input().props.value, "iphone");
   assert.deepEqual(view.changes, []);
-  await view.devicesChanged([...aliases, builtIn]);
+  await view.devicesChanged([alias, builtIn]);
   assert.equal(view.input().props.value, "__unavailable__");
   const unavailable = view.options().find((option) => option.props.value === "__unavailable__");
   assert.equal(unavailable.props.children, `${iphone.label} (Unavailable)`);

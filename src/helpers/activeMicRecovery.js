@@ -179,10 +179,7 @@ export class ActiveMicRecoveryController {
     this.inputs = current;
 
     const activeSettings = this.track?.getSettings?.() || {};
-    const hasPhysicalId =
-      activeSettings.deviceId &&
-      activeSettings.deviceId !== "default" &&
-      activeSettings.deviceId !== "communications";
+    const hasPhysicalId = activeSettings.deviceId && activeSettings.deviceId !== "default";
     const preferredDiffers = preferredDevice?.deviceId
       ? hasPhysicalId
         ? preferredDevice.deviceId !== activeSettings.deviceId

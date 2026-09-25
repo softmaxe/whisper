@@ -130,9 +130,7 @@ export const MicrophoneSettings: React.FC<MicrophoneSettingsProps> = ({
     };
   }, []);
 
-  const physicalDevices = devices.filter(
-    (device) => !["default", "communications"].includes(device.deviceId)
-  );
+  const physicalDevices = devices.filter((device) => device.deviceId !== "default");
   const isAuto = microphoneSelectionMode === "auto" || microphoneSelectionMode === "system";
   const builtInDevice = physicalDevices.find((device) => device.isBuiltIn);
   const selectedDevice =
