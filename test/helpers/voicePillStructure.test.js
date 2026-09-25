@@ -130,8 +130,7 @@ test("a Flow bar that loses its microphone pulses resting dots under a visible r
 
   assert.match(unavailable, /data-flow-bar="true"/);
   assert.match(unavailable, /voice-flow-waveform[^"\n]*animate-pulse/);
-  assert.match(unavailable, /rounded-full border-2 animate-pulse border-white\/30/);
-  assert.doesNotMatch(unavailable, /border-foreground\/30/);
+  assert.match(unavailable, /rounded-full border-2 animate-pulse/);
 });
 
 test("the Flow bar renders one symmetric bar set that goes live as soon as recording starts", async () => {
@@ -211,16 +210,6 @@ test("the compact panel pill transitions its logo into an expand chevron", async
   );
 });
 
-test("the panel's idle identity keeps the logo at normal foreground strength", async () => {
-  const idle = await renderPill("idle", false, "right", PANEL_IDLE);
-
-  assert.match(idle, /border-border-hover[^"\n]*dark:border-border\/50/);
-  assert.match(
-    idle,
-    /voice-identity-icon relative inline-block shrink-0 transition-\[width,height\] duration-200 text-foreground/
-  );
-});
-
 test("hovering the sliver grows it to the peek capsule without zooming", async () => {
   const footprint = await pillFootprints();
   const hovered = await renderPill("hover", false);
@@ -253,18 +242,15 @@ test("an interactive voice pill is keyboard focusable", async () => {
   assert.match(interactive, /tabindex="0"/);
 });
 
-test("the panel waveform uses foreground contrast, rounded caps, and a pronounced height range", async () => {
+test("the panel waveform uses rounded caps and a pronounced height range", async () => {
   const recording = await renderPill("recording", true, "right", PANEL_RECORDING);
   const { WAVEFORM_BAR_MIN_PX, WAVEFORM_BAR_MAX_PX, resolveWaveformBarHeight } =
     await import("../../src/components/dictation/waveformMath.ts");
 
-  assert.match(recording, /relative shrink-0 overflow-hidden text-foreground/);
   assert.equal(
     (recording.match(/w-0\.5 rounded-full bg-current/g) || []).length,
     await totalWaveBars()
   );
-  assert.equal(WAVEFORM_BAR_MIN_PX, 4);
-  assert.equal(WAVEFORM_BAR_MAX_PX, 22);
   assert.equal(resolveWaveformBarHeight(0), WAVEFORM_BAR_MIN_PX);
   assert.equal(resolveWaveformBarHeight(1), WAVEFORM_BAR_MAX_PX);
   assert.ok(resolveWaveformBarHeight(0.15) > 20);

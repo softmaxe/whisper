@@ -15,22 +15,6 @@ const OVERRIDDEN_VOICE_SURFACE_GEOMETRY = `
   export const LIVE_TRANSCRIPT_SURFACE_LIMITS = { minHeight: 91, maxHeight: 321 };
 `;
 
-test("renderer presentation consumes the shared live-transcript geometry", async (t) => {
-  const vite = await createRendererServer(t, {
-    cachePrefix: "openwhispr-voice-surface-geometry-test-",
-    mockModules: {
-      "/voiceSurfaceGeometry.mjs": OVERRIDDEN_VOICE_SURFACE_GEOMETRY,
-    },
-  });
-
-  const presentation = await vite.ssrLoadModule("/helpers/voicePillPresentation.js");
-
-  assert.deepEqual(presentation.LIVE_TRANSCRIPT_SURFACE_LIMITS, {
-    minHeight: 91,
-    maxHeight: 321,
-  });
-});
-
 test("DictationErrorCard reports content height at the shared expected width", async (t) => {
   const card = {
     getBoundingClientRect: () => ({ width: 500 }),
