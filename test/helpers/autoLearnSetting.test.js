@@ -17,7 +17,7 @@ test("reports a change when disabling from enabled", () => {
   });
 });
 
-test("is idempotent when the value is unchanged (enabled) — #1080 dual-window mount sync", () => {
+test("is idempotent when the value is unchanged (enabled)", () => {
   assert.deepEqual(applyAutoLearnSetting(true, true), {
     changed: false,
     enabled: true,

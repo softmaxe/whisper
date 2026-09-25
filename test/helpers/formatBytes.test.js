@@ -14,7 +14,7 @@ test("zero and sub-kilobyte values format as Bytes", async () => {
   assert.equal(formatBytes(500), "500 Bytes");
 });
 
-test("unit boundaries land on whole units — model download sizes must read cleanly", async () => {
+test("unit boundaries land on whole units so sizes read cleanly", async () => {
   const { formatBytes } = await load();
 
   assert.equal(formatBytes(1024), "1 KB");
