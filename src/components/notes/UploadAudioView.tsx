@@ -658,7 +658,7 @@ function CompleteView({
         </div>
       </div>
 
-      <UploadCompleteWarnings partialWarning={partialWarning} diarizationWarning={false} t={t} />
+      <UploadCompleteWarnings partialWarning={partialWarning} t={t} />
 
       {saveError && (
         <p className="text-xs text-destructive text-center mb-4" role="status">

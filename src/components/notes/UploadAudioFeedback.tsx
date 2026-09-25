@@ -42,32 +42,21 @@ export function UploadModelSettingsButton({
 
 interface UploadCompleteWarningsProps {
   partialWarning: { failed: number; total: number } | null;
-  diarizationWarning: boolean;
   t: (key: string, options?: Record<string, unknown>) => string;
 }
 
 export function UploadCompleteWarnings({
   partialWarning,
-  diarizationWarning,
   t,
 }: UploadCompleteWarningsProps): React.JSX.Element | null {
-  if (!partialWarning && !diarizationWarning) return null;
+  if (!partialWarning) return null;
 
   return (
-    <>
-      {partialWarning && (
-        <p className={cn(COMPLETION_WARNING, "text-destructive/50")}>
-          {t("notes.upload.partialWarningCount", {
-            failed: partialWarning.failed,
-            total: partialWarning.total,
-          })}
-        </p>
-      )}
-      {diarizationWarning && (
-        <p className={cn(COMPLETION_WARNING, "text-warning")} role="status" aria-live="polite">
-          {t("notes.upload.diarizationWarning")}
-        </p>
-      )}
-    </>
+    <p className={cn(COMPLETION_WARNING, "text-destructive/50")}>
+      {t("notes.upload.partialWarningCount", {
+        failed: partialWarning.failed,
+        total: partialWarning.total,
+      })}
+    </p>
   );
 }

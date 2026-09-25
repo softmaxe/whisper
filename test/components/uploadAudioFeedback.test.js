@@ -95,7 +95,6 @@ test("the completed upload stays quiet when nothing went wrong", async (t) => {
   const markup = renderToStaticMarkup(
     createElement(UploadCompleteWarnings, {
       partialWarning: null,
-      diarizationWarning: false,
       t: (key) => key,
     })
   );

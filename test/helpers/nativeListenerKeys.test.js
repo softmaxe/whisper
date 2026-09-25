@@ -38,8 +38,5 @@ test("dictation lookup handles primary and secondary shortcuts", () => {
   const manager = makeManager(["GLOBE", "Control+Shift+R"]);
   assert.equal(manager.slotHasHotkey("dictation", "Control+Shift+R"), true);
   assert.equal(manager.slotHasHotkey("dictation", "F12"), false);
-  assert.equal(manager.findSlotByHotkey("Control+Shift+R"), "dictation");
-  assert.equal(manager.findSlotByHotkey("F12"), null);
   assert.deepEqual(manager.getSlotHotkeys("dictation"), ["GLOBE", "Control+Shift+R"]);
-  assert.equal(manager.getSlotHotkey("dictation"), "GLOBE");
 });

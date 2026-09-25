@@ -94,7 +94,7 @@ class ReasoningService extends BaseReasoningService {
       }
       const controller = new AbortController();
       this.activeRequestControllers.add(controller);
-      const timeoutSeconds = getLlmRequestTimeoutSeconds({ scope: config.inferenceScope });
+      const timeoutSeconds = getLlmRequestTimeoutSeconds();
       const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
       try {
         const headers: Record<string, string> = {

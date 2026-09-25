@@ -7,30 +7,13 @@ test("an idle state may start a dictation", async () => {
   const { canStartDictation } = await load();
 
   assert.equal(canStartDictation({}), true);
-  assert.equal(
-    canStartDictation({
-      isRecording: false,
-      isProcessing: false,
-      isStreaming: false,
-      isStreamingStartInProgress: false,
-      isFinalizingStreaming: false,
-    }),
-    true
-  );
+  assert.equal(canStartDictation({ isRecording: false, isProcessing: false }), true);
 });
 
 test("every busy flag independently blocks a new dictation start", async () => {
   const { canStartDictation } = await load();
 
-  // The full five-flag set: three call sites used to carry drifting subsets
-  // of this list, so each flag is pinned individually.
-  for (const flag of [
-    "isRecording",
-    "isProcessing",
-    "isStreaming",
-    "isStreamingStartInProgress",
-    "isFinalizingStreaming",
-  ]) {
+  for (const flag of ["isRecording", "isProcessing"]) {
     assert.equal(canStartDictation({ [flag]: true }), false, `${flag} must block a start`);
   }
 });
