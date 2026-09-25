@@ -38,8 +38,6 @@ test("raw cleanup fallback is reported only after the original dictation is past
     window: {
       electronAPI: {
         onToggleDictation: noopDispose,
-        onToggleVoiceAgent: noopDispose,
-        onToggleTranslation: noopDispose,
         onStartDictation: noopDispose,
         onPrepareDictation: noopDispose,
         onCancelDictationPreparation: noopDispose,
@@ -71,7 +69,7 @@ test("raw cleanup fallback is reported only after the original dictation is past
   useCleanupFailureStore.setState({ pending: 0, lastFailure: null });
 
   function Harness() {
-    useAudioRecording(() => {}, { onDemoEvent: () => {} });
+    useAudioRecording(() => {}, {});
     return null;
   }
 

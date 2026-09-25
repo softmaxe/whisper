@@ -41,14 +41,6 @@ const SETTINGS_STORE_SOURCE = `
 export const getSettings = () => globalThis.__forceStopSettings;
 `;
 
-const POLICY_STORE_SOURCE = `
-export const usePolicyStore = {
-  // An unknown status fails closed at the policy gate, which would make the
-  // second dictation bail before it reaches AudioManager at all.
-  getState: () => ({ status: "unmanaged" }),
-  subscribe: () => () => {},
-};
-`;
 
 const LOGGER_SOURCE = `
 const noop = () => {};
@@ -80,8 +72,6 @@ async function mountHarness(t, { settings, writeClipboard } = {}) {
     window: {
       electronAPI: {
         onToggleDictation: noopDispose,
-        onToggleVoiceAgent: noopDispose,
-        onToggleTranslation: noopDispose,
         onStartDictation: noopDispose,
         onPrepareDictation: noopDispose,
         onCancelDictationPreparation: noopDispose,
@@ -93,7 +83,6 @@ async function mountHarness(t, { settings, writeClipboard } = {}) {
         dictationLifecycleStateChanged: NOOP,
         completeDictationPreview: NOOP,
         hideDictationPreview: NOOP,
-        setScreenContextEnabled: NOOP,
         async writeClipboard(text) {
           clipboardWrites.push(text);
           return writeClipboard ? writeClipboard(text) : { success: true };
@@ -108,7 +97,6 @@ async function mountHarness(t, { settings, writeClipboard } = {}) {
     keepTranscriptionInClipboard: false,
     showTranscriptionPreview: false,
     snippets: [],
-    useLocalWhisper: false,
     pauseMediaOnDictation: false,
     ...settings,
   };
@@ -120,7 +108,6 @@ async function mountHarness(t, { settings, writeClipboard } = {}) {
     mockModules: {
       "/helpers/audioManager": FAKE_AUDIO_MANAGER_SOURCE,
       "/stores/settingsStore": SETTINGS_STORE_SOURCE,
-      "/stores/policyStore": POLICY_STORE_SOURCE,
       "/utils/logger": LOGGER_SOURCE,
       "react-i18next": TRANSLATION_SOURCE,
     },
@@ -131,7 +118,7 @@ async function mountHarness(t, { settings, writeClipboard } = {}) {
   function Harness() {
     Object.assign(
       api,
-      useAudioRecording((entry) => toasts.push(entry), { onDemoEvent: NOOP })
+      useAudioRecording((entry) => toasts.push(entry), {})
     );
     return null;
   }

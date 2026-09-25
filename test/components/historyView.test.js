@@ -27,8 +27,6 @@ test("empty History keeps an accessible toggle to reveal failed and discarded re
         'export const useTranslation = () => ({ t: (key) => key, i18n: { language: "en" } });',
       "/stores/settingsStore":
         "export const useSettingsStore = (selector) => selector({ dataRetentionEnabled: true });",
-      "/stores/policyStore":
-        'export const usePolicyStore = (selector) => selector({ status: "unmanaged" });',
     },
   });
   const { default: HistoryView } = await vite.ssrLoadModule("/components/HistoryView.tsx");

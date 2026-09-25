@@ -139,6 +139,5 @@ for (const saved of [true, false]) {
       assert.match(markup, /controlPanel\.history\.dataRetentionDisabled/);
       assert.doesNotMatch(markup, /controlPanel\.history\.sectionTitle/);
     }
-    assert.doesNotMatch(markup, /notes\.upload\.openNote/);
   });
 }

@@ -15,7 +15,6 @@ async function loadCleanup(t) {
     globalThis.fetch = originalFetch;
   });
   useSettingsStore.setState({
-    cleanupMode: "self-hosted",
     cleanupRemoteUrl: "http://127.0.0.1:8080",
     cleanupModel: "qwen3.5:9b",
     cleanupCustomApiKey: "fixture-key",

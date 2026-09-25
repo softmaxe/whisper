@@ -8,8 +8,6 @@ async function loadUploadHistory(t, enabled = true) {
     cachePrefix: "whisper-upload-history-save-test-",
     mockModules: {
       "/stores/settingsStore": `export const getSettings = () => ({ dataRetentionEnabled: ${enabled} });`,
-      "/stores/policyStore":
-        'export const usePolicyStore = { getState: () => ({ status: "unmanaged" }) };',
     },
   });
   const service = await vite.ssrLoadModule("/services/uploadNotes.ts");

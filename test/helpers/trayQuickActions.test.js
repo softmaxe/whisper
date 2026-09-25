@@ -45,21 +45,16 @@ function createTrayManager(calls, { dictating = false } = {}) {
     isDictating: () => dictating,
     sendStartDictation: () => calls.push("start-dictation"),
     sendStopDictation: () => calls.push("stop-dictation"),
-    sendOpenAssistantPanel: () => calls.push("assistant"),
-    startManualMeeting: () => calls.push("meeting"),
   };
   return trayManager;
 }
 
-test("the tray offers dictation without assistant or meeting actions", () => {
+test("the tray offers dictation first", () => {
   const calls = [];
   const entries = createTrayManager(calls).buildContextMenuTemplate();
   const [listen, separator] = entries;
   assert.equal(listen.label, "app.commandMenu.startListening");
   assert.equal(separator.type, "separator");
-  assert.ok(
-    entries.every((entry) => !/askAssistant|startMeetingRecording/.test(entry.label || ""))
-  );
   listen.click();
   assert.deepEqual(calls, ["start-dictation"]);
 });

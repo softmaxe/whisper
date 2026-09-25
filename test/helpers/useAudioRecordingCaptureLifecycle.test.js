@@ -184,7 +184,6 @@ async function mountCapture(
   const { useSettingsStore } = await vite.ssrLoadModule("/stores/settingsStore.ts");
   useSettingsStore.setState({
     transcriptionMode: "self-hosted",
-    useLocalWhisper: false,
     reasoningMode: "disabled",
     useReasoningModel: false,
   });
