@@ -74,7 +74,6 @@ function getEffectiveRetentionPreferences() {
 function resolveCleanupConfig(settings) {
   if (!settings.useCleanupModel || !getEffectiveCleanupModel()?.trim()) return null;
   return {
-    inferenceScope: /** @type {const} */ ("dictationCleanup"),
     disableThinking: settings.cleanupDisableThinking,
     // Pin cleanup to 0; zero does not guarantee determinism.
     temperature: 0,

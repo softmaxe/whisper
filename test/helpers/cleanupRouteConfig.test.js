@@ -22,7 +22,6 @@ test("cleanup pins temperature 0 and requires complete output", async (t) => {
   const config = resolveCleanupConfig({ useCleanupModel: true, cleanupDisableThinking: true });
 
   assert.deepEqual(config, {
-    inferenceScope: "dictationCleanup",
     disableThinking: true,
     temperature: 0,
     requireCompleteOutput: true,
