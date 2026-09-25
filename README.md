@@ -11,11 +11,13 @@
 
 A macOS dictation app for your own speech recognition and text cleanup servers. Speak, and Whisper pastes the text into your current app. Deploy the servers separately and connect them in Settings.
 
+https://github.com/user-attachments/assets/97892742-e3d3-4b1b-88d2-b9b05e55a560
+
 <p align="center">
   <img src="docs/images/overview-en.png" alt="Whisper interface with local dictation history and navigation" width="800">
 </p>
 
-The interface above uses sample data.
+The video and the interface above use sample data.
 
 ## Features
 
@@ -69,7 +71,7 @@ npm ci
 npm run dev
 ```
 
-Run `npm run quality-check` for lint, TypeScript, translations, and regression tests. `npm run pack` builds an ad-hoc signed development app. See [Tests](test/README.md) for coverage and CI, and [macOS signing](docs/macos-signing.md) for release builds.
+Run `npm run quality-check` for lint, TypeScript, translations, and regression tests. `npm run pack` builds an ad-hoc signed development app. See [Tests](test/README.md) for coverage and CI, and [macOS signing](docs/macos-signing.md) for release builds. The demo video is rendered from code in [demo](demo/README.md).
 
 ## License
 

@@ -11,11 +11,13 @@
 
 连接自建语音识别和文本整理服务的 macOS 听写应用。说完后，文字自动粘贴到正在使用的应用。服务需要单独部署，再到设置中填写连接信息。
 
+https://github.com/user-attachments/assets/a5c75987-fc24-4ef6-94f2-efdf130c2087
+
 <p align="center">
   <img src="docs/images/overview-zh-CN.png" alt="Whisper 中文界面，展示本地听写历史记录和导航菜单" width="800">
 </p>
 
-上图为使用示例数据的应用界面。
+上方视频和应用界面均使用示例数据。
 
 ## 功能
 
@@ -69,7 +71,7 @@ npm ci
 npm run dev
 ```
 
-`npm run quality-check` 检查 lint、TypeScript、翻译和回归测试。`npm run pack` 构建 ad-hoc 签名的开发版应用。测试范围与 CI 见[测试说明](test/README.md)，发布构建见 [macOS 签名说明](docs/macos-signing.md)。
+`npm run quality-check` 检查 lint、TypeScript、翻译和回归测试。`npm run pack` 构建 ad-hoc 签名的开发版应用。测试范围与 CI 见[测试说明](test/README.md)，发布构建见 [macOS 签名说明](docs/macos-signing.md)。演示视频由 [demo](demo/README.md) 中的代码渲染生成。
 
 ## 许可证
 
