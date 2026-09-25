@@ -8,7 +8,6 @@ async function loadManagerClass(t) {
     cachePrefix: "openwhispr-cancel-lifecycle-test-",
     settingsKey: "__cancelLifecycleSettings",
     settings: {
-      transcriptionMode: "self-hosted",
       remoteTranscriptionUrl: "http://localhost:8000/v1",
       remoteTranscriptionModel: "whisper-1",
     },

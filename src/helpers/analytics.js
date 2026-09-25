@@ -66,17 +66,8 @@ export function buildAnalyticsActivityDays(daily, today = new Date()) {
   return days;
 }
 
-function modeFromSettings({ useLocalWhisper, transcriptionMode, cloudTranscriptionMode }) {
-  if (useLocalWhisper || transcriptionMode === "local") return "local";
-  if (transcriptionMode === "self-hosted") return "self_hosted";
-  if (cloudTranscriptionMode === "openwhispr" || transcriptionMode === "openwhispr") {
-    return "openwhispr_cloud";
-  }
-  if (transcriptionMode === "providers") return "byok";
-  return "unknown";
-}
-
-function modeFromStoredProvider(provider) {
+// The mode of the transcription route a stored provider name identifies.
+export function resolveAnalyticsMode(provider) {
   if (!provider) return "unknown";
   if (provider.startsWith("local")) return "local";
   if (provider === "openwhispr") return "openwhispr_cloud";
@@ -85,20 +76,8 @@ function modeFromStoredProvider(provider) {
 }
 
 export function inferHistoricalAnalyticsMode(provider) {
-  const mode = modeFromStoredProvider(provider);
+  const mode = resolveAnalyticsMode(provider);
   return mode === "byok" ? "unknown" : mode;
-}
-
-// The provider that actually ran wins when it names a concrete engine or ends
-// in "-fallback", which proves the selected route never ran. Streaming provider
-// names ("deepgram-streaming") are too coarse to tell BYOK from OpenWhispr
-// Cloud, so everything else defers to the selected settings.
-export function resolveAnalyticsMode(settings, provider) {
-  const providerMode = modeFromStoredProvider(provider);
-  if (providerMode === "local" || providerMode === "self_hosted") return providerMode;
-  if (provider?.endsWith("-fallback")) return providerMode;
-  const selected = modeFromSettings(settings);
-  return selected === "unknown" ? providerMode : selected;
 }
 
 function dayNumber(value) {

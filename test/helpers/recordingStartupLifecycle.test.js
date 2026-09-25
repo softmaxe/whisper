@@ -138,8 +138,6 @@ async function setup(t, { cues = false } = {}) {
   const vite = await createRendererServer(t);
   const { useSettingsStore } = await vite.ssrLoadModule("/stores/settingsStore.ts");
   useSettingsStore.setState({
-    transcriptionMode: "self-hosted",
-    useLocalWhisper: false,
     microphoneSelectionMode: "system",
     micWarmHoldSeconds: 0,
     audioCuesEnabled: cues,

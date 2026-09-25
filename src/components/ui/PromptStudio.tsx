@@ -89,7 +89,6 @@ export default function PromptStudio({ className = "" }: PromptStudioProps) {
         {
           lanUrl: cleanupRemoteUrl.trim(),
           customApiKey: effectiveSettings.cleanupCustomApiKey,
-          inferenceScope: "dictationCleanup",
           disableThinking: effectiveSettings.cleanupDisableThinking,
           temperature: 0,
           requireCompleteOutput: true,

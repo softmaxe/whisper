@@ -74,7 +74,6 @@ function getEffectiveRetentionPreferences() {
 function resolveCleanupConfig(settings) {
   if (!settings.useCleanupModel || !getEffectiveCleanupModel()?.trim()) return null;
   return {
-    inferenceScope: /** @type {const} */ ("dictationCleanup"),
     disableThinking: settings.cleanupDisableThinking,
     // Pin cleanup to 0; zero does not guarantee determinism.
     temperature: 0,
@@ -1496,7 +1495,7 @@ class AudioManager {
         occurredAt: occurredAt.toISOString(),
         localDate: localDateKey(occurredAt),
         spokenDurationMs: metadata.durationMs || null,
-        mode: resolveAnalyticsMode(getSettings(), metadata.provider),
+        mode: resolveAnalyticsMode(metadata.provider),
         provider: metadata.provider || null,
         model: metadata.model || null,
       });

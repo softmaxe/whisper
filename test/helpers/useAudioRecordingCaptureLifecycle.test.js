@@ -54,7 +54,6 @@ async function mountCapture(
   const { window, storage } = installBrowserGlobals(t, {
     initialStorage: {
       onboardingCompleted: "true",
-      transcriptionMode: "self-hosted",
       remoteTranscriptionUrl: "http://localhost:8178/v1",
       remoteTranscriptionModel: "test-model",
       microphoneSelectionMode: "specific",
@@ -183,7 +182,6 @@ async function mountCapture(
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
   const { useSettingsStore } = await vite.ssrLoadModule("/stores/settingsStore.ts");
   useSettingsStore.setState({
-    transcriptionMode: "self-hosted",
     reasoningMode: "disabled",
     useReasoningModel: false,
   });

@@ -13,7 +13,6 @@ export interface ReasoningConfig {
   disableThinking?: boolean;
   language?: string;
   requireCompleteOutput?: boolean;
-  inferenceScope?: "dictationCleanup";
 }
 
 export abstract class BaseReasoningService {

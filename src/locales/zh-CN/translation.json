@@ -565,13 +565,6 @@
     "noneAvailable": "没有可用的模型"
   },
   "notes": {
-    "folders": {
-      "defaults": {
-        "personal": "个人",
-        "meetings": "会议",
-        "videos": "视频"
-      }
-    },
     "list": {
       "timeNow": "刚刚",
       "minutesAgo": "{{count}} 分钟前",
@@ -623,10 +616,6 @@
       "transcriptLabel": "转录全文",
       "copyFullText": "复制全文",
       "viewInHistory": "在历史记录中查看"
-    },
-    "empty": {
-      "title": "这里还没有笔记",
-      "emptyFolder": "此文件夹中没有笔记"
     }
   },
   "dictionary": {
@@ -758,7 +747,7 @@
   },
   "commandSearch": {
     "title": "搜索",
-    "description": "搜索笔记和转录",
+    "description": "搜索转录",
     "sections": {
       "transcripts": "转录"
     },
