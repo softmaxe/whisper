@@ -30,7 +30,6 @@ export interface Copy {
     serversNote: string;
   };
   saidLabel: string;
-  cleanedLabel: string;
   mail: {
     app: string;
     to: string;
@@ -72,7 +71,6 @@ export interface Copy {
     today: string;
     showDiscarded: string;
     clearAll: string;
-    rawTranscript: string;
     copied: string;
     query: string;
     history: { time: string; text: string }[];
@@ -119,7 +117,7 @@ const en: Copy = {
   gap: " ",
   slogan: "Speak. It's typed.",
   subtitle: "Whisper · dictation for your Mac, on your own servers",
-  key: { doubleTap: "Double-tap", hold: "Hold" },
+  key: { doubleTap: "Double-tap", hold: "Hold mode · set in Hotkeys" },
   clock: {
     morning: "7:45 AM",
     chat: "9:30 AM",
@@ -149,7 +147,6 @@ const en: Copy = {
     serversNote: "Connect any OpenAI-compatible speech and cleanup server",
   },
   saidLabel: "You said",
-  cleanedLabel: "Pasted",
   mail: {
     app: "Mail",
     to: "To:",
@@ -189,10 +186,10 @@ const en: Copy = {
     ],
     question: "Who's joining the design review at 11?",
     you: "You",
-    heard: "I'll join. Can you add Shivon too?",
-    wrong: "Shivon",
-    right: "Siobhan",
-    toast: "Added “Siobhan” to your dictionary",
+    heard: "I'll join. Can you add Caitlin too?",
+    wrong: "Caitlin",
+    right: "Kaitlyn",
+    toast: "Added “Kaitlyn” to your dictionary",
     placeholder: "Message #design-review",
   },
   snippet: {
@@ -234,14 +231,13 @@ const en: Copy = {
     today: "Today",
     showDiscarded: "Show failed and discarded",
     clearAll: "Clear all",
-    rawTranscript: "Raw Transcript",
     copied: "Copied!",
     query: "launch",
     history: [
       { time: "18:41", text: "Team sync: we agreed to move the launch review to Thursday." },
       { time: "15:05", text: "// Retry failed uploads with exponential backoff" },
       { time: "12:15", text: "Sounds great, grab any slot here: cal.com/alex/30min" },
-      { time: "09:30", text: "I'll join. Can you add Siobhan too?" },
+      { time: "09:30", text: "I'll join. Can you add Kaitlyn too?" },
       {
         time: "07:45",
         text: "Friday works for me. Let's ship at 10, and I'll send the notes after.",
@@ -293,7 +289,7 @@ const zh: Copy = {
   gap: "",
   slogan: "开口，即成文。",
   subtitle: "Whisper · Mac 听写，跑在你自己的服务器上",
-  key: { doubleTap: "双击", hold: "按住" },
+  key: { doubleTap: "双击", hold: "按住模式 · 在快捷键设置中切换" },
   clock: {
     morning: "上午 7:45",
     chat: "上午 9:30",
@@ -323,7 +319,6 @@ const zh: Copy = {
     serversNote: "接入任意 OpenAI 兼容的语音识别与文本整理服务",
   },
   saidLabel: "你说的",
-  cleanedLabel: "粘贴的",
   mail: {
     app: "邮件",
     to: "收件人：",
@@ -398,7 +393,6 @@ const zh: Copy = {
     today: "今天",
     showDiscarded: "显示失败和已放弃的记录",
     clearAll: "全部清除",
-    rawTranscript: "原始转录",
     copied: "已复制！",
     query: "发布",
     history: [

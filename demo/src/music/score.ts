@@ -132,8 +132,6 @@ const voicing = (tones: number[], floor: number, count: number) => {
   return notes;
 };
 
-const starts = sceneStartBeat;
-
 // Arpeggio contour over eight quavers: rises, turns, and settles.
 const ARPEGGIO = [0, 2, 1, 3, 4, 3, 2, 1];
 
@@ -144,11 +142,11 @@ export function composeScore(): Note[] {
     if (note.beat < TOTAL_BEATS) notes.push({ ...note, beats: end - note.beat });
   };
 
-  const chat = starts("chat");
-  const snippet = starts("snippet");
-  const night = starts("night");
-  const settings = starts("settings");
-  const outro = starts("outro");
+  const chat = sceneStartBeat("chat");
+  const snippet = sceneStartBeat("snippet");
+  const night = sceneStartBeat("night");
+  const settings = sceneStartBeat("settings");
+  const outro = sceneStartBeat("outro");
 
   for (const span of chordSpans()) {
     const { chord, beat, beats } = span;
@@ -238,17 +236,18 @@ export function composeScore(): Note[] {
     add({ instrument: "violins", midi: midi - 12, beat: night + offset, beats, velocity: 0.42 });
   }
 
-  // Finale: strings bloom on the tonic and let it ring.
+  // Finale: the strings swell on the tonic and fall away, leaving the piano alone.
   for (const midi of [DB + 36, DB + 48])
-    add({ instrument: "cello", midi, beat: outro, beats: 8, velocity: 0.45 });
-  add({ instrument: "viola", midi: F + 60, beat: outro, beats: 8, velocity: 0.34 });
-  add({ instrument: "violins", midi: AB + 72, beat: outro, beats: 8, velocity: 0.38 });
+    add({ instrument: "cello", midi, beat: outro, beats: 3, velocity: 0.4 });
+  add({ instrument: "viola", midi: F + 60, beat: outro, beats: 2.5, velocity: 0.3 });
+  add({ instrument: "violins", midi: AB + 72, beat: outro, beats: 2.5, velocity: 0.34 });
   for (const [midi, offset] of [
     [AB + 72, 3],
     [F + 72, 3.5],
-    [DB + 72, 4],
+    [EB + 72, 4],
+    [DB + 72, 5],
   ] as const) {
-    add({ instrument: "piano", midi, beat: outro + offset, beats: 4, velocity: 0.36 });
+    add({ instrument: "piano", midi, beat: outro + offset, beats: 3, velocity: 0.36 });
   }
 
   // Harp glissandi lift the title and the logo.

@@ -42,6 +42,17 @@ describe("score", () => {
     }
   });
 
+  it("returns to solo piano for the last bar", () => {
+    const lastBar = TOTAL_BEATS - 4;
+    const ringing = score.filter(
+      (note) =>
+        note.instrument !== "piano" &&
+        note.instrument !== "harp" &&
+        note.beat + note.beats > lastBar
+    );
+    expect(ringing).toEqual([]);
+  });
+
   it("resolves to the tonic at the end", () => {
     const lastBass = score
       .filter((note) => note.instrument === "cello")
