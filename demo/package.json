@@ -1,0 +1,27 @@
+{
+  "name": "whisper-demo",
+  "private": true,
+  "type": "module",
+  "description": "Programmatic demo video for the Whisper README",
+  "scripts": {
+    "studio": "remotion studio",
+    "music": "node scripts/render-music.ts",
+    "render:en": "remotion render WhisperDemo-en out/whisper-demo-en.mp4",
+    "render:zh": "remotion render WhisperDemo-zh out/whisper-demo-zh-CN.mp4",
+    "render": "npm run render:en && npm run render:zh",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.529",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "remotion": "^4.0.529"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

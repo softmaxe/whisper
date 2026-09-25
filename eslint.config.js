@@ -12,6 +12,7 @@ module.exports = [
       "*.min.js",
       "build/**",
       "src/**", // src has its own config
+      "demo/**", // the demo video is a separate TypeScript package
     ],
   },
   // Main process files (CommonJS)
