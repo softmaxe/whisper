@@ -16,7 +16,7 @@ const { changeLanguage } = require("./i18nMain");
 
 const AudioStorageManager = require("./audioStorage");
 
-const { applySmartSpacing } = require("./smartSpacing");
+const AutomaticPaste = require("./automaticPaste");
 const { applyAutoLearnSetting } = require("./autoLearnSetting");
 const {
   DEFAULT_RETENTION_SETTINGS,
@@ -143,6 +143,12 @@ class IPCHandlers {
     this._autoLearnDebounceTimer = null;
     this._autoLearnLatestData = null;
     this._textEditHandler = null;
+    this.automaticPaste = new AutomaticPaste({
+      clipboardManager: this.clipboardManager,
+      getMainWindow: () => this.windowManager?.mainWindow,
+      getTextEditMonitor: () => this.textEditMonitor,
+      isAutoLearnEnabled: () => this._autoLearnEnabled,
+    });
     this.audioStorageManager = new AudioStorageManager();
     this._retentionCleanupInterval = null;
     this._retentionSettings = { ...DEFAULT_RETENTION_SETTINGS }; // Synced from renderer
@@ -776,59 +782,10 @@ class IPCHandlers {
     });
 
     ipcMain.handle("paste-text", async (event, text, options) => {
-      const mainWindow = this.windowManager?.mainWindow;
-      const targetPid = this.textEditMonitor?.lastTargetPid || null;
-
-      // Activating the target by PID is more reliable than hide()'s implicit
-      // focus hand-off for Chromium apps like Claude desktop and Brave (#668).
-      let activated = false;
-      if (this.textEditMonitor) {
-        activated = await this.textEditMonitor.activateTargetPid();
-      }
-
-      if (!activated && mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
-        mainWindow.hide();
-        await new Promise((resolve) => setTimeout(resolve, 120));
-        mainWindow.showInactive();
-      }
-
-      // Smart spacing (#856): append a trailing space so the next paste's leading
-      // space self-corrects the gap. Reading the char before the cursor to space
-      // the front instead would take a macOS Accessibility read costing hundreds
-      // of ms — too slow for the paste hot path.
-      const textToPaste = applySmartSpacing(text);
-
-      const pasteResult = await this.clipboardManager.pasteText(textToPaste, {
+      return this.automaticPaste.paste(text, {
         ...options,
         webContents: event.sender,
-        checkPasteTarget: () => this.textEditMonitor?.canPasteAtTarget(targetPid) ?? null,
       });
-      const pasted = pasteResult?.pasted !== false;
-      debugLogger.debug("[AutoLearn] Paste completed", {
-        autoLearnEnabled: this._autoLearnEnabled,
-        hasMonitor: !!this.textEditMonitor,
-        targetPid,
-        pasted,
-      });
-      if (pasted && this.textEditMonitor && this._autoLearnEnabled) {
-        setTimeout(() => {
-          try {
-            debugLogger.debug("[AutoLearn] Starting monitoring", {
-              textPreview: text.substring(0, 80),
-            });
-            this.textEditMonitor.startMonitoring(text, 30000, { targetPid });
-          } catch (err) {
-            debugLogger.debug("[AutoLearn] Failed to start monitoring", { error: err.message });
-          }
-        }, 500);
-      }
-      // ClipboardManager returns `restoreComplete` so main-process callers can
-      // serialize subsequent clipboard work behind its delayed restore. A
-      // Promise cannot cross Electron's IPC boundary, though, and renderer
-      // callers need to know whether text was pasted, but not the delayed
-      // clipboard restoration promise. Successful platform paths predate the
-      // explicit `pasted` outcome; clipboard-only delivery sets false.
-      return { success: true, pasted };
     });
 
     ipcMain.handle("check-accessibility-permission", async (_event, silent = false) => {

@@ -1,8 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 
-// All requests use fixture.paste so the same behavioral baseline can move from
-// IPC to AutomaticPaste without changing the retained collaborators or cases.
+// These scenarios use AutomaticPaste's entry interface with the same retained
+// collaborators and expectations established by the original IPC baseline.
 function automaticPasteScenarios(createFixture) {
   async function completePaste(fixture, text = "dictated text", options) {
     const result = fixture.paste(text, options);

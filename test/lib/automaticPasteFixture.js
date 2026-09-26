@@ -6,12 +6,13 @@ const path = require("node:path");
 
 const modulePaths = {
   ipc: require.resolve("../../src/helpers/ipcHandlers"),
+  automaticPaste: require.resolve("../../src/helpers/automaticPaste"),
   clipboard: require.resolve("../../src/helpers/clipboard"),
   monitor: require.resolve("../../src/helpers/textEditMonitor"),
 };
 
-// Keep the IPC, clipboard queue, native adapters and monitor real. Only the OS
-// clipboard, process transport, executable discovery, window and clock are fake.
+// Keep production AutomaticPaste wiring, the clipboard queue, native adapters
+// and monitor real. Control OS access and unrelated IPC startup services.
 function createAutomaticPasteFixture(t, options = {}) {
   const state = {
     targetPid: 42,
@@ -159,6 +160,14 @@ function createAutomaticPasteFixture(t, options = {}) {
   Module._load = function loadExternalSeams(request, parent, isMain) {
     if (request === "electron") return electron;
     if (request === "./debugLogger") return { debug: () => {} };
+    if (parent?.filename === modulePaths.ipc) {
+      // Constructor services outside Automatic paste must not touch disk or
+      // query microphone hardware while these scenarios exercise real wiring.
+      if (request === "./audioStorage") return class AudioStorageManager {};
+      if (request === "./systemDefaultMicrophone") {
+        return { resolveSystemDefaultMicrophone: async () => null };
+      }
+    }
     if ([modulePaths.clipboard, modulePaths.monitor].includes(parent?.filename)) {
       if (request === "child_process") return { spawn, execFile };
       if (request === "fs") return nativeFs;
@@ -186,16 +195,16 @@ function createAutomaticPasteFixture(t, options = {}) {
     hide: () => record("hide"),
     showInactive: () => record("show-inactive"),
   };
-  const owner = {
+  const owner = new IPCHandlers({
     clipboardManager: new ClipboardManager(),
     textEditMonitor: state.missingMonitor ? null : monitor,
     windowManager: { mainWindow: window },
-    _autoLearnEnabled: options.autoLearn !== false,
-  };
-  IPCHandlers.prototype.setupHandlers.call(owner);
+  });
+  owner._autoLearnEnabled = options.autoLearn !== false;
   const sender = { id: 1 };
   const flush = () => new Promise((resolve) => setImmediate(resolve));
   t.after(() => {
+    owner._cleanupTextEditMonitor();
     monitor.stopMonitoring();
     t.mock.timers.reset();
     for (const file of Object.values(modulePaths)) delete require.cache[file];
@@ -210,7 +219,9 @@ function createAutomaticPasteFixture(t, options = {}) {
     monitorStart,
     owner,
     sender,
-    paste: (text, pasteOptions) => handlers.get("paste-text")({ sender }, text, pasteOptions),
+    paste: (text, pasteOptions) =>
+      owner.automaticPaste.paste(text, { ...pasteOptions, webContents: sender }),
+    invokePaste: (text, pasteOptions) => handlers.get("paste-text")({ sender }, text, pasteOptions),
     writeClipboard: (text) => handlers.get("write-clipboard")({ sender }, text),
     flush,
     advance: async (ms) => {
