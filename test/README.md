@@ -41,6 +41,21 @@ The [combined verification report](../docs/recording-startup-verification.md)
 maps the integrated lifecycle coverage to #28 and records outstanding hardware
 checks.
 
+## Automatic paste baseline
+
+The [Automatic paste integration suite](helpers/automaticPasteIntegration.test.js)
+submits requests through the production `paste-text` IPC handler with the real
+ClipboardManager and TextEditMonitor. Its [shared scenarios](lib/automaticPasteScenarios.js)
+cover target confirmation, spacing, permissions, native failure and retry,
+clipboard restoration and queue timing, and correction monitoring. The
+[fixture](lib/automaticPasteFixture.js) controls OS clipboard access, native
+process responses, executable discovery, windows and time. A dedicated
+failure-isolation case injects a synchronous monitoring-start exception.
+
+These tests establish command completion under controlled OS responses. They do
+not establish observed text insertion in a live macOS app. Existing native target,
+keyboard-layout and renderer recovery tests remain separate regression coverage.
+
 ## Release smoke check
 
 Automated checks do not establish microphone, Accessibility, or server compatibility on a user's Mac. Before calling a release ready, check the packaged app on macOS:
