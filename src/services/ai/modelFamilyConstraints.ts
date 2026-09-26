@@ -1,15 +1,11 @@
 /**
- * Request constraints that belong to a model family, independent of which
- * provider serves it. Storing a family fact inside a provider branch is what
- * broke Tinfoil gpt-oss (#1611: the "no reasoning off switch" rule lived under
- * `providerKey === "groq"`, so every other provider sent the rejected "none").
- * New family facts must land here, never in a provider conditional.
+ * Request constraints for model families served by self-hosted backends.
  *
  * Kept free of runtime imports so the table stays unit-testable on its own,
  * like thinkingSuppressionDialects.
  */
 export interface ModelFamilyConstraints {
-  family: "gpt-oss" | "qwen" | "magistral";
+  family: "gpt-oss" | "qwen";
   reasoningEffort?: {
     /** Value that best approximates "thinking off" for reasoning_effort. */
     suppressValue: string;
@@ -22,33 +18,20 @@ export interface ModelFamilyConstraints {
      */
     cleanupValue?: string;
   };
-  /** Family reasons natively and may reject reasoning params outright. */
-  omitReasoningParams?: boolean;
 }
 
 const FAMILIES: Array<ModelFamilyConstraints & { match: RegExp }> = [
   {
     family: "gpt-oss",
     match: /gpt-oss/,
-    // gpt-oss accepts low|medium|high only; it has no off switch. Confirmed
-    // live on Groq and Tinfoil (#1611): "none" is a 400 on both.
+    // gpt-oss accepts low|medium|high only; it has no off switch.
     reasoningEffort: { suppressValue: "low", cleanupValue: "low" },
   },
   {
     family: "qwen",
     match: /qwen/,
-    // qwen3 accepts none|default only (Groq's enum; "none" is also what the
-    // generic dialect sends everywhere, so the fact is provider-agnostic).
+    // Qwen uses the same suppression value as the generic self-hosted request.
     reasoningEffort: { suppressValue: "none" },
-  },
-  {
-    family: "magistral",
-    match: /magistral/,
-    // Legacy magistral models reason natively and may reject reasoning_effort.
-    // Verified only against the Mistral API, so the mistral dialect is the
-    // sole consumer today — a canary run should confirm other hosts before
-    // the generic dialect honors it.
-    omitReasoningParams: true,
   },
 ];
 

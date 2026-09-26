@@ -1,15 +1,11 @@
 import type { ReasoningConfig } from "../BaseReasoningService";
-import { detectEndpointDialect, suppressThinking } from "./thinkingSuppressionDialects";
+import { suppressThinking } from "./thinkingSuppressionDialects";
 
 export function applyThinkingSuppression(
   requestBody: Record<string, unknown>,
   model: string,
-  provider: string,
-  config: ReasoningConfig,
-  baseUrl?: string
+  config: ReasoningConfig
 ): void {
   if (config.disableThinking !== true) return;
-  // A known endpoint host wins over the generic provider dialect.
-  const providerKey = detectEndpointDialect(baseUrl)?.key ?? provider.toLowerCase();
-  suppressThinking(requestBody, providerKey, model);
+  suppressThinking(requestBody, model);
 }

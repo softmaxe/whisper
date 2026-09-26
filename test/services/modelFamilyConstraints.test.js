@@ -8,7 +8,6 @@ test("family lookup matches anywhere in the id, case-insensitively", async () =>
   assert.equal(getModelFamilyConstraints("openai/GPT-OSS-120b")?.family, "gpt-oss");
   assert.equal(getModelFamilyConstraints("gpt-oss-safeguard-120b")?.family, "gpt-oss");
   assert.equal(getModelFamilyConstraints("qwen/qwen3-32b")?.family, "qwen");
-  assert.equal(getModelFamilyConstraints("magistral-small-latest")?.family, "magistral");
 });
 
 test("unknown, empty, and missing ids resolve to no constraints", async () => {

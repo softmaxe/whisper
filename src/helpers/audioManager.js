@@ -36,8 +36,7 @@ import {
   dictionaryEchoError,
   matchesDictionaryPrompt,
 } from "../utils/dictionaryEchoFilter.js";
-import { dictionaryKeywords, usesTranscriptionKeywords } from "../utils/dictionaryKeywords.js";
-import { dictionaryPromptLimit, trimDictionaryPrompt } from "../utils/dictionaryPromptCap.js";
+import { WHISPER_PROMPT_CHARS, trimDictionaryPrompt } from "../utils/dictionaryPromptCap.js";
 import { getDictionaryHintWords } from "../utils/snippets";
 import { isEmptyRecording } from "./recordingGuard";
 import { evaluateFinishedRecording, withSalvageWarning } from "./recordingValidation";
@@ -1336,17 +1335,13 @@ class AudioManager {
         formData.append("language", language);
       }
 
-      // gpt-transcribe takes the dictionary on its own keywords[] channel (see
-      // dictionaryKeywords), so its prompt carries only the Chinese script bias.
-      const usesKeywords = usesTranscriptionKeywords(model || "");
       const dictionary = this.getCustomDictionaryPrompt();
 
       // The cut is a request bound, not a priority rule: Whisper decoders read
       // the tail of whatever they are given (see dictionaryPromptCap).
-      const maxPromptChars = dictionaryPromptLimit({ endpoint, model: model || "" });
       const trimmedPrompt = trimDictionaryPrompt(
-        this.getWhisperPrompt(settings, usesKeywords ? null : dictionary),
-        maxPromptChars
+        this.getWhisperPrompt(settings, dictionary),
+        WHISPER_PROMPT_CHARS
       );
       const dictionaryPrompt = trimmedPrompt.prompt;
       if (dictionaryPrompt) {
@@ -1356,19 +1351,13 @@ class AudioManager {
             {
               originalLength: trimmedPrompt.originalLength,
               truncatedLength: dictionaryPrompt.length,
-              maxChars: maxPromptChars,
+              maxChars: WHISPER_PROMPT_CHARS,
             },
             "transcription"
           );
         }
         formData.append("prompt", dictionaryPrompt);
       }
-      if (usesKeywords) {
-        for (const keyword of dictionaryKeywords(dictionary)) {
-          formData.append("keywords[]", keyword);
-        }
-      }
-
       const apiCallStart = performance.now();
       requestController = new AbortController();
       this._activeTranscriptionAbortController = requestController;

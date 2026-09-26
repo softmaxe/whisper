@@ -10,7 +10,7 @@ test("lan gets the nested reasoning object plus chat_template_kwargs", async () 
   const { suppressThinking } = await load();
 
   const body = {};
-  suppressThinking(body, "lan", "qwen3-8b");
+  suppressThinking(body, "qwen3-8b");
 
   assert.deepEqual(body, {
     reasoning: { effort: "none" },
@@ -22,7 +22,7 @@ test("lan sends a family's suppress floor inside the reasoning object, not a fla
   const { suppressThinking } = await load();
 
   const body = {};
-  suppressThinking(body, "lan", "gpt-oss-20b-mxfp4");
+  suppressThinking(body, "gpt-oss-20b-mxfp4");
 
   assert.deepEqual(body, {
     reasoning: { effort: "low" },
@@ -35,10 +35,10 @@ test("the gpt-oss floor covers the whole family case-insensitively", async () =>
   const { suppressThinking } = await load();
 
   const safeguard = {};
-  suppressThinking(safeguard, "lan", "gpt-oss-safeguard-120b");
+  suppressThinking(safeguard, "gpt-oss-safeguard-120b");
   assert.equal(safeguard.reasoning.effort, "low");
 
   const mixedCase = {};
-  suppressThinking(mixedCase, "lan", "GPT-OSS-20B");
+  suppressThinking(mixedCase, "GPT-OSS-20B");
   assert.equal(mixedCase.reasoning.effort, "low");
 });

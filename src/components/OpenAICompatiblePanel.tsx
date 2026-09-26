@@ -26,7 +26,7 @@ interface OpenAICompatiblePanelProps {
   defaultBaseUrl?: string;
   baseUrlPlaceholder?: string;
   helpExamples?: ReactNode;
-  // Hide the endpoint editor when the URL is fixed by the caller (e.g. OpenRouter).
+  // Hide the endpoint editor when the URL is fixed by the caller.
   lockedBaseUrl?: boolean;
   // Providers whose /models is public but whose inference needs a key.
   apiKeyRequired?: boolean;
@@ -41,7 +41,7 @@ export default function OpenAICompatiblePanel({
   model,
   setModel,
   defaultBaseUrl,
-  baseUrlPlaceholder = "https://api.openai.com/v1",
+  baseUrlPlaceholder = "http://localhost:8080/v1",
   helpExamples,
   lockedBaseUrl = false,
   apiKeyRequired = false,
@@ -298,13 +298,13 @@ export default function OpenAICompatiblePanel({
             <p className="text-xs text-muted-foreground">
               {t("reasoning.custom.endpointExamples")}{" "}
               <code dir="ltr" className="text-primary">
-                https://openrouter.ai/api/v1
+                http://localhost:1234/v1
               </code>{" "}
-              (OpenRouter),{" "}
+              (LM Studio),{" "}
               <code dir="ltr" className="text-primary">
-                https://api.together.xyz/v1
+                http://localhost:11434/v1
               </code>{" "}
-              (Together).
+              (Ollama).
             </p>
           )}
         </div>

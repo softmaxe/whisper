@@ -40,7 +40,7 @@ for (const [name, model, config, expectedParams] of CASES) {
   test(`self-hosted request: ${name}`, async () => {
     const { applyChatCompletionsParams } = await load();
     const body = { model, messages: [] };
-    applyChatCompletionsParams(body, { model, provider: "lan", config, maxTokens: MAX_TOKENS });
+    applyChatCompletionsParams(body, { model, config, maxTokens: MAX_TOKENS });
     const { model: _model, messages: _messages, ...params } = body;
     assert.deepEqual(params, expectedParams);
   });
@@ -51,7 +51,6 @@ test("self-hosted requests preserve explicit temperature and token limits", asyn
   const body = { model: "qwen3.5:9b", messages: [] };
   applyChatCompletionsParams(body, {
     model: body.model,
-    provider: "lan",
     config: { temperature: 0.7, maxTokens: 42 },
     maxTokens: 42,
   });
