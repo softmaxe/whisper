@@ -134,9 +134,7 @@ class IPCHandlers {
     this.windowManager = managers.windowManager;
     this.textEditMonitor = managers.textEditMonitor;
     this.getTrayManager = managers.getTrayManager;
-    // requestId -> AbortControllers for in-flight audio-upload work (cloud
-    // upload, or local transcription + diarization sharing one id), so a
-    // cancel can abort the exact job.
+    // Track each upload so cancellation stops its conversion and server request.
     this._uploadCancelRegistry = createUploadCancelRegistry();
     this._hotkeyCaptureMode = false;
     this._autoLearnEnabled = true; // Default on, synced from renderer
@@ -702,8 +700,12 @@ class IPCHandlers {
 
     ipcMain.handle(
       "transcribe-audio-file",
-      async (event, { filePath, language, remoteTranscriptionUrl, remoteTranscriptionModel }) => {
+      async (
+        event,
+        { filePath, language, remoteTranscriptionUrl, remoteTranscriptionModel, requestId }
+      ) => {
         const fs = require("fs");
+        const { signal, release } = this._uploadCancelRegistry.register(requestId);
         let cleanupUpload = null;
         try {
           if (typeof filePath !== "string") {
@@ -728,7 +730,7 @@ class IPCHandlers {
             };
           }
 
-          const upload = await prepareProviderUpload(sourcePath);
+          const upload = await prepareProviderUpload(sourcePath, { signal });
           cleanupUpload = upload.cleanup;
           const realByok = upload.path;
 
@@ -739,7 +741,7 @@ class IPCHandlers {
             providerContentType(realByok),
             { model: route.model, language: route.language }
           );
-          const data = await postMultipart(new URL(route.endpoint), body, boundary);
+          const data = await postMultipart(new URL(route.endpoint), body, boundary, {}, { signal });
           if (data.statusCode !== 200) {
             throw new Error(
               data.data?.error?.message ||
@@ -749,6 +751,10 @@ class IPCHandlers {
           }
           return { success: true, text: data.data.text };
         } catch (error) {
+          if (signal?.aborted) {
+            debugLogger.debug("Audio file transcription cancelled", { requestId });
+            return { success: false, error: "Cancelled", code: "UPLOAD_CANCELLED" };
+          }
           debugLogger.error("Audio file transcription error", { error: error.message });
           return {
             success: false,
@@ -757,6 +763,7 @@ class IPCHandlers {
             messageKey: error.messageKey,
           };
         } finally {
+          release();
           cleanupUpload?.();
         }
       }

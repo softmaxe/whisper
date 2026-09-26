@@ -359,9 +359,10 @@ declare global {
 
       cancelUploadTranscription?: (requestId: string) => Promise<{ success: boolean }>;
 
-      // BYOK audio file transcription
+      // Self-hosted audio file transcription
       transcribeAudioFile?: (options: {
         filePath: string;
+        requestId?: string;
         language?: string;
         remoteTranscriptionUrl?: string;
         remoteTranscriptionModel?: string;

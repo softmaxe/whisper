@@ -5,14 +5,14 @@ const { createUploadCancelRegistry } = require("../../src/helpers/uploadCancelRe
 
 test("cancel aborts every operation registered under one requestId", () => {
   const registry = createUploadCancelRegistry();
-  const transcribe = registry.register("req-1");
-  const diarize = registry.register("req-1");
+  const first = registry.register("req-1");
+  const second = registry.register("req-1");
 
   const aborted = registry.cancel("req-1");
 
   assert.equal(aborted, 2);
-  assert.equal(transcribe.signal.aborted, true);
-  assert.equal(diarize.signal.aborted, true);
+  assert.equal(first.signal.aborted, true);
+  assert.equal(second.signal.aborted, true);
 });
 
 test("release removes only its own controller", () => {

@@ -19,11 +19,15 @@ test("file transcription sends the self-hosted server settings to the main proce
     return { success: true, text: "self-hosted" };
   };
 
-  const result = await transcribeFile("/tmp/audio.webm", {
-    remoteTranscriptionUrl: "http://192.168.1.20:9000/v1",
-    remoteTranscriptionModel: "whisper-large-v3",
-    language: "en",
-  });
+  const result = await transcribeFile(
+    "/tmp/audio.webm",
+    {
+      remoteTranscriptionUrl: "http://192.168.1.20:9000/v1",
+      remoteTranscriptionModel: "whisper-large-v3",
+      language: "en",
+    },
+    { requestId: "upload-request" }
+  );
 
   assert.equal(result.success, true);
   assert.deepEqual(receivedOptions, {
@@ -31,6 +35,7 @@ test("file transcription sends the self-hosted server settings to the main proce
     language: "en",
     remoteTranscriptionUrl: "http://192.168.1.20:9000/v1",
     remoteTranscriptionModel: "whisper-large-v3",
+    requestId: "upload-request",
   });
 });
 

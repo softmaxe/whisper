@@ -22,7 +22,8 @@ export interface FileTranscriptionConfig {
 // trip; the main-process handler re-resolves the same route as defense in depth.
 export async function transcribeFile(
   filePath: string,
-  cfg: FileTranscriptionConfig
+  cfg: FileTranscriptionConfig,
+  opts: { requestId?: string } = {}
 ): Promise<FileTranscriptionResult> {
   const route = resolveTranscriptionRoute({
     settings: {
@@ -45,5 +46,6 @@ export async function transcribeFile(
     language: cfg.language,
     remoteTranscriptionUrl: cfg.remoteTranscriptionUrl,
     remoteTranscriptionModel: cfg.remoteTranscriptionModel,
+    requestId: opts.requestId,
   });
 }
