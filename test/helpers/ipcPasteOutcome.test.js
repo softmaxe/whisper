@@ -1,188 +1,55 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const Module = require("node:module");
+const { createAutomaticPasteFixture } = require("../lib/automaticPasteFixture");
 
-const handlersModulePath = require.resolve("../../src/helpers/ipcHandlers");
-const originalLoad = Module._load;
-const handlers = new Map();
-
-const electronStub = {
-  app: {
-    getPath: () => "/tmp",
-    getName: () => "test",
-    getVersion: () => "0.0.0",
-    isPackaged: false,
-    on: () => {},
-    requestSingleInstanceLock: () => true,
-  },
-  ipcMain: {
-    handle: (channel, fn) => handlers.set(channel, fn),
-    on: () => {},
-    removeHandler: () => {},
-  },
-  net: { fetch: async () => ({ ok: true, status: 200, json: async () => ({}) }) },
-  BrowserWindow: class BrowserWindow {
-    static getAllWindows() {
-      return [];
-    }
-    static fromWebContents() {
-      return null;
-    }
-  },
-  shell: {},
-  dialog: {},
-  screen: { getPrimaryDisplay: () => ({ workAreaSize: { width: 0, height: 0 } }) },
-  systemPreferences: { getMediaAccessStatus: () => "granted" },
-  session: { fromPartition: () => ({}) },
-  clipboard: {},
-  nativeImage: {},
-  globalShortcut: {},
-  utilityProcess: {},
-  MessageChannelMain: class {},
-};
-
-Module._load = function loadWithElectronStub(request, parent, isMain) {
-  if (request === "electron") return electronStub;
-  if (parent?.filename === handlersModulePath && request === "./debugLogger") {
-    return new Proxy({}, { get: () => () => {} });
-  }
-  return originalLoad.call(this, request, parent, isMain);
-};
-
-function anything() {
-  return new Proxy(function () {}, {
-    get: (_target, property) => {
-      if (property === Symbol.toPrimitive || property === "toString") return () => "";
-      if (property === "then") return undefined;
-      return anything();
-    },
-    apply: () => anything(),
+test("paste-text forwards unchanged text, options and the actual sender to AutomaticPaste", async (t) => {
+  const f = createAutomaticPasteFixture(t);
+  let finish;
+  const pending = new Promise((resolve) => {
+    finish = resolve;
   });
-}
-
-let target;
-test.before(() => {
-  delete require.cache[handlersModulePath];
-  const IPCHandlers = require(handlersModulePath);
-  const Ctor = IPCHandlers.default || IPCHandlers;
-  target = {
-    sessionId: "test-session",
-    _autoLearnEnabled: false,
-    textEditMonitor: null,
-    selectionManager: null,
-  };
-  Ctor.prototype.setupHandlers.call(
-    new Proxy(target, {
-      get: (value, property) => (property in value ? value[property] : anything()),
-    })
-  );
-  assert.ok(handlers.get("paste-text"), "paste-text must be registered");
-});
-
-test.after(() => {
-  Module._load = originalLoad;
-});
-
-test("paste-text reports pasted only after the clipboard paste completes", async () => {
-  const pastes = [];
-  target.clipboardManager = {
-    pasteText: async (text, options) => {
-      pastes.push({ text, options });
-    },
-  };
-
-  const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "normal transcript");
-
-  assert.deepEqual(result, { success: true, pasted: true });
-  assert.equal(pastes.length, 1);
-});
-
-test("paste-text preserves a clipboard-only fallback as not pasted", async () => {
-  target.clipboardManager = {
-    pasteText: async () => ({ pasted: false }),
-  };
-
-  const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "manual transcript", {
+  const paste = t.mock.method(f.owner.automaticPaste, "paste", () => pending);
+  const options = {
+    restoreClipboard: false,
     allowClipboardFallback: true,
+    webContents: { id: 999 },
+  };
+  let settled = false;
+  const result = f.invokePaste("original text", options).then((value) => {
+    settled = true;
+    return value;
   });
-
-  assert.deepEqual(result, { success: true, pasted: false });
+  await f.flush();
+  assert.equal(settled, false);
+  assert.deepEqual(paste.mock.calls[0].arguments, [
+    "original text",
+    {
+      restoreClipboard: false,
+      allowClipboardFallback: true,
+      webContents: f.sender,
+    },
+  ]);
+  assert.equal(options.webContents.id, 999);
+  finish({ success: true, pasted: true });
+  assert.deepEqual(structuredClone(await result), { success: true, pasted: true });
 });
 
-test("paste-text does not schedule AutoLearn monitoring after a clipboard-only fallback", async (t) => {
-  const originalSetTimeout = global.setTimeout;
-  t.after(() => {
-    global.setTimeout = originalSetTimeout;
-    target._autoLearnEnabled = false;
-    target.textEditMonitor = null;
-  });
-  global.setTimeout = (callback) => {
-    callback();
-    return 1;
-  };
-  const monitored = [];
-  target._autoLearnEnabled = true;
-  target.textEditMonitor = {
-    lastTargetPid: 42,
-    activateTargetPid: async () => true,
-    startMonitoring: (...args) => monitored.push(args),
-  };
-  target.clipboardManager = {
-    pasteText: async () => ({ pasted: false }),
-  };
-
-  const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "manual transcript", {
-    allowClipboardFallback: true,
-  });
-
-  assert.deepEqual(result, { success: true, pasted: false });
-  assert.deepEqual(monitored, []);
+test("paste-text preserves a serializable clipboard-only outcome and omitted options", async (t) => {
+  const f = createAutomaticPasteFixture(t);
+  const paste = t.mock.method(f.owner.automaticPaste, "paste", async () => ({
+    success: true,
+    pasted: false,
+  }));
+  const result = await f.invokePaste("manual transcript");
+  assert.deepEqual(paste.mock.calls[0].arguments, ["manual transcript", { webContents: f.sender }]);
+  assert.deepEqual(structuredClone(result), { success: true, pasted: false });
 });
 
-test("paste-text checks the captured target and skips AutoLearn when it cannot accept paste", async (t) => {
-  t.after(() => {
-    target.textEditMonitor = null;
-    target._autoLearnEnabled = false;
+test("paste-text propagates AutomaticPaste errors", async (t) => {
+  const f = createAutomaticPasteFixture(t);
+  const failure = new Error("Paste command failed");
+  t.mock.method(f.owner.automaticPaste, "paste", async () => {
+    throw failure;
   });
-  const events = [];
-  target._autoLearnEnabled = true;
-  target.textEditMonitor = {
-    lastTargetPid: 42,
-    activateTargetPid: async () => {
-      events.push("activate");
-      target.textEditMonitor.lastTargetPid = 99;
-      return true;
-    },
-    canPasteAtTarget: async (pid) => {
-      events.push(["probe", pid]);
-      return false;
-    },
-    startMonitoring: () => assert.fail("clipboard fallback must not start AutoLearn"),
-  };
-  target.clipboardManager = {
-    pasteText: async (_text, options) => {
-      events.push("clipboard");
-      return { pasted: await options.checkPasteTarget() };
-    },
-  };
-
-  const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "final transcript");
-
-  assert.deepEqual(result, { success: true, pasted: false });
-  assert.deepEqual(events, ["activate", "clipboard", ["probe", 42]]);
-});
-
-test("macOS dictation still requires target confirmation when the monitor is unavailable", async () => {
-  target.textEditMonitor = null;
-  target.clipboardManager = {
-    pasteText: async (_text, options) => {
-      assert.equal(typeof options.checkPasteTarget, "function");
-      const canPaste = await options.checkPasteTarget();
-      assert.equal(canPaste, null);
-      return { pasted: canPaste === true };
-    },
-  };
-
-  const result = await handlers.get("paste-text")({ sender: { id: 1 } }, "final transcript");
-  assert.deepEqual(result, { success: true, pasted: false });
+  await assert.rejects(f.invokePaste("manual transcript"), (error) => error === failure);
 });
