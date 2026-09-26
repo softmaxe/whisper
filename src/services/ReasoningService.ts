@@ -17,7 +17,6 @@ import {
   isTruncatedFinishReason,
   truncatedOutputError,
 } from "./ai/chatRequestBody";
-import { openCodeSessionHeaders } from "./ai/openCodeSession";
 import { extractApiErrorMessage } from "./ai/apiErrorMessage";
 
 const PROVIDER_NAME = "LAN";
@@ -61,8 +60,6 @@ class ReasoningService extends BaseReasoningService {
     const requestBody: Record<string, unknown> = { model, messages };
     applyChatCompletionsParams(requestBody, {
       model,
-      provider: "lan",
-      endpoint,
       config,
       maxTokens:
         config.maxTokens ||
@@ -84,9 +81,6 @@ class ReasoningService extends BaseReasoningService {
       requestBody: JSON.stringify(requestBody).substring(0, 200),
     });
 
-    // Minted before the retry loop so every attempt of this call is one conversation.
-    const openCodeHeaders = openCodeSessionHeaders(endpoint);
-
     const requestGeneration = this.requestCancellationGeneration;
     const response = await withRetry(async () => {
       if (requestGeneration !== this.requestCancellationGeneration) {
@@ -99,7 +93,6 @@ class ReasoningService extends BaseReasoningService {
       try {
         const headers: Record<string, string> = {
           "Content-Type": "application/json",
-          ...openCodeHeaders,
         };
         if (apiKey) {
           headers["Authorization"] = `Bearer ${apiKey}`;

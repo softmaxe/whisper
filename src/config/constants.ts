@@ -1,6 +1,6 @@
 // Split query/hash so path-suffix stripping and later joins operate on the
-// path only. Provider docs and Azure/gateway pastes often include ?api-version=
-// (or similar) on a full /chat/completions URL (#1309).
+// path only. Self-hosted gateways may include query parameters on a full
+// /chat/completions URL.
 function splitUrlDecorators(value: string): { path: string; query: string; hash: string } {
   let path = value;
   let hash = "";
@@ -56,7 +56,8 @@ export const normalizeBaseUrl = (value?: string | null): string => {
 };
 
 export const buildApiUrl = (base: string, path: string): string => {
-  const normalizedBase = normalizeBaseUrl(base) || "https://api.openai.com/v1";
+  const normalizedBase = normalizeBaseUrl(base);
+  if (!normalizedBase) throw new Error("Server URL is not configured");
   if (!path) {
     return normalizedBase;
   }
@@ -87,31 +88,6 @@ export const getModelListBaseCandidates = (base: string): string[] => {
   const withV1 = ensureV1Suffix(normalized);
   return withV1 === normalized ? [normalized] : [normalized, withV1];
 };
-
-const env = (typeof import.meta !== "undefined" && (import.meta as any).env) || {};
-
-const computeBaseUrl = (candidates: Array<string | undefined>, fallback: string): string => {
-  for (const candidate of candidates) {
-    const normalized = normalizeBaseUrl(candidate);
-    if (normalized) {
-      return normalized;
-    }
-  }
-  return fallback;
-};
-
-const DEFAULT_OPENAI_BASE = computeBaseUrl(
-  [env.OPENWHISPR_OPENAI_BASE_URL as string | undefined, env.OPENAI_BASE_URL as string | undefined],
-  "https://api.openai.com/v1"
-);
-
-const DEFAULT_TRANSCRIPTION_BASE = computeBaseUrl(
-  [
-    env.OPENWHISPR_TRANSCRIPTION_BASE_URL as string | undefined,
-    env.WHISPER_BASE_URL as string | undefined,
-  ],
-  DEFAULT_OPENAI_BASE
-);
 
 // List length above which pickers switch to a searchable variant.
 export const LIST_SEARCH_THRESHOLD = 12;

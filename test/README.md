@@ -25,7 +25,7 @@ On macOS, run `npm run test:signing` with the original [release signing credenti
 | File uploads                | Supported formats, batch state, cancellation, raw transcript persistence, and copyable results when History is disabled                                 |
 | Local Insights and settings | Local event accounting, date grouping, microphone settings, menu bar visibility, permissions, and translations                                          |
 
-OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistant, bundled model servers, Linux, and Windows are outside this suite. Shared test doubles may still name upstream interfaces imported by the retained implementation; those names do not add product requirements.
+Hosted provider APIs, OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistant, bundled model servers, Linux, and Windows are outside this suite. Shared test doubles may still name upstream interfaces imported by the retained implementation; those names do not add product requirements.
 
 Keep tests that exercise supported behavior, failure recovery, or boundaries such as renderer-to-native window sizing. When a component test already covers a helper's cases, keep those cases in one place. Avoid tests that only pin CSS classes, decorative animation details, or React's attribute forwarding. Review those appearance changes in the running app.
 

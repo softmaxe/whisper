@@ -80,10 +80,12 @@ test("buildApiUrl joins base and path, adding the leading slash when missing", a
   );
 });
 
-test("buildApiUrl falls back to the OpenAI default when the base is empty", async () => {
+test("buildApiUrl rejects an empty or blank server URL", async () => {
   const { buildApiUrl } = await load();
 
-  assert.equal(buildApiUrl("", "/responses"), "https://api.openai.com/v1/responses");
+  for (const base of ["", "   "]) {
+    assert.throws(() => buildApiUrl(base, "/chat/completions"), /Server URL is not configured/);
+  }
 });
 
 test("buildApiUrl normalizes a pasted endpoint URL before appending", async () => {

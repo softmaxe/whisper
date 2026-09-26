@@ -3,7 +3,7 @@ import { getModelFamilyConstraints } from "./modelFamilyConstraints";
 import { applyThinkingSuppression } from "./thinkingSuppression";
 
 /**
- * Single place that turns (model, provider, endpoint, config) into the
+ * Single place that turns a model and configuration into the
  * parameter set of an OpenAI-compatible chat-completions body: token limit,
  * temperature, family reasoning effort, and thinking suppression. Self-hosted
  * servers (llama.cpp, Ollama, vLLM) speak the legacy shape: always
@@ -13,14 +13,10 @@ export function applyChatCompletionsParams(
   requestBody: Record<string, unknown>,
   {
     model,
-    provider,
-    endpoint,
     config,
     maxTokens,
   }: {
     model: string;
-    provider: string;
-    endpoint?: string | null;
     config: ReasoningConfig;
     maxTokens: number;
   }
@@ -39,7 +35,7 @@ export function applyChatCompletionsParams(
     requestBody.reasoning_effort = familyEffort.cleanupValue;
   }
 
-  applyThinkingSuppression(requestBody, model, provider, config, endpoint ?? undefined);
+  applyThinkingSuppression(requestBody, model, config);
 }
 
 /** Finish reasons that mean the output hit the token cap, across providers. */

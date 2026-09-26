@@ -5,11 +5,7 @@
 // Loaded by the renderer and the main process alike (main uses dynamic import):
 // erasable TypeScript syntax only, explicit import extensions, no store imports.
 import { buildApiUrl, normalizeBaseUrl } from "../config/constants.ts";
-import {
-  isSecureHttpEndpoint,
-  isAzureOpenAIEndpoint,
-  buildAzureTranscriptionUrl,
-} from "../utils/urlUtils.ts";
+import { isSecureHttpEndpoint } from "../utils/urlUtils.ts";
 
 const CUSTOM_ENDPOINT_INVALID_CODE = "CUSTOM_ENDPOINT_INVALID";
 const CUSTOM_ENDPOINT_INVALID_MESSAGE_KEY =
@@ -47,15 +43,6 @@ function error(message: string): TranscriptionRoute {
   };
 }
 
-// Azure routes by deployment in the path and needs an api-version query, so the
-// plain {base}/audio/transcriptions shape returns DeploymentNotFound. Takes the
-// raw URL because normalization strips the suffix that marks a pinned deployment.
-function buildBatchEndpoint(rawUrl: string, base: string, model: string | null): string {
-  const fallback = buildApiUrl(base, "/audio/transcriptions");
-  if (!isAzureOpenAIEndpoint(base)) return fallback;
-  return buildAzureTranscriptionUrl(rawUrl, model || "") || fallback;
-}
-
 export function resolveTranscriptionRoute({
   settings,
   request,
@@ -78,7 +65,7 @@ export function resolveTranscriptionRoute({
   const model = (s.remoteTranscriptionModel || "").trim() || null;
   return {
     transport: "http-batch",
-    endpoint: buildBatchEndpoint(rawUrl, base, model),
+    endpoint: buildApiUrl(base, "/audio/transcriptions"),
     model,
     language,
   };

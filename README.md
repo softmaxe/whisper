@@ -28,6 +28,8 @@ The screenshot uses sample data. See [demo](demo/README.md) to render the animat
 
 This fork focuses on dictation and file transcription. It does not include OpenWhispr Cloud, accounts, sync, meetings, Notes, AI Assistant, or bundled model servers.
 
+Only self-hosted servers are supported. Hosted provider APIs are outside the supported scope, including when entered as OpenAI-compatible server URLs. Whisper sends generic OpenAI-compatible requests without provider-specific URL, header, or parameter handling; hosted endpoints may reject them. Server URLs must be configured explicitly.
+
 ## Install
 
 Requires an Apple Silicon Mac with macOS 12 Monterey or later.
