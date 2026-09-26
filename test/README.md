@@ -27,6 +27,8 @@ On macOS, run `npm run test:signing` with the original [release signing credenti
 
 OpenWhispr Cloud, accounts, sync, enterprise policies, meetings, Notes, Assistant, bundled model servers, Linux, and Windows are outside this suite. Shared test doubles may still name upstream interfaces imported by the retained implementation; those names do not add product requirements.
 
+Keep tests that exercise supported behavior, failure recovery, or boundaries such as renderer-to-native window sizing. When a component test already covers a helper's cases, keep those cases in one place. Avoid tests that only pin CSS classes, decorative animation details, or React's attribute forwarding. Review those appearance changes in the running app.
+
 The CI workflow runs checks for pull requests targeting `main` and pushes to `main`, without packaging or uploading the app. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag on `main`. It runs the same checks, packages the macOS ARM64 app, and verifies its bundle name, version, architecture, signature, archive, and checksum. Manual builds use ad-hoc signing without release credentials and retain the package as an Actions artifact for seven days. Release builds require signatures matching `resources/mac/signing-certificate.pem`; a missing identity, different certificate, or ad-hoc signature must fail the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
 
 ## Recording startup measurements
