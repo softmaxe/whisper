@@ -1,0 +1,15 @@
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 400;
+  src: url("../../src/assets/fonts/jetbrains-mono/JetBrainsMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 500;
+  src: url("../../src/assets/fonts/jetbrains-mono/JetBrainsMono-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-weight: 600;
+  src: url("../../src/assets/fonts/jetbrains-mono/JetBrainsMono-SemiBold.woff2") format("woff2");
+}
