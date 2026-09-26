@@ -112,8 +112,12 @@ async function mountUpload(
 test("a cancelled single upload ignores late results and never saves them", async (t) => {
   const response = deferred();
   const saved = [];
+  let transcriptionOptions;
   const view = await mountUpload(t, {
-    transcribe: () => response.promise,
+    transcribe: (_path, _config, options) => {
+      transcriptionOptions = options;
+      return response.promise;
+    },
     save: async (text) => {
       saved.push(text);
       return { success: true, id: 9 };
@@ -128,6 +132,7 @@ test("a cancelled single upload ignores late results and never saves them", asyn
   assert.doesNotMatch(markup, /aria-valuenow|role="progressbar"/);
   await React.act(async () => progress.props.onCancel());
   assert.equal(view.cancelled.length, 1);
+  assert.equal(transcriptionOptions?.requestId, view.cancelled[0]);
   assert.ok(view.current("IdleView"));
   await React.act(async () => {
     response.resolve({ success: true, text: "A late result" });

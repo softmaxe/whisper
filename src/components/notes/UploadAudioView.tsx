@@ -175,7 +175,9 @@ export default function UploadAudioView({
     setSaveError(null);
 
     try {
-      const res = await transcribeFile(file.path, buildTranscriptionConfig()).finally(() => {
+      const res = await transcribeFile(file.path, buildTranscriptionConfig(), {
+        requestId,
+      }).finally(() => {
         if (activeRequestIdRef.current === requestId) activeRequestIdRef.current = null;
       });
       if (runId !== runIdRef.current) return;

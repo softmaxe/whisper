@@ -43,21 +43,31 @@ async function waitForQueueCompletion(store) {
 
 test("cancelled batches discard late transcription and never save it", async (t) => {
   let finish;
+  let transcriptionOptions;
+  const cancelled = [];
   const saved = [];
   const queue = await loadQueue(
     t,
-    () =>
-      new Promise((resolve) => {
+    (_path, _config, opts) => {
+      transcriptionOptions = opts;
+      return new Promise((resolve) => {
         finish = resolve;
-      }),
+      });
+    },
     async (text) => {
       saved.push(text);
       return { success: true, id: 42 };
     }
   );
+  queue.window.electronAPI.cancelUploadTranscription = async (requestId) => {
+    cancelled.push(requestId);
+    return { success: true };
+  };
   queue.addFiles([file("first.wav"), file("second.wav")]);
   queue.processBatchQueue(options);
   queue.cancelBatch();
+  assert.equal(cancelled.length, 1);
+  assert.equal(transcriptionOptions?.requestId, cancelled[0]);
   assert.equal(queue.useBatchQueueStore.getState().isProcessing, false);
   finish({ success: true, text: "Late transcript" });
   await tick();

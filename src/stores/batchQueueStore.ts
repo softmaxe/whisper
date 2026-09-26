@@ -108,7 +108,7 @@ export function processBatchQueue(transcribeOpts: TranscribeOptions): void {
       updateItem(item.id, { status: "transcribing", progress: 0 });
       const requestId = crypto.randomUUID();
       activeUploadRequestId = requestId;
-      const result = await transcribeFile(item.path, transcription).finally(() => {
+      const result = await transcribeFile(item.path, transcription, { requestId }).finally(() => {
         if (activeUploadRequestId === requestId) activeUploadRequestId = null;
       });
       if (run !== runId) return;
