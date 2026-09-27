@@ -19,6 +19,22 @@ npm run render
 
 Run `npm test` and `npm run typecheck` after changing the timeline, score, or text helpers.
 
+## Hand-drawn Film (in progress)
+
+A hand-drawn replacement is being built beside the walkthrough above (#93). It needs Node.js 24, [uv](https://docs.astral.sh/uv/) and ffmpeg.
+
+```sh
+cd demo
+npm ci
+npm run build
+```
+
+`npm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames to `out/frames/<lang>/`. The first render downloads Chrome Headless Shell.
+
+Tests: `npm test` (timeline and caption layout), `npm run test:audio` (synthesiser), `npm run test:film` (both rendered cuts; rebuilds them first when stale) and `npm run typecheck`.
+
+Captions use [LXGW WenKai](https://github.com/lxgw/LxgwWenKai) under the SIL Open Font License ([`public/fonts/OFL.txt`](public/fonts/OFL.txt)), bundled as a subset of ASCII, common CJK punctuation and GB2312 made by [`scripts/subset_font.py`](scripts/subset_font.py). Strokes are drawn with [Rough.js](https://roughjs.com/) (MIT).
+
 ## Timing and music
 
 [`src/timeline.ts`](src/timeline.ts) is the single beat grid: 76 BPM in 4/4, 19 bars, exactly 60 seconds. Scenes and their cues (key presses, pastes, the learned word) are counted in beats, so cuts land on strong beats and [`src/music/score.ts`](src/music/score.ts) can ring a glockenspiel on each paste.
