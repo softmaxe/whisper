@@ -1,5 +1,6 @@
 import { Composition } from "remotion";
 import { DemoVideo } from "./DemoVideo.tsx";
+import { FilmCompositions } from "./film/FilmCompositions.tsx";
 import { FPS, HEIGHT, TOTAL_FRAMES, WIDTH } from "./timeline.ts";
 import "./fonts.css";
 
@@ -24,6 +25,7 @@ export function Root() {
         height={HEIGHT}
         defaultProps={{ lang: "zh-CN" as const }}
       />
+      <FilmCompositions />
     </>
   );
 }

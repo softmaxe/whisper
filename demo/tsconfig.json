@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src", "scripts", "test", "remotion.config.ts"]
+  "include": ["src", "timeline", "scripts", "test", "remotion.config.ts", "vitest.config.ts"]
 }
