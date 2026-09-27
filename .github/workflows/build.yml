@@ -91,6 +91,7 @@ jobs:
           test -d "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$plist")" = "Whisper"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$plist")" = "Whisper"
+          test -f "$app/Contents/Resources/Assets.car"
           codesign --verify --deep --strict "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")" = "local.whisper.desktop"
           if [[ -n "$RELEASE_TAG" ]]; then

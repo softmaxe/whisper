@@ -86,7 +86,7 @@
     {
       "from": "src/assets",
       "to": "src/assets",
-      "filter": ["**/*", "!**/*.md", "!openwhispr.icon/**"]
+      "filter": ["**/*", "!**/*.md", "!openwhispr.icon/**", "!Assets.car"]
     },
     {
       "from": "resources/bin/",
@@ -126,6 +126,12 @@
     "hardenedRuntime": true,
     "entitlements": "resources/mac/entitlements.mac.plist",
     "entitlementsInherit": "resources/mac/entitlements.mac.plist",
+    "extraResources": [
+      {
+        "from": "src/assets/Assets.car",
+        "to": "Assets.car"
+      }
+    ],
     "identity": "-",
     "notarize": false,
     "extendInfo": {

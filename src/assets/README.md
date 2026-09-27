@@ -4,6 +4,7 @@ Whisper uses its own W monogram for the app and menu bar icons, and provider ico
 
 - `icon.icns` is the macOS app icon.
 - `openwhispr.icon/` is the Icon Composer source for `scripts/compile-macos-icon.js`. The source asset keeps its upstream name.
+- `Assets.car` is the compiled Icon Composer icon that macOS 26 and later show instead of `icon.icns`. Without it, macOS places the legacy icon on a light platter. CI runners lack an Xcode that can compile `.icon` bundles, so run `npm run compile:mac-icon` with Xcode 26 or later and commit the result whenever `openwhispr.icon/` changes.
 - `iconTemplate@3x.png` is the macOS menu bar template icon.
 - `icon.png` is the favicon and fallback icon.
 - `icons/providers/` supplies `src/utils/providerIcons.ts`.

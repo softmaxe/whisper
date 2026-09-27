@@ -6,7 +6,6 @@ build/
 out/
 release/
 resources/bin/
-src/assets/Assets.car
 *.tsbuildinfo
 *.tgz
 *.dmg
