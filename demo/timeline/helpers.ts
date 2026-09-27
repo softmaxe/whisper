@@ -48,6 +48,36 @@ export function typingCues(typing: Typing, params: SoundCue["params"] = {}): Sou
   }));
 }
 
+/** Seconds between the two presses of a Double tap. */
+export const DOUBLE_TAP_GAP: Seconds = 0.25;
+
+/**
+ * The moments of a Double tap on the fn/Globe key whose first press lands at
+ * `first`: both presses, and `listen`, when the Recording pill opens (two
+ * frames after the second press, as in the app). Spread into a Beat's
+ * moments, e.g. `const tap = doubleTapMoments(5.9)` then
+ * `moments = { ..., taps: tap.taps, listen: tap.listen }`. Rounded to ms.
+ */
+export function doubleTapMoments(
+  first: Seconds,
+  gap: Seconds = DOUBLE_TAP_GAP,
+): { taps: readonly [Seconds, Seconds]; listen: Seconds } {
+  const ms = (x: number) => Math.round(x * 1000) / 1000;
+  const second = ms(first + gap);
+  return { taps: [ms(first), second], listen: ms(second + 2 / 30) };
+}
+
+/**
+ * The sounds of a Double tap that starts a Dictation: a key click per press
+ * and the app's recording-start chime when the pill opens.
+ */
+export function doubleTapCues(tap: { taps: readonly Seconds[]; listen: Seconds }): SoundCue[] {
+  return [
+    ...tap.taps.map((at): SoundCue => ({ type: "key_click", at, params: { key: "char" } })),
+    { type: "rec_start", at: tap.listen },
+  ];
+}
+
 /** Every moment as `[name, seconds]` in declaration order, with series flattened to `name[i]`. */
 export function momentTimes(moments: Moments): [name: string, at: Seconds][] {
   return Object.entries(moments).flatMap(([name, at]): [string, Seconds][] =>
