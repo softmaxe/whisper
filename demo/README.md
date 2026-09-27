@@ -29,7 +29,7 @@ npm ci
 npm run build
 ```
 
-`npm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames to `out/frames/<lang>/`. The first render downloads Chrome Headless Shell.
+`npm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames to `out/frames/<lang>/`. It also renders the `WhisSheet` model sheet of the mascot, Whis, to `out/frames/whis-sheet.png`. The first render downloads Chrome Headless Shell.
 
 Tests: `npm test` (timeline and caption layout), `npm run test:audio` (synthesiser), `npm run test:film` (both rendered cuts; rebuilds them first when stale) and `npm run typecheck`.
 

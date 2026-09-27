@@ -5,7 +5,7 @@
  *
  * Usage: npm run build [-- --concurrency=N]
  * Output (git-ignored): out/whisper-film-en.mp4, out/whisper-film-zh-CN.mp4,
- * out/audio.wav and out/frames/<lang>/*.png.
+ * out/audio.wav, out/frames/<lang>/*.png and the Whis model sheet out/frames/whis-sheet.png.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -13,10 +13,10 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { bundle } from "@remotion/bundler";
-import { renderMedia, selectComposition } from "@remotion/renderer";
+import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { FILM, LANGS } from "../timeline/index.ts";
 import { exportTimeline } from "./export-timeline.ts";
-import { cutPaths, FILM_COMPOSITION_IDS, OUT_DIR, PATHS, ROOT } from "./paths.ts";
+import { cutPaths, FILM_COMPOSITION_IDS, OUT_DIR, PATHS, ROOT, WHIS_SHEET } from "./paths.ts";
 import { reviewFrameTimes } from "./review-frames.ts";
 
 function run(cmd: string, args: string[], cwd = ROOT): void {
@@ -54,6 +54,12 @@ async function main(): Promise<void> {
   );
 
   const serveUrl = await step("Bundle", () => bundle({ entryPoint: PATHS.videoEntry, publicDir: PATHS.publicDir }));
+
+  await step("Render Whis model sheet", async () => {
+    const composition = await selectComposition({ serveUrl, id: WHIS_SHEET.id });
+    fs.mkdirSync(PATHS.framesRoot, { recursive: true });
+    await renderStill({ serveUrl, composition, frame: WHIS_SHEET.frame, output: PATHS.whisSheetPng });
+  });
 
   for (const lang of LANGS) {
     const cut = cutPaths(lang);
@@ -113,7 +119,7 @@ async function main(): Promise<void> {
     console.log(`Film (${lang}): ${path.relative(ROOT, cut.film)}`);
   }
 
-  console.log(`\nReview frames: ${path.relative(ROOT, PATHS.framesRoot)}/<lang>/`);
+  console.log(`\nReview frames: ${path.relative(ROOT, PATHS.framesRoot)}/<lang>/ and ${path.relative(ROOT, PATHS.whisSheetPng)}`);
   console.log(`Total build time: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 
