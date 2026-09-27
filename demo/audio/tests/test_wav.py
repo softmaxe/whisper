@@ -8,16 +8,13 @@ from __future__ import annotations
 import subprocess
 import sys
 import wave
-from pathlib import Path
 
 import numpy as np
 import pytest
 
 from whisper_audio import SAMPLE_RATE as SR
 from whisper_audio.mix import render_layers
-from whisper_audio.timeline import all_cues, load_timeline
-
-ROOT = Path(__file__).resolve().parents[2]
+from whisper_audio.timeline import all_cues
 
 
 def db(x: float) -> float:
@@ -26,18 +23,6 @@ def db(x: float) -> float:
 
 def rms(x: np.ndarray) -> float:
     return float(np.sqrt(np.mean(x**2))) if x.size else 0.0
-
-
-@pytest.fixture(scope="module")
-def timeline_json(tmp_path_factory) -> Path:
-    out = tmp_path_factory.mktemp("timeline") / "timeline.json"
-    subprocess.run(["node", "scripts/export-timeline.ts", str(out)], cwd=ROOT, check=True, capture_output=True)
-    return out
-
-
-@pytest.fixture(scope="module")
-def timeline(timeline_json):
-    return load_timeline(timeline_json)
 
 
 @pytest.fixture(scope="module")
@@ -76,6 +61,7 @@ def test_sound_is_present_in_the_mix_at_each_cue(timeline, wav):
 
 def test_music_plays_under_the_film_and_fades_out(timeline, wav):
     assert db(rms(wav[SR : 2 * SR])) > -45, "music audible near the start"
+    assert db(rms(wav[-2 * SR : -SR])) > -60, "music still playing in the second before the end"
     assert db(rms(wav[-SR:])) < -40, "the last second has faded"
     assert np.max(np.abs(wav)) < 0.95, "no clipping"
 
