@@ -205,8 +205,8 @@ async function setup(t, { cues = false } = {}) {
         })
       );
       return {
+        rendered: markup !== "",
         motion: markup.match(/data-motion="([^"]+)"/)?.[1] ?? null,
-        shape: markup.match(/data-shape="([^"]+)"/)?.[1],
       };
     },
     advance: (ms) => {
@@ -286,7 +286,7 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   assert.equal(h.presentation().motion, "live");
   await React.act(async () => h.hook().cancelRecording());
   assert.equal(h.presentation().motion, null);
-  assert.equal(h.presentation().shape, "sliver");
+  assert.equal(h.presentation().rendered, false);
   assert.equal(h.hook().getAudioLevel(), null);
 });
 
@@ -769,7 +769,7 @@ test("microphone recovery Retry gives a slow connection the presentation before 
     await retryResult;
   });
   assert.equal(h.recovery(), null, "cancelled retry must not restore its dismissed prompt");
-  assert.equal(h.presentation().shape, "sliver");
+  assert.equal(h.presentation().rendered, false);
   assert.equal(h.media.track.readyState, "ended");
 });
 
