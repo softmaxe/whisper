@@ -24,6 +24,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
   let root;
   let hook;
+  let panel;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
   });
@@ -35,12 +36,28 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   const recoveries = [];
   const errors = [];
   const lifecycle = [];
+  const previewListeners = new Map();
   let hidden = 0;
   const noopDispose = () => () => {};
   installBrowserGlobals(t, {
     initialStorage: { onboardingCompleted: "true" },
     window: {
       electronAPI: {
+        ...Object.fromEntries(
+          [
+            "onPreviewText",
+            "onPreviewAppend",
+            "onPreviewHold",
+            "onPreviewResult",
+            "onPreviewHide",
+          ].map((method) => [
+            method,
+            (listener) => {
+              previewListeners.set(method, listener);
+              return () => previewListeners.delete(method);
+            },
+          ])
+        ),
         getLogLevel: async () => "error",
         log: async () => {},
         captureDictationTarget: async () => {},
@@ -125,11 +142,12 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     snippets: [],
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
+  const { useLiveTranscriptPanel } = await vite.ssrLoadModule("/hooks/useLiveTranscriptPanel.js");
   const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
   const { DictationErrorCard } = await vite.ssrLoadModule(
     "/components/dictation/DictationErrorCard.tsx"
   );
-  const { resolveRecordingPillState } = await vite.ssrLoadModule(
+  const { resolveRecordingPillState, resolvePillVisualSuppression } = await vite.ssrLoadModule(
     "/helpers/voicePillPresentation.js"
   );
   let activeError = null;
@@ -140,9 +158,24 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   const dismissDictationError = () => {
     activeError = null;
   };
-  const showTranscript = (text, options) => recoveries.push({ text, options });
+  const showTranscript = (text, options) => {
+    recoveries.push({ text, options });
+    panel.showFinalText(text, options);
+  };
+  const resizeToContent = async () => ({ success: true });
+  const onDictationError = () => panel.dismissForError();
   function Harness() {
-    hook = useAudioRecording(toast, { onShowTranscript: showTranscript, dismissDictationError });
+    hook = useAudioRecording(toast, {
+      onShowTranscript: showTranscript,
+      dismissDictationError,
+      onDictationError,
+    });
+    panel = useLiveTranscriptPanel({
+      resizeToContent,
+      isRecording: hook.isRecording,
+      isPreparing: hook.isPreparing,
+      isProcessing: hook.isProcessing,
+    });
     return null;
   }
   root = createRoot(container);
@@ -173,6 +206,9 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     hidden: () => hidden,
     releases: () => releases,
     hook: () => hook,
+    panel: () => panel,
+    media,
+    emitPreview: (method, payload) => act(() => previewListeners.get(method)(payload)),
     settings: useSettingsStore,
     act,
     start: async (value = 1) => {
@@ -206,6 +242,12 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
         width: Number(markup.match(/width:(\d+)px/)?.[1]),
       };
     },
+    pillVisible: () =>
+      !resolvePillVisualSuppression({
+        liveTranscriptCopyFallback: panel.copyFallback,
+        dictationErrorSuppressed: Boolean(activeError),
+        panelReturnResizeActive: false,
+      }),
     unmount: async () =>
       act(() => {
         root.unmount();
@@ -297,6 +339,71 @@ for (const reject of [false, true]) {
     ]);
     assert.equal(h.hidden(), 0);
     assert.equal(h.saves.length, 0);
+  });
+}
+
+for (const outcome of ["ready", "cancelled", "failed"]) {
+  test(`manual-copy recovery yields to deferred preparation that is ${outcome}`, async (t) => {
+    const retain = outcome === "ready";
+    const h = await setup(t, { retain });
+    await h.start();
+    await h.stop();
+    await h.resolveRequest(0, { text: "previous recoverable result" });
+    await h.act(() => h.pastes[0].resolve({ pasted: false }));
+    assert.equal(h.panel().copyFallback, "copied");
+    assert.equal(h.panel().open, true);
+    assert.equal(h.panel().text, "previous recoverable result");
+    assert.equal(h.pillVisible(), false);
+
+    const device = deferred();
+    h.media.mediaDevices.getUserMedia = () => device.promise;
+    let startup;
+    await h.act(() => {
+      startup = h.hook().startRecording();
+    });
+    assert.equal(h.hook().isPreparing, true);
+    assert.equal(h.hook().isRecording, false);
+    assert.equal(h.panel().copyFallback, null);
+    assert.equal(h.panel().mounted, false);
+    assert.equal(h.pillVisible(), true);
+    assert.deepEqual(h.presentation(), { motion: "sweep", width: 84 });
+
+    // A queued preview from the completed result must not reclaim the panel.
+    await h.emitPreview("onPreviewResult", { text: "late previous result" });
+    assert.equal(h.panel().open, false);
+    assert.equal(h.pillVisible(), true);
+    assert.equal(h.presentation().motion, "sweep");
+
+    if (outcome === "cancelled") await h.act(() => h.hook().cancelRecording());
+    await h.act(async () => {
+      if (outcome === "failed") {
+        device.reject(
+          Object.assign(new Error("Microphone unavailable"), { name: "NotAllowedError" })
+        );
+      } else {
+        device.resolve(h.media.stream);
+      }
+      await startup;
+    });
+    assert.equal(h.panel().copyFallback, null);
+    assert.equal(h.panel().mounted, false);
+    assert.equal(h.hook().isRecording, outcome === "ready");
+    assert.equal(h.hook().isPreparing, false);
+    if (outcome === "failed") {
+      assert.ok(h.recovery(), "the new microphone failure owns the recovery prompt");
+    } else {
+      assert.equal(h.recovery(), null);
+      assert.equal(h.pillVisible(), true);
+      assert.equal(h.presentation().motion, outcome === "ready" ? "live" : null);
+    }
+    if (outcome !== "ready") {
+      await h.emitPreview("onPreviewResult", { text: "late result after preparation ended" });
+      assert.equal(h.panel().open, false);
+    }
+    assert.deepEqual(h.writes, ["previous recoverable result"]);
+    assert.equal(h.saves.length, retain ? 1 : 0);
+    if (retain) assert.equal(h.saves[0].args[0], "previous recoverable result");
+    assert.equal(h.recoveries.length, 1, "the old completion cannot produce a new recovery");
   });
 }
 
