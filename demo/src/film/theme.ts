@@ -21,7 +21,7 @@ export const PALETTE = {
   washDawn: "#f3c89a",
   washDay: "#f6e3b0",
   washDusk: "#e3a07f",
-  washNight: "#3d4a78",
+  washNight: "#2a4bb0",
 } as const;
 
 /** The red-pen stroke style shared by every annotation. */
