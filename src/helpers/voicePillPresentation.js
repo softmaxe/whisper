@@ -281,3 +281,24 @@ export function shouldActivateVoicePill({ hasDragged, liveTranscriptMounted, isP
 export function isVoicePillActivationKey(key) {
   return key === "Enter" || key === " ";
 }
+
+/** Map the Dictation lifecycle to the same state used by the rendered pill. */
+export function resolveRecordingPillState({
+  isRecording,
+  isPreparing,
+  isStopping,
+  isProcessing,
+  micCaptureStatus,
+  isHovered = false,
+  isCommandMenuOpen = false,
+  entranceState = null,
+}) {
+  if (isRecording) {
+    if (micCaptureStatus === "reconnecting" || micCaptureStatus === "unavailable")
+      return "unavailable";
+    return entranceState || "recording";
+  }
+  if (isProcessing || isStopping) return "thinking";
+  if (isPreparing) return "processing";
+  return isHovered || isCommandMenuOpen ? "hover" : "idle";
+}

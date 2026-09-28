@@ -20,7 +20,7 @@ export const resolveWaveformBarHeight = (rms: number) =>
   WAVEFORM_BAR_MIN_PX + toBarLevel(rms) * (WAVEFORM_BAR_MAX_PX - WAVEFORM_BAR_MIN_PX);
 
 // The floating Flow bar: a symmetric set of bars that all follow the current
-// level at once. Silence rests every bar at a dot; speech lifts them under a
+// level at once. Ready silence gently breathes; speech lifts the bars under a
 // center-weighted envelope, so loudness reads as the whole shape swelling.
 export const FLOW_BAR_COUNT = 10;
 export const FLOW_BAR_MIN_PX = 3;
@@ -36,18 +36,23 @@ const FLOW_DRIFT_SPEED_STEP = 0.37;
 const FLOW_DRIFT_PHASE_STEP = 1.7;
 const FLOW_DRIFT_FLOOR = 0.55;
 
-/**
- * Target height (0..1 of the Flow bar lane) for one bar. The level gates
- * everything, so silence stays flat.
- */
+// Ready silence breathes in unison, distinct from the travelling processing
+// wave. This floor is presentation only and never enters audio measurements.
+const FLOW_BREATH_PERIOD_MS = 2400;
+const flowBreath = (nowMs: number) =>
+  0.5 + 0.5 * Math.sin((nowMs / FLOW_BREATH_PERIOD_MS) * 2 * Math.PI);
+
+/** Target height (0..1 of the Flow bar lane) for an available live input. */
 export const resolveFlowBarTarget = (rms: number, index: number, nowMs: number) => {
   const phase =
     nowMs * FLOW_DRIFT_RATE_PER_MS * (1 + index * FLOW_DRIFT_SPEED_STEP) +
     index * FLOW_DRIFT_PHASE_STEP;
   const drift = 0.5 + 0.5 * Math.sin(phase);
-  return (
-    toBarLevel(rms) * FLOW_BAR_ENVELOPE[index] * (FLOW_DRIFT_FLOOR + (1 - FLOW_DRIFT_FLOOR) * drift)
-  );
+  const level = toBarLevel(rms);
+  const speech =
+    level * FLOW_BAR_ENVELOPE[index] * (FLOW_DRIFT_FLOOR + (1 - FLOW_DRIFT_FLOOR) * drift);
+  const breathing = 0.12 * flowBreath(nowMs);
+  return speech + (1 - level) * breathing;
 };
 
 export const resolveFlowBarHeight = (lane: number) =>
@@ -64,7 +69,7 @@ export const FLOW_PEEK_OPACITY = 0.55;
 // running a few bars past each edge so the pass fades in and out.
 const FLOW_SWEEP_BAR_MS = 70;
 const FLOW_SWEEP_OVERRUN = 3;
-const FLOW_SWEEP_FLOOR = 0.28;
+const FLOW_SWEEP_FLOOR = 0.16;
 const FLOW_SWEEP_SPREAD = 2.2;
 
 export const resolveFlowSweepOpacity = (index: number, nowMs: number) => {
@@ -75,6 +80,11 @@ export const resolveFlowSweepOpacity = (index: number, nowMs: number) => {
     FLOW_SWEEP_FLOOR + (1 - FLOW_SWEEP_FLOOR) * Math.exp(-(distance * distance) / FLOW_SWEEP_SPREAD)
   );
 };
+
+// The same sweep slightly lifts its bright dots to remain legible in the
+// compact pill during a long device open. It never samples microphone levels.
+export const resolveFlowSweepTarget = (index: number, nowMs: number) =>
+  0.16 * resolveFlowSweepOpacity(index, nowMs);
 
 // Thinking: a low wave travels left to right, each bar repeating its left
 // neighbour FLOW_WAVE_STEP_MS later. Its crest stays well under speech height.
