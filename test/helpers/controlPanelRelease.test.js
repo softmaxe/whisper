@@ -65,7 +65,10 @@ class FakeBrowserWindow extends EventEmitter {
   focus() {}
 
   close() {
-    const event = { defaultPrevented: false, preventDefault: () => (event.defaultPrevented = true) };
+    const event = {
+      defaultPrevented: false,
+      preventDefault: () => (event.defaultPrevented = true),
+    };
     this.emit("close", event);
     if (!event.defaultPrevented) this.destroy();
   }
@@ -189,6 +192,8 @@ test("retained work keeps the hidden panel until it finishes", async (t) => {
 
 test("releasing the panel leaves dictation available", async (t) => {
   const { manager, panel, dictationWindow } = await createManagerWithOpenPanel(t);
+  manager.setDictationLifecycleState("recording");
+  dictationWindow.show();
 
   panel.close();
   t.mock.timers.tick(RELEASE_DELAY_MS);

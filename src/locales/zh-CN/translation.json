@@ -456,10 +456,8 @@
         "title": "外观"
       },
       "floatingIcon": {
-        "autoHide": "空闲时自动隐藏",
-        "autoHideDescription": "在开始听写前保持图标隐藏",
-        "description": "控制听写图标在屏幕上的显示",
-        "title": "悬浮图标",
+        "description": "选择听写时录音胶囊的显示位置",
+        "title": "录音胶囊",
         "startPosition": "起始位置",
         "startPositionDescription": "语音录制面板在屏幕上的显示位置",
         "bottomRight": "右下角",

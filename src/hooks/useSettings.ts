@@ -95,8 +95,6 @@ function useSettingsInternal() {
     setAudioCuesEnabled: store.setAudioCuesEnabled,
     pauseMediaOnDictation: store.pauseMediaOnDictation,
     setPauseMediaOnDictation: store.setPauseMediaOnDictation,
-    floatingIconAutoHide: store.floatingIconAutoHide,
-    setFloatingIconAutoHide: store.setFloatingIconAutoHide,
     startMinimized: store.startMinimized,
     setStartMinimized: store.setStartMinimized,
     showMenuBarIcon: store.showMenuBarIcon,

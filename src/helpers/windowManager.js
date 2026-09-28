@@ -68,7 +68,6 @@ class WindowManager {
     this.loadErrorShown = false;
     this.macCompoundPushState = null;
     this._cachedActivationMode = "tap";
-    this._floatingIconAutoHide = false;
     this._panelStartPosition = "bottom-right";
     this._activeHorizontalDirection = null;
     this._isDictatingToggle = false;
@@ -751,10 +750,6 @@ class WindowManager {
     return true;
   }
 
-  setFloatingIconAutoHide(enabled) {
-    this._floatingIconAutoHide = Boolean(enabled);
-  }
-
   getMainWindowHorizontalDirection() {
     if (!this.mainWindow || this.mainWindow.isDestroyed()) {
       return this._panelStartPosition === "bottom-left" ? "left" : "right";
@@ -1215,7 +1210,6 @@ class WindowManager {
     this.sendCancelDictation();
     this.hideDictationPanel();
     this._onboardingActive = false;
-    if (!this._floatingIconAutoHide) this.showDictationPanel();
     return true;
   }
 
@@ -1426,24 +1420,9 @@ class WindowManager {
     const window = this.mainWindow;
     this._mainWindowOnScreen = false;
 
-    // Safety timeout: force show the window if ready-to-show doesn't fire within 10 seconds
-    const showTimeout = setTimeout(() => {
-      if (
-        this.mainWindow &&
-        !this.mainWindow.isDestroyed() &&
-        !this.mainWindow.isVisible() &&
-        !this._floatingIconAutoHide
-      ) {
-        this.showDictationPanel();
-      }
-    }, 10000);
-
+    // The panel stays hidden until dictation or feedback requests it.
     this.mainWindow.once("ready-to-show", () => {
-      clearTimeout(showTimeout);
       this.enforceMainWindowOnTop();
-      if (!this.mainWindow.isVisible() && !this._floatingIconAutoHide) {
-        this.showDictationPanel();
-      }
     });
 
     this.mainWindow.on("show", () => {
@@ -1477,7 +1456,6 @@ class WindowManager {
     for (const event of displayEvents) screen.on(event, recenterOnDisplayChange);
 
     this.mainWindow.on("closed", () => {
-      clearTimeout(showTimeout);
       for (const event of displayEvents) screen.removeListener(event, recenterOnDisplayChange);
       this._mainWindowPlacementCoordinator.cancelPending();
       this.dragManager.cleanup();

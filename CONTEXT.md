@@ -17,8 +17,9 @@ The interval from requesting Dictation to Recording readiness. It excludes
 transcription and Automatic paste time.
 
 **Recording pill**:
-The floating indicator for dictation, including recording activity, the speech
-waveform, and transcription progress.
+The floating indicator shown during Dictation and its result feedback, including
+recording activity, the speech waveform, and transcription progress. It has no
+standalone idle presence.
 _Avoid_: Status bar, menu bar icon
 
 **Target app**:

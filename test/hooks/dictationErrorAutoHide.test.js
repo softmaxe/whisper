@@ -8,13 +8,8 @@ const {
   installHookDom,
 } = require("../lib/rendererTestHarness");
 
-const AUTO_HIDE_ON = `
-  export const useSettingsStore = { getState: () => ({ floatingIconAutoHide: true }) };
-`;
-
-// Mount the real size owner with "Auto-hide when idle" enabled and an error
-// card on screen, then dismiss the card the way Retry does.
-async function mountWithErrorCard(t) {
+// Exercise native visibility through the real size and feedback owner.
+async function mountWithErrorCard(t, initialProps = {}) {
   // Registered before the browser globals so React still has `window` when the
   // harness tears the root down.
   let root = null;
@@ -23,11 +18,15 @@ async function mountWithErrorCard(t) {
   });
 
   const hideCalls = [];
+  const showCalls = [];
   installBrowserGlobals(t, {
     window: {
       electronAPI: {
         hideWindow: async () => {
           hideCalls.push("hide");
+        },
+        showDictationPanel: async (options) => {
+          showCalls.push(options);
         },
       },
     },
@@ -35,7 +34,6 @@ async function mountWithErrorCard(t) {
   const container = installHookDom(t);
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-dictation-error-auto-hide-",
-    mockModules: { "stores/settingsStore": AUTO_HIDE_ON },
   });
   const { useMainWindowSizeOwner } = await vite.ssrLoadModule("/hooks/useMainWindowSizeOwner.js");
 
@@ -50,6 +48,7 @@ async function mountWithErrorCard(t) {
     liveTranscriptOpen: false,
     liveTranscriptMounted: false,
     liveTranscriptOpenRef: closed,
+    ...initialProps,
   };
   let result;
   function Harness() {
@@ -75,7 +74,7 @@ async function mountWithErrorCard(t) {
   };
 
   await render();
-  return { hideCalls, render, settle, state: () => result };
+  return { hideCalls, showCalls, render, settle, state: () => result };
 }
 
 test("Retry keeps the pill window on screen while the new dictation runs", async (t) => {
@@ -97,3 +96,54 @@ test("an error card dismissed while idle still auto-hides the window", async (t)
 
   assert.deepEqual(hideCalls, ["hide"]);
 });
+
+test("startup and completed dictation hide immediately without an idle grace period", async (t) => {
+  const h = await mountWithErrorCard(t, { dictationErrorActionCount: 0 });
+  assert.deepEqual(h.hideCalls, ["hide"]);
+  assert.deepEqual(h.showCalls, []);
+
+  await h.render({ isDictationActive: true });
+  assert.equal(h.hideCalls.length, 1, "preparing, recording and processing keep their window");
+  await h.render({ isDictationActive: false });
+  assert.equal(h.hideCalls.length, 2, "completion hides without waiting for a timer");
+});
+
+test("a late error reopens the hidden window without moving the pill", async (t) => {
+  const h = await mountWithErrorCard(t, { dictationErrorActionCount: 0 });
+  await h.render({ toastCount: 1, dictationErrorActionCount: 1 });
+  assert.deepEqual(h.showCalls, [{ reposition: false }]);
+  assert.deepEqual(h.hideCalls, ["hide"]);
+  await h.render({ toastCount: 0, dictationErrorActionCount: 0 });
+  await h.settle();
+  assert.deepEqual(h.hideCalls, ["hide", "hide"]);
+});
+
+test("ordinary notifications remain visible until dismissed", async (t) => {
+  const h = await mountWithErrorCard(t, { dictationErrorActionCount: 0, toastCount: 1 });
+  assert.equal(h.showCalls.length, 1);
+  assert.deepEqual(h.hideCalls, []);
+  await h.render({ toastCount: 0 });
+  assert.deepEqual(h.hideCalls, ["hide"]);
+});
+
+for (const feedback of [
+  { liveTranscriptMounted: true, liveTranscriptOpen: true },
+  { liveTranscriptMounted: true, liveTranscriptOpen: false },
+  { liveTranscriptCopyFallback: { reason: "paste-failed" } },
+  { toastCount: 1 },
+]) {
+  test(`error dismissal preserves pending feedback ${JSON.stringify(feedback)}`, async (t) => {
+    const h = await mountWithErrorCard(t);
+    await h.render({ dictationErrorActionCount: 0, ...feedback });
+    await h.settle();
+    assert.deepEqual(h.hideCalls, [], "the error handoff must not hide its successor");
+    await h.render({
+      liveTranscriptMounted: false,
+      liveTranscriptOpen: false,
+      liveTranscriptCopyFallback: null,
+      toastCount: 0,
+    });
+    await h.settle();
+    assert.deepEqual(h.hideCalls, ["hide"]);
+  });
+}

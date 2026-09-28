@@ -2,8 +2,6 @@ import { waitForVisualFrames } from "./visualFrame";
 
 interface PillVisibilityHandoffOptions {
   onSuppressedChange: (suppressed: boolean) => void;
-  shouldAutoHide?: () => boolean;
-  hideWindow?: () => Promise<unknown> | undefined;
   waitForFrames?: () => Promise<void>;
 }
 
@@ -16,8 +14,6 @@ interface PillVisibilityHandoffOptions {
  */
 export function createPillVisibilityHandoff({
   onSuppressedChange,
-  shouldAutoHide = () => false,
-  hideWindow = () => undefined,
   waitForFrames = waitForVisualFrames,
 }: PillVisibilityHandoffOptions) {
   let generation = 0;
@@ -44,11 +40,7 @@ export function createPillVisibilityHandoff({
           return { released: false, superseded: true };
         }
 
-        if (shouldAutoHide()) {
-          await hideWindow();
-        } else {
-          await waitForFrames();
-        }
+        await waitForFrames();
       } catch {
         // A destroyed native window should not strand the next renderer mount
         // in a permanently suppressed state.

@@ -38,11 +38,14 @@ Module._load = function loadTrayWithStubs(request, parent, isMain) {
 const TrayManager = require("../../src/helpers/tray");
 Module._load = originalLoad;
 
-function createTrayManager(calls, { dictating = false } = {}) {
+function createTrayManager(calls, { dictating = false, active = dictating, visible = false } = {}) {
   const trayManager = new TrayManager();
   trayManager.windowManager = {
-    isDictationPanelVisible: () => false,
+    isDictationPanelVisible: () => visible,
     isDictating: () => dictating,
+    isDictationActive: () => active,
+    showDictationPanel: () => calls.push("show-dictation"),
+    hideDictationPanel: () => calls.push("hide-dictation"),
     sendStartDictation: () => calls.push("start-dictation"),
     sendStopDictation: () => calls.push("stop-dictation"),
   };
@@ -57,6 +60,23 @@ test("the tray offers dictation first", () => {
   assert.equal(separator.type, "separator");
   listen.click();
   assert.deepEqual(calls, ["start-dictation"]);
+});
+
+test("the tray cannot reveal an idle pill", () => {
+  const entries = createTrayManager([]).buildContextMenuTemplate();
+  assert.equal(
+    entries.some((entry) => entry.label?.startsWith("tray.toggleDictation")),
+    false
+  );
+});
+
+test("the tray can still show a hidden active session and hide visible feedback", () => {
+  const calls = [];
+  const activeEntries = createTrayManager(calls, { active: true }).buildContextMenuTemplate();
+  activeEntries.find((entry) => entry.label === "tray.toggleDictation.show").click();
+  const feedbackEntries = createTrayManager(calls, { visible: true }).buildContextMenuTemplate();
+  feedbackEntries.find((entry) => entry.label === "tray.toggleDictation.hide").click();
+  assert.deepEqual(calls, ["show-dictation", "hide-dictation"]);
 });
 
 test("the tray's listen item stops the recording it reflects", () => {
