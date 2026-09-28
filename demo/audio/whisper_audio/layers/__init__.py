@@ -1,1 +1,1 @@
-"""Mix layers: every public module here is rendered and summed by `mix.py`."""
+"""Mix layers: the music bed and the sound effects, summed by `mix.py`."""

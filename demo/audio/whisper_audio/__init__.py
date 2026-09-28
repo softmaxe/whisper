@@ -1,8 +1,11 @@
 """Synthesised audio for the Whisper demo Film.
 
 The synthesiser reads the shared timeline (exported to JSON by
-`scripts/export-timeline.ts`) and never hard-codes a time of its own. No
-samples are downloaded: every sound is generated with numpy.
+`scripts/export-timeline.ts`): every Beat window, sound cue and the Film's
+length come from there, so retiming the Film re-times the audio. Only sound
+design durations are fixed here, such as note and effect lengths and the
+music's closing fade (`layers/music.py` FADE_OUT), which is measured back from
+the Film's end. No samples are downloaded: every sound is generated with numpy.
 """
 
 SAMPLE_RATE = 48_000

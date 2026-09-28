@@ -1,38 +1,31 @@
-"""Mixes every layer in `whisper_audio.layers` into the final stereo track.
+"""Mixes the layers in `whisper_audio.layers` into the final stereo track.
 
-A layer is any module in `whisper_audio/layers/` exposing
+Each layer module exposes
 
     GAIN: float                      # optional, default 1.0
     def render(timeline, sr) -> np.ndarray  # shape (n_samples, 2)
 
-Layers are discovered automatically, so adding music or ambience means adding
-a new module rather than editing this file.
+and is listed in LAYERS below.
 """
 
 from __future__ import annotations
 
-import importlib
-import pkgutil
 import wave
 from pathlib import Path
 
 import numpy as np
 
-from . import layers
+from .layers import music, sfx
 from .timeline import Timeline, film_samples
 
-
-def discover_layers():
-    for info in sorted(pkgutil.iter_modules(layers.__path__), key=lambda m: m.name):
-        if not info.name.startswith("_"):
-            yield importlib.import_module(f"{layers.__name__}.{info.name}")
+LAYERS = (music, sfx)
 
 
 def render_layers(timeline: Timeline, sr: int) -> dict[str, np.ndarray]:
     """Every layer's output at its GAIN, keyed by layer name (e.g. "music", "sfx")."""
     n = film_samples(timeline, sr)
     rendered = {}
-    for layer in discover_layers():
+    for layer in LAYERS:
         out = np.asarray(layer.render(timeline, sr), dtype=np.float64)
         if out.shape != (n, 2):
             raise ValueError(f"layer {layer.__name__} returned {out.shape}, expected {(n, 2)}")
