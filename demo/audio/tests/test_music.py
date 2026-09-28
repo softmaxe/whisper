@@ -18,7 +18,7 @@ from whisper_audio.layers import music
 from whisper_audio.dsp import seconds
 from whisper_audio.mix import master, render_layers
 from whisper_audio.music.bank import CHORDS, MELODY, ROLES, Note
-from whisper_audio.music.score import bars
+from whisper_audio.music.score import BPM, bars
 from whisper_audio.timeline import all_cues, beat
 
 
@@ -78,13 +78,13 @@ def test_the_score_lasts_exactly_the_film(any_timeline, bank):
         assert math.isclose(a.end, b.start), "bars are contiguous"
 
 
-def test_every_beat_starts_on_a_downbeat_near_76_bpm(any_timeline):
+def test_every_beat_starts_on_a_downbeat_near_the_target_tempo(any_timeline):
     grid = bars(any_timeline)
     starts = [bar.start for bar in grid]
     for b in any_timeline["beats"]:
         assert any(math.isclose(b["start"], s) for s in starts), f"{b['key']} starts mid-bar"
     for bar in grid:
-        assert abs(60.0 / bar.beat_len - 76) <= 4, f"{bar.beat_key} bar {bar.index} is off tempo"
+        assert abs(60.0 / bar.beat_len - BPM) <= 4, f"{bar.beat_key} bar {bar.index} is off tempo"
         assert 2 <= bar.beats <= 7
 
 
@@ -127,11 +127,15 @@ def test_the_opening_is_sparser_than_the_feature_beats(stems):
 PITCH_CLASSES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
 
+def power_spectrum(x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The frequencies (Hz) and power of a stereo signal's Hann-windowed mono sum."""
+    mono = x.mean(axis=1) * np.hanning(x.shape[0])
+    return np.fft.rfftfreq(mono.shape[0], 1.0 / SR), np.abs(np.fft.rfft(mono)) ** 2
+
+
 def pitch_class_levels(x: np.ndarray) -> dict[str, float]:
     """Spectral energy (dB) per pitch class, from about C2 to C7."""
-    mono = x.mean(axis=1) * np.hanning(x.shape[0])
-    power = np.abs(np.fft.rfft(mono)) ** 2
-    freqs = np.fft.rfftfreq(mono.shape[0], 1.0 / SR)
+    freqs, power = power_spectrum(x)
     keep = (freqs > 60) & (freqs < 2100)
     classes = np.round(12 * np.log2(freqs[keep] / 440.0) + 69).astype(int) % 12
     energy = np.bincount(classes, weights=power[keep], minlength=12)
@@ -213,8 +217,7 @@ def test_layers_sum_below_full_scale(layers):
 
 def high_share(x: np.ndarray, above: float) -> float:
     """How much of the signal's energy lies above `above` Hz, in dB."""
-    power = np.abs(np.fft.rfft(x.mean(axis=1))) ** 2
-    freqs = np.fft.rfftfreq(x.shape[0], 1.0 / SR)
+    freqs, power = power_spectrum(x)
     return 10 * np.log10(power[freqs > above].sum() / power.sum())
 
 
