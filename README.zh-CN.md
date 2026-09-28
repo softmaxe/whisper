@@ -15,7 +15,7 @@ Whisper 将语音转成文字，粘贴到 Mac 上正在使用的应用。你需�
   <img src="docs/images/overview-zh-CN.png" alt="Whisper 中文界面，展示本地听写历史记录和导航菜单" width="800">
 </p>
 
-截图使用示例数据。中英文手绘讲解视频的生成方法见 [demo](demo/README.md)。
+视频和截图使用示例数据。视频由 [demo](demo/README.md) 中的代码生成。
 
 ## 功能
 
