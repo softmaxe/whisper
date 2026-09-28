@@ -15,20 +15,36 @@ import {
   resolveFlowWaveOpacity,
   resolveFlowWaveTarget,
 } from "../../../../src/components/dictation/waveformMath.ts";
+import {
+  LISTENING_ENTRANCE_TIMING,
+  VOICE_PILL_FOOTPRINT,
+  VOICE_PILL_GROW_EASING,
+} from "../../../../src/helpers/voicePillPresentation.js";
 import { hash01 } from "../../../timeline/helpers.ts";
 
 export { FLOW_BAR_COUNT as PILL_BAR_COUNT };
 
-/** Footprints from VOICE_PILL_FOOTPRINT (src/helpers/voicePillPresentation.js), in app px. */
-export const PILL_SLIVER = { width: 38, height: 10 } as const;
-export const PILL_LISTENING = { width: 84, height: 30 } as const;
-/** Bar geometry of FlowWaveform, in app px. */
+/** Control points of a CSS `cubic-bezier(x1, y1, x2, y2)`. */
+function parseCubicBezier(css: string): [number, number, number, number] {
+  const match = /^cubic-bezier\(([^)]*)\)$/.exec(css);
+  const points = match?.[1].split(",").map(Number);
+  if (points?.length !== 4 || points.some(Number.isNaN)) throw new Error(`Not a cubic-bezier(): ${css}`);
+  return points as [number, number, number, number];
+}
+
+/** The floating pill's footprints (resting sliver and listening Flow bar), in app px. */
+export const PILL_SLIVER = VOICE_PILL_FOOTPRINT.sliver;
+export const PILL_LISTENING = VOICE_PILL_FOOTPRINT.listening;
+/** Bar geometry of FlowWaveform (private constants there), in app px. */
 export const PILL_BAR_WIDTH = 2.5;
 export const PILL_BAR_GAP = 3;
-/** LISTENING_ENTRANCE_TIMING.expansionMs: the sliver grows into the pill. */
-export const PILL_GROW_SECONDS = 0.3;
+/** The sliver grows into the pill. */
+export const PILL_GROW_SECONDS = LISTENING_ENTRANCE_TIMING.expansionMs / 1000;
+/** The pill's morph curve, as cubic-bezier control points parsed from VOICE_PILL_GROW_EASING. */
+export const PILL_GROW_BEZIER = parseCubicBezier(VOICE_PILL_GROW_EASING);
 /** The sweep shown before the microphone is ready. */
 export const PILL_WARMUP_SECONDS = 0.2;
+
 /** FlowWaveform's easing toward each target, per 60 fps frame. */
 const RISE = 0.45;
 const FALL = 0.16;

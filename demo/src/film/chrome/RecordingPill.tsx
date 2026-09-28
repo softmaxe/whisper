@@ -4,6 +4,7 @@ import { clamp } from "../anim.ts";
 import {
   PILL_BAR_GAP,
   PILL_BAR_WIDTH,
+  PILL_GROW_BEZIER,
   PILL_GROW_SECONDS,
   PILL_LISTENING,
   PILL_SLIVER,
@@ -14,7 +15,7 @@ import { RoughDrawing, useWobbleSeed } from "../rough/RoughDrawing.tsx";
 import { PALETTE } from "../theme.ts";
 
 /** The app's pill morph curve (VOICE_PILL_GROW_EASING). */
-const pillEase = Easing.bezier(0.2, 0, 0, 1);
+const pillEase = Easing.bezier(...PILL_GROW_BEZIER);
 /** Hold mode's rim glow, pencilled in the app's accent blue. */
 const HELD_BLUE = "#5b86f5";
 
