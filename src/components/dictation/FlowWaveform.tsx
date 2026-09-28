@@ -1,7 +1,8 @@
-import { useEffect, useRef, type CSSProperties } from "react";
+import { useLayoutEffect, useRef, type CSSProperties } from "react";
 import { cn } from "../lib/utils";
 import {
   FLOW_BAR_COUNT,
+  FLOW_SWEEP_DURATION_MS,
   resolveFlowBarHeight,
   resolveFlowBarTarget,
   resolveFlowSweepOpacity,
@@ -38,26 +39,38 @@ const FRAME_MS = 1000 / 60;
 
 // Per motion: each bar's target lane (0..1) and opacity at a moment.
 const MOTION_BARS: Record<
-  FlowMotion,
+  Exclude<FlowMotion, "sweep">,
   {
     target: (rms: number, index: number, now: number) => number;
     opacity: (index: number, now: number) => number;
   }
 > = {
   live: { target: resolveFlowBarTarget, opacity: () => 1 },
-  sweep: {
-    target: (_rms, index, now) => resolveFlowSweepTarget(index, now),
-    opacity: resolveFlowSweepOpacity,
-  },
   wave: {
     target: (_rms, index, now) => resolveFlowWaveTarget(index, now),
     opacity: resolveFlowWaveOpacity,
   },
 };
 
+// Precompute the connection sweep so the compositor can play it while native
+// microphone setup blocks the renderer. Height animation would still need the
+// renderer on every frame; scale and opacity do not.
+const SWEEP_KEYFRAMES = Array.from({ length: FLOW_BAR_COUNT }, (_, index) =>
+  Array.from({ length: 33 }, (_, step) => {
+    const now = (step / 32) * FLOW_SWEEP_DURATION_MS;
+    const scale =
+      resolveFlowBarHeight(resolveFlowSweepTarget(index, now)) / resolveFlowBarHeight(0);
+    return {
+      offset: step / 32,
+      transform: `scaleY(${scale})`,
+      opacity: resolveFlowSweepOpacity(index, now),
+    };
+  })
+);
+
 /**
- * The Flow bar's waveform. Like PillWaveform it writes heights straight to the
- * DOM from a rAF loop, so listening never pays React re-render cost.
+ * Connection feedback runs on the compositor. Live audio and processing write
+ * heights from a rAF loop without React re-renders.
  */
 export function FlowWaveform({
   getLevel,
@@ -70,8 +83,16 @@ export function FlowWaveform({
   // Lanes persist across motions so stopping eases the live shape into the
   // thinking wave instead of snapping it to dots first.
   const lanesRef = useRef<number[]>(new Array(FLOW_BAR_COUNT).fill(0));
+  const sweepRef = useRef<Animation[]>([]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // Cancellation freezes even a compositor-driven sweep for the finish fade.
+    if (!motion && !resting) {
+      sweepRef.current.forEach((animation) => animation.pause());
+      return;
+    }
+    sweepRef.current.forEach((animation) => animation.cancel());
+    sweepRef.current = [];
     const lanes = lanesRef.current;
     const paintBar = (index: number, opacity: number) => {
       const bar = barRefs.current[index];
@@ -86,6 +107,21 @@ export function FlowWaveform({
       if (resting) {
         lanes.fill(0);
         for (let i = 0; i < FLOW_BAR_COUNT; i += 1) paintBar(i, 1);
+      }
+      return;
+    }
+
+    if (motion === "sweep") {
+      lanes.fill(0);
+      for (let i = 0; i < FLOW_BAR_COUNT; i += 1) {
+        paintBar(i, 1);
+        const animation = barRefs.current[i]?.animate(SWEEP_KEYFRAMES[i], {
+          duration: FLOW_SWEEP_DURATION_MS,
+          iterations: Infinity,
+          // Begin with the bright spot inside the pill on its first paint.
+          delay: -FLOW_SWEEP_DURATION_MS / 4,
+        });
+        if (animation) sweepRef.current.push(animation);
       }
       return;
     }
@@ -113,6 +149,13 @@ export function FlowWaveform({
     frame = requestAnimationFrame(paint);
     return () => cancelAnimationFrame(frame);
   }, [motion, resting, getLevel]);
+
+  useLayoutEffect(
+    () => () => {
+      sweepRef.current.forEach((animation) => animation.cancel());
+    },
+    []
+  );
 
   return (
     <div
