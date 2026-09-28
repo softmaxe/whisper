@@ -11,6 +11,8 @@
 
 Whisper 将语音转成文字，粘贴到 Mac 上正在使用的应用。你需要单独部署语音识别服务，再到设置中连接。也可以接入文本整理服务，修正标点、去掉语气词。
 
+https://github.com/user-attachments/assets/e843849f-951e-49a4-bb52-a283c7349164
+
 <p align="center">
   <img src="docs/images/overview-zh-CN.png" alt="Whisper 中文界面，展示本地听写历史记录和导航菜单" width="800">
 </p>
