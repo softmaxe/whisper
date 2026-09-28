@@ -186,7 +186,7 @@ const outline = (seed: number) => ({
 /** Light pencil hatching over the black crayon: gives the body its hand-coloured texture. */
 const hatch = {
   stroke: "none",
-  fill: PALETTE.clawdWhite,
+  fill: PALETTE.iconWhite,
   fillStyle: "hachure",
   hachureAngle: -52,
   hachureGap: 9,
@@ -346,8 +346,8 @@ const CrayonBlock: React.FC<{ x: number; y: number; w: number; h: number; p: num
   return (
     <g opacity={p}>
       {/* A dense charcoal base, then waxy black crayon whose grain lets the base show through. */}
-      <rect x={x + 1} y={y + 1} width={w - 2} height={h - 2} fill={PALETTE.clawdBlack} opacity={0.82} />
-      <rect x={x + 2} y={y + 2} width={w - 4} height={h - 4} fill={PALETTE.clawdBlack} filter={`url(#${filter})`} />
+      <rect x={x + 1} y={y + 1} width={w - 2} height={h - 2} fill={PALETTE.iconBlack} opacity={0.82} />
+      <rect x={x + 2} y={y + 2} width={w - 4} height={h - 4} fill={PALETTE.iconBlack} filter={`url(#${filter})`} />
       <g opacity={0.16}>
         <RoughDrawing seed={seed + 100} options={hatch} build={(g, o) => [g.rectangle(x + 3, y + 3, w - 6, h - 6, o)]} />
       </g>
@@ -362,7 +362,7 @@ const WaveformW: React.FC<{ progress: number; seed: number }> = ({ progress, see
   return (
     <RoughDrawing
       seed={seed}
-      options={{ stroke: PALETTE.clawdWhite, strokeWidth: 6.5, roughness: 0.55, bowing: 0.4, disableMultiStroke: true }}
+      options={{ stroke: PALETTE.iconWhite, strokeWidth: 6.5, roughness: 0.55, bowing: 0.4, disableMultiStroke: true }}
       progress={progress}
       build={(g, o) =>
         W_BARS.map((h, i) => {
@@ -375,7 +375,7 @@ const WaveformW: React.FC<{ progress: number; seed: number }> = ({ progress, see
 };
 
 const Eye: React.FC<{ cx: number; top: number; shape: ClawdEyes; seed: number }> = ({ cx, top, shape, seed }) => {
-  const ink = { stroke: PALETTE.clawdWhite, strokeWidth: 5, roughness: 0.8, seed };
+  const ink = { stroke: PALETTE.iconWhite, strokeWidth: 5, roughness: 0.8, seed };
   if (shape === "closed") {
     return (
       <RoughDrawing seed={seed} options={ink} build={(g, o) => [g.line(cx - EYE_W / 2 - 3, top + EYE_H * 0.62, cx + EYE_W / 2 + 3, top + EYE_H * 0.62, o)]} />
@@ -403,7 +403,7 @@ const Eye: React.FC<{ cx: number; top: number; shape: ClawdEyes; seed: number }>
   return (
     <RoughDrawing
       seed={seed}
-      options={{ ...ink, strokeWidth: 2.5, fill: PALETTE.clawdWhite, fillStyle: "solid" }}
+      options={{ ...ink, strokeWidth: 2.5, fill: PALETTE.iconWhite, fillStyle: "solid" }}
       build={(g, o) => [g.rectangle(cx - EYE_W / 2, top, EYE_W, EYE_H, o)]}
     />
   );

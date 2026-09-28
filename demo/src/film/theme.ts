@@ -1,6 +1,6 @@
 /**
  * Shared Film palette: warm paper, graphite pencil, ink, the red pen and the
- * Clawd mascot's black and white. Beats keep one-off colours as local constants.
+ * app icon's black and white. Beats keep one-off colours as local constants.
  */
 export const PALETTE = {
   paper: "#f4ead5",
@@ -14,9 +14,9 @@ export const PALETTE = {
   ink: "#3a2e2a",
   /** The red pen: circles, strike-throughs, ticks, arrows and corrections. */
   redPen: "#c2562b",
-  /** Clawd's body and the white waveform W from the app icon. */
-  clawdBlack: "#1d1b1c",
-  clawdWhite: "#f7f3ea",
+  /** The app icon's black and white: the Recording pill and the logo. */
+  iconBlack: "#1d1b1c",
+  iconWhite: "#f7f3ea",
   /** Watercolour wash keyframes over the working day. */
   washDawn: "#f3c89a",
   washDay: "#f6e3b0",
