@@ -126,7 +126,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
   const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
-  const { resolveVoiceActivityPresentation } = await vite.ssrLoadModule(
+  const { resolveRecordingPillState } = await vite.ssrLoadModule(
     "/helpers/voicePillPresentation.js"
   );
   const toast = (error) => errors.push(error);
@@ -173,7 +173,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     resolveRequest: async (index, payload, status = 200) =>
       act(() => requests[index].resolve(new Response(JSON.stringify(payload), { status }))),
     presentation: () => {
-      const state = resolveVoiceActivityPresentation(hook).activeState || "idle";
+      const state = resolveRecordingPillState(hook);
       const markup = renderToStaticMarkup(
         React.createElement(VoicePill, {
           variant: "floating",
