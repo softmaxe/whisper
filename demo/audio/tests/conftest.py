@@ -47,7 +47,7 @@ def standin_voice(level: float, tau: float):
 
 
 def standin_bank() -> SampleBank:
-    return {CHORDS: standin_voice(0.3, 0.4), MELODY: standin_voice(1.0, 0.8)}
+    return {CHORDS: standin_voice(0.67, 0.4), MELODY: standin_voice(0.9, 0.8)}
 
 
 @pytest.fixture(scope="session")

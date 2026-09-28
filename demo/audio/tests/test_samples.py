@@ -13,7 +13,7 @@ import pytest
 import soundfile
 
 from whisper_audio.dsp import midi_hz
-from whisper_audio.music.bank import Note
+from whisper_audio.music.bank import Note, softly
 from whisper_audio.music.sfz import load_library
 from whisper_audio.samples import Library, SampleCacheError, fetch, verified_archive
 
@@ -112,3 +112,17 @@ def test_a_note_plays_the_nearest_sample_at_its_pitch_and_length(tmp_path, libra
     assert np.max(np.abs(clip)) == pytest.approx(0.6, rel=0.01)
     assert dominant_hz(clip[: SR // 2], SR) == pytest.approx(midi_hz(pitch), rel=0.01)
     assert np.max(np.abs(clip[-10:])) < 1e-3  # released to silence at the note's end
+
+
+def test_a_soft_touch_strikes_softly_but_keeps_the_notes_level():
+    struck = []
+
+    def play(note: Note, sr: int, rng: np.random.Generator) -> np.ndarray:
+        struck.append(note.velocity)
+        return note.velocity * np.ones(sr // 10)
+
+    soft = softly(play, 0.6)
+    rng = np.random.default_rng(0)
+    assert np.allclose(soft(Note(60, 0.9, 0.1), SR, rng), 0.9)
+    assert np.allclose(soft(Note(60, 0.4, 0.1), SR, rng), 0.4)
+    assert struck == [0.6, 0.4]

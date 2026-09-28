@@ -161,16 +161,24 @@ def paper_rustle(n: int, sr: int, rng: np.random.Generator, rate: float = 0.5) -
     return fft_filter(out, sr, lowpass=7000, highpass=1500)
 
 
-def room(x: np.ndarray, sr: int, rng: np.random.Generator, decay: float = 1.4, predelay: float = 0.018) -> np.ndarray:
+def room(
+    x: np.ndarray,
+    sr: int,
+    rng: np.random.Generator,
+    decay: float = 1.4,
+    predelay: float = 0.018,
+    tone: float = 3500.0,
+) -> np.ndarray:
     """A small warm room: stereo convolution with decorrelated, exponentially decaying, darkened noise.
 
-    `x` has shape (n, 2); the wet signal has the same shape (the tail past the end is dropped).
+    `tone` is the low-pass on the tail (lower is softer). `x` has shape (n, 2); the wet
+    signal has the same shape (the tail past the end is dropped).
     """
     n = x.shape[0]
     ir_n = seconds(decay * 1.6, sr)
     lead = seconds(predelay, sr)
     ir = rng.standard_normal((ir_n, 2)) * exp_decay(ir_n, decay / 6.9 * sr)[:, None]
-    ir = fft_filter(ir, sr, lowpass=3500, highpass=150)
+    ir = fft_filter(ir, sr, lowpass=tone, highpass=150)
     ir[:lead] = 0.0
     ir /= np.sqrt(np.sum(ir**2, axis=0, keepdims=True)) + 1e-12
     size = 1 << int(np.ceil(np.log2(n + ir_n)))

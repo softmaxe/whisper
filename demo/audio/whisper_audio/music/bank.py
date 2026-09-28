@@ -17,7 +17,7 @@ wraps the numpy instruments in `instruments.py`. Tests pass their own bank to
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 import numpy as np
@@ -73,16 +73,39 @@ def synth_bank() -> SampleBank:
     return {CHORDS: plucked_guitar, MELODY: kalimba}
 
 
+def softly(play: NoteRenderer, touch: float) -> NoteRenderer:
+    """`play`, always struck with a velocity of at most `touch` but scaled back to the note's own level.
+
+    A sampled instrument picks its velocity layer from the note's velocity, so this keeps a
+    piano on its soft, dark layer (a felt-like touch) while the score still sets how loud each note is.
+    """
+
+    def render(note: Note, sr: int, rng: np.random.Generator) -> np.ndarray:
+        struck = min(note.velocity, touch)
+        if struck <= 0:
+            return play(note, sr, rng)
+        return note.velocity / struck * play(replace(note, velocity=struck), sr, rng)
+
+    return render
+
+
+# The upright piano's soft layer covers velocities up to 80 of 127.
+PIANO_TOUCH = 0.6
+
+
 def sampled_bank() -> SampleBank:
     """The recorded instruments in `samples.toml`, read from the sample cache: each library plays its role
-    (upright piano for the chords, Rhodes for the melody).
+    (upright piano for the chords, played softly for a felt-like tone; Rhodes for the melody).
 
     Only verifies the cache; the build's fetch step downloads it.
     """
     from ..samples import load_manifest
     from .sfz import load_library
 
-    return check_bank({library.role: load_library(library) for library in load_manifest()})
+    bank = {library.role: load_library(library) for library in load_manifest()}
+    if CHORDS in bank:
+        bank[CHORDS] = softly(bank[CHORDS], PIANO_TOUCH)
+    return check_bank(bank)
 
 
 def default_bank() -> SampleBank:

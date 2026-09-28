@@ -211,6 +211,19 @@ def test_layers_sum_below_full_scale(layers):
     assert np.max(np.abs(master(total))) <= 0.89
 
 
+def high_share(x: np.ndarray, above: float) -> float:
+    """How much of the signal's energy lies above `above` Hz, in dB."""
+    power = np.abs(np.fft.rfft(x.mean(axis=1))) ** 2
+    freqs = np.fft.rfftfreq(x.shape[0], 1.0 / SR)
+    return 10 * np.log10(power[freqs > above].sum() / power.sum())
+
+
+def test_only_the_music_gets_the_warm_low_pass(layers):
+    """The music bus is darkened like worn tape; the sound effects stay dry and keep their bright edges."""
+    assert high_share(layers["music"], 8000) < -38
+    assert high_share(layers["sfx"], 8000) > -20
+
+
 def test_every_cue_stands_out_over_the_music(timeline, layers):
     for cue in all_cues(timeline):
         at = round(cue["at"] * SR)

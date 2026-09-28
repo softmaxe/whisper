@@ -38,6 +38,17 @@ def normalise(x: np.ndarray, peak: float = 1.0) -> np.ndarray:
     return peak * x / (current or 1.0)
 
 
+def tape_saturate(x: np.ndarray, drive: float = 1.5, bias: float = 0.1) -> np.ndarray:
+    """Tape-style saturation: a slightly asymmetric tanh curve that rounds off peaks.
+
+    Unity gain for quiet material, so it only thickens the loud moments; the `bias`
+    makes the curve lopsided, which adds the soft even harmonics of tape. The bias
+    leaves a small DC offset under loud passages, so high-pass the result.
+    """
+    offset = np.tanh(drive * bias)
+    return (np.tanh(drive * (x + bias)) - offset) / (drive * (1.0 - offset**2))
+
+
 def place(buffer: np.ndarray, clip: np.ndarray, at_sample: int, pan: float = 0.0) -> None:
     """Add a mono `clip` into stereo `buffer` at `at_sample` with equal-power pan (-1..1)."""
     if at_sample >= buffer.shape[0]:

@@ -13,6 +13,9 @@ through a sample bank (`music/bank.py`); the other stems are synthesised here:
     servers   the chords roll again over the night pad and resolve on Cadd9,
               which rings through a fade to silence at the end of the Film
 
+The whole music bus then goes through a soft room and a lo-fi finish: tape-style
+saturation and a gentle low-pass. The sound effects are a separate layer and stay dry.
+
 The music reads only Beat keys and windows and the Film length from the
 timeline. It ignores sound cues, so the sound-effect layer can grow freely.
 """
@@ -21,7 +24,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..dsp import fft_filter, place, seconds
+from ..dsp import fft_filter, place, seconds, tape_saturate
 from ..music import instruments as inst
 from ..music.bank import CHORDS, MELODY, Note, SampleBank, check_bank
 from ..music.score import CHORD_PATTERNS, MELODY_FIGURES, Bar, bars
@@ -30,12 +33,19 @@ from ..timeline import Timeline, film_samples
 GAIN = 1.4
 SEED = 84
 
-# Level of each stem in the music bus, tuned so the bed sits about 12 dB under the sound cues.
-# The round bass sustains where a plucked one decayed, so it sits much lower at the same loudness.
-STEM_GAINS = {CHORDS: 0.3, "bass": 0.055, MELODY: 0.1, "drums": 0.2, "pad": 0.09, "paper": 0.07}
+# Level of each stem in the music bus, tuned against the sampled instruments so the bed sits
+# at least 10 dB under the sound cues. The Rhodes melody leads; the piano sits under it.
+# The round bass sustains where a plucked one decays, so its gain is small for the same loudness.
+STEM_GAINS = {CHORDS: 0.135, "bass": 0.062, MELODY: 0.115, "drums": 0.16, "pad": 0.08, "paper": 0.07}
 # How much of each stem goes to the shared room reverb.
-ROOM_SENDS = {CHORDS: 0.35, "bass": 0.1, MELODY: 0.5, "drums": 0.25, "pad": 0.4, "paper": 0.0}
-ROOM_LEVEL = 0.45
+ROOM_SENDS = {CHORDS: 0.3, "bass": 0.05, MELODY: 0.45, "drums": 0.2, "pad": 0.5, "paper": 0.0}
+ROOM_LEVEL = 0.4
+# A soft room: a slightly longer, darker tail than a bright live room.
+ROOM = {"decay": 1.6, "predelay": 0.024, "tone": 2400.0}
+# The lo-fi finish on the music bus: tape drive, then a gentle low-pass (and a DC-blocking high-pass).
+TAPE_DRIVE = 1.5
+BUS_LOWPASS = 5000.0
+BUS_HIGHPASS = 30.0
 FADE_IN = 0.25
 # The fade to silence at the end: a squared raised cosine over the last FADE_OUT seconds
 # (about -33 dB one second before the end, where the picture starts fading to paper).
@@ -86,7 +96,8 @@ def render_chords(grid: list[Bar], n: int, sr: int, rng: np.random.Generator, ba
             note = voicing[min(voice, len(voicing) - 1)]
             clip = play(Note(note, vel * rng.uniform(0.85, 1.0), ring), sr, rng)
             place(out, clip, played(bar, pos, sr, rng), pan=-0.3 + 0.1 * voice)
-    return filtered(out, sr, lowpass=4500, highpass=60)
+    # A darker top end for the soft, felt-like piano.
+    return filtered(out, sr, lowpass=3000, highpass=60)
 
 
 def render_bass(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> np.ndarray:
@@ -214,10 +225,15 @@ def fade_envelope(n: int, sr: int) -> np.ndarray:
     return env * (0.5 * (1.0 - np.cos(np.pi * remaining))) ** 2
 
 
+def lofi(bed: np.ndarray, sr: int) -> np.ndarray:
+    """The music bus's warm finish: tape-style saturation, then a gentle low-pass."""
+    return filtered(tape_saturate(bed, TAPE_DRIVE), sr, lowpass=BUS_LOWPASS, highpass=BUS_HIGHPASS)
+
+
 def render(timeline: Timeline, sr: int, bank: SampleBank) -> np.ndarray:
     n = film_samples(timeline, sr)
     dry = stems(timeline, sr, bank)
     send = sum((ROOM_SENDS[name] * x for name, x in dry.items()), stereo(n))
-    wet = inst.room(send, sr, np.random.default_rng(SEED + 1))
+    wet = inst.room(send, sr, np.random.default_rng(SEED + 1), **ROOM)
     bed = sum(dry.values(), stereo(n)) + ROOM_LEVEL * wet
-    return bed * fade_envelope(n, sr)[:, None]
+    return lofi(bed, sr) * fade_envelope(n, sr)[:, None]
