@@ -58,5 +58,6 @@ Dictation that continues after the Dictation hotkey is released, until the next
 Clean press or cancellation.
 
 **Clawd**:
-The mascot of the demo video: a blocky black character with short legs and
-the white waveform W from the app icon on its body.
+The mascot of the demo video: the Claude Code mascot, drawn in the Film's
+paper style as a blocky terracotta character with dark vertical-bar eyes,
+stubby side arms and four short legs.

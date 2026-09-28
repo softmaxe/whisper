@@ -1,6 +1,6 @@
 # Demo video
 
-A 75-second hand-drawn explainer of Whisper, written as code with [Remotion](https://www.remotion.dev/). Clawd, Whisper's mascot, takes the viewer through five Beats on textured paper with coloured-pencil strokes, red-pen annotations, and handwritten Captions:
+A 75-second hand-drawn explainer of Whisper, written as code with [Remotion](https://www.remotion.dev/). Clawd, the Claude Code mascot drawn as a blocky terracotta character with dark vertical-bar eyes, stubby arms, and four short legs, takes the viewer through five Beats on textured paper with coloured-pencil strokes, red-pen annotations, and handwritten Captions:
 
 1. **Opening**: typing is slow; the Globe/fn key is circled and a Double tap brings up the Recording pill.
 2. **Speak and it's written**: fillers are crossed out and punctuation added before the text lands in Mail by Automatic paste; a misheard product name is corrected in team chat and written into Dictionary.
