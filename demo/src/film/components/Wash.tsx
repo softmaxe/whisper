@@ -10,7 +10,7 @@ import { WASH_LAYERS, washAt } from "./washKeys.ts";
  * low-frequency noise, fine granulation, a heavier sky along the top and
  * pigment pooled at the edges. The texture is fixed across frames (fixed
  * seeds); only the colour and strength move. It sits under the Beat content,
- * so windows, Whis, the red pen and the Captions are drawn on top of it.
+ * so windows, Clawd, the red pen and the Captions are drawn on top of it.
  */
 export const Wash: React.FC = () => {
   const frame = useCurrentFrame();

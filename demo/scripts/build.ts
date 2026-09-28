@@ -5,7 +5,7 @@
  *
  * Usage: npm run build [-- --concurrency=N]
  * Output (git-ignored): out/whisper-film-en.mp4, out/whisper-film-zh-CN.mp4,
- * out/audio.wav, out/frames/<lang>/*.png and the Whis model sheet out/frames/whis-sheet.png.
+ * out/audio.wav, out/frames/<lang>/*.png and the Clawd model sheet out/frames/clawd-sheet.png.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -14,7 +14,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
-import { FILM_COMPOSITION_IDS, WHIS_SHEET } from "../src/film/compositionIds.ts";
+import { FILM_COMPOSITION_IDS, CLAWD_SHEET } from "../src/film/compositionIds.ts";
 import { FILM, LANGS } from "../timeline/index.ts";
 import { exportTimeline } from "./export-timeline.ts";
 import { cutPaths, OUT_DIR, PATHS, ROOT } from "./paths.ts";
@@ -56,10 +56,10 @@ async function main(): Promise<void> {
 
   const serveUrl = await step("Bundle", () => bundle({ entryPoint: PATHS.videoEntry, publicDir: PATHS.publicDir }));
 
-  await step("Render Whis model sheet", async () => {
-    const composition = await selectComposition({ serveUrl, id: WHIS_SHEET.id });
+  await step("Render Clawd model sheet", async () => {
+    const composition = await selectComposition({ serveUrl, id: CLAWD_SHEET.id });
     fs.mkdirSync(PATHS.framesRoot, { recursive: true });
-    await renderStill({ serveUrl, composition, frame: WHIS_SHEET.frame, output: PATHS.whisSheetPng });
+    await renderStill({ serveUrl, composition, frame: CLAWD_SHEET.frame, output: PATHS.clawdSheetPng });
   });
 
   for (const lang of LANGS) {
@@ -120,7 +120,7 @@ async function main(): Promise<void> {
     console.log(`Film (${lang}): ${path.relative(ROOT, cut.film)}`);
   }
 
-  console.log(`\nReview frames: ${path.relative(ROOT, PATHS.framesRoot)}/<lang>/ and ${path.relative(ROOT, PATHS.whisSheetPng)}`);
+  console.log(`\nReview frames: ${path.relative(ROOT, PATHS.framesRoot)}/<lang>/ and ${path.relative(ROOT, PATHS.clawdSheetPng)}`);
   console.log(`Total build time: ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 }
 

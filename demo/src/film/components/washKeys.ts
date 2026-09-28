@@ -26,7 +26,7 @@ const { opening, speak, more, servers } = BEAT_BOUNDS;
 const mid = ([a, b]: readonly [number, number]) => (a + b) / 2;
 
 /**
- * Night stops at a strength where ink Captions, graphite pencil, Whis (with
+ * Night stops at a strength where ink Captions, graphite pencil, Clawd (with
  * its paper rim) and the red pen all stay readable on the washed paper.
  */
 export const NIGHT_OPACITY = 0.44;

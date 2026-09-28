@@ -5,10 +5,10 @@ import type { Beat, Caption, Lang, Moments, SoundCue } from "../types.ts";
 const [start, end] = BEAT_BOUNDS.speak;
 
 /*
- * Beat 2 · Speak and it's written. Mail: Whis's words (still being dictated
+ * Beat 2 · Speak and it's written. Mail: Clawd's words (still being dictated
  * from Beat 1) appear on a "You said" card with their fillers; the pill stops
  * listening, the red pen strikes the fillers and adds punctuation, and the
- * cleaned text lands in the Mail reply by Automatic paste. Team chat: Whis
+ * cleaned text lands in the Mail reply by Automatic paste. Team chat: Clawd
  * dictates a reply whose product name is misheard; the red pen circles it and
  * writes Supabase, and the Dictionary notebook records it with a tick.
  */
@@ -67,13 +67,13 @@ export const BEAT2_TEXT = {
 const chatTap = doubleTapMoments(20.6);
 
 const moments = {
-  /** The Mail window, the "You said" card, the pill and Whis fade in, still dictating. */
+  /** The Mail window, the "You said" card, the pill and Clawd fade in, still dictating. */
   sketchIn: 9,
   /** The spoken words start appearing on the card, fillers and all. */
   wordsIn: 9.2,
   /** The last spoken word appears. */
   wordsEnd: 12.1,
-  /** Whis stops speaking; the pill turns to its thinking wave. */
+  /** Clawd stops speaking; the pill turns to its thinking wave. */
   stop: 12.4,
   /** The red pen strikes out each filler (the copy module has three per cut). */
   strikes: [12.8, 13.25, 13.7],
@@ -87,11 +87,11 @@ const moments = {
   mailOut: 18.9,
   /** The team chat window is sketched in, with a question waiting. */
   chatIn: 19.4,
-  /** Whis Double taps fn to answer. */
+  /** Clawd Double taps fn to answer. */
   chatTaps: chatTap.taps,
-  /** The pill opens and Whis dictates the reply. */
+  /** The pill opens and Clawd dictates the reply. */
   chatListen: chatTap.listen,
-  /** Whis stops speaking. */
+  /** Clawd stops speaking. */
   chatStop: 22.7,
   /** The reply lands in the message box by Automatic paste, with a misheard product name. */
   chatPaste: 23.1,

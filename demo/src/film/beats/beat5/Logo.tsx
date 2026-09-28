@@ -81,7 +81,7 @@ export const Logo: React.FC<LogoProps> = ({ cx, cy, size, square, stroke, seed =
     <g transform={`translate(${cx - size / 2} ${cy - size / 2}) scale(${k})`}>
       {/* Paper rim, so the black square separates from a dark wash. */}
       <path d={outline} fill={PALETTE.paper} stroke={PALETTE.paper} strokeWidth={24} opacity={Math.min(1, square * 2)} />
-      <path d={outline} fill={PALETTE.whisBlack} opacity={fill} />
+      <path d={outline} fill={PALETTE.clawdBlack} opacity={fill} />
       <RoughDrawing
         seed={boil}
         options={{ stroke: PALETTE.graphite, strokeWidth: 3.2 / k, roughness: 1.1, bowing: 0.8 }}
@@ -92,7 +92,7 @@ export const Logo: React.FC<LogoProps> = ({ cx, cy, size, square, stroke, seed =
         <path
           d={waveformStroke(boil, 5)}
           fill="none"
-          stroke={PALETTE.whisWhite}
+          stroke={PALETTE.clawdWhite}
           strokeWidth={BAR_W + 4}
           strokeLinecap="round"
           strokeLinejoin="round"

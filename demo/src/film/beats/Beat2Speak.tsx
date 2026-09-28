@@ -7,7 +7,7 @@ import { clamp, ramp, useBeatTime } from "../anim.ts";
 import { AppWindow, type Box } from "../chrome/AppWindow.tsx";
 import { FnKey, keyDepth } from "../chrome/FnKey.tsx";
 import { RecordingPill } from "../chrome/RecordingPill.tsx";
-import { isBlinking, Whis, whisPose } from "../characters/Whis.tsx";
+import { isBlinking, Clawd, clawdPose } from "../characters/Clawd.tsx";
 import { HAND_FONT } from "../fonts.ts";
 import { useLang } from "../lang.tsx";
 import { PenArrow, PenMark, PenNote } from "../pen/RedPen.tsx";
@@ -18,8 +18,8 @@ import { type Insertion, SaidCard } from "./beat2/SaidCard.tsx";
 
 /* Composition (canvas px). Captions are written below y = 850. */
 const GROUND_Y = 832;
-const WHIS_X = 340;
-const WHIS_SCALE = 1.1;
+const CLAWD_X = 340;
+const CLAWD_SCALE = 1.1;
 /** Mail stays where Beat 1 drew it, so the Dictation carries straight on. */
 const MAIL: Box = { x: 800, y: 64, w: 1000, h: 420 };
 const MAIL_PILL = { cx: MAIL.x + MAIL.w / 2, cy: MAIL.y + MAIL.h - 78, scale: 3 };
@@ -54,7 +54,7 @@ const INSERTIONS: Record<Lang, Insertion[]> = {
  * Beat 2 · Speak and it's written. Mail: the Dictation begun in Beat 1 goes
  * on; the heard words fill the "You said" card, fillers and all. The pill
  * stops, the red pen strikes the fillers and adds punctuation, and the
- * cleaned text lands in the reply by Automatic paste. Team chat: Whis
+ * cleaned text lands in the reply by Automatic paste. Team chat: Clawd
  * Double taps fn and dictates a reply; the product name comes out misheard,
  * so the red pen circles it and writes Supabase, and the Dictionary notebook
  * records the correction with a tick.
@@ -165,8 +165,8 @@ export const Beat2Speak: React.FC = () => {
         </>
       )}
       <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
-        <Whis x={WHIS_X} y={GROUND_Y} scale={WHIS_SCALE} seed={21} {...whisAt(t)} />
-        {speaking(t) && <SpeechLines x={WHIS_X + 150} y={GROUND_Y - 190} t={t} />}
+        <Clawd x={CLAWD_X} y={GROUND_Y} scale={CLAWD_SCALE} seed={21} {...clawdAt(t)} />
+        {speaking(t) && <SpeechLines x={CLAWD_X + 150} y={GROUND_Y - 190} t={t} />}
       </svg>
     </AbsoluteFill>
   );
@@ -175,9 +175,9 @@ export const Beat2Speak: React.FC = () => {
     return t < m.stop || (t >= m.chatListen && t < m.chatStop);
   }
 
-  /** Whis's pose at time t: dictating, watching the pen, pleased with the paste, tapping fn, puzzled, proud. */
-  function whisAt(t: number) {
-    const idle = whisPose("idle", frame, fps);
+  /** Clawd's pose at time t: dictating, watching the pen, pleased with the paste, tapping fn, puzzled, proud. */
+  function clawdAt(t: number) {
+    const idle = clawdPose("idle", frame, fps);
     if (speaking(t)) {
       const level = speechLevel(frame + Math.round(beat.start * fps));
       return {
@@ -190,7 +190,7 @@ export const Beat2Speak: React.FC = () => {
       };
     }
     if (t < m.paste) return { ...idle, look: [1, 0.5] as const };
-    if (t < m.paste + 1.4) return whisPose("proud", frame, fps);
+    if (t < m.paste + 1.4) return clawdPose("proud", frame, fps);
     if (t < m.chatIn) return { ...idle, look: [1, -0.6] as const };
     if (t < m.chatListen) {
       // Reaches for the fn key and Double taps it.
@@ -198,9 +198,9 @@ export const Beat2Speak: React.FC = () => {
       return { ...idle, rightArm: -30 * reach - 22 * fnDepth, look: [0.8, 0.6] as const, rotate: 2 * reach };
     }
     if (t < m.circle) return { ...idle, look: [1, -0.7] as const };
-    if (t < m.fix + 0.5) return whisPose("scratch", frame, fps);
+    if (t < m.fix + 0.5) return clawdPose("scratch", frame, fps);
     if (t < m.tick) return { ...idle, look: [1, -0.4] as const };
-    return whisPose("proud", frame, fps);
+    return clawdPose("proud", frame, fps);
   }
 };
 
@@ -366,7 +366,7 @@ function splitOnce(text: string, word: string): [string, string] {
   return at < 0 ? [text, ""] : [text.slice(0, at), text.slice(at + word.length)];
 }
 
-/** Little pencil sound strokes beside Whis's head while it speaks. */
+/** Little pencil sound strokes beside Clawd's head while it speaks. */
 const SpeechLines: React.FC<{ x: number; y: number; t: number }> = ({ x, y, t }) => {
   const pulse = interpolate(Math.sin(t * Math.PI * 3), [-1, 1], [0.35, 1], clamp);
   const lines = [

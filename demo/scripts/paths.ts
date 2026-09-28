@@ -10,7 +10,7 @@ export const PATHS = {
   timelineJson: path.join(OUT_DIR, "timeline.json"),
   audioWav: path.join(OUT_DIR, "audio.wav"),
   framesRoot: path.join(OUT_DIR, "frames"),
-  whisSheetPng: path.join(OUT_DIR, "frames", "whis-sheet.png"),
+  clawdSheetPng: path.join(OUT_DIR, "frames", "clawd-sheet.png"),
   videoEntry: path.join(ROOT, "src", "index.ts"),
   publicDir: path.join(ROOT, "public"),
   audioProject: path.join(ROOT, "audio"),

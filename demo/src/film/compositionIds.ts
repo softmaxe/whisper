@@ -7,5 +7,5 @@ import type { Lang } from "../../timeline/types.ts";
 /** The composition id of each cut. */
 export const FILM_COMPOSITION_IDS: Record<Lang, string> = { en: "Film-en", "zh-CN": "Film-zh" };
 
-/** The Whis model sheet composition and the frame exported as its review still. */
-export const WHIS_SHEET = { id: "WhisSheet", frame: 45 } as const;
+/** The Clawd model sheet composition and the frame exported as its review still. */
+export const CLAWD_SHEET = { id: "ClawdSheet", frame: 45 } as const;

@@ -6,7 +6,7 @@ import { AppWindow, type Box } from "../chrome/AppWindow.tsx";
 import { keyDepth } from "../chrome/FnKey.tsx";
 import { Keyboard, keyboardLayout } from "../chrome/Keyboard.tsx";
 import { RecordingPill } from "../chrome/RecordingPill.tsx";
-import { isBlinking, Whis, WHIS_POSES, whisPose } from "../characters/Whis.tsx";
+import { isBlinking, Clawd, CLAWD_POSES, clawdPose } from "../characters/Clawd.tsx";
 import { useLang } from "../lang.tsx";
 import { useCopy } from "../../lib/copy-context.tsx";
 import { PenArrow, PenCircle, PenNote } from "../pen/RedPen.tsx";
@@ -15,22 +15,22 @@ import { PALETTE } from "../theme.ts";
 
 /* Composition (canvas px). Captions are written below y = 850. */
 const GROUND_Y = 832;
-const WHIS_X = 340;
-const WHIS_SCALE = 1.1;
+const CLAWD_X = 340;
+const CLAWD_SCALE = 1.1;
 const WINDOW: Box = { x: 800, y: 64, w: 1000, h: 420 };
 const KEYBOARD: Box = { x: 560, y: 560, w: 880, h: 262 };
 /** The pill floats over the bottom of the app, as the real one floats over the screen. */
 const PILL = { cx: WINDOW.x + WINDOW.w / 2, cy: WINDOW.y + WINDOW.h - 78, scale: 3 };
-/** Where the red-pen label is written: above and left of the keyboard, clear of Whis. */
+/** Where the red-pen label is written: above and left of the keyboard, clear of Clawd. */
 const NOTE = { x: 110, y: 470 };
 
 /**
- * Beat 1 · Opening. The Mail window, keyboard and Whis are sketched in; Whis
+ * Beat 1 · Opening. The Mail window, keyboard and Clawd are sketched in; Clawd
  * pecks out the reply's greeting one keystroke at a time (in step with the
  * key-click cues) and gives up, scratching its head. The fn/Globe key is
- * circled in red pen and labelled with an arrow; Whis Double taps it and the
+ * circled in red pen and labelled with an arrow; Clawd Double taps it and the
  * Recording pill opens, its bars replaying the app's waveform math while
- * Whis speaks.
+ * Clawd speaks.
  */
 export const Beat1Opening: React.FC = () => {
   const { frame, fps, t } = useBeatTime(beat);
@@ -43,7 +43,7 @@ export const Beat1Opening: React.FC = () => {
   // Sketch-in, staggered.
   const windowP = ramp(t, m.sketchIn, m.sketchIn + 1.1);
   const keyboardP = ramp(t, m.sketchIn + 0.2, m.sketchIn + 1.0);
-  const whisP = ramp(t, m.sketchIn + 0.1, m.sketchIn + 1.0);
+  const clawdP = ramp(t, m.sketchIn + 0.1, m.sketchIn + 1.0);
   const beatOpacity = 1 - ramp(t, m.beatOut, beat.end);
 
   // Typing: the text follows the keystrokes; each strike dips an arm and shades a key.
@@ -54,7 +54,7 @@ export const Beat1Opening: React.FC = () => {
   const shownChars = [...text].slice(0, Math.round((typed / keys.length) * [...text].length)).join("");
   const isTyping = t >= typing.start - 0.3 && t < m.giveUp;
 
-  // The Double tap on fn: the key sinks, Whis's right arm dips with it.
+  // The Double tap on fn: the key sinks, Clawd's right arm dips with it.
   const fnDepth = keyDepth(t, m.taps);
   const listening = t >= m.listen;
 
@@ -80,7 +80,7 @@ export const Beat1Opening: React.FC = () => {
           fnDepth={fnDepth}
           seed={81}
         />
-        <Whis x={WHIS_X} y={GROUND_Y} scale={WHIS_SCALE} seed={21} draw={whisP} {...whisAt(t, frame, fps, typed, strike)} />
+        <Clawd x={CLAWD_X} y={GROUND_Y} scale={CLAWD_SCALE} seed={21} draw={clawdP} {...clawdAt(t, frame, fps, typed, strike)} />
         <RecordingPill cx={PILL.cx} cy={PILL.cy} scale={PILL.scale} t={t} listenAt={m.listen} seed={61} />
         <PenCircle cx={fnCx} cy={fnCy} rx={fn.w * 0.95} ry={fn.h * 0.95} progress={circleP} seed={401} />
         <PenNote x={NOTE.x} y={NOTE.y} text={BEAT1_TEXT.fnNote[lang]} progress={noteP} fontSize={50} />
@@ -91,35 +91,35 @@ export const Beat1Opening: React.FC = () => {
           progress={arrowP}
           seed={402}
         />
-        {listening && <SpeechLines x={WHIS_X + 150} y={GROUND_Y - 190} t={t} />}
+        {listening && <SpeechLines x={CLAWD_X + 150} y={GROUND_Y - 190} t={t} />}
       </svg>
     </AbsoluteFill>
   );
 
-  /** Whis's pose at time t: typing, giving up, watching the pen, tapping fn, speaking. */
-  function whisAt(t: number, frame: number, fps: number, typed: number, strike: number) {
-    if (t < typing.start - 0.3) return whisPose("idle", frame, fps);
+  /** Clawd's pose at time t: typing, giving up, watching the pen, tapping fn, speaking. */
+  function clawdAt(t: number, frame: number, fps: number, typed: number, strike: number) {
+    if (t < typing.start - 0.3) return clawdPose("idle", frame, fps);
     if (t < m.giveUp) {
       // Hunt and peck: the arm that struck the last key dips, eyes on the keys.
       const right = typed % 2 === 0;
-      const base = WHIS_POSES.typing;
+      const base = CLAWD_POSES.typing;
       return {
-        ...whisPose("typing", frame, fps),
+        ...clawdPose("typing", frame, fps),
         leftArm: base.leftArm - (right ? 0 : 14 * strike),
         rightArm: base.rightArm - (right ? 14 * strike : 0),
         look: [0.6, 0.8] as const,
       };
     }
-    if (t < m.fnCircle + 0.2) return whisPose("scratch", frame, fps);
+    if (t < m.fnCircle + 0.2) return clawdPose("scratch", frame, fps);
     if (t < m.listen) {
       // Watches the pen, then taps fn: the right arm dips with the key.
-      const idle = whisPose("idle", frame, fps);
+      const idle = clawdPose("idle", frame, fps);
       return { ...idle, rightArm: -30 - 22 * fnDepth, leftArm: -24, look: [0.7, 0.7] as const, rotate: 2 };
     }
     // Speaking to the pill: looks up at it, and bobs with the voice.
     const level = speechLevel(frame + Math.round(beat.start * fps));
     return {
-      ...whisPose("idle", frame, fps),
+      ...clawdPose("idle", frame, fps),
       eyes: isBlinking(frame, fps) ? ("closed" as const) : ("open" as const),
       look: [1, -0.45] as const,
       squash: 1 + level * 0.35,
@@ -167,7 +167,7 @@ const MailDraft: React.FC<{ typed: string; caret: boolean }> = ({ typed, caret }
   );
 };
 
-/** Little pencil sound strokes beside Whis's head while it speaks. */
+/** Little pencil sound strokes beside Clawd's head while it speaks. */
 const SpeechLines: React.FC<{ x: number; y: number; t: number }> = ({ x, y, t }) => {
   const pulse = interpolate(Math.sin(t * Math.PI * 3), [-1, 1], [0.35, 1], clamp);
   const lines = [

@@ -11,7 +11,7 @@ import numpy as np
 
 from ..dsp import exp_decay, fade, normalise, seconds
 
-# The keyboard sits a little left of centre, under Whis's hands.
+# The keyboard sits a little left of centre, under Clawd's hands.
 PAN = -0.25
 
 _VOICES = {

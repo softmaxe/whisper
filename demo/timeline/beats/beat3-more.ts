@@ -6,10 +6,10 @@ const [start, end] = BEAT_BOUNDS.more;
 
 /*
  * Beat 3 · More ways to use it. Three paper notes are pinned up in turn, each
- * a drawn app with Whis beside it at the fn key:
- * 1. Snippet: Whis Double taps and says the trigger phrase; Messages gets the
+ * a drawn app with Clawd beside it at the fn key:
+ * 1. Snippet: Clawd Double taps and says the trigger phrase; Messages gets the
  *    full link, and the red pen circles the phrase and arrows it to the link.
- * 2. Hold mode: Whis holds fn (a blue ring on the pill) and dictates a comment;
+ * 2. Hold mode: Clawd holds fn (a blue ring on the pill) and dictates a comment;
  *    on release it lands on the blank line of the code editor, ticked.
  * 3. Upload: three audio files are dropped on Whisper's Upload page and
  *    transcribe one after another, each ticked, until the batch completes.
@@ -45,7 +45,7 @@ export const BEAT3_TEXT = {
   snippetTitle: { en: "Snippets", "zh-CN": "片段" },
   holdTitle: { en: "Hold mode", "zh-CN": "按住说话" },
   uploadTitle: { en: "Upload", "zh-CN": "批量上传" },
-  /** What Whis says in the Snippet note: the trigger phrase (copy.snippet.trigger). */
+  /** What Clawd says in the Snippet note: the trigger phrase (copy.snippet.trigger). */
   said: { en: "“…cal link”", "zh-CN": "“…我的日程链接”" },
   /** Red-pen notes beside the held fn key. */
   holdNote: { en: "hold fn…", "zh-CN": "按住 fn…" },
@@ -59,12 +59,12 @@ const HOLD_PRESS = 36.9;
 const moments = {
   /** Note 1 (Snippet) is pinned up and the Messages window sketched in. */
   snippetIn: 31.1,
-  /** Whis Double taps fn; the pill opens. */
+  /** Clawd Double taps fn; the pill opens. */
   taps: tap.taps,
   listen: tap.listen,
-  /** The spoken trigger phrase is written in Whis's speech bubble. */
+  /** The spoken trigger phrase is written in Clawd's speech bubble. */
   said: 32.5,
-  /** Whis stops speaking; the pill thinks. */
+  /** Clawd stops speaking; the pill thinks. */
   snippetStop: 33.5,
   /** The expanded text lands in the composer; the pill closes. */
   snippetPaste: 33.8,

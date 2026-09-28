@@ -4,7 +4,7 @@ import { clamp, moveEase, ramp, useBeatTime } from "../anim.ts";
 import { emWidth } from "../components/captionLayout.ts";
 import { FnKey, keyDepth } from "../chrome/FnKey.tsx";
 import { RecordingPill } from "../chrome/RecordingPill.tsx";
-import { isBlinking, Whis, whisPose } from "../characters/Whis.tsx";
+import { isBlinking, Clawd, clawdPose } from "../characters/Clawd.tsx";
 import { useLang } from "../lang.tsx";
 import { useCopy } from "../../lib/copy-context.tsx";
 import { PenArrow, PenCircle, PenNote } from "../pen/RedPen.tsx";
@@ -16,11 +16,11 @@ import { NOTE, NOTE_WINDOW, PinnedNote, THUMB_SLOTS } from "./beat3/PinnedNote.t
 import { SnippetNote } from "./beat3/SnippetNote.tsx";
 import { dropZoneCentre, FileIcon, UploadNote } from "./beat3/UploadNote.tsx";
 
-/* Composition (canvas px). Notes on the right, Whis and the fn key lower left; Captions below y = 850. */
+/* Composition (canvas px). Notes on the right, Clawd and the fn key lower left; Captions below y = 850. */
 const GROUND_Y = 832;
-const WHIS = { x: 192, scale: 0.85 };
+const CLAWD = { x: 192, scale: 0.85 };
 const FN = { x: 338, y: 730, size: 90 };
-/** Whis's speech bubble in the Snippet note. */
+/** Clawd's speech bubble in the Snippet note. */
 const BUBBLE = { cx: 250, cy: 522, fontSize: 40 };
 /** The pill floats over the bottom of the note's app window, over its content area. */
 const pillAt = (sidebar: number) => ({
@@ -32,10 +32,10 @@ const pillAt = (sidebar: number) => ({
 /**
  * Beat 3 · More ways to use it. Three notes are pinned up in turn, each
  * shrinking to a thumbnail at the top left when done:
- * 1. Snippet: Whis Double taps fn and says the trigger phrase (in a speech
+ * 1. Snippet: Clawd Double taps fn and says the trigger phrase (in a speech
  *    bubble); the reply lands in Messages with the full link, and the red pen
  *    circles the phrase and arrows it to the underlined link.
- * 2. Hold mode: Whis holds fn down (the pill gets its blue ring) and dictates;
+ * 2. Hold mode: Clawd holds fn down (the pill gets its blue ring) and dictates;
  *    on release the comment lands on the code editor's blank line, ticked.
  * 3. Upload: three audio files are dragged onto Whisper's Upload page, their
  *    pencilled progress bars fill one after another, each ticked, and the
@@ -119,7 +119,7 @@ export const Beat3More: React.FC = () => {
         <g opacity={fnOpacity}>
           <FnKey x={FN.x} y={FN.y} size={FN.size} depth={fnDepth} progress={fnP} seed={307} />
         </g>
-        <Whis x={WHIS.x} y={GROUND_Y} scale={WHIS.scale} seed={23} draw={ramp(t, beat.start, beat.start + 0.8)} {...whisAt(t)} />
+        <Clawd x={CLAWD.x} y={GROUND_Y} scale={CLAWD.scale} seed={23} draw={ramp(t, beat.start, beat.start + 0.8)} {...clawdAt(t)} />
 
         <g opacity={snippetMarks}>
           <SpeechBubble cx={BUBBLE.cx} cy={BUBBLE.cy} width={saidW + 70} progress={bubbleP} seed={333} />
@@ -152,7 +152,7 @@ export const Beat3More: React.FC = () => {
 
         <g opacity={holdMarks}>
           <PenNote
-            x={WHIS.x + 60}
+            x={CLAWD.x + 60}
             y={600}
             text={BEAT3_TEXT.holdNote[lang]}
             progress={ramp(t, m.holdNote, m.holdNote + 0.5)}
@@ -160,7 +160,7 @@ export const Beat3More: React.FC = () => {
             align="middle"
           />
           <PenNote
-            x={WHIS.x + 90}
+            x={CLAWD.x + 90}
             y={540}
             text={BEAT3_TEXT.releaseNote[lang]}
             progress={ramp(t, m.releaseNote, m.releaseNote + 0.35)}
@@ -171,15 +171,15 @@ export const Beat3More: React.FC = () => {
         </g>
 
         <DraggedFiles t={t} from={m.filesIn} to={m.drop} />
-        {t >= m.listen && t < m.snippetStop && <SpeechLines x={WHIS.x + 140} y={GROUND_Y - 150} t={t} />}
-        {t >= m.holdListen && t < m.holdRelease && <SpeechLines x={WHIS.x + 140} y={GROUND_Y - 150} t={t} />}
+        {t >= m.listen && t < m.snippetStop && <SpeechLines x={CLAWD.x + 140} y={GROUND_Y - 150} t={t} />}
+        {t >= m.holdListen && t < m.holdRelease && <SpeechLines x={CLAWD.x + 140} y={GROUND_Y - 150} t={t} />}
       </svg>
     </AbsoluteFill>
   );
 
-  /** Whis's performance: tapping and speaking, holding the key, pointing at the files, proud of each result. */
-  function whisAt(t: number) {
-    const idle = whisPose("idle", frame, fps);
+  /** Clawd's performance: tapping and speaking, holding the key, pointing at the files, proud of each result. */
+  function clawdAt(t: number) {
+    const idle = clawdPose("idle", frame, fps);
     const speaking = () => {
       const level = speechLevel(frame + Math.round(beat.start * fps));
       return {
@@ -194,18 +194,18 @@ export const Beat3More: React.FC = () => {
     if (t < m.listen) return { ...idle, rightArm: -30 - 24 * fnDepth, leftArm: -24, look: [0.7, 0.7] as const, rotate: 2 };
     if (t < m.snippetStop) return { ...idle, ...speaking(), rightArm: 8 };
     if (t < m.expandArrow) return { ...idle, look: [1, -0.3] as const };
-    if (t < m.holdIn + 0.4) return whisPose("proud", frame, fps);
+    if (t < m.holdIn + 0.4) return clawdPose("proud", frame, fps);
     // Hold mode: the right arm presses fn down for as long as the key is held.
     if (t < m.holdPress - 0.3) return { ...idle, look: [0.7, 0.7] as const };
     if (t < m.holdListen) return { ...idle, rightArm: -30 - 24 * fnDepth, leftArm: -24, look: [0.7, 0.7] as const, rotate: 2 };
     if (t < m.holdRelease) return { ...idle, ...speaking(), rightArm: -30 - 24 * fnDepth, rotate: 2 };
     if (t < m.holdTick) return { ...idle, rightArm: -30 - 24 * fnDepth, look: [1, -0.3] as const };
-    if (t < m.uploadIn + 0.4) return whisPose("proud", frame, fps);
+    if (t < m.uploadIn + 0.4) return clawdPose("proud", frame, fps);
     // Upload: points the files onto the drop zone, watches the bars, proud when done.
     if (t < m.filesIn - 0.3) return { ...idle, look: [1, -0.3] as const };
-    if (t < m.drop + 0.4) return whisPose("point", frame, fps);
+    if (t < m.drop + 0.4) return clawdPose("point", frame, fps);
     if (t < m.uploadComplete) return { ...idle, look: [1, -0.4] as const };
-    return whisPose("proud", frame, fps);
+    return clawdPose("proud", frame, fps);
   }
 };
 
@@ -221,7 +221,7 @@ function snippetArrowTip(before: string): [number, number] {
   return [textLeft + beforeW + 60, composerTop - 6];
 }
 
-/** A pencilled speech bubble with a tail down towards Whis. */
+/** A pencilled speech bubble with a tail down towards Clawd. */
 const SpeechBubble: React.FC<{ cx: number; cy: number; width: number; progress: number; seed: number }> = ({
   cx,
   cy,
@@ -281,7 +281,7 @@ const DraggedFiles: React.FC<{ t: number; from: number; to: number }> = ({ t, fr
   );
 };
 
-/** Little pencil sound strokes beside Whis's head while it speaks. */
+/** Little pencil sound strokes beside Clawd's head while it speaks. */
 const SpeechLines: React.FC<{ x: number; y: number; t: number }> = ({ x, y, t }) => {
   const pulse = interpolate(Math.sin(t * Math.PI * 3), [-1, 1], [0.35, 1], clamp);
   const lines = [

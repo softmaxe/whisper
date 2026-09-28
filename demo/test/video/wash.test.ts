@@ -1,7 +1,7 @@
 /**
  * The time-of-day wash: it moves from dawn to night across the five Beats,
  * clears to blank paper for the ending, and never gets so dark that ink, the
- * red pen or Whis stop reading on the washed paper.
+ * red pen or Clawd stop reading on the washed paper.
  */
 import { describe, expect, it } from "vitest";
 import { CLEAR_END, NIGHT_FULL, NIGHT_OPACITY, WASH_KEYS, WASH_LAYERS, washAt } from "../../src/film/components/washKeys.ts";

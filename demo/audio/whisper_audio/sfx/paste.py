@@ -13,7 +13,7 @@ import numpy as np
 
 from ..dsp import exp_decay, fade, fft_filter, normalise, seconds
 
-# App windows sit right of centre, where Whis's text lands.
+# App windows sit right of centre, where Clawd's text lands.
 PAN = 0.2
 
 SWISH = 0.07

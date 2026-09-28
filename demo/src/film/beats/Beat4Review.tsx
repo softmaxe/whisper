@@ -3,7 +3,7 @@ import { beat4 as beat } from "../../../timeline/beats/beat4-review.ts";
 import { keystrokeTimes } from "../../../timeline/helpers.ts";
 import { ramp, useBeatTime } from "../anim.ts";
 import { AppWindow, type Box } from "../chrome/AppWindow.tsx";
-import { Whis, WHIS_POSES, whisPose } from "../characters/Whis.tsx";
+import { Clawd, CLAWD_POSES, clawdPose } from "../characters/Clawd.tsx";
 import { useLang } from "../lang.tsx";
 import { RoughDrawing, useWobbleSeed } from "../rough/RoughDrawing.tsx";
 import { PALETTE } from "../theme.ts";
@@ -11,8 +11,8 @@ import { HistoryPage, InsightsPage, Sidebar } from "./beat4/WhisperPages.tsx";
 
 /* Composition (canvas px). Captions are written below y = 850. */
 const GROUND_Y = 832;
-const WHIS_X = 320;
-const WHIS_SCALE = 1.05;
+const CLAWD_X = 320;
+const CLAWD_SCALE = 1.05;
 const WINDOW: Box = { x: 620, y: 62, w: 1220, h: 750 };
 const SIDEBAR = 230;
 /** The pencilled moon and stars in the night sky, top left, clear of the window. */
@@ -27,10 +27,10 @@ const STARS: readonly (readonly [number, number, number])[] = [
 /**
  * Beat 4 · The day in review. Night falls on the paper (the wash) and a
  * pencilled moon and stars are drawn in. The Whisper main window is sketched
- * in on History; Whis types a word into search, entries that don't match fade
+ * in on History; Clawd types a word into search, entries that don't match fade
  * back and the matches are swept with a highlighter and underlined in red pen.
  * The window switches to Insights: the values are written in by hand, the
- * activity bars are drawn, and today's bar is circled while Whis looks proud.
+ * activity bars are drawn, and today's bar is circled while Clawd looks proud.
  */
 export const Beat4Review: React.FC = () => {
   const { frame, fps, t } = useBeatTime(beat);
@@ -40,7 +40,7 @@ export const Beat4Review: React.FC = () => {
   const keys = keystrokeTimes(typing);
 
   const windowP = ramp(t, m.sketchIn, m.sketchIn + 1.1);
-  const whisP = ramp(t, m.sketchIn + 0.1, m.sketchIn + 1.0);
+  const clawdP = ramp(t, m.sketchIn + 0.1, m.sketchIn + 1.0);
   const skyP = ramp(t, m.nightfall + 0.4, m.nightfall + 1.8);
   const beatOpacity = 1 - ramp(t, m.beatOut, beat.end);
 
@@ -76,27 +76,27 @@ export const Beat4Review: React.FC = () => {
         </div>
       </AppWindow>
       <svg width={1920} height={1080} style={{ position: "absolute", inset: 0 }}>
-        <Whis x={WHIS_X} y={GROUND_Y} scale={WHIS_SCALE} seed={24} draw={whisP} {...whisAt()} />
+        <Clawd x={CLAWD_X} y={GROUND_Y} scale={CLAWD_SCALE} seed={24} draw={clawdP} {...clawdAt()} />
       </svg>
     </AbsoluteFill>
   );
 
-  /** Whis's pose: watching, typing the query, pointing at the matches, watching Insights, proud of today. */
-  function whisAt() {
-    if (t < typing.start - 0.3) return { ...whisPose("idle", frame, fps), look: [1, -0.3] as const };
+  /** Clawd's pose: watching, typing the query, pointing at the matches, watching Insights, proud of today. */
+  function clawdAt() {
+    if (t < typing.start - 0.3) return { ...clawdPose("idle", frame, fps), look: [1, -0.3] as const };
     if (t < typing.end + 0.25) {
       const right = typed % 2 === 0;
-      const base = WHIS_POSES.typing;
+      const base = CLAWD_POSES.typing;
       return {
-        ...whisPose("typing", frame, fps),
+        ...clawdPose("typing", frame, fps),
         leftArm: base.leftArm - (right ? 0 : 14 * strike),
         rightArm: base.rightArm - (right ? 14 * strike : 0),
       };
     }
-    if (t < m.highlight - 0.1) return { ...whisPose("idle", frame, fps), look: [1, -0.4] as const };
-    if (t < m.insights) return whisPose("point", frame, fps);
-    if (t < m.today + 0.15) return { ...whisPose("idle", frame, fps), look: [1, -0.35] as const };
-    return whisPose("proud", frame, fps);
+    if (t < m.highlight - 0.1) return { ...clawdPose("idle", frame, fps), look: [1, -0.4] as const };
+    if (t < m.insights) return clawdPose("point", frame, fps);
+    if (t < m.today + 0.15) return { ...clawdPose("idle", frame, fps), look: [1, -0.35] as const };
+    return clawdPose("proud", frame, fps);
   }
 };
 

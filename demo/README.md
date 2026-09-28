@@ -1,6 +1,6 @@
 # Demo video
 
-A 75-second hand-drawn explainer of Whisper, written as code with [Remotion](https://www.remotion.dev/). Whis, Whisper's mascot, takes the viewer through five Beats on textured paper with coloured-pencil strokes, red-pen annotations, and handwritten Captions:
+A 75-second hand-drawn explainer of Whisper, written as code with [Remotion](https://www.remotion.dev/). Clawd, Whisper's mascot, takes the viewer through five Beats on textured paper with coloured-pencil strokes, red-pen annotations, and handwritten Captions:
 
 1. **Opening**: typing is slow; the Globe/fn key is circled and a Double tap brings up the Recording pill.
 2. **Speak and it's written**: fillers are crossed out and punctuation added before the text lands in Mail by Automatic paste; a misheard product name is corrected in team chat and written into Dictionary.
@@ -20,7 +20,7 @@ npm ci
 npm run build
 ```
 
-`npm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames at Beat midpoints, Caption ends, and key moments to `out/frames/<lang>/`. It also renders the `WhisSheet` model sheet of Whis to `out/frames/whis-sheet.png`. Pass `-- --concurrency=N` to limit render threads. The first render downloads Chrome Headless Shell for Remotion; nothing else is downloaded. Use `npm run studio` to preview and scrub the Film in a browser.
+`npm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames at Beat midpoints, Caption ends, and key moments to `out/frames/<lang>/`. It also renders the `ClawdSheet` model sheet of Clawd to `out/frames/clawd-sheet.png`. Pass `-- --concurrency=N` to limit render threads. The first render downloads Chrome Headless Shell for Remotion; nothing else is downloaded. Use `npm run studio` to preview and scrub the Film in a browser.
 
 ## Timeline and sound
 

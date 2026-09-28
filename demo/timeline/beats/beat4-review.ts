@@ -6,11 +6,11 @@ const [start, end] = BEAT_BOUNDS.review;
 
 /*
  * Beat 4 · The day in review. The wash turns to night. The Whisper main
- * window is sketched in on History, today's Dictations listed; Whis types a
+ * window is sketched in on History, today's Dictations listed; Clawd types a
  * word into search, the entries that don't match fade back, and the matches are
  * highlighted and underlined in red pen. The window switches to Insights: the
  * usage values are written in by hand one after another, the activity bars
- * are drawn, and today's bar is circled while Whis looks proud.
+ * are drawn, and today's bar is circled while Clawd looks proud.
  */
 const captions: Caption[] = [
   {
@@ -39,7 +39,7 @@ const typing: Typing[] = [{ keys: "launch", start: 48.5, end: 49.3 }];
 const moments = {
   /** The wash starts turning from dusk to night. */
   nightfall: 47,
-  /** The Whisper main window (History) and Whis are sketched in. */
+  /** The Whisper main window (History) and Clawd are sketched in. */
   sketchIn: 47.15,
   /** The search field is focused, ready for the query. */
   searchOpen: 48.1,
@@ -53,7 +53,7 @@ const moments = {
   values: [53.1, 53.6, 54.1, 54.6],
   /** The activity bars are drawn, one after another. */
   bars: 55.2,
-  /** Today's bar is circled in red pen; Whis looks proud. */
+  /** Today's bar is circled in red pen; Clawd looks proud. */
   today: 57.1,
   /** Everything fades out ahead of Beat 5. */
   beatOut: 58.4,

@@ -81,7 +81,7 @@ describe("Handwritten text uses only characters in the bundled font subset", () 
     for (const [key, text] of Object.entries(handwrittenCopy(lang))) expect(missing(text), `${key}: ${HINT}`).toEqual([]);
   });
 
-  it("text written literally in the picture's components (punctuation marks, Whis's marks, the model sheet)", () => {
+  it("text written literally in the picture's components (punctuation marks, Clawd's marks, the model sheet)", () => {
     for (const { file, code } of pictureSources()) {
       const literal = [...code].filter(
         (ch) => ch.codePointAt(0)! > 0x7f && !SYSTEM_FONT_LITERALS.has(ch) && !/\p{Extended_Pictographic}/u.test(ch),

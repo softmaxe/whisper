@@ -5,7 +5,7 @@ import { RoughDrawing, useWobbleSeed } from "../rough/RoughDrawing.tsx";
 import { PALETTE } from "../theme.ts";
 
 /**
- * Whis, Whisper's mascot, drawn in the Film's paper style: a blocky black
+ * Clawd, Whisper's mascot, drawn in the Film's paper style: a blocky black
  * body with the app icon's white waveform W on its front, two small white
  * eyes, stubby side arms and four short legs, with a pencil outline, waxy
  * crayon fill and light hatching.
@@ -15,16 +15,16 @@ import { PALETTE } from "../theme.ts";
  *
  *   const frame = useCurrentFrame();
  *   <svg width={1920} height={1080}>
- *     <Whis x={400} y={770} {...whisPose("wave", frame, fps)} draw={p} />
+ *     <Clawd x={400} y={770} {...clawdPose("wave", frame, fps)} draw={p} />
  *   </svg>
  *
- * (x, y) is the ground point between the feet. At scale 1 Whis is 296px wide
+ * (x, y) is the ground point between the feet. At scale 1 Clawd is 296px wide
  * including arms (220px body) and 200px tall. Motion is driven by props, so
  * animate by passing per-frame values. The pencil strokes "boil" (re-seed
  * every 4 frames) unless `wobble` is false; the wobble is held still while
  * `draw` < 1 so the stroke-by-stroke reveal doesn't jump.
  */
-export interface WhisProps {
+export interface ClawdProps {
   /** Ground point between the feet, in the parent SVG's coordinates. */
   x: number;
   y: number;
@@ -37,25 +37,25 @@ export interface WhisProps {
   /**
    * Arm angles in degrees for the arm on the viewer's left / right (before
    * `flip`). 0 = straight out sideways, positive = raised, negative = lowered.
-   * Useful range is about -70..80. See WHIS_POSES and whisPose().
+   * Useful range is about -70..80. See CLAWD_POSES and clawdPose().
    */
   leftArm?: number;
   rightArm?: number;
   /** Eye shape: open (white blocks), closed (blink line) or happy (^ ^). */
-  eyes?: WhisEyes;
+  eyes?: ClawdEyes;
   /** Gaze offset of the eyes, each in -1..1 ([1, 0] looks to the viewer's right, before `flip`). */
   look?: readonly [number, number];
   /** Vertical squash & stretch around the feet: 1 = normal, 0.85 = squashed, 1.08 = stretched. Width compensates. */
   squash?: number;
-  /** Draw legs. Set false when Whis sits behind something that hides them (e.g. a desk). */
+  /** Draw legs. Set false when Clawd sits behind something that hides them (e.g. a desk). */
   legs?: boolean;
   /** Extra mark beside the head: a pencilled "?" (puzzled) or sparkle strokes (proud). */
-  mark?: WhisMark;
+  mark?: ClawdMark;
   /** Stick a pointing finger out of the right arm's tip (the "point" pose). */
   finger?: boolean;
   /** Hand-drawn reveal, 0..1: outline first, then the black fill, then eyes and the W. */
   draw?: number;
-  /** Base wobble seed. Keep it fixed per on-screen Whis; change it for a differently sketched copy. */
+  /** Base wobble seed. Keep it fixed per on-screen Clawd; change it for a differently sketched copy. */
   seed?: number;
   /** Re-seed the pencil strokes every few frames (default true). */
   wobble?: boolean;
@@ -63,11 +63,11 @@ export interface WhisProps {
   opacity?: number;
 }
 
-export type WhisEyes = "open" | "closed" | "happy";
-export type WhisMark = "none" | "question" | "sparkles";
+export type ClawdEyes = "open" | "closed" | "happy";
+export type ClawdMark = "none" | "question" | "sparkles";
 
-/** Static arm presets; spread into <Whis> and override as needed. whisPose() animates them. */
-export const WHIS_POSES = {
+/** Static arm presets; spread into <Clawd> and override as needed. clawdPose() animates them. */
+export const CLAWD_POSES = {
   /** Idle: arms relaxed, slightly down. */
   idle: { leftArm: -18, rightArm: -18 },
   /** Both arms reaching down and forward to a keyboard (alternate them to type). */
@@ -82,14 +82,14 @@ export const WHIS_POSES = {
   point: { leftArm: -26, rightArm: 22 },
 } as const satisfies Record<string, { leftArm: number; rightArm: number }>;
 
-export type WhisPoseName = keyof typeof WHIS_POSES;
+export type ClawdPoseName = keyof typeof CLAWD_POSES;
 
 /** Every pose, in storyboard order. */
-export const WHIS_POSE_NAMES = Object.keys(WHIS_POSES) as WhisPoseName[];
+export const CLAWD_POSE_NAMES = Object.keys(CLAWD_POSES) as ClawdPoseName[];
 
 /**
  * Deterministic blink: true for 4 frames every ~`periodSeconds` (offset per
- * Whis so two copies don't blink in unison).
+ * Clawd so two copies don't blink in unison).
  */
 export function isBlinking(frame: number, fps: number, periodSeconds = 2.8, offsetSeconds = 0.9): boolean {
   const period = Math.round(periodSeconds * fps);
@@ -97,15 +97,15 @@ export function isBlinking(frame: number, fps: number, periodSeconds = 2.8, offs
   return f >= period - 4;
 }
 
-type PoseProps = Required<Pick<WhisProps, "leftArm" | "rightArm" | "eyes" | "look" | "squash" | "rotate" | "mark" | "finger">>;
+type PoseProps = Required<Pick<ClawdProps, "leftArm" | "rightArm" | "eyes" | "look" | "squash" | "rotate" | "mark" | "finger">>;
 
 /**
  * A pose animated at `frame` (any frame counter; Beat-local is fine): arm
- * swings, blinks, gaze and marks. Spread into <Whis> and override as needed:
- *   <Whis x={..} y={..} {...whisPose("typing", frame, fps)} />
+ * swings, blinks, gaze and marks. Spread into <Clawd> and override as needed:
+ *   <Clawd x={..} y={..} {...clawdPose("typing", frame, fps)} />
  */
-export function whisPose(name: WhisPoseName, frame: number, fps = 30): PoseProps {
-  const base = WHIS_POSES[name];
+export function clawdPose(name: ClawdPoseName, frame: number, fps = 30): PoseProps {
+  const base = CLAWD_POSES[name];
   const s = frame / fps; // seconds
   const blink = isBlinking(frame, fps) ? "closed" : "open";
   const still = { ...base, eyes: blink, look: [0, 0], squash: 1, rotate: 0, mark: "none", finger: false } as const;
@@ -186,7 +186,7 @@ const outline = (seed: number) => ({
 /** Light pencil hatching over the black crayon: gives the body its hand-coloured texture. */
 const hatch = {
   stroke: "none",
-  fill: PALETTE.whisWhite,
+  fill: PALETTE.clawdWhite,
   fillStyle: "hachure",
   hachureAngle: -52,
   hachureGap: 9,
@@ -194,14 +194,14 @@ const hatch = {
   roughness: 1.6,
 } as const;
 
-export const Whis: React.FC<WhisProps> = ({
+export const Clawd: React.FC<ClawdProps> = ({
   x,
   y,
   scale = 1,
   rotate = 0,
   flip = false,
-  leftArm = WHIS_POSES.idle.leftArm,
-  rightArm = WHIS_POSES.idle.rightArm,
+  leftArm = CLAWD_POSES.idle.leftArm,
+  rightArm = CLAWD_POSES.idle.rightArm,
   eyes = "open",
   look = [0, 0],
   squash = 1,
@@ -213,7 +213,7 @@ export const Whis: React.FC<WhisProps> = ({
   wobble = true,
   opacity = 1,
 }) => {
-  const crayonId = `whis-crayon-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const crayonId = `clawd-crayon-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const seed = useWobbleSeed(baseSeed, 4, !wobble || draw < 1);
   const outlineP = ramp(draw, 0, 0.6);
   const fillP = ramp(draw, 0.45, 0.85);
@@ -346,8 +346,8 @@ const CrayonBlock: React.FC<{ x: number; y: number; w: number; h: number; p: num
   return (
     <g opacity={p}>
       {/* A dense charcoal base, then waxy black crayon whose grain lets the base show through. */}
-      <rect x={x + 1} y={y + 1} width={w - 2} height={h - 2} fill={PALETTE.whisBlack} opacity={0.82} />
-      <rect x={x + 2} y={y + 2} width={w - 4} height={h - 4} fill={PALETTE.whisBlack} filter={`url(#${filter})`} />
+      <rect x={x + 1} y={y + 1} width={w - 2} height={h - 2} fill={PALETTE.clawdBlack} opacity={0.82} />
+      <rect x={x + 2} y={y + 2} width={w - 4} height={h - 4} fill={PALETTE.clawdBlack} filter={`url(#${filter})`} />
       <g opacity={0.16}>
         <RoughDrawing seed={seed + 100} options={hatch} build={(g, o) => [g.rectangle(x + 3, y + 3, w - 6, h - 6, o)]} />
       </g>
@@ -362,7 +362,7 @@ const WaveformW: React.FC<{ progress: number; seed: number }> = ({ progress, see
   return (
     <RoughDrawing
       seed={seed}
-      options={{ stroke: PALETTE.whisWhite, strokeWidth: 6.5, roughness: 0.55, bowing: 0.4, disableMultiStroke: true }}
+      options={{ stroke: PALETTE.clawdWhite, strokeWidth: 6.5, roughness: 0.55, bowing: 0.4, disableMultiStroke: true }}
       progress={progress}
       build={(g, o) =>
         W_BARS.map((h, i) => {
@@ -374,8 +374,8 @@ const WaveformW: React.FC<{ progress: number; seed: number }> = ({ progress, see
   );
 };
 
-const Eye: React.FC<{ cx: number; top: number; shape: WhisEyes; seed: number }> = ({ cx, top, shape, seed }) => {
-  const ink = { stroke: PALETTE.whisWhite, strokeWidth: 5, roughness: 0.8, seed };
+const Eye: React.FC<{ cx: number; top: number; shape: ClawdEyes; seed: number }> = ({ cx, top, shape, seed }) => {
+  const ink = { stroke: PALETTE.clawdWhite, strokeWidth: 5, roughness: 0.8, seed };
   if (shape === "closed") {
     return (
       <RoughDrawing seed={seed} options={ink} build={(g, o) => [g.line(cx - EYE_W / 2 - 3, top + EYE_H * 0.62, cx + EYE_W / 2 + 3, top + EYE_H * 0.62, o)]} />
@@ -403,13 +403,13 @@ const Eye: React.FC<{ cx: number; top: number; shape: WhisEyes; seed: number }> 
   return (
     <RoughDrawing
       seed={seed}
-      options={{ ...ink, strokeWidth: 2.5, fill: PALETTE.whisWhite, fillStyle: "solid" }}
+      options={{ ...ink, strokeWidth: 2.5, fill: PALETTE.clawdWhite, fillStyle: "solid" }}
       build={(g, o) => [g.rectangle(cx - EYE_W / 2, top, EYE_W, EYE_H, o)]}
     />
   );
 };
 
-/** Sparkle rays around the body, in Whis's local (unflipped) coordinates. */
+/** Sparkle rays around the body, in Clawd's local (unflipped) coordinates. */
 const SPARKLES: [number, number, number][] = [
   [-150, -190, 150],
   [-170, -125, 190],
@@ -417,7 +417,7 @@ const SPARKLES: [number, number, number][] = [
   [170, -125, -10],
 ];
 
-const Mark: React.FC<{ mark: WhisMark; side: -1 | 1; draw: number; seed: number }> = ({ mark, side, draw, seed }) => {
+const Mark: React.FC<{ mark: ClawdMark; side: -1 | 1; draw: number; seed: number }> = ({ mark, side, draw, seed }) => {
   if (mark === "none" || draw <= 0) return null;
   if (mark === "question") {
     // Pencilled "?" above the scratching arm, rocking gently with the wobble seed.

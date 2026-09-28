@@ -10,7 +10,7 @@ const [start, end] = BEAT_BOUNDS.servers;
  * Data arrows join them and data circulates along them without ever leaving
  * the house, while a Dictation runs on the Mac. The house lifts off; the
  * Whisper logo is drawn (its waveform W in one stroke), then the `brew
- * install` command and the repository link are written and Whis waves. The
+ * install` command and the repository link are written and Clawd waves. The
  * Beat fades out before the Film's last second, which is blank paper.
  */
 const captions: Caption[] = [
@@ -61,7 +61,7 @@ const moments = {
   listen: 63.6,
   /** The Dictation stops; the pill thinks, then closes. */
   stop: 65.0,
-  /** The red-pen note in the roof: the data never leaves the house. Whis is proud. */
+  /** The red-pen note in the roof: the data never leaves the house. Clawd is proud. */
   home: 65.7,
   /** The house scene lifts off the paper. */
   houseOut: 68.0,
@@ -69,7 +69,7 @@ const moments = {
   logo: 68.9,
   /** The waveform W is drawn in one continuous white stroke. */
   logoStroke: 69.3,
-  /** Whis waves goodbye. */
+  /** Clawd waves goodbye. */
   wave: 70.6,
   /** The `brew install` command is written. */
   install: 70.8,

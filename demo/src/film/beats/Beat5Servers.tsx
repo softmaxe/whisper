@@ -2,7 +2,7 @@ import { AbsoluteFill } from "remotion";
 import { BEAT5_DURATIONS, BEAT5_TEXT, beat5 as beat } from "../../../timeline/beats/beat5-servers.ts";
 import { ramp, useBeatTime } from "../anim.ts";
 import { RecordingPill } from "../chrome/RecordingPill.tsx";
-import { isBlinking, Whis, whisPose } from "../characters/Whis.tsx";
+import { isBlinking, Clawd, clawdPose } from "../characters/Clawd.tsx";
 import { HAND_FONT } from "../fonts.ts";
 import { useLang } from "../lang.tsx";
 import { useCopy } from "../../lib/copy-context.tsx";
@@ -15,7 +15,7 @@ import { Logo } from "./beat5/Logo.tsx";
 
 /* Composition (canvas px). Captions are written below y = 850. */
 const GROUND_Y = 832;
-const WHIS = { x: 180, scale: 0.85 };
+const CLAWD = { x: 180, scale: 0.85 };
 const HOUSE: HouseShape = { left: 380, right: 1540, eave: 300, base: 800, apex: 64, overhang: 44 };
 const MAC = { x: 450, y: 350, w: 400, h: 260 };
 const SERVER = { x: 930, w: 540, h: 118 };
@@ -46,7 +46,7 @@ const LINK = { x: 960, y: 668 };
  * never crossing the walls, while a Dictation runs on the Mac; the red pen
  * notes in the roof that the data never leaves the house. The house lifts
  * off, the Whisper logo is drawn with its W in one stroke, the `brew
- * install` command and the repository link are written, and Whis waves.
+ * install` command and the repository link are written, and Clawd waves.
  * The Beat fades itself out before the Film's last second, so that second
  * is blank paper (under whatever wash the Film lays over the paper).
  */
@@ -161,21 +161,21 @@ export const Beat5Servers: React.FC = () => {
         <CommandCard progress={cardP} textProgress={commandP} command={copy.outro.install} />
         <PenNote x={LINK.x} y={LINK.y} text={copy.outro.link} progress={linkP} fontSize={60} align="middle" rotate={-1.5} />
 
-        <Whis
-          x={WHIS.x}
+        <Clawd
+          x={CLAWD.x}
           y={GROUND_Y}
-          scale={WHIS.scale}
+          scale={CLAWD.scale}
           seed={23}
           draw={ramp(t, m.sketchIn + 0.3, m.sketchIn + 1.2)}
-          {...whisAt()}
+          {...clawdAt()}
         />
       </svg>
     </AbsoluteFill>
   );
 
-  /** Whis's pose: watching the house go up, speaking the Dictation, proud of the house, then waving goodbye. */
-  function whisAt() {
-    const idle = whisPose("idle", frame, fps);
+  /** Clawd's pose: watching the house go up, speaking the Dictation, proud of the house, then waving goodbye. */
+  function clawdAt() {
+    const idle = clawdPose("idle", frame, fps);
     if (t < m.listen) return { ...idle, look: [1, -0.25] as const };
     if (t < m.stop) {
       const level = speechLevel(frame + Math.round(beat.start * fps));
@@ -188,9 +188,9 @@ export const Beat5Servers: React.FC = () => {
       };
     }
     if (t < m.home) return { ...idle, look: [1, -0.25] as const };
-    if (t < m.houseOut) return whisPose("proud", frame, fps);
+    if (t < m.houseOut) return clawdPose("proud", frame, fps);
     if (t < m.wave) return { ...idle, look: [1, -0.5] as const };
-    return { ...whisPose("wave", frame, fps), look: [0.2, -0.1] as const };
+    return { ...clawdPose("wave", frame, fps), look: [0.2, -0.1] as const };
   }
 };
 

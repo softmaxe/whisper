@@ -1,7 +1,7 @@
 import { Composition } from "remotion";
 import { FILM, LANGS, toFrame } from "../../timeline/index.ts";
-import { WhisSheet, WHIS_SHEET_FRAMES } from "./characters/WhisSheet.tsx";
-import { FILM_COMPOSITION_IDS, WHIS_SHEET } from "./compositionIds.ts";
+import { ClawdSheet, CLAWD_SHEET_FRAMES } from "./characters/ClawdSheet.tsx";
+import { FILM_COMPOSITION_IDS, CLAWD_SHEET } from "./compositionIds.ts";
 import { Film } from "./Film.tsx";
 import { loadFonts } from "./fonts.ts";
 
@@ -9,7 +9,7 @@ loadFonts();
 
 /**
  * The hand-drawn Film compositions: one per cut, sharing the timeline.
- * WhisSheet is the mascot model sheet; the build exports one still of it.
+ * ClawdSheet is the mascot model sheet; the build exports one still of it.
  */
 export const FilmCompositions: React.FC = () => (
   <>
@@ -26,9 +26,9 @@ export const FilmCompositions: React.FC = () => (
       />
     ))}
     <Composition
-      id={WHIS_SHEET.id}
-      component={WhisSheet}
-      durationInFrames={WHIS_SHEET_FRAMES}
+      id={CLAWD_SHEET.id}
+      component={ClawdSheet}
+      durationInFrames={CLAWD_SHEET_FRAMES}
       fps={FILM.fps}
       width={FILM.width}
       height={FILM.height}

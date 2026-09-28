@@ -5,10 +5,10 @@ import type { Beat, Caption, Lang, Moments, SoundCue, Typing } from "../types.ts
 const [start, end] = BEAT_BOUNDS.opening;
 
 /*
- * Beat 1 · Opening. Whis pecks out the start of a Mail reply, key by key, and
+ * Beat 1 · Opening. Clawd pecks out the start of a Mail reply, key by key, and
  * gives up with a scratch of the head: typing is slow. The fn/Globe key is
- * circled in red pen and labelled; Whis Double taps it and the Recording pill
- * opens, its bars following Whis's voice.
+ * circled in red pen and labelled; Clawd Double taps it and the Recording pill
+ * opens, its bars following Clawd's voice.
  */
 const captions: Caption[] = [
   {
@@ -41,9 +41,9 @@ export const BEAT1_TEXT = {
 const tap = doubleTapMoments(6.1);
 
 const moments = {
-  /** The Mail window, keyboard and Whis start being sketched in. */
+  /** The Mail window, keyboard and Clawd start being sketched in. */
   sketchIn: 0.05,
-  /** Whis stops typing and scratches its head. */
+  /** Clawd stops typing and scratches its head. */
   giveUp: 3.9,
   /** The fn/Globe key is circled in red pen. */
   fnCircle: 4.6,
@@ -51,7 +51,7 @@ const moments = {
   fnNote: 4.95,
   /** The two presses of the Double tap. */
   taps: tap.taps,
-  /** The Recording pill opens and starts listening; Whis speaks. */
+  /** The Recording pill opens and starts listening; Clawd speaks. */
   listen: tap.listen,
   /** Everything fades out ahead of Beat 2. */
   beatOut: 8.6,

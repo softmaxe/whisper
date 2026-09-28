@@ -7,7 +7,7 @@ import { PALETTE } from "../../theme.ts";
 
 /* Composition shared by the three notes (canvas px). Captions are written below y = 850. */
 
-/** The note being shown, large, right of Whis. */
+/** The note being shown, large, right of Clawd. */
 export const NOTE: Box = { x: 470, y: 28, w: 1400, h: 792 };
 /** The app window inside each note, in note-local px. */
 export const NOTE_WINDOW: Box = { x: 44, y: 116, w: 1312, h: 636 };

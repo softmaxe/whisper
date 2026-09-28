@@ -97,7 +97,7 @@ export const RecordingPill: React.FC<RecordingPillProps> = ({
     <g>
       {/* A soft pencil shadow under the pill. */}
       <ellipse cx={cx} cy={cy + h / 2 + 10 * (scale / 2.6)} rx={w * 0.42} ry={5 * (scale / 2.6)} fill={PALETTE.pencil} opacity={0.18 * open} />
-      <path d={capsule(x, y, w, h)} fill={PALETTE.whisBlack} />
+      <path d={capsule(x, y, w, h)} fill={PALETTE.clawdBlack} />
       <RoughDrawing
         seed={seed + wobble}
         options={{ stroke: PALETTE.graphite, strokeWidth: 3, roughness: 0.9, bowing: 0.6 }}
@@ -122,7 +122,7 @@ export const RecordingPill: React.FC<RecordingPillProps> = ({
             width={barW}
             height={bh}
             rx={barW / 2}
-            fill={PALETTE.whisWhite}
+            fill={PALETTE.clawdWhite}
             opacity={barsOpacity * bar.opacity}
           />
         );
