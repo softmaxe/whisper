@@ -63,7 +63,7 @@ export const ClawdSheet: React.FC = () => {
           Clawd
         </text>
         <text x={300} y={110} fontFamily={`"${HAND_FONT}", serif`} fontSize={34} fill={PALETTE.pencil}>
-          Whisper's mascot · model sheet
+          the Claude Code mascot · model sheet
         </text>
 
         {CLAWD_POSE_NAMES.map((name, i) => {
