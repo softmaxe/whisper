@@ -41,6 +41,11 @@ export interface ClawdProps {
    */
   leftArm?: number;
   rightArm?: number;
+  /**
+   * How far the arm on the viewer's right (before `flip`) stretches out, in
+   * extra arm lengths: 0 = stubby (default), about 0.8 = reaching out to point.
+   */
+  reach?: number;
   /** Eye shape: open (dark vertical bars), closed (blink line) or happy (^ ^). */
   eyes?: ClawdEyes;
   /** Gaze offset of the eyes, each in -1..1 ([1, 0] looks to the viewer's right, before `flip`). */
@@ -64,7 +69,10 @@ export interface ClawdProps {
 export type ClawdEyes = "open" | "closed" | "happy";
 export type ClawdMark = "none" | "question" | "sparkles";
 
-/** Static arm presets; spread into <Clawd> and override as needed. clawdPose() animates them. */
+/**
+ * Static arm presets; spread into <Clawd> and override as needed. clawdPose() animates them.
+ * Point's arm stays clear of wave's swing (36..72), so the two never read alike.
+ */
 export const CLAWD_POSES = {
   /** Idle: arms relaxed, slightly down. */
   idle: { leftArm: -18, rightArm: -18 },
@@ -76,9 +84,12 @@ export const CLAWD_POSES = {
   proud: { leftArm: -62, rightArm: -62 },
   /** Right arm raised to wave (swing ~±18). */
   wave: { leftArm: -18, rightArm: 54 },
-  /** Whole right arm raised toward something up on the viewer's right, pointing at it (flip to point left). */
-  point: { leftArm: -34, rightArm: 36 },
-} as const satisfies Record<string, { leftArm: number; rightArm: number }>;
+  /**
+   * Whole right arm stretched out and held still toward something up on the viewer's right,
+   * pointing at it without a finger (flip to point left): lower, longer and stiller than a wave.
+   */
+  point: { leftArm: -34, rightArm: 24, reach: 0.8 },
+} as const satisfies Record<string, { leftArm: number; rightArm: number; reach?: number }>;
 
 export type ClawdPoseName = keyof typeof CLAWD_POSES;
 
@@ -95,7 +106,7 @@ export function isBlinking(frame: number, fps: number, periodSeconds = 2.8, offs
   return f >= period - 4;
 }
 
-type PoseProps = Required<Pick<ClawdProps, "leftArm" | "rightArm" | "eyes" | "look" | "squash" | "rotate" | "mark">>;
+type PoseProps = Required<Pick<ClawdProps, "leftArm" | "rightArm" | "reach" | "eyes" | "look" | "squash" | "rotate" | "mark">>;
 
 /**
  * A pose animated at `frame` (any frame counter; Beat-local is fine): arm
@@ -106,7 +117,7 @@ export function clawdPose(name: ClawdPoseName, frame: number, fps = 30): PosePro
   const base = CLAWD_POSES[name];
   const s = frame / fps; // seconds
   const blink = isBlinking(frame, fps) ? "closed" : "open";
-  const still = { ...base, eyes: blink, look: [0, 0], squash: 1, rotate: 0, mark: "none" } as const;
+  const still = { reach: 0, ...base, eyes: blink, look: [0, 0], squash: 1, rotate: 0, mark: "none" } as const;
   switch (name) {
     case "idle":
       return { ...still, squash: 1 + 0.012 * Math.sin(s * Math.PI * 1.2) };
@@ -135,12 +146,8 @@ export function clawdPose(name: ClawdPoseName, frame: number, fps = 30): PosePro
     case "wave":
       return { ...still, rightArm: base.rightArm + 18 * Math.sin(s * Math.PI * 2.4), look: [0.1, -0.2] };
     case "point":
-      return {
-        ...still,
-        rightArm: base.rightArm + 3 * Math.sin(s * Math.PI * 1.5),
-        look: [1, -0.3],
-        rotate: 5,
-      };
+      // The arm holds still on the target; only the body leans in a little.
+      return { ...still, look: [1, -0.3], rotate: 5 + 1.5 * Math.sin(s * Math.PI * 1.5) };
   }
 }
 
@@ -192,6 +199,7 @@ export const Clawd: React.FC<ClawdProps> = ({
   flip = false,
   leftArm = CLAWD_POSES.idle.leftArm,
   rightArm = CLAWD_POSES.idle.rightArm,
+  reach = 0,
   eyes = "open",
   look = [0, 0],
   squash = 1,
@@ -212,16 +220,16 @@ export const Clawd: React.FC<ClawdProps> = ({
   const sy = scale * squash;
 
   // Blocks in local coordinates; arms carry their rotation.
-  const armBlock = (side: -1 | 1, angle: number) => {
+  const armBlock = (side: -1 | 1, angle: number, length = ARM_LEN) => {
     // The arm starts inside the body so the shoulder never shows a gap when rotated.
-    const x0 = side < 0 ? -BODY_W / 2 - ARM_LEN : BODY_W / 2 - 10;
+    const x0 = side < 0 ? -BODY_W / 2 - length : BODY_W / 2 - 10;
     const pivotX = side * (BODY_W / 2 - 4);
     // Screen-space rotation: raising the left arm is clockwise, the right arm counter-clockwise.
     const deg = side < 0 ? angle : -angle;
-    return { x: x0, y: SHOULDER_Y - ARM_H / 2, w: ARM_LEN + 10, h: ARM_H, transform: `rotate(${deg} ${pivotX} ${SHOULDER_Y})` };
+    return { x: x0, y: SHOULDER_Y - ARM_H / 2, w: length + 10, h: ARM_H, transform: `rotate(${deg} ${pivotX} ${SHOULDER_Y})` };
   };
   const legBlocks = legs ? LEG_CENTRES.map((cx) => ({ x: cx - LEG_W / 2, y: BODY_BOTTOM - 4, w: LEG_W, h: LEG_H + 2 })) : [];
-  const arms = [armBlock(-1, leftArm), armBlock(1, rightArm)];
+  const arms = [armBlock(-1, leftArm), armBlock(1, rightArm, ARM_LEN * (1 + Math.max(0, reach)))];
   const rimOpacity = outlineP;
 
   return (
