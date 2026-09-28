@@ -28,7 +28,7 @@ The score's piano and Rhodes are recorded multisample libraries, listed with the
 
 Each Beat has one timeline module in [`timeline/beats/`](timeline/beats) that defines its window, named moments, Captions (text per language, time, and position), and sound cues. The picture imports these modules; the audio step reads the exported JSON. Change a time in one place and picture and sound stay in sync.
 
-The score plays a sampled upright piano for the chords and a sampled Rhodes for the melody at about 84 BPM, with brushed drums, paper rustle, and a soft pad at night, arranged by Beat and resolving on the home chord. The bass, drums, pad, paper rustle, and sound effects are synthesised with numpy. Each sound cue type (key click, recording start and stop chimes, red-pen scratch, tick, paste, file drop) has its own synthesiser module in [`audio/whisper_audio/sfx/`](audio/whisper_audio/sfx).
+The score is in C major at about 76 BPM. A sampled Rhodes carries the melody over chords on a sampled upright piano, played on its soft layer and darkened for a felt-like tone. A round, almost sine bass and light brushed drums join through the feature Beats, a soft pad plays throughout and grows thicker at night, and paper rustles now and then. The music is arranged by Beat and resolves on Cadd9, which rings through the final fade. The music bus has a lo-fi finish: a soft room, tape-style saturation, and a gentle low-pass; the sound effects stay dry. The bass, drums, pad, paper rustle, and sound effects are synthesised with numpy. Each sound cue type (key click, recording start and stop chimes, red-pen scratch, tick, paste, file drop) has its own synthesiser module in [`audio/whisper_audio/sfx/`](audio/whisper_audio/sfx).
 
 ## Tests
 
