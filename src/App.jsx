@@ -179,6 +179,7 @@ export default function App() {
     resizeToContent: resizeLiveTranscriptToContent,
     onWillOpen: onPanelOpened,
     isRecording,
+    isPreparing,
     isProcessing,
   });
 
@@ -452,12 +453,11 @@ export default function App() {
       : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
   const dictationErrorSuppressesPill =
     dictationErrorActionCount > 0 || dictationErrorPillHandoffActive;
-  const pillVisuallySuppressed =
-    Boolean(liveTranscript.copyFallback) ||
-    resolvePillVisualSuppression({
-      dictationErrorSuppressed: dictationErrorSuppressesPill,
-      panelReturnResizeActive,
-    });
+  const pillVisuallySuppressed = resolvePillVisualSuppression({
+    liveTranscriptCopyFallback: liveTranscript.copyFallback,
+    dictationErrorSuppressed: dictationErrorSuppressesPill,
+    panelReturnResizeActive,
+  });
 
   return (
     <div className="dictation-window">

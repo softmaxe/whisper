@@ -268,10 +268,11 @@ export function resolveVoicePillInteraction({
  * it is bounded by the native shrink it covers.
  */
 export function resolvePillVisualSuppression({
+  liveTranscriptCopyFallback,
   dictationErrorSuppressed,
   panelReturnResizeActive,
 }) {
-  return Boolean(dictationErrorSuppressed || panelReturnResizeActive);
+  return Boolean(liveTranscriptCopyFallback || dictationErrorSuppressed || panelReturnResizeActive);
 }
 
 export function shouldActivateVoicePill({ hasDragged, liveTranscriptMounted, isProcessing }) {
