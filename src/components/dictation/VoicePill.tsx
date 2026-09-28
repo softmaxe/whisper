@@ -11,7 +11,8 @@ import {
   VOICE_PILL_GROW_TRANSITION,
 } from "../../helpers/voicePillPresentation";
 
-export type VoicePillState = "idle" | "recording" | "processing" | "thinking" | "unavailable";
+export type VoicePillState =
+  "idle" | "finishing" | "recording" | "processing" | "thinking" | "unavailable";
 
 interface VoicePillProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   variant: "floating" | "panel";
@@ -47,6 +48,7 @@ const COMPACT_CONTENT_GAP_PX = 6;
 // .voice-pill-control[data-flow-bar] chrome.
 const STATE_APPEARANCE: Record<VoicePillState, string> = {
   idle: "border-border-hover bg-surface-1 text-muted-foreground dark:border-border/50",
+  finishing: "border-border-hover bg-surface-1 text-foreground",
   recording: "border-border-hover bg-surface-1 text-foreground",
   processing: "border-border/60 bg-surface-1 text-foreground/70",
   thinking: "border-border/60 bg-surface-1 text-foreground",
@@ -99,7 +101,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   // starts (the entrance beats only stage the panel pill); thinking ripples a
   // wave; a lost microphone holds still.
   const flowMotion: FlowMotion | null =
-    shape !== "listening" || isUnavailable
+    shape !== "listening" || isUnavailable || state === "finishing"
       ? null
       : isThinking
         ? "wave"

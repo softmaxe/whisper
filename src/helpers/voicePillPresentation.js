@@ -48,6 +48,9 @@ export function resolveVoicePillShape({
 // or the control clips at the native window bounds.
 export const VOICE_PILL_CANCEL = Object.freeze({ size: 28, gap: 8 });
 
+// App's pill root fades for 150 ms; keep the window for two final frames.
+export const VOICE_PILL_FINISH_MS = 180;
+
 export const LISTENING_ENTRANCE_TIMING = Object.freeze({
   // A short hold that reads as an acknowledged press before the control
   // changes shape. It was 420ms when it also had to hide the native window
@@ -282,8 +285,7 @@ export function resolveRecordingPillState({
   isStopping,
   isProcessing,
   micCaptureStatus,
-  isHovered = false,
-  isCommandMenuOpen = false,
+  isFinishing = false,
   entranceState = null,
 }) {
   if (isRecording) {
@@ -293,5 +295,5 @@ export function resolveRecordingPillState({
   }
   if (isProcessing || isStopping) return "thinking";
   if (isPreparing) return "processing";
-  return isHovered || isCommandMenuOpen ? "hover" : "idle";
+  return isFinishing ? "finishing" : "idle";
 }
