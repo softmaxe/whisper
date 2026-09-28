@@ -119,6 +119,10 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     else globalThis.MediaRecorder = originalRecorder;
   });
   t.mock.method(globalThis, "fetch", (url, options) => {
+    // Reachability succeeds independently of the deferred transcription and
+    // cleanup responses. A 405 still establishes that the ASR server is up.
+    if (options.method === "HEAD") return Promise.resolve(new Response(null, { status: 405 }));
+    assert.equal(options.method, "POST");
     const result = deferred();
     requests.push({ url, options, ...result });
     return result.promise;
@@ -184,6 +188,14 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     React.act(async () => {
       await callback();
     });
+  const renderPill = () =>
+    renderToStaticMarkup(
+      React.createElement(VoicePill, {
+        variant: "floating",
+        state: resolveRecordingPillState(hook),
+        getAudioLevel: hook.getAudioLevel,
+      })
+    );
   return {
     requests,
     pastes,
@@ -229,20 +241,16 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     resolveRequest: async (index, payload, status = 200) =>
       act(() => requests[index].resolve(new Response(JSON.stringify(payload), { status }))),
     presentation: () => {
-      const state = resolveRecordingPillState(hook);
-      const markup = renderToStaticMarkup(
-        React.createElement(VoicePill, {
-          variant: "floating",
-          state,
-          getAudioLevel: hook.getAudioLevel,
-        })
-      );
+      const markup = renderPill();
+      const width = markup.match(/width:(\d+)px/)?.[1];
       return {
+        rendered: markup !== "",
         motion: markup.match(/data-motion="([^"]+)"/)?.[1] ?? null,
-        width: Number(markup.match(/width:(\d+)px/)?.[1]),
+        width: width === undefined ? null : Number(width),
       };
     },
     pillVisible: () =>
+      renderPill() !== "" &&
       !resolvePillVisualSuppression({
         liveTranscriptCopyFallback: panel.copyFallback,
         dictationErrorSuppressed: Boolean(activeError),
@@ -259,7 +267,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
 function assertPending(harness) {
   assert.equal(harness.hook().isProcessing, true);
   assert.equal(harness.lifecycle.at(-1), "processing");
-  assert.deepEqual(harness.presentation(), { motion: "wave", width: 84 });
+  assert.deepEqual(harness.presentation(), { rendered: true, motion: "wave", width: 84 });
 }
 
 test("transcription failure presents an actionable retry that starts a new Dictation", async (t) => {
@@ -313,7 +321,7 @@ for (const cleanup of [false, true, "fallback"]) {
     await h.act(() => h.pastes[0].resolve({ pasted: true }));
     assert.equal(h.hook().isProcessing, false);
     assert.equal(h.lifecycle.at(-1), "idle");
-    assert.deepEqual(h.presentation(), { motion: null, width: 38 });
+    assert.deepEqual(h.presentation(), { rendered: false, motion: null, width: null });
     assert.equal(h.hidden(), 1);
     assert.deepEqual(h.recoveries, []);
     assert.deepEqual(h.lifecycle, ["idle", "preparing", "recording", "processing", "idle"]);
@@ -366,7 +374,7 @@ for (const outcome of ["ready", "cancelled", "failed"]) {
     assert.equal(h.panel().copyFallback, null);
     assert.equal(h.panel().mounted, false);
     assert.equal(h.pillVisible(), true);
-    assert.deepEqual(h.presentation(), { motion: "sweep", width: 84 });
+    assert.deepEqual(h.presentation(), { rendered: true, motion: "sweep", width: 84 });
 
     // A queued preview from the completed result must not reclaim the panel.
     await h.emitPreview("onPreviewResult", { text: "late previous result" });
@@ -393,7 +401,7 @@ for (const outcome of ["ready", "cancelled", "failed"]) {
       assert.ok(h.recovery(), "the new microphone failure owns the recovery prompt");
     } else {
       assert.equal(h.recovery(), null);
-      assert.equal(h.pillVisible(), true);
+      assert.equal(h.pillVisible(), outcome === "ready");
       assert.equal(h.presentation().motion, outcome === "ready" ? "live" : null);
     }
     if (outcome !== "ready") {
@@ -429,7 +437,7 @@ for (const stage of ["transcription", "cleanup", "paste"]) {
       if (stage !== "transcription") await h.resolveRequest(0, { text: "previous result" });
       assertPending(h);
       await h.act(() => h.hook().cancelProcessing());
-      assert.deepEqual(h.presentation(), { motion: null, width: 38 });
+      assert.deepEqual(h.presentation(), { rendered: false, motion: null, width: null });
       await h.start();
       const hidden = h.hidden();
       if (stage === "paste") {
