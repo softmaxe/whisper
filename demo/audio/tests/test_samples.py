@@ -13,7 +13,8 @@ import pytest
 import soundfile
 
 from whisper_audio.dsp import midi_hz
-from whisper_audio.music.bank import Note, softly
+from whisper_audio import samples
+from whisper_audio.music.bank import Note, sampled_bank, softly
 from whisper_audio.music.sfz import load_instrument, load_library
 from whisper_audio.samples import Library, SampleCacheError, fetch, verified_archive
 
@@ -148,3 +149,11 @@ def test_a_soft_touch_strikes_softly_but_keeps_the_notes_level():
     assert np.allclose(soft(Note(60, 0.9, 0.1), SR, rng), 0.9)
     assert np.allclose(soft(Note(60, 0.4, 0.1), SR, rng), 0.4)
     assert struck == [0.6, 0.4]
+
+
+@pytest.mark.parametrize("roles", [["melody", "drums"], ["chords", "melody", "melody"]])
+def test_the_sampled_bank_rejects_an_unknown_or_repeated_role(monkeypatch, library, roles):
+    libraries = [dataclasses.replace(library, id=f"lib-{i}", role=role) for i, role in enumerate(roles)]
+    monkeypatch.setattr(samples, "load_manifest", lambda: libraries)
+    with pytest.raises(ValueError, match=f"'lib-{len(roles) - 1}'"):
+        sampled_bank()

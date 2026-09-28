@@ -11,56 +11,6 @@ import numpy as np
 from ..dsp import attack_release, exp_decay, fft_filter, midi_hz, seconds
 
 
-def karplus_strong(
-    note: float,
-    length: float,
-    sr: int,
-    rng: np.random.Generator,
-    brightness: float = 0.5,
-    decay: float = 0.996,
-) -> np.ndarray:
-    """A plucked string: a noise burst circulating in a delay line with a two-tap averaging low-pass.
-
-    `brightness` (0..1) shapes the initial burst (lower = softer, more like a thumb pluck);
-    `decay` is the loop gain per period. Computed one period at a time, so a note costs
-    about `length * f` numpy operations rather than a Python loop per sample.
-    """
-    period = max(2, int(round(sr / midi_hz(note))))
-    n = seconds(length, sr)
-    burst = rng.uniform(-1.0, 1.0, period)
-    burst = brightness * burst + (1.0 - brightness) * np.convolve(burst, [0.5, 0.5], mode="same")
-    burst -= np.mean(burst)
-
-    # buf[0] is a leading zero so that buf[i - period - 1] exists for the first loop.
-    buf = np.zeros(n + 1)
-    buf[1 : 1 + min(period, n)] = burst[: min(period, n)]
-    for k in range(period + 1, n + 1, period):
-        end = min(k + period, n + 1)
-        buf[k:end] = decay * 0.5 * (buf[k - period : end - period] + buf[k - period - 1 : end - period - 1])
-    out = buf[1:]
-    return out * attack_release(n, seconds(0.002, sr), seconds(0.08, sr))
-
-
-# Kalimba tine partials: (frequency ratio, amplitude, decay seconds). The upper
-# partials are inharmonic and die away fast, which gives the bell-like attack.
-_KALIMBA_PARTIALS = ((1.0, 1.0, 1.1), (2.76, 0.32, 0.22), (5.4, 0.14, 0.07))
-
-
-def kalimba(note: float, length: float, sr: int, rng: np.random.Generator, ring: float = 1.0) -> np.ndarray:
-    """A kalimba tine: a few decaying sine partials at inharmonic ratios plus a tiny thumb click.
-
-    `ring` scales every partial's decay time (above 1 lets a closing note hang on).
-    """
-    n = seconds(length, sr)
-    t = np.arange(n) / sr
-    f = midi_hz(note)
-    out = np.zeros(n)
-    for ratio, amp, tau in _KALIMBA_PARTIALS:
-        out += amp * np.sin(2 * np.pi * f * ratio * t + rng.uniform(0, 2 * np.pi)) * np.exp(-t / (tau * ring))
-    click = rng.standard_normal(n) * exp_decay(n, 0.0015 * sr) * 0.12
-    return (out + click) * attack_release(n, seconds(0.001, sr), seconds(0.06, sr))
-
-
 # Round bass partials: (harmonic, amplitude). Almost a pure sine; the faint 2nd and 3rd
 # harmonics let the line be heard on small speakers without adding boom.
 _BASS_HARMONICS = ((1, 1.0), (2, 0.18), (3, 0.06))

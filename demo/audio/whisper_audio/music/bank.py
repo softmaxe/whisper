@@ -9,9 +9,9 @@ changing an instrument means changing the bank, not the score:
 
 A bank maps every role to a `NoteRenderer`, which turns one `Note` into a mono
 clip. `sampled_bank()` plays the recorded instruments in the sample cache
-(`samples.py`, `sfz.py`) and is the build's `default_bank()`; `synth_bank()`
-wraps the numpy instruments in `instruments.py`. Tests pass their own bank to
-`render_layers`, so the audio suite never needs the cache or the network.
+(`samples.py`, `sfz.py`); the build uses it whenever `render_layers` is given
+no bank. Tests pass their own bank to `render_layers`, so the audio suite never
+needs the cache or the network.
 """
 
 from __future__ import annotations
@@ -21,8 +21,6 @@ from dataclasses import dataclass, replace
 from typing import Protocol
 
 import numpy as np
-
-from . import instruments as inst
 
 CHORDS = "chords"
 MELODY = "melody"
@@ -56,23 +54,6 @@ def check_bank(bank: SampleBank) -> SampleBank:
     return bank
 
 
-def plucked_guitar(note: Note, sr: int, rng: np.random.Generator) -> np.ndarray:
-    """Karplus-Strong guitar: a soft thumb pluck, or a brighter, longer-ringing strum on a closing chord."""
-    if note.let_ring:
-        return note.velocity * inst.karplus_strong(note.pitch, note.duration, sr, rng, brightness=0.4, decay=0.998)
-    return note.velocity * inst.karplus_strong(note.pitch, note.duration, sr, rng, brightness=0.35)
-
-
-def kalimba(note: Note, sr: int, rng: np.random.Generator) -> np.ndarray:
-    """Kalimba tine; a closing note hangs on 2.5 times longer."""
-    return note.velocity * inst.kalimba(note.pitch, note.duration, sr, rng, ring=2.5 if note.let_ring else 1.0)
-
-
-def synth_bank() -> SampleBank:
-    """The synthesised instruments: plucked guitar for the chords, kalimba for the melody."""
-    return {CHORDS: plucked_guitar, MELODY: kalimba}
-
-
 def softly(play: NoteRenderer, touch: float) -> NoteRenderer:
     """`play`, always struck with a velocity of at most `touch` but scaled back to the note's own level.
 
@@ -102,12 +83,15 @@ def sampled_bank() -> SampleBank:
     from ..samples import load_manifest
     from .sfz import load_library
 
-    bank = {library.role: load_library(library) for library in load_manifest()}
+    libraries = load_manifest()
+    seen: set[str] = set()
+    for library in libraries:  # checked before any archive is read
+        if library.role not in ROLES:
+            raise ValueError(f"sample library '{library.id}' has role '{library.role}', not one of {', '.join(ROLES)}")
+        if library.role in seen:
+            raise ValueError(f"sample library '{library.id}' plays '{library.role}', which another library already plays")
+        seen.add(library.role)
+    bank = {library.role: load_library(library) for library in libraries}
     if CHORDS in bank:
         bank[CHORDS] = softly(bank[CHORDS], PIANO_TOUCH)
     return check_bank(bank)
-
-
-def default_bank() -> SampleBank:
-    """The bank the build uses when `render_layers` is given none."""
-    return sampled_bank()

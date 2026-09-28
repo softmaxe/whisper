@@ -17,16 +17,17 @@ from pathlib import Path
 import numpy as np
 
 from .layers import music, sfx
-from .music.bank import SampleBank, default_bank
+from .music.bank import SampleBank, sampled_bank
 from .timeline import Timeline, film_samples
 
 
 def render_layers(timeline: Timeline, sr: int, bank: SampleBank | None = None) -> dict[str, np.ndarray]:
     """Every layer's output at its GAIN, keyed by layer name ("music", "sfx").
 
-    `bank` plays the music's melodic stems; without one, the build's `default_bank()` is used.
+    `bank` plays the music's melodic stems; without one, the recorded instruments in the sample cache
+    (`sampled_bank()`) play them.
     """
-    bank = default_bank() if bank is None else bank
+    bank = sampled_bank() if bank is None else bank
     n = film_samples(timeline, sr)
     layers = {
         "music": (music, lambda: music.render(timeline, sr, bank)),
