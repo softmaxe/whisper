@@ -41,6 +41,22 @@ The [combined verification report](../docs/recording-startup-verification.md)
 maps the integrated lifecycle coverage to #28 and records outstanding hardware
 checks.
 
+The [pill startup animation regression](components/pillStartupAnimation.test.js)
+builds the production VoicePill and styles, then renders them in an isolated
+offscreen Electron window. It blocks renderer JavaScript for 1.5 seconds and
+checks that changing frames continue during the block, including first
+appearance, restart during the finish fade, and a new appearance after idle.
+It also checks the frozen finish, handoff to measured audio levels, and animation
+cleanup. It opens no microphone, uses a temporary profile, and removes its build
+and profile after the test. Run it separately with:
+
+```sh
+ELECTRON_RUN_AS_NODE=1 node_modules/.bin/electron --import tsx --test test/components/pillStartupAnimation.test.js
+```
+
+This checks animation continuity under renderer contention, not physical iPhone
+connection latency or macOS permission behavior.
+
 ## Automatic paste
 
 The [Automatic paste integration suite](helpers/automaticPasteIntegration.test.js)

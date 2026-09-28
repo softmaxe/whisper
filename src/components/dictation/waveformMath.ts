@@ -65,6 +65,7 @@ export const resolveFlowBarHeight = (lane: number) =>
 // running a few bars past each edge so the pass fades in and out.
 const FLOW_SWEEP_BAR_MS = 70;
 const FLOW_SWEEP_OVERRUN = 3;
+export const FLOW_SWEEP_DURATION_MS = FLOW_SWEEP_BAR_MS * (FLOW_BAR_COUNT + FLOW_SWEEP_OVERRUN * 2);
 const FLOW_SWEEP_FLOOR = 0.16;
 const FLOW_SWEEP_SPREAD = 2.2;
 
