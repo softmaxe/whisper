@@ -244,7 +244,22 @@ export interface PenMarkProps extends PenProps {
   pad?: number;
   /** For `strike`: 2 crosses the text out firmly. */
   passes?: 1 | 2;
+  /**
+   * For `circle` round a word inside a line: moves the neighbouring text out
+   * by as far as the measured loop (and its ink) reaches past the word, so the
+   * loop circles only the word.
+   */
+  clear?: boolean;
   children: React.ReactNode;
+}
+
+/** The loop PenMark draws round a `w` x `h` span, in the span's coordinates. */
+const markLoop = (w: number, h: number, pad: number) => loopPoints(w / 2, h / 2, w / 2 + pad, h / 2 + pad * 0.6, 1.12);
+
+/** How far a `circle` mark's loop reaches past the span's left and right edges, ink included. */
+function circleOverhang(w: number, h: number, pad: number, strokeWidth: number = RED_PEN.strokeWidth): [number, number] {
+  const xs = markLoop(w, h, pad).map(([x]) => x);
+  return [Math.max(0, -Math.min(...xs)) + strokeWidth, Math.max(0, Math.max(...xs) - w) + strokeWidth];
 }
 
 /**
@@ -254,9 +269,10 @@ export interface PenMarkProps extends PenProps {
  *
  *   <p>Friday works <PenMark kind="strike" progress={p} seed={41}>uh</PenMark> let's launch</p>
  *
- * The mark overflows the span and draws above the text; it does not change layout.
+ * The mark overflows the span and draws above the text; it does not change
+ * layout unless `clear` makes room for a circle.
  */
-export const PenMark: React.FC<PenMarkProps> = ({ kind, pad = 10, passes = 1, children, ...pen }) => {
+export const PenMark: React.FC<PenMarkProps> = ({ kind, pad = 10, passes = 1, clear = false, children, ...pen }) => {
   const ref = useRef<HTMLSpanElement>(null);
   const [size, setSize] = useState<[number, number] | null>(null);
   useLayoutEffect(() => {
@@ -272,12 +288,17 @@ export const PenMark: React.FC<PenMarkProps> = ({ kind, pad = 10, passes = 1, ch
   const [w, h] = size ?? [0, 0];
   const build: RoughBuild =
     kind === "circle"
-      ? (g, o) => [g.curve(loopPoints(w / 2, h / 2, w / 2 + pad, h / 2 + pad * 0.6, 1.12), { ...o, roughness: 0.6 })]
+      ? (g, o) => [g.curve(markLoop(w, h, pad), { ...o, roughness: 0.6 })]
       : kind === "strike"
         ? (g, o) => strikeCurves(g, o, 0, h * 0.55, w, passes, 3)
         : (g, o) => strikeCurves(g, o, 0, h + pad * 0.4, w, 1, 2);
+  const strokeWidth = pen.options?.strokeWidth ?? RED_PEN.strokeWidth;
+  const [clearLeft, clearRight] = clear && kind === "circle" && size ? circleOverhang(w, h, pad, strokeWidth) : [0, 0];
   return (
-    <span ref={ref} style={{ position: "relative", display: "inline-block" }}>
+    <span
+      ref={ref}
+      style={{ position: "relative", display: "inline-block", marginLeft: clearLeft, marginRight: clearRight }}
+    >
       {children}
       {size && (
         <svg

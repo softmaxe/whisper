@@ -329,7 +329,7 @@ const ChatThread: React.FC<ChatThreadProps> = ({ pasted, circle, fix, toast }) =
           <span style={{ opacity: pasted, background: highlighter(1 - circle) }}>
             {head}
             <span style={{ position: "relative", display: "inline-block" }}>
-              <PenMark kind="circle" progress={circle} seed={741} pad={8}>
+              <PenMark kind="circle" progress={circle} seed={741} pad={12} clear>
                 {chat.wrong}
               </PenMark>
               <span
