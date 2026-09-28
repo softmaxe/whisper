@@ -59,6 +59,8 @@ describe("Wash", () => {
   it("clears to blank paper before the Film ends", () => {
     expect(CLEAR_END).toBeLessThanOrEqual(FILM.durationSeconds);
     expect(washAt(FILM.durationSeconds - 0.01 / FILM.fps).opacity).toBe(0);
+    // The whole last second, where the Film fades out, is blank paper.
+    expect(washAt(FILM.durationSeconds - FILM.fadeOutSeconds).opacity).toBe(0);
   });
 
   it("keeps ink and the red pen readable on the darkest washed paper", () => {

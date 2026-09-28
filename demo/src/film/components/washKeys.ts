@@ -8,7 +8,8 @@
  * `nightfall` moment, so a retimed Beat moves the wash with it.
  */
 import { beat4 } from "../../../timeline/beats/beat4-review.ts";
-import { BEAT_BOUNDS, FILM_SECONDS } from "../../../timeline/bounds.ts";
+import { BEAT_BOUNDS } from "../../../timeline/bounds.ts";
+import { FILM } from "../../../timeline/index.ts";
 import type { Seconds } from "../../../timeline/types.ts";
 import { PALETTE } from "../theme.ts";
 
@@ -39,9 +40,12 @@ export const WASH_LAYERS = { skyTop: 0.55, poolEdge: 0.45, grain: 0.35 } as cons
 /** When the wash has fully turned to night in Beat 4. */
 export const NIGHT_FULL: Seconds = beat4.moments.nightfall + 2.2;
 
-/** When the night starts to clear for the ending, and when the paper is blank again. */
-export const CLEAR_START: Seconds = FILM_SECONDS - 3.5;
-export const CLEAR_END: Seconds = FILM_SECONDS - 0.5;
+/**
+ * When the paper is blank again: at the start of the Film's final fade, so its
+ * whole last second is blank paper. The night clears over the 3 s before.
+ */
+export const CLEAR_END: Seconds = FILM.durationSeconds - FILM.fadeOutSeconds;
+export const CLEAR_START: Seconds = CLEAR_END - 3;
 
 export const WASH_KEYS: readonly WashKey[] = [
   { at: opening[0], color: PALETTE.washDawn, opacity: 0.4 },
