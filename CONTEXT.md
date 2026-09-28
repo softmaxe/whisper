@@ -56,3 +56,7 @@ and ends Dictation with a single press instead.
 **Hands-free dictation**:
 Dictation that continues after the Dictation hotkey is released, until the next
 Clean press or cancellation.
+
+**Whis**:
+The mascot of the demo video: a blocky black character with short legs and
+the white waveform W from the app icon on its body.
