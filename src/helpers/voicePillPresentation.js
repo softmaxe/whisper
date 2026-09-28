@@ -11,11 +11,6 @@ export const VOICE_PILL_FOOTPRINT = Object.freeze({
   // The panel's circular identity, between takes inside the Live Transcript
   // footer.
   idle: Object.freeze({ width: 40, height: 40 }),
-  // The floating pill at rest: an empty black sliver, like Wispr Flow's.
-  sliver: Object.freeze({ width: 38, height: 10 }),
-  // Hovering the sliver previews the bar set as dim dots: 6px of air either
-  // side of the 52px bar set.
-  peek: Object.freeze({ width: 64, height: 22 }),
   // The floating Flow bar: 16px of air either side of the 52px bar set. At
   // least 2 × VOICE_PILL_CANCEL radius tall, so the swallowed cancel skin
   // stays inside the capsule. Also the largest floating footprint.
@@ -27,8 +22,8 @@ export const VOICE_PILL_FOOTPRINT = Object.freeze({
 });
 
 /**
- * Which footprint the pill renders. The floating pill rests as the sliver,
- * peeks on hover, and is the Flow bar through every active state — warm-up,
+ * Which footprint the pill renders. The floating pill is the Flow bar through
+ * every active state: warm-up,
  * listening, and thinking alike. The Live Transcript footer keeps the circular
  * identity beside its waveform.
  */
@@ -40,8 +35,6 @@ export function resolveVoicePillShape({
   waveformOnlyWhileRecording = false,
 }) {
   if (variant !== "panel") {
-    if (state === "idle") return "sliver";
-    if (state === "hover") return "peek";
     return "listening";
   }
   const collapseToIdentity = collapseToLogo || state === "thinking";
@@ -209,8 +202,8 @@ export function resolveListeningEntrancePresentation({ isRecording, phase }) {
 }
 
 /**
- * Resolve only the active voice presentation. Idle/hover styling remains owned
- * by App because it also depends on pointer and microphone availability state.
+ * Resolve the active voice presentation. App also accounts for microphone
+ * availability and the Live Transcript footer.
  */
 export function resolveVoiceActivityPresentation({ isRecording, isProcessing }) {
   if (isRecording) {
@@ -235,8 +228,7 @@ export function resolveVoicePanelCorePresentation({ liveTranscriptOpen, liveTran
 
 /**
  * A collapsed Live Transcript can be reopened only while its owning dictation
- * is still recording or finalizing. Completed sessions must return the pill to
- * its normal identity instead of inheriting a stale chevron.
+ * is still recording or finalizing. Completed sessions have no floating pill.
  */
 export function shouldOfferLiveTranscriptReopen({ manuallyCollapsed, isRecording, isProcessing }) {
   return Boolean(manuallyCollapsed && (Boolean(isRecording) || Boolean(isProcessing)));

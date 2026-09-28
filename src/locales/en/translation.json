@@ -213,6 +213,8 @@
       "errorTitles": {
         "microphoneUnavailable": "Microphone unavailable",
         "offline": "You're Offline",
+        "transcriptionTimeout": "Transcription timed out",
+        "transcriptionConnectionFailed": "Transcription server unavailable",
         "providerRateLimited": "Provider Rate Limited"
       },
       "errorActions": {
@@ -235,6 +237,8 @@
         "description": "Part of the recording couldn't be transcribed."
       },
       "errorDescriptions": {
+        "transcriptionConnectionFailed": "Could not reach the transcription server within 3 seconds. Check that the server is running and reachable, then try again.",
+        "transcriptionTimeout": "The transcription server did not finish responding within 30 seconds. Check that the server is running and reachable, then try again.",
         "microphoneUnavailable": "The selected microphone could not capture audio. Reconnect it, check microphone access in System Settings, or choose another microphone in Settings before trying again.",
         "providerRateLimited": "Your transcription provider rate-limited the request. Wait a moment and try again.",
         "customEndpointInvalid": "Your custom transcription endpoint is not configured or its URL is invalid. Update it in Settings → Speech to Text.",
@@ -456,15 +460,13 @@
         "title": "Appearance"
       },
       "floatingIcon": {
-        "autoHide": "Auto-hide when idle",
-        "autoHideDescription": "Keep the icon hidden until you start dictating",
         "startPosition": "Start position",
         "startPositionDescription": "Where the voice recorder panel appears on screen",
         "bottomRight": "Bottom Right",
         "center": "Bottom Center",
         "bottomLeft": "Bottom Left",
-        "description": "Control when the dictation icon is visible on your screen",
-        "title": "Floating Icon"
+        "description": "Choose where the recording pill appears during dictation",
+        "title": "Recording pill"
       },
       "hotkey": {
         "activationMode": "Activation Mode",

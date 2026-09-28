@@ -242,7 +242,6 @@ async function startApp() {
   initializeCoreManagers();
   await environmentManager.init();
   await windowManager.setActivationModeCache(environmentManager.getActivationMode());
-  windowManager.setFloatingIconAutoHide(environmentManager.getFloatingIconAutoHide());
   windowManager.setPanelStartPosition(environmentManager.getPanelStartPosition());
 
   let activationModeChangeQueue = Promise.resolve();
@@ -267,15 +266,6 @@ async function startApp() {
       .catch((err) => {
         debugLogger.error("Failed to change activation mode", { error: err.message }, "hotkey");
       });
-  });
-
-  ipcMain.on("floating-icon-auto-hide-changed", (_event, enabled) => {
-    windowManager.setFloatingIconAutoHide(enabled);
-    environmentManager.saveFloatingIconAutoHide(enabled);
-    // Relay to the floating icon window so it can react immediately
-    if (windowManager.mainWindow && !windowManager.mainWindow.isDestroyed()) {
-      windowManager.mainWindow.webContents.send("floating-icon-auto-hide-changed", enabled);
-    }
   });
 
   ipcMain.on("start-minimized-changed", (_event, enabled) => {

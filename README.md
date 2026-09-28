@@ -15,7 +15,7 @@ Whisper turns speech into text and pastes it into the app you're using on your M
   <img src="docs/images/overview-en.png" alt="Whisper interface with local dictation history and navigation" width="800">
 </p>
 
-The screenshot uses sample data. See [demo](demo/README.md) to render the animated walkthrough in English or Chinese.
+The screenshot uses sample data. See [demo](demo/README.md) to render the hand-drawn explainer video in English or Chinese.
 
 ## Features
 
@@ -62,6 +62,8 @@ Releases use the same self-signed certificate across versions and are not notari
 - In Hold mode, hold the shortcut while speaking and release it to finish. Use a key that supports release detection, such as Globe/fn, a right-side modifier, or a modifier key combination.
 
 Using a modifier in another shortcut, such as Command+C, does not trigger dictation. If Whisper cannot paste into the target app, it shows the transcript in a panel where you can copy it and paste manually.
+
+The recording pill appears when you start dictation and disappears after the session and its feedback finish. It stays hidden while idle.
 
 ### File transcription
 

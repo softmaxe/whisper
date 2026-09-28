@@ -97,7 +97,7 @@ declare global {
         }
       ) => Promise<{ success: true; pasted: boolean }>;
       hideWindow: () => Promise<void>;
-      showDictationPanel: () => Promise<void>;
+      showDictationPanel: (options?: { reposition?: boolean }) => Promise<void>;
       captureDictationTarget?: () => Promise<{ success: boolean; pid: number | null }>;
       onToggleDictation: (callback: (options?: RecordingRequestOptions) => void) => () => void;
       onStartDictation?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
@@ -334,8 +334,6 @@ declare global {
       // Windows Push-to-Talk notifications
       notifyActivationModeChanged?: (mode: "tap" | "push") => void;
       notifyHotkeyChanged?: (hotkey: string) => void;
-      notifyFloatingIconAutoHideChanged?: (enabled: boolean) => void;
-      onFloatingIconAutoHideChanged?: (callback: (enabled: boolean) => void) => () => void;
       notifyStartMinimizedChanged?: (enabled: boolean) => void;
       getMenuBarIconVisible?: () => Promise<boolean>;
       setMenuBarIconVisible?: (visible: boolean) => Promise<boolean>;

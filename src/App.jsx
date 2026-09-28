@@ -63,10 +63,7 @@ export default function App() {
   const [dragStartPos, setDragStartPos] = useState(null);
   const [hasDragged, setHasDragged] = useState(false);
 
-  // Floating icon auto-hide setting (read from store, synced via IPC)
-  const floatingIconAutoHide = useSettingsStore((s) => s.floatingIconAutoHide);
   const panelStartPosition = useSettingsStore((s) => s.panelStartPosition);
-  const prevAutoHideRef = useRef(floatingIconAutoHide);
   const [voiceHorizontalDirection, setVoiceHorizontalDirection] = useState(() =>
     resolveVoiceHorizontalDirection(panelStartPosition)
   );
@@ -250,15 +247,6 @@ export default function App() {
     }
   }, [isRecording, dictationErrorActionCount, dismissByPresentation]);
 
-  // Sync auto-hide from main process — setState directly to avoid IPC echo
-  useEffect(() => {
-    const unsubscribe = window.electronAPI?.onFloatingIconAutoHideChanged?.((enabled) => {
-      localStorage.setItem("floatingIconAutoHide", String(enabled));
-      useSettingsStore.setState({ floatingIconAutoHide: enabled });
-    });
-    return () => unsubscribe?.();
-  }, []);
-
   const isRecordingRef = useRef(isRecording);
 
   useLayoutEffect(() => {
@@ -272,38 +260,13 @@ export default function App() {
     return () => unsubscribe?.();
   }, [cancelRecording]);
 
-  // Auto-hide the floating icon when idle (setting enabled or dictation cycle completed)
+  // A finished session leaves no standalone pill or command menu.
   useEffect(() => {
-    let hideTimeout;
-
-    if (
-      floatingIconAutoHide &&
-      !isRecording &&
-      !isVisuallyProcessing &&
-      toastCount === 0 &&
-      !dictationErrorPillHandoffActive &&
-      !liveTranscript.mounted &&
-      !liveTranscript.copyFallback
-    ) {
-      // Delay briefly so processing can start after recording stops without a flash
-      hideTimeout = setTimeout(() => {
-        window.electronAPI?.hideWindow?.();
-      }, 500);
-    } else if (!floatingIconAutoHide && prevAutoHideRef.current) {
-      window.electronAPI?.showDictationPanel?.();
+    if (!isRecording && !isVisuallyProcessing) {
+      setIsHovered(false);
+      setIsCommandMenuOpen(false);
     }
-
-    prevAutoHideRef.current = floatingIconAutoHide;
-    return () => clearTimeout(hideTimeout);
-  }, [
-    isRecording,
-    isVisuallyProcessing,
-    floatingIconAutoHide,
-    toastCount,
-    dictationErrorPillHandoffActive,
-    liveTranscript.mounted,
-    liveTranscript.copyFallback,
-  ]);
+  }, [isRecording, isVisuallyProcessing]);
 
   const handleClose = () => {
     window.electronAPI.hideWindow();
@@ -347,9 +310,6 @@ export default function App() {
       return "unavailable";
     if (isRecording) return "recording";
     if (isVisuallyProcessing) return "processing";
-    // An open command menu holds the peek, so the menu anchored above it does
-    // not drop while the pointer crosses the gap to reach it.
-    if ((isHovered || isCommandMenuOpen) && !isRecording && !isVisuallyProcessing) return "hover";
     return "idle";
   };
 
@@ -468,6 +428,7 @@ export default function App() {
         } ${pillVisuallySuppressed ? "opacity-0" : "opacity-100"}`}
         style={{
           "--voice-pill-travel-duration": `${voicePillTravelDuration}ms`,
+          visibility: !isRecording && !isVisuallyProcessing && !panelMounted ? "hidden" : undefined,
         }}
         data-dictation-error-suppressed={dictationErrorSuppressesPill || undefined}
         aria-hidden={pillVisuallySuppressed || undefined}

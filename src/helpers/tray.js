@@ -242,6 +242,7 @@ class TrayManager {
   buildContextMenuTemplate() {
     const dictationVisible = this.windowManager?.isDictationPanelVisible?.() ?? false;
     const dictating = this.windowManager?.isDictating?.() ?? false;
+    const dictationActive = this.windowManager?.isDictationActive?.() ?? false;
 
     return [
       {
@@ -254,20 +255,24 @@ class TrayManager {
             : this.windowManager?.sendStartDictation(),
       },
       { type: "separator" },
-      {
-        label: dictationVisible
-          ? i18nMain.t("tray.toggleDictation.hide")
-          : i18nMain.t("tray.toggleDictation.show"),
-        click: () => {
-          if (!this.windowManager) return;
-          if (this.windowManager.isDictationPanelVisible()) {
-            this.windowManager.hideDictationPanel();
-          } else {
-            this.windowManager.showDictationPanel({ focus: true, reposition: true });
-          }
-          this.updateTrayMenu();
-        },
-      },
+      ...(dictationActive || dictationVisible
+        ? [
+            {
+              label: dictationVisible
+                ? i18nMain.t("tray.toggleDictation.hide")
+                : i18nMain.t("tray.toggleDictation.show"),
+              click: () => {
+                if (!this.windowManager) return;
+                if (this.windowManager.isDictationPanelVisible()) {
+                  this.windowManager.hideDictationPanel();
+                } else if (this.windowManager.isDictationActive()) {
+                  this.windowManager.showDictationPanel({ focus: true, reposition: true });
+                }
+                this.updateTrayMenu();
+              },
+            },
+          ]
+        : []),
       {
         label: this.isControlPanelVisible()
           ? i18nMain.t("tray.hideControlPanel")

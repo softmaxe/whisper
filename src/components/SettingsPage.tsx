@@ -160,8 +160,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     setAutoPasteEnabled,
     keepTranscriptionInClipboard,
     setKeepTranscriptionInClipboard,
-    floatingIconAutoHide,
-    setFloatingIconAutoHide,
     startMinimized,
     setStartMinimized,
     showMenuBarIcon,
@@ -427,14 +425,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                 description={t("settingsPage.general.floatingIcon.description")}
               />
               <SettingsPanel>
-                <SettingsPanelRow>
-                  <SettingsRow
-                    label={t("settingsPage.general.floatingIcon.autoHide")}
-                    description={t("settingsPage.general.floatingIcon.autoHideDescription")}
-                  >
-                    <Toggle checked={floatingIconAutoHide} onChange={setFloatingIconAutoHide} />
-                  </SettingsRow>
-                </SettingsPanelRow>
                 <SettingsPanelRow>
                   <SettingsRow
                     label={t("settingsPage.general.floatingIcon.startPosition")}

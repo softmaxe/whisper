@@ -213,6 +213,8 @@
       "errorTitles": {
         "microphoneUnavailable": "麦克风不可用",
         "offline": "你已离线",
+        "transcriptionTimeout": "转写超时",
+        "transcriptionConnectionFailed": "无法连接转写服务器",
         "providerRateLimited": "服务商速率限制"
       },
       "errorActions": {
@@ -235,6 +237,8 @@
         "description": "部分录音内容无法转录。"
       },
       "errorDescriptions": {
+        "transcriptionConnectionFailed": "3 秒内未能连接转写服务器。请确认服务器已启动且网络可达，然后重试。",
+        "transcriptionTimeout": "转写服务器未在 30 秒内完成响应。请确认服务器已启动且网络可达，然后重试。",
         "microphoneUnavailable": "所选麦克风无法采集音频。请重新连接，在系统设置中检查麦克风权限，或在设置中选择其他麦克风后重试。",
         "providerRateLimited": "你的转录服务商限制了请求频率。请稍候再试。",
         "customEndpointInvalid": "自定义转写端点未配置或其 URL 无效。请在“设置 → 语音转文字”中更新。",
@@ -456,10 +460,8 @@
         "title": "外观"
       },
       "floatingIcon": {
-        "autoHide": "空闲时自动隐藏",
-        "autoHideDescription": "在开始听写前保持图标隐藏",
-        "description": "控制听写图标在屏幕上的显示",
-        "title": "悬浮图标",
+        "description": "选择听写时录音胶囊的显示位置",
+        "title": "录音胶囊",
         "startPosition": "起始位置",
         "startPositionDescription": "语音录制面板在屏幕上的显示位置",
         "bottomRight": "右下角",

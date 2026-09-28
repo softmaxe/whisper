@@ -2,9 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { deferred } = require("./harness/deferred");
 
-test("the resting pill stays suppressed until bounds and compositor frames settle", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
+test("the pill stays suppressed until bounds and compositor frames settle", async () => {
+  const { createPillVisibilityHandoff } = await import("../../src/utils/pillVisibilityHandoff.ts");
   const bounds = deferred();
   const frames = deferred();
   const visibility = [];
@@ -26,8 +25,7 @@ test("the resting pill stays suppressed until bounds and compositor frames settl
 });
 
 test("a new error invalidates an older in-flight pill reveal", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
+  const { createPillVisibilityHandoff } = await import("../../src/utils/pillVisibilityHandoff.ts");
   const bounds = deferred();
   const visibility = [];
   const handoff = createPillVisibilityHandoff({
@@ -45,8 +43,7 @@ test("a new error invalidates an older in-flight pill reveal", async () => {
 });
 
 test("a rejecting settleBounds still releases suppression instead of stranding the pill", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
+  const { createPillVisibilityHandoff } = await import("../../src/utils/pillVisibilityHandoff.ts");
   const visibility = [];
   const handoff = createPillVisibilityHandoff({
     onSuppressedChange: (suppressed) => visibility.push(suppressed),
@@ -62,28 +59,8 @@ test("a rejecting settleBounds still releases suppression instead of stranding t
   assert.deepEqual(visibility, [true, false]);
 });
 
-test("a rejecting hideWindow still releases suppression instead of stranding the pill", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
-  const visibility = [];
-  const handoff = createPillVisibilityHandoff({
-    onSuppressedChange: (suppressed) => visibility.push(suppressed),
-    shouldAutoHide: () => true,
-    hideWindow: async () => {
-      throw new Error("window already gone");
-    },
-  });
-
-  handoff.suppress();
-  const result = await handoff.releaseAfter(async () => {});
-
-  assert.deepEqual(result, { released: true, superseded: false });
-  assert.deepEqual(visibility, [true, false]);
-});
-
 test("cancel supersedes an in-flight release but keeps the pill suppressed", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
+  const { createPillVisibilityHandoff } = await import("../../src/utils/pillVisibilityHandoff.ts");
   const bounds = deferred();
   const visibility = [];
   const handoff = createPillVisibilityHandoff({
@@ -110,8 +87,7 @@ test("cancel supersedes an in-flight release but keeps the pill suppressed", asy
 });
 
 test("dispose permanently silences the handoff, including releases started later", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
+  const { createPillVisibilityHandoff } = await import("../../src/utils/pillVisibilityHandoff.ts");
   const bounds = deferred();
   const visibility = [];
   const handoff = createPillVisibilityHandoff({
@@ -130,21 +106,4 @@ test("dispose permanently silences the handoff, including releases started later
     superseded: true,
   });
   assert.deepEqual(visibility, [true], "no callback may fire after dispose");
-});
-
-test("auto-hide closes the native window before releasing DOM suppression", async () => {
-  const { createPillVisibilityHandoff } =
-    await import("../../src/utils/pillVisibilityHandoff.ts");
-  const order = [];
-  const handoff = createPillVisibilityHandoff({
-    onSuppressedChange: (suppressed) => order.push(suppressed ? "suppress" : "release"),
-    shouldAutoHide: () => true,
-    hideWindow: async () => order.push("hide"),
-    waitForFrames: async () => assert.fail("visible-frame wait should not run"),
-  });
-
-  handoff.suppress();
-  await handoff.releaseAfter(async () => order.push("bounds"));
-
-  assert.deepEqual(order, ["suppress", "bounds", "hide", "release"]);
 });

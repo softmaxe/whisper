@@ -402,8 +402,8 @@ class IPCHandlers {
       this.windowManager.hideDictationPanel();
     });
 
-    ipcMain.handle("show-dictation-panel", () => {
-      this.windowManager.showDictationPanel({ reposition: true });
+    ipcMain.handle("show-dictation-panel", (_event, options) => {
+      this.windowManager.showDictationPanel({ reposition: options?.reposition !== false });
     });
 
     ipcMain.handle("capture-dictation-target", async () => {
