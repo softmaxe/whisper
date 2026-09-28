@@ -705,16 +705,16 @@ class AudioManager {
 
       micStream.getTracks().forEach((track) => track.stop());
       this._markCaptureStreamReleased();
-      await this.finalizeBatchRecording(segment);
+      await this.finalizeBatchRecording(segment, recorder._processingPipeline);
     };
 
     if (!adoption) recorder.start(RECORDING_TIMESLICE_MS);
     return recorder;
   }
 
-  async finalizeBatchRecording(finalSegment) {
-    const processingPipeline = this._startProcessingPipeline();
+  async finalizeBatchRecording(finalSegment, processingPipeline = this._startProcessingPipeline()) {
     const wasCancelled = () => this._shouldAbandonProcessingPipeline(processingPipeline);
+    if (wasCancelled()) return;
     this.micRecovery.stop();
     this.teardownSpeechGate();
     this.isRecording = false;
@@ -824,6 +824,9 @@ class AudioManager {
       (this.mediaRecorder.state === "recording" || (this.isRecording && this.mediaRecorder.onstop))
     ) {
       this._endCaptureSession();
+      // Own finalization before stop queues its final data and stop events.
+      // Cancellation in that interval must invalidate those events too.
+      this.mediaRecorder._processingPipeline = this._startProcessingPipeline();
       if (this.mediaRecorder.state === "recording") this.mediaRecorder.stop();
       this.mediaRecorder.stream?.getTracks().forEach((track) => track.stop());
       this.isRecording = false;
@@ -1085,7 +1088,10 @@ class AudioManager {
           : {}),
         ...this._takePendingResultExtras(),
       };
-      this.onTranscriptionComplete?.(result);
+      // Delivery and persistence belong to this pipeline. Keep processing
+      // visible until the renderer has received the asynchronous paste outcome.
+      await this.onTranscriptionComplete?.(result);
+      if (wasCancelled()) return;
 
       logger.info(
         "Pipeline timing",
@@ -1527,6 +1533,7 @@ class AudioManager {
 
     const eventId = clientTranscriptionId || crypto.randomUUID();
     const occurredAt = analyticsOccurredAt ? new Date(analyticsOccurredAt) : new Date();
+    const audioBlob = this.lastAudioBlob;
     const metadata = this.lastAudioMetadata || {};
     try {
       await window.electronAPI.recordAnalyticsEvent({
@@ -1554,22 +1561,20 @@ class AudioManager {
       });
 
       // Save audio if we have a captured blob and the transcription was saved successfully
-      if (result?.id && this.lastAudioBlob) {
+      if (result?.id && audioBlob) {
         if (audioRetentionDays > 0) {
           try {
-            const arrayBuffer = await this.lastAudioBlob.arrayBuffer();
-            await window.electronAPI.saveTranscriptionAudio(
-              result.id,
-              arrayBuffer,
-              this.lastAudioMetadata
-            );
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            await window.electronAPI.saveTranscriptionAudio(result.id, arrayBuffer, metadata);
           } catch (audioErr) {
             // Non-blocking: transcription is saved even if audio save fails
             logger.warn("Failed to save transcription audio", { error: audioErr.message }, "audio");
           }
         }
-        this.lastAudioBlob = null;
-        this.lastAudioMetadata = null;
+        if (this.lastAudioBlob === audioBlob) {
+          this.lastAudioBlob = null;
+          this.lastAudioMetadata = null;
+        }
       }
 
       return true;

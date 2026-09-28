@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const React = require("react");
 const { createRoot } = require("react-dom/client");
+const { renderToStaticMarkup } = require("react-dom/server");
 const {
   createRendererServer,
   installBrowserGlobals,
@@ -144,10 +145,24 @@ async function setup(t, { cues = false } = {}) {
     dataRetentionEnabled: false,
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
+  const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
+  const { DictationErrorCard } = await vite.ssrLoadModule(
+    "/components/dictation/DictationErrorCard.tsx"
+  );
+  const { resolveRecordingPillState } = await vite.ssrLoadModule(
+    "/helpers/voicePillPresentation.js"
+  );
   const toasts = errors;
-  const toast = (error) => errors.push(error);
+  let activeError = null;
+  const toast = (error) => {
+    errors.push(error);
+    if (error.presentation === "dictation-error") activeError = error;
+  };
+  const dismissDictationError = () => {
+    activeError = null;
+  };
   function Harness() {
-    hook = useAudioRecording(toast);
+    hook = useAudioRecording(toast, { dismissDictationError });
     return null;
   }
   root = createRoot(container);
@@ -158,6 +173,16 @@ async function setup(t, { cues = false } = {}) {
     toasts,
     settings: useSettingsStore,
     errors,
+    recovery: () => activeError,
+    recoveryMarkup: () =>
+      activeError
+        ? renderToStaticMarkup(
+            React.createElement(DictationErrorCard, {
+              ...activeError,
+              onAction: (action) => action.onClick(),
+            })
+          )
+        : "",
     tones,
     unmount: () =>
       React.act(async () => {
@@ -171,6 +196,19 @@ async function setup(t, { cues = false } = {}) {
     recorders,
     readers,
     hook: () => hook,
+    presentation: () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(VoicePill, {
+          variant: "floating",
+          state: resolveRecordingPillState(hook),
+          getAudioLevel: hook.getAudioLevel,
+        })
+      );
+      return {
+        rendered: markup !== "",
+        motion: markup.match(/data-motion="([^"]+)"/)?.[1] ?? null,
+      };
+    },
     advance: (ms) => {
       now += ms;
     },
@@ -220,6 +258,7 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));
   assert.equal(h.hook().isPreparing, true);
   assert.equal(h.lifecycle.at(-1), "preparing");
+  assert.equal(h.presentation().motion, "sweep");
   assert.equal(opens.length, 1);
   assert.equal(h.timing().at(-1)?.stages.preparationEntered, 20);
   h.advance(40);
@@ -238,12 +277,17 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   assert.equal(trace.stages.readyFeedback, undefined);
   assert.equal(trace.stages.firstAudio, undefined);
   assert.equal(trace.outcome, "pending");
+  assert.equal(h.presentation().motion, "sweep");
   await h.deliver();
   assert.equal(h.timing().at(-1).outcome, "completed");
   assert.equal(h.timing().at(-1).stages.firstAudio, 190);
   assert.equal(h.timing().at(-1).stages.readyFeedback, 190);
   assert.equal(h.hook().isRecording, true);
+  assert.equal(h.presentation().motion, "live");
   await React.act(async () => h.hook().cancelRecording());
+  assert.equal(h.presentation().motion, null);
+  assert.equal(h.presentation().rendered, false);
+  assert.equal(h.hook().getAudioLevel(), null);
 });
 
 test("a silent input frame establishes readiness after acquisition without waiting for speech", async (t) => {
@@ -268,6 +312,17 @@ test("a silent input frame establishes readiness after acquisition without waiti
   assert.equal(h.media.track.readyState, "live");
   assert.equal(h.recorders.length, 1);
   assert.equal(h.recorders[0].state, "recording");
+  assert.equal(h.hook().getAudioLevel(), 0);
+  assert.equal(h.presentation().motion, "live");
+  h.media.setInputSample(144);
+  assert.ok(h.hook().getAudioLevel() > 0);
+  assert.equal(h.presentation().motion, "live");
+  h.media.setInputSample(128);
+  // Repeated presentation reads cannot turn visual breathing into measured audio.
+  h.advance(2400);
+  await h.paint();
+  assert.equal(h.presentation().motion, "live");
+  assert.equal(h.hook().getAudioLevel(), 0);
 });
 
 test("preparation and start share one capture and retain first audio observed before ready feedback", async (t) => {
@@ -365,6 +420,7 @@ test("cancelling preparation preserves the old identity when its acquisition res
   await React.act(async () => old.resolve(oldStream));
   assert.equal(oldStopped, true);
   assert.equal(h.hook().isPreparing, true);
+  assert.equal(h.presentation().motion, "sweep");
   const oldLate = h
     .timing()
     .filter((entry) => entry.requestId === h.request.requestId)
@@ -386,6 +442,7 @@ test("cancelling preparation preserves the old identity when its acquisition res
   await h.paint();
   await React.act(async () => h.target.resolve());
   const completed = h.timing().at(-1);
+  assert.equal(h.presentation().motion, "live");
   assert.equal(completed.requestId, nextRequest.requestId);
   assert.equal(completed.outcome, "completed");
   assert.equal(completed.stages.acquisitionCompleted, 70);
@@ -681,6 +738,56 @@ test("a selected microphone disconnect ends Dictation and reports failure withou
   assert.equal(stopped, true);
   assert.deepEqual(opens, ["phone"]);
   assert.match(h.toasts.at(-1).description, /Reconnect it/);
+  assert.match(h.recoveryMarkup(), /role="alert"/);
+  assert.match(h.recoveryMarkup(), /Reconnect it/);
+  assert.match(h.recoveryMarkup(), /Retry/);
+});
+
+test("microphone recovery Retry gives a slow connection the presentation before readiness", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  h.media.mediaDevices.getUserMedia = async () => {
+    throw Object.assign(new Error("Device unavailable"), { name: "NotReadableError" });
+  };
+  await React.act(async () => h.events.StartDictation());
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isPreparing, false);
+  assert.match(h.recoveryMarkup(), /Retry/);
+  const retry = h.recovery().actions.find((action) => action.icon === "retry");
+  const acquisition = deferred();
+  h.media.mediaDevices.getUserMedia = () => acquisition.promise;
+  let retryResult;
+  await React.act(async () => {
+    retryResult = retry.onClick();
+  });
+  assert.equal(h.recovery(), null, "the old error must not cover connection feedback");
+  assert.equal(h.hook().isPreparing, true);
+  assert.equal(h.presentation().motion, "sweep");
+  await React.act(async () => h.hook().cancelRecording());
+  await React.act(async () => {
+    acquisition.resolve(h.media.stream);
+    await retryResult;
+  });
+  assert.equal(h.recovery(), null, "cancelled retry must not restore its dismissed prompt");
+  assert.equal(h.presentation().rendered, false);
+  assert.equal(h.media.track.readyState, "ended");
+});
+
+test("a failed recovery Retry replaces its old prompt with the new actionable failure", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  h.media.mediaDevices.getUserMedia = async () => {
+    throw Object.assign(new Error("Device unavailable"), { name: "NotReadableError" });
+  };
+  await React.act(async () => h.events.StartDictation());
+  await React.act(async () => h.target.resolve());
+  const previous = h.recovery();
+  await React.act(async () => previous.actions[0].onClick());
+  assert.notEqual(h.recovery(), previous);
+  assert.match(h.recoveryMarkup(), /Retry/);
+  assert.equal(h.hook().isPreparing, false);
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(h.lifecycle.at(-1), "idle");
 });
 
 test("a stale selected ID with only a label match fails instead of guessing physical identity", async (t) => {
@@ -890,6 +997,7 @@ test("a delayed selected input remains the only acquisition while a healthy alte
   await React.act(async () => t.mock.timers.tick(5000));
   assert.equal(h.hook().isPreparing, true);
   assert.equal(h.hook().isRecording, false);
+  assert.equal(h.presentation().motion, "sweep");
   assert.deepEqual(opens, ["phone"]);
   await React.act(async () => pending.resolve(h.media.stream));
   await h.deliverAll();
@@ -939,6 +1047,7 @@ for (const action of ["stop", "cancel", "teardown"]) {
       assert.equal(h.recorders[0].state, "inactive");
       assert.equal(h.tones.length, 0);
       assert.equal(h.lifecycle.includes("recording"), false);
+      if (action !== "teardown") assert.equal(h.presentation().motion, null);
       assert.equal(h.timing().at(-1).stages.readyFeedback, undefined);
     }
   );

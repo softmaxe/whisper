@@ -11,7 +11,7 @@ const PANEL_RETURN_FADE_MS = 180;
  * Single owner of the main window size: panel > menu > toast > compact pill >
  * base. Grows apply immediately so content never clips; shrinks wait for the
  * content collapse animation to finish before the window snaps down. Hides the
- * window when no dictation or feedback owns it. Also owns
+ * window when no dictation, brief pill finish, or feedback owns it. Also owns
  * the two pill-visibility handoffs around risky native resizes: the
  * dictation-error handoff (pill hidden until the window leaves the error
  * footprint) and the panel-return handoff (pill faded out across the
@@ -24,6 +24,7 @@ export function useMainWindowSizeOwner({
   isCommandMenuOpen,
   isCompactPill,
   isDictationActive,
+  isPillFinishing = false,
   liveTranscriptOpen,
   liveTranscriptMounted,
   liveTranscriptOpenRef,
@@ -75,6 +76,7 @@ export function useMainWindowSizeOwner({
   useEffect(() => {
     if (
       !isDictationActive &&
+      !isPillFinishing &&
       toastCount === 0 &&
       dictationErrorActionCount === 0 &&
       !handoffActive &&
@@ -85,6 +87,7 @@ export function useMainWindowSizeOwner({
     }
   }, [
     isDictationActive,
+    isPillFinishing,
     toastCount,
     dictationErrorActionCount,
     handoffActive,

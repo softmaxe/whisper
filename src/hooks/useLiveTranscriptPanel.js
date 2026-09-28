@@ -21,7 +21,13 @@ const COPY_RECOVERY_HIDE_MS = 5000;
  * new transcript line from pushing the panel up before its BrowserWindow
  * catches up.
  */
-export function useLiveTranscriptPanel({ resizeToContent, onWillOpen, isRecording, isProcessing }) {
+export function useLiveTranscriptPanel({
+  resizeToContent,
+  onWillOpen,
+  isRecording,
+  isPreparing,
+  isProcessing,
+}) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [text, setText] = useState("");
@@ -418,6 +424,15 @@ export function useLiveTranscriptPanel({ resizeToContent, onWillOpen, isRecordin
     setPhase("listening");
     setEntrancePhase("idle");
   }, [clearEntranceTimers, clearFinalHide, resetText]);
+
+  useLayoutEffect(() => {
+    if (isPreparing && copyFallbackRef.current) {
+      // A new request owns the pill before device acquisition finishes. Reuse
+      // immediate teardown so pending resize callbacks and late previews cannot
+      // revive the completed result if this preparation is cancelled or fails.
+      dismissForError();
+    }
+  }, [dismissForError, isPreparing]);
 
   useEffect(() => {
     const reveal = () => {

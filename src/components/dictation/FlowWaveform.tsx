@@ -5,6 +5,7 @@ import {
   resolveFlowBarHeight,
   resolveFlowBarTarget,
   resolveFlowSweepOpacity,
+  resolveFlowSweepTarget,
   resolveFlowWaveOpacity,
   resolveFlowWaveTarget,
 } from "./waveformMath";
@@ -44,7 +45,10 @@ const MOTION_BARS: Record<
   }
 > = {
   live: { target: resolveFlowBarTarget, opacity: () => 1 },
-  sweep: { target: () => 0, opacity: resolveFlowSweepOpacity },
+  sweep: {
+    target: (_rms, index, now) => resolveFlowSweepTarget(index, now),
+    opacity: resolveFlowSweepOpacity,
+  },
   wave: {
     target: (_rms, index, now) => resolveFlowWaveTarget(index, now),
     opacity: resolveFlowWaveOpacity,
@@ -96,9 +100,10 @@ export function FlowWaveform({
       // same speed as 60Hz ones.
       const frames = last ? Math.min(4, (now - last) / FRAME_MS) : 1;
       last = now;
-      const rms = motion === "live" ? (getLevel() ?? 0) : 0;
+      const rms = motion === "live" ? getLevel() : 0;
       for (let i = 0; i < FLOW_BAR_COUNT; i += 1) {
-        const target = bars.target(rms, i, now);
+        // A missing or suspended source must not look like ready silence.
+        const target = rms === null ? 0 : bars.target(rms, i, now);
         const rate = target > lanes[i] ? RISE : FALL;
         lanes[i] += (target - lanes[i]) * (1 - Math.pow(1 - rate, frames));
         paintBar(i, bars.opacity(i, now));

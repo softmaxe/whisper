@@ -14,6 +14,7 @@ import {
   resolveListeningEntrancePresentation,
   resolveLiveTranscriptEntrancePresentation,
   resolvePillVisualSuppression,
+  resolveRecordingPillState,
   resolveVoiceActivityPresentation,
   resolveVoiceHorizontalDirection,
   resolveVoicePanelCorePresentation,
@@ -30,6 +31,7 @@ import { useListeningEntrancePhase } from "./hooks/useListeningEntrancePhase";
 import { useLiveTranscriptPanel } from "./hooks/useLiveTranscriptPanel";
 import { useMainProcessNotifications } from "./hooks/useMainProcessNotifications";
 import { useMainWindowSizeOwner } from "./hooks/useMainWindowSizeOwner";
+import { usePillFinish } from "./hooks/usePillFinish";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useWindowResizeCompensation } from "./hooks/useWindowResizeCompensation";
 import "./index.css";
@@ -175,12 +177,18 @@ export default function App() {
     resizeToContent: resizeLiveTranscriptToContent,
     onWillOpen: onPanelOpened,
     isRecording,
+    isPreparing,
     isProcessing,
   });
 
   useLayoutEffect(() => {
     liveTranscriptApiRef.current = liveTranscript;
   });
+
+  const isPillFinishing = usePillFinish(
+    isRecording || isVisuallyProcessing,
+    toastCount > 0 || liveTranscript.mounted || Boolean(liveTranscript.copyFallback)
+  );
 
   // Must run before the size owner's ladder effect below: the error teardown
   // drops the live transcript's open ref, which the ladder reads this commit.
@@ -191,7 +199,8 @@ export default function App() {
   // Direction is part of the interaction's geometry, not a live decoration.
   // Hold the origin through processing and panel exit so every close animation
   // returns to the same side from which that voice session started.
-  const voiceDirectionLocked = isRecording || isVisuallyProcessing || liveTranscript.mounted;
+  const voiceDirectionLocked =
+    isRecording || isVisuallyProcessing || isPillFinishing || liveTranscript.mounted;
   useLayoutEffect(() => {
     if (voiceDirectionLocked) return;
     setVoiceHorizontalDirection(
@@ -225,6 +234,7 @@ export default function App() {
     isCommandMenuOpen,
     isCompactPill: windowFitsCompactPill,
     isDictationActive: isRecording || isVisuallyProcessing,
+    isPillFinishing,
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptMounted: liveTranscript.mounted,
     liveTranscriptOpenRef: liveTranscript.openRef,
@@ -341,7 +351,7 @@ export default function App() {
     isProcessing,
     isHovered,
   });
-  const pillIsInteractive = voicePillInteraction.pillInteractive;
+  const pillIsInteractive = !isPillFinishing && voicePillInteraction.pillInteractive;
   // The cancel button pours out of the pill as a fused liquid skin — except
   // inside the Live Transcript panel, where the pill is already headless and
   // the classic bordered circle stays (with the same emergence motion).
@@ -375,10 +385,15 @@ export default function App() {
   );
   const activeVoicePanelLabel =
     activeVoicePanelMode === "live-transcript" ? t("transcriptionPreview.label") : undefined;
-  const commonPillState =
-    micState === "unavailable"
-      ? "unavailable"
-      : listeningEntrance.activeState || voiceActivity.activeState || micState;
+  const commonPillState = resolveRecordingPillState({
+    isRecording,
+    isPreparing,
+    isStopping,
+    isProcessing,
+    micCaptureStatus,
+    isFinishing: isPillFinishing,
+    entranceState: listeningEntrance.activeState,
+  });
   // The pill shape tracks the pill's footprint through the entrance phases
   // (the panel's logo-collapsed thinking renders 40×40 even while recording;
   // the floating pill stays the Flow bar). These are
@@ -405,26 +420,29 @@ export default function App() {
       : LIVE_TRANSCRIPT_ENTRANCE_TIMING.horizontalMs;
   const dictationErrorSuppressesPill =
     dictationErrorActionCount > 0 || dictationErrorPillHandoffActive;
-  const pillVisuallySuppressed =
-    Boolean(liveTranscript.copyFallback) ||
-    resolvePillVisualSuppression({
-      dictationErrorSuppressed: dictationErrorSuppressesPill,
-      panelReturnResizeActive,
-    });
+  const pillVisuallySuppressed = resolvePillVisualSuppression({
+    liveTranscriptCopyFallback: liveTranscript.copyFallback,
+    dictationErrorSuppressed: dictationErrorSuppressesPill,
+    panelReturnResizeActive,
+  });
+  const pillFadingOut = pillVisuallySuppressed || isPillFinishing;
 
   return (
     <div className="dictation-window">
       {/* The panel footer can hide this pill, but never unmounts it. */}
       <div
         className={`voice-pill-position voice-pill-position-${voicePillDock} fixed z-50 transition-opacity duration-150 ease-out ${
-          pillVisuallySuppressed ? "pointer-events-none" : ""
-        } ${pillVisuallySuppressed ? "opacity-0" : "opacity-100"}`}
+          pillFadingOut ? "pointer-events-none" : ""
+        } ${pillFadingOut ? "opacity-0" : "opacity-100"}`}
         style={{
           "--voice-pill-travel-duration": `${voicePillTravelDuration}ms`,
-          visibility: !isRecording && !isVisuallyProcessing && !panelMounted ? "hidden" : undefined,
+          visibility:
+            !isRecording && !isVisuallyProcessing && !isPillFinishing && !panelMounted
+              ? "hidden"
+              : undefined,
         }}
         data-dictation-error-suppressed={dictationErrorSuppressesPill || undefined}
-        aria-hidden={pillVisuallySuppressed || undefined}
+        aria-hidden={pillFadingOut || undefined}
       >
         <div
           className="relative flex items-center"
