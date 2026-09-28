@@ -29,9 +29,11 @@ async function mountCapture(
     initialStorage = {},
     input = "external",
     holdFrames = false,
+    mockTimeouts = false,
+    serverUnavailable = false,
   } = {}
 ) {
-  t.mock.timers.enable({ apis: ["setInterval"] });
+  t.mock.timers.enable({ apis: ["setInterval", ...(mockTimeouts ? ["setTimeout"] : [])] });
   let root;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
@@ -51,6 +53,8 @@ async function mountCapture(
   const contexts = [];
   const transcription = deferred();
   const audioPayloads = [];
+  const transcriptionSignals = [];
+  const connectionSignals = [];
   const { window, storage } = installBrowserGlobals(t, {
     initialStorage: {
       onboardingCompleted: "true",
@@ -172,7 +176,20 @@ async function mountCapture(
   });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, options) => {
+    if (options.method === "HEAD") {
+      connectionSignals.push(options.signal);
+      if (!serverUnavailable) return { status: 405 };
+      return new Promise((_, reject) => {
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), {
+          once: true,
+        });
+      });
+    }
     audioPayloads.push(options.body);
+    transcriptionSignals.push(options.signal);
+    options.signal?.addEventListener("abort", () => transcription.reject(options.signal.reason), {
+      once: true,
+    });
     return transcription.promise;
   };
   t.after(() => {
@@ -213,6 +230,8 @@ async function mountCapture(
     contexts,
     storage,
     audioPayloads,
+    transcriptionSignals,
+    connectionSignals,
     transcription,
     flush,
     async act(fn) {
@@ -259,6 +278,82 @@ async function mountCapture(
       return track;
     },
   };
+}
+
+test("stopping silent Dictation returns the recording pill to idle without transcription", async (t) => {
+  const h = await mountCapture(t);
+  let start;
+  await h.act(() => {
+    start = h.api().startRecording();
+  });
+  await h.act(() => h.resolveMic(0));
+  assert.equal(await start, true);
+  await h.act(() => t.mock.timers.tick(100));
+  await h.act(() => h.api().stopRecording());
+  await h.act(() => h.recorders[0].finish());
+  await h.flush();
+
+  assert.equal(h.api().isProcessing, false, "silence must not leave the pill processing");
+  assert.equal(h.api().isRecording, false);
+  assert.equal(h.api().isStopping, false);
+  assert.equal(h.lifecycle.at(-1), "idle");
+  assert.equal(h.audioPayloads.length, 0);
+  assert.deepEqual(h.pastes, []);
+});
+
+test("silent Dictation with pre-roll leaves processing after three seconds when the server is unreachable", async (t) => {
+  const target = deferred();
+  const h = await mountCapture(t, {
+    captureTarget: () => target.promise,
+    mockTimeouts: true,
+    serverUnavailable: true,
+  });
+  await h.act(() => h.api().startRecording());
+  await h.act(() => h.resolveMic(0));
+  await h.act(() => h.recorders[0].data("silent pre-roll".repeat(200)));
+  await h.act(() => target.resolve("editor"));
+  await h.act(() => t.mock.timers.tick(100));
+  await h.act(() => h.api().stopRecording());
+  await h.act(() => h.recorders[0].finish());
+  assert.equal(h.audioPayloads.length, 0);
+  await h.act(() => t.mock.timers.tick(2_999));
+  assert.equal(h.api().isProcessing, true);
+  await h.act(() => t.mock.timers.tick(1));
+
+  assert.equal(
+    h.api().isProcessing,
+    false,
+    "the pill must not wait indefinitely for transcription"
+  );
+  assert.equal(h.lifecycle.at(-1), "idle");
+  assert.deepEqual(h.pastes, []);
+  assert.equal(h.connectionSignals[0].aborted, true);
+  assert.equal(h.toasts.length, 1, "the user must get a recoverable error");
+  assert.equal(h.toasts[0].title, "Transcription server unavailable");
+  assert.match(h.toasts[0].description, /server.*3 seconds/);
+  assert.equal(h.saved[0][2].errorCode, "TRANSCRIPTION_CONNECTION_FAILED");
+});
+
+for (const serverUnavailable of [true, false]) {
+  const phase = serverUnavailable ? "connection probe" : "transcription";
+  test(`cancelling a stalled ${phase} stays idle without a later timeout error`, async (t) => {
+    const h = await mountCapture(t, { mockTimeouts: true, serverUnavailable });
+    await h.act(() => h.api().startRecording());
+    await h.act(() => h.resolveMic(0));
+    await h.act(() => h.api().stopRecording());
+    await h.act(() => h.recorders[0].finish());
+    assert.equal(h.audioPayloads.length, serverUnavailable ? 0 : 1);
+    await h.act(() => h.api().cancelProcessing());
+    await h.act(() => t.mock.timers.tick(30_000));
+
+    assert.equal(h.api().isProcessing, false);
+    assert.equal(h.lifecycle.at(-1), "idle");
+    const signals = serverUnavailable ? h.connectionSignals : h.transcriptionSignals;
+    assert.equal(signals[0].aborted, true);
+    assert.deepEqual(h.toasts, []);
+    assert.deepEqual(h.saved, []);
+    assert.deepEqual(h.pastes, []);
+  });
 }
 
 test("normal stop releases capture before recorder delivery or transcription with an old idle hold", async (t) => {
