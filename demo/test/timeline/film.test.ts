@@ -119,16 +119,7 @@ describe("Captions", () => {
       }
     });
   }
-
-  it("only use characters in the bundled font subset, in both cuts", () => {
-    const charset = new Set(fs.readFileSync(path.join(ROOT, "public/fonts/LXGWWenKai-Regular.subset.charset.txt"), "utf8"));
-    for (const c of captions) {
-      for (const lang of LANGS) {
-        const missing = [...c.text[lang]].filter((ch) => !charset.has(ch));
-        expect(missing, `${c.id} (${lang}): re-run scripts/subset_font.py with these characters`).toEqual([]);
-      }
-    }
-  });
+  // font-subset.test.ts checks Captions, with every other handwritten string, against the font subset.
 });
 
 describe("Sound cues", () => {

@@ -25,7 +25,7 @@ from pathlib import Path
 from fontTools import subset
 
 OUT = Path(__file__).resolve().parent.parent / "public/fonts/LXGWWenKai-Regular.subset.woff2"
-# Every character the subset can draw; tests check Captions against it.
+# Every character the subset can draw; tests check all handwritten text against it.
 CHARSET = OUT.with_name("LXGWWenKai-Regular.subset.charset.txt")
 
 
