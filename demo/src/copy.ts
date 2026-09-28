@@ -1,6 +1,8 @@
 // On-screen words for each language. App labels match src/locales; the
 // dictated sentences are sample data written for the demo.
 
+import type { Lang } from "../timeline/types.ts";
+
 export interface Token {
   text: string;
   /** Spoken filler that text cleanup removes. */
@@ -8,27 +10,9 @@ export interface Token {
 }
 
 export interface Copy {
-  lang: "en" | "zh-CN";
   font: string;
-  /** Joins spoken tokens: a space in English, nothing in Chinese. */
+  /** Separates the `mail.spoken` tokens on the You said card: a space in English, nothing in Chinese. */
   gap: string;
-  slogan: string;
-  subtitle: string;
-  key: { doubleTap: string; hold: string };
-  clock: Record<"morning" | "chat" | "snippet" | "hold" | "upload" | "night", string>;
-  menuClock: Record<"morning" | "chat" | "snippet" | "hold" | "upload" | "night", string>;
-  caption: {
-    dictate: string;
-    cleanup: string;
-    learn: string;
-    snippet: string;
-    hold: string;
-    upload: string;
-    history: string;
-    insights: string;
-    servers: string;
-    serversNote: string;
-  };
   saidLabel: string;
   mail: {
     app: string;
@@ -112,40 +96,8 @@ export interface Copy {
 }
 
 const en: Copy = {
-  lang: "en",
   font: '-apple-system, "SF Pro Display", "Helvetica Neue", sans-serif',
   gap: " ",
-  slogan: "Speak. It's typed.",
-  subtitle: "Whisper · dictation for your Mac, on your own servers",
-  key: { doubleTap: "Double-tap", hold: "Hold mode · set in Hotkeys" },
-  clock: {
-    morning: "7:45 AM",
-    chat: "9:30 AM",
-    snippet: "12:15 PM",
-    hold: "3:05 PM",
-    upload: "6:40 PM",
-    night: "10:20 PM",
-  },
-  menuClock: {
-    morning: "Mon 7:45 AM",
-    chat: "Mon 9:30 AM",
-    snippet: "Mon 12:15 PM",
-    hold: "Mon 3:05 PM",
-    upload: "Mon 6:40 PM",
-    night: "Mon 10:20 PM",
-  },
-  caption: {
-    dictate: "Double-tap fn, speak, and it's pasted",
-    cleanup: "Fillers gone, punctuation in",
-    learn: "Fix a word once. Whisper learns it.",
-    snippet: "Say a trigger, get the whole snippet",
-    hold: "Hold fn to talk, let go to paste",
-    upload: "Drop in recordings, transcribe in batches",
-    history: "Every dictation, searchable",
-    insights: "Your day, in words",
-    servers: "Your servers. Your data.",
-    serversNote: "Connect any OpenAI-compatible speech and cleanup server",
-  },
   saidLabel: "You said",
   mail: {
     app: "Mail",
@@ -163,7 +115,7 @@ const en: Copy = {
       { text: "me" },
       { text: "uh", filler: true },
       { text: "let's" },
-      { text: "ship" },
+      { text: "launch" },
       { text: "at" },
       { text: "ten" },
       { text: "and" },
@@ -173,7 +125,7 @@ const en: Copy = {
       { text: "notes" },
       { text: "after" },
     ],
-    cleaned: "Friday works for me. Let's ship at 10, and I'll send the notes after.",
+    cleaned: "Friday works for me. Let's launch at 10, and I'll send the notes after.",
   },
   chat: {
     app: "Team chat",
@@ -186,10 +138,10 @@ const en: Copy = {
     ],
     question: "Who's joining the design review at 11?",
     you: "You",
-    heard: "I'll join. Can you add Caitlin too?",
-    wrong: "Caitlin",
-    right: "Kaitlyn",
-    toast: "Added “Kaitlyn” to your dictionary",
+    heard: "I'll join. Bring the super base migration plan.",
+    wrong: "super base",
+    right: "Supabase",
+    toast: "Added “Supabase” to your dictionary",
     placeholder: "Message #design-review",
   },
   snippet: {
@@ -237,10 +189,10 @@ const en: Copy = {
       { time: "18:41", text: "Team sync: we agreed to move the launch review to Thursday." },
       { time: "15:05", text: "// Retry failed uploads with exponential backoff" },
       { time: "12:15", text: "Sounds great, grab any slot here: cal.com/alex/30min" },
-      { time: "09:30", text: "I'll join. Can you add Kaitlyn too?" },
+      { time: "09:30", text: "I'll join. Bring the Supabase migration plan." },
       {
         time: "07:45",
-        text: "Friday works for me. Let's ship at 10, and I'll send the notes after.",
+        text: "Friday works for me. Let's launch at 10, and I'll send the notes after.",
       },
     ],
     upload: {
@@ -267,7 +219,7 @@ const en: Copy = {
     settings: {
       speechToText: "Speech-to-Text",
       shared: "Dictation and file transcription share these settings.",
-      endpoint: "Endpoint URL",
+      endpoint: "Server URL",
       model: "Model",
       cleanup: "Text cleanup",
       enableCleanup: "Enable text cleanup",
@@ -284,40 +236,8 @@ const en: Copy = {
 };
 
 const zh: Copy = {
-  lang: "zh-CN",
   font: '-apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif',
   gap: "",
-  slogan: "开口，即成文。",
-  subtitle: "Whisper · Mac 听写，跑在你自己的服务器上",
-  key: { doubleTap: "双击", hold: "按住模式 · 在快捷键设置中切换" },
-  clock: {
-    morning: "上午 7:45",
-    chat: "上午 9:30",
-    snippet: "中午 12:15",
-    hold: "下午 3:05",
-    upload: "傍晚 6:40",
-    night: "晚上 10:20",
-  },
-  menuClock: {
-    morning: "周一 上午7:45",
-    chat: "周一 上午9:30",
-    snippet: "周一 中午12:15",
-    hold: "周一 下午3:05",
-    upload: "周一 下午6:40",
-    night: "周一 晚上10:20",
-  },
-  caption: {
-    dictate: "双击 fn，开口说，自动粘贴",
-    cleanup: "去掉语气词，补全标点",
-    learn: "改一次，Whisper 就记住了",
-    snippet: "说出触发词，展开整段内容",
-    hold: "按住 fn 说话，松开即粘贴",
-    upload: "拖入录音，批量转写",
-    history: "每一次听写，都能搜到",
-    insights: "今天的你，说了这么多",
-    servers: "你的服务器，你的数据。",
-    serversNote: "接入任意 OpenAI 兼容的语音识别与文本整理服务",
-  },
   saidLabel: "你说的",
   mail: {
     app: "邮件",
@@ -426,7 +346,7 @@ const zh: Copy = {
     settings: {
       speechToText: "语音转文字",
       shared: "听写与文件转录共用此配置。",
-      endpoint: "端点 URL",
+      endpoint: "服务器 URL",
       model: "模型",
       cleanup: "文本整理",
       enableCleanup: "启用文本整理",
@@ -442,5 +362,4 @@ const zh: Copy = {
   },
 };
 
-export const COPY = { en, "zh-CN": zh } as const;
-export type Lang = keyof typeof COPY;
+export const COPY: Record<Lang, Copy> = { en, "zh-CN": zh };

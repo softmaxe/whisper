@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { graphemes, revealText, spokenTokens } from "../src/lib/text.ts";
+import { graphemes, revealText } from "../src/lib/text.ts";
 
 describe("revealText", () => {
   it("reveals Latin text by characters", () => {
@@ -22,25 +22,5 @@ describe("revealText", () => {
 describe("graphemes", () => {
   it("counts user-perceived characters", () => {
     expect(graphemes("周五👋🏽").length).toBe(3);
-  });
-});
-
-describe("spokenTokens", () => {
-  it("splits English on spaces", () => {
-    expect(spokenTokens("I'll join. Can you", "en").map((t) => t.text)).toEqual([
-      "I'll",
-      "join.",
-      "Can",
-      "you",
-    ]);
-  });
-
-  it("chunks Chinese into pairs and keeps Latin words whole", () => {
-    expect(spokenTokens("带上Supabase的方案", "zh-CN").map((t) => t.text)).toEqual([
-      "带上",
-      "Supabase",
-      "的方",
-      "案",
-    ]);
   });
 });

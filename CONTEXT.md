@@ -56,3 +56,7 @@ and ends Dictation with a single press instead.
 **Hands-free dictation**:
 Dictation that continues after the Dictation hotkey is released, until the next
 Clean press or cancellation.
+
+**Clawd**:
+The mascot of the demo video: the Claude Code mascot, drawn in the Film's
+paper style.

@@ -1,0 +1,30 @@
+# Sample libraries the build downloads into demo/.cache/samples/ (git-ignored).
+#
+# Each library is one archive, pinned by an immutable URL (a commit or a dated
+# release) and the SHA-256 of that archive. `python -m whisper_audio.samples`
+# (the build's "Fetch samples" step) downloads a missing archive and verifies
+# it; the sample bank reads the SFZ instrument named by `sfz` straight from the
+# verified archive. To swap a library, change its entry here: the build fails
+# until `sha256` matches the new archive.
+#
+# `license` records what the source states; the licences have not been reviewed.
+
+[libraries.piano]
+name = "Upright Piano KW (FreePats)"
+role = "chords"
+version = "2022-02-21"
+source = "https://freepats.zenvoid.org/Piano/acoustic-grand-piano.html#UprightKW"
+license = "CC0 1.0"
+url = "https://freepats.zenvoid.org/Piano/UprightPianoKW/UprightPianoKW-SFZ+FLAC-20220221.7z"
+sha256 = "3a66da3b25a2fd9499d90bcf09f1aee4431825796e249361b48af59b1201e703"
+sfz = "UprightPianoKW-SFZ+FLAC-20220221/UprightPianoKW-20220221.sfz"
+
+[libraries.rhodes]
+name = "jRhodes3d, 1977 Rhodes Mark I Stage 73 (Jeff Learman)"
+role = "melody"
+version = "aea5b8d3e11e2f7102593789a4e0a0e41b30271a"
+source = "https://github.com/sfzinstruments/jlearman.jRhodes3d"
+license = "Samples CC BY-NC 4.0; SFZ files CC0"
+url = "https://github.com/sfzinstruments/jlearman.jRhodes3d/archive/aea5b8d3e11e2f7102593789a4e0a0e41b30271a.tar.gz"
+sha256 = "3ab4bcfd55e0274e22c3c92dd8bbe6267354dc45e2ae528812aa37e66e36a592"
+sfz = "jlearman.jRhodes3d-aea5b8d3e11e2f7102593789a4e0a0e41b30271a/jRhodes3d-mono-no-xfade.sfz"

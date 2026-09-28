@@ -15,7 +15,7 @@ Whisper turns speech into text and pastes it into the app you're using on your M
   <img src="docs/images/overview-en.png" alt="Whisper interface with local dictation history and navigation" width="800">
 </p>
 
-The screenshot uses sample data. See [demo](demo/README.md) to render the animated walkthrough in English or Chinese.
+The screenshot uses sample data. See [demo](demo/README.md) to render the hand-drawn explainer video in English or Chinese.
 
 ## Features
 
