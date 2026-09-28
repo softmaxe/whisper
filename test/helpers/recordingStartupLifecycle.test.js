@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const React = require("react");
 const { createRoot } = require("react-dom/client");
+const { renderToStaticMarkup } = require("react-dom/server");
 const {
   createRendererServer,
   installBrowserGlobals,
@@ -144,6 +145,10 @@ async function setup(t, { cues = false } = {}) {
     dataRetentionEnabled: false,
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
+  const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
+  const { resolveRecordingPillState } = await vite.ssrLoadModule(
+    "/helpers/voicePillPresentation.js"
+  );
   const toasts = errors;
   const toast = (error) => errors.push(error);
   function Harness() {
@@ -171,6 +176,19 @@ async function setup(t, { cues = false } = {}) {
     recorders,
     readers,
     hook: () => hook,
+    presentation: () => {
+      const markup = renderToStaticMarkup(
+        React.createElement(VoicePill, {
+          variant: "floating",
+          state: resolveRecordingPillState(hook),
+          getAudioLevel: hook.getAudioLevel,
+        })
+      );
+      return {
+        motion: markup.match(/data-motion="([^"]+)"/)?.[1] ?? null,
+        shape: markup.match(/data-shape="([^"]+)"/)?.[1],
+      };
+    },
     advance: (ms) => {
       now += ms;
     },
@@ -220,6 +238,7 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   await React.act(async () => h.events.ToggleDictation({ startupRequest: h.request }));
   assert.equal(h.hook().isPreparing, true);
   assert.equal(h.lifecycle.at(-1), "preparing");
+  assert.equal(h.presentation().motion, "sweep");
   assert.equal(opens.length, 1);
   assert.equal(h.timing().at(-1)?.stages.preparationEntered, 20);
   h.advance(40);
@@ -238,12 +257,17 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   assert.equal(trace.stages.readyFeedback, undefined);
   assert.equal(trace.stages.firstAudio, undefined);
   assert.equal(trace.outcome, "pending");
+  assert.equal(h.presentation().motion, "sweep");
   await h.deliver();
   assert.equal(h.timing().at(-1).outcome, "completed");
   assert.equal(h.timing().at(-1).stages.firstAudio, 190);
   assert.equal(h.timing().at(-1).stages.readyFeedback, 190);
   assert.equal(h.hook().isRecording, true);
+  assert.equal(h.presentation().motion, "live");
   await React.act(async () => h.hook().cancelRecording());
+  assert.equal(h.presentation().motion, null);
+  assert.equal(h.presentation().shape, "sliver");
+  assert.equal(h.hook().getAudioLevel(), null);
 });
 
 test("a silent input frame establishes readiness after acquisition without waiting for speech", async (t) => {
@@ -268,6 +292,17 @@ test("a silent input frame establishes readiness after acquisition without waiti
   assert.equal(h.media.track.readyState, "live");
   assert.equal(h.recorders.length, 1);
   assert.equal(h.recorders[0].state, "recording");
+  assert.equal(h.hook().getAudioLevel(), 0);
+  assert.equal(h.presentation().motion, "live");
+  h.media.setInputSample(144);
+  assert.ok(h.hook().getAudioLevel() > 0);
+  assert.equal(h.presentation().motion, "live");
+  h.media.setInputSample(128);
+  // Repeated presentation reads cannot turn visual breathing into measured audio.
+  h.advance(2400);
+  await h.paint();
+  assert.equal(h.presentation().motion, "live");
+  assert.equal(h.hook().getAudioLevel(), 0);
 });
 
 test("preparation and start share one capture and retain first audio observed before ready feedback", async (t) => {
@@ -365,6 +400,7 @@ test("cancelling preparation preserves the old identity when its acquisition res
   await React.act(async () => old.resolve(oldStream));
   assert.equal(oldStopped, true);
   assert.equal(h.hook().isPreparing, true);
+  assert.equal(h.presentation().motion, "sweep");
   const oldLate = h
     .timing()
     .filter((entry) => entry.requestId === h.request.requestId)
@@ -386,6 +422,7 @@ test("cancelling preparation preserves the old identity when its acquisition res
   await h.paint();
   await React.act(async () => h.target.resolve());
   const completed = h.timing().at(-1);
+  assert.equal(h.presentation().motion, "live");
   assert.equal(completed.requestId, nextRequest.requestId);
   assert.equal(completed.outcome, "completed");
   assert.equal(completed.stages.acquisitionCompleted, 70);
@@ -890,6 +927,7 @@ test("a delayed selected input remains the only acquisition while a healthy alte
   await React.act(async () => t.mock.timers.tick(5000));
   assert.equal(h.hook().isPreparing, true);
   assert.equal(h.hook().isRecording, false);
+  assert.equal(h.presentation().motion, "sweep");
   assert.deepEqual(opens, ["phone"]);
   await React.act(async () => pending.resolve(h.media.stream));
   await h.deliverAll();
@@ -939,6 +977,7 @@ for (const action of ["stop", "cancel", "teardown"]) {
       assert.equal(h.recorders[0].state, "inactive");
       assert.equal(h.tones.length, 0);
       assert.equal(h.lifecycle.includes("recording"), false);
+      if (action !== "teardown") assert.equal(h.presentation().motion, null);
       assert.equal(h.timing().at(-1).stages.readyFeedback, undefined);
     }
   );

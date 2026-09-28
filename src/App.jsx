@@ -14,6 +14,7 @@ import {
   resolveListeningEntrancePresentation,
   resolveLiveTranscriptEntrancePresentation,
   resolvePillVisualSuppression,
+  resolveRecordingPillState,
   resolveVoiceActivityPresentation,
   resolveVoiceHorizontalDirection,
   resolveVoicePanelCorePresentation,
@@ -415,10 +416,16 @@ export default function App() {
   );
   const activeVoicePanelLabel =
     activeVoicePanelMode === "live-transcript" ? t("transcriptionPreview.label") : undefined;
-  const commonPillState =
-    micState === "unavailable"
-      ? "unavailable"
-      : listeningEntrance.activeState || voiceActivity.activeState || micState;
+  const commonPillState = resolveRecordingPillState({
+    isRecording,
+    isPreparing,
+    isStopping,
+    isProcessing,
+    micCaptureStatus,
+    isHovered,
+    isCommandMenuOpen,
+    entranceState: listeningEntrance.activeState,
+  });
   // The pill shape tracks the pill's footprint through the entrance phases
   // (the panel's logo-collapsed thinking renders 40×40 even while recording;
   // the floating pill stays the Flow bar). These are

@@ -182,13 +182,14 @@ function installMicCaptureGlobals(t) {
     addEventListener() {},
     removeEventListener() {},
   };
+  let inputSample = 128;
   const node = () => ({
     connect() {},
     disconnect() {},
     gain: { value: 0 },
     fftSize: 0,
     smoothingTimeConstant: 0,
-    getByteTimeDomainData: (data) => data.fill(128),
+    getByteTimeDomainData: (data) => data.fill(inputSample),
   });
   class FakeAudioContext {
     constructor() {
@@ -231,7 +232,14 @@ function installMicCaptureGlobals(t) {
     delete globalThis.AudioWorkletNode;
   });
 
-  return { stream, track, mediaDevices };
+  return {
+    stream,
+    track,
+    mediaDevices,
+    setInputSample: (sample) => {
+      inputSample = sample;
+    },
+  };
 }
 
 module.exports = {
