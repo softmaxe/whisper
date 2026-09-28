@@ -28,7 +28,7 @@ const STARS: readonly (readonly [number, number, number])[] = [
  * Beat 4 · The day in review. Night falls on the paper (the wash) and a
  * pencilled moon and stars are drawn in. The Whisper main window is sketched
  * in on History; Whis types a word into search, entries that don't match fade
- * back and the match is swept with a highlighter and underlined in red pen.
+ * back and the matches are swept with a highlighter and underlined in red pen.
  * The window switches to Insights: the values are written in by hand, the
  * activity bars are drawn, and today's bar is circled while Whis looks proud.
  */
@@ -81,7 +81,7 @@ export const Beat4Review: React.FC = () => {
     </AbsoluteFill>
   );
 
-  /** Whis's pose: watching, typing the query, pointing at the match, watching Insights, proud of today. */
+  /** Whis's pose: watching, typing the query, pointing at the matches, watching Insights, proud of today. */
   function whisAt() {
     if (t < typing.start - 0.3) return { ...whisPose("idle", frame, fps), look: [1, -0.3] as const };
     if (t < typing.end + 0.25) {

@@ -163,7 +163,7 @@ const en: Copy = {
       { text: "me" },
       { text: "uh", filler: true },
       { text: "let's" },
-      { text: "ship" },
+      { text: "launch" },
       { text: "at" },
       { text: "ten" },
       { text: "and" },
@@ -173,7 +173,7 @@ const en: Copy = {
       { text: "notes" },
       { text: "after" },
     ],
-    cleaned: "Friday works for me. Let's ship at 10, and I'll send the notes after.",
+    cleaned: "Friday works for me. Let's launch at 10, and I'll send the notes after.",
   },
   chat: {
     app: "Team chat",
@@ -240,7 +240,7 @@ const en: Copy = {
       { time: "09:30", text: "I'll join. Bring the Supabase migration plan." },
       {
         time: "07:45",
-        text: "Friday works for me. Let's ship at 10, and I'll send the notes after.",
+        text: "Friday works for me. Let's launch at 10, and I'll send the notes after.",
       },
     ],
     upload: {

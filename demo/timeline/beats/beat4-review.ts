@@ -7,7 +7,7 @@ const [start, end] = BEAT_BOUNDS.review;
 /*
  * Beat 4 · The day in review. The wash turns to night. The Whisper main
  * window is sketched in on History, today's Dictations listed; Whis types a
- * word into search, the entries that don't match fade back, and the match is
+ * word into search, the entries that don't match fade back, and the matches are
  * highlighted and underlined in red pen. The window switches to Insights: the
  * usage values are written in by hand one after another, the activity bars
  * are drawn, and today's bar is circled while Whis looks proud.
@@ -45,7 +45,7 @@ const moments = {
   searchOpen: 48.1,
   /** Entries that don't match fade back. */
   filter: 49.6,
-  /** The match is swept with a highlighter and underlined in red pen. */
+  /** The matches are swept with a highlighter and underlined in red pen. */
   highlight: 49.95,
   /** The window switches to Insights. */
   insights: 52.4,

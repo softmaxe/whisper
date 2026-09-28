@@ -48,13 +48,15 @@ describe("Beat 4 story", () => {
     expect(m.values).toHaveLength(4);
   });
 
-  it("finds the query in today's History in both cuts", () => {
-    for (const lang of LANGS) {
+  it("finds the query in several of today's History entries, the same number in both cuts", () => {
+    const counts = LANGS.map((lang) => {
       const { query, history } = COPY[lang].whisper;
       const matches = history.filter((e) => e.text.includes(query));
-      expect(matches.length, lang).toBeGreaterThan(0);
+      expect(matches.length, lang).toBeGreaterThanOrEqual(2);
       expect(matches.length, lang).toBeLessThan(history.length);
-    }
+      return matches.length;
+    });
+    expect(new Set(counts).size).toBe(1);
   });
 });
 

@@ -252,7 +252,7 @@ export interface PenMarkProps extends PenProps {
  * draws a red-pen mark sized to it. The text is measured after layout, so
  * the mark follows whatever font and wrapping the text ends up with:
  *
- *   <p>Friday works <PenMark kind="strike" progress={p} seed={41}>uh</PenMark> let's ship</p>
+ *   <p>Friday works <PenMark kind="strike" progress={p} seed={41}>uh</PenMark> let's launch</p>
  *
  * The mark overflows the span and draws above the text; it does not change layout.
  */
