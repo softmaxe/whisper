@@ -20,11 +20,12 @@ const LABELS: Record<ClawdPoseName, string> = {
 /**
  * Stress-test washes: stronger than the Film's watercolour wash is likely to
  * get, so a Clawd that reads here reads in every Beat. Clawd is drawn over the
- * wash, as in the Film (Paper → Wash → Beat visuals).
+ * wash, as in the Film (Paper → Wash → Beat visuals). The day panel holds a
+ * blink, so the sheet shows every eye state in one still.
  */
 const WASHES = [
-  { label: "day wash", colour: PALETTE.washDay, opacity: 0.55, pose: "wave" as const },
-  { label: "night wash", colour: PALETTE.washNight, opacity: 0.75, pose: "proud" as const },
+  { label: "day wash · blinking", colour: PALETTE.washDay, opacity: 0.55, pose: "wave" as const, eyes: "closed" as const },
+  { label: "night wash", colour: PALETTE.washNight, opacity: 0.75, pose: "proud" as const, eyes: undefined },
 ];
 
 const PANEL = { x: 1390, w: 470, h: 400, ys: [130, 590] };
@@ -87,7 +88,7 @@ export const ClawdSheet: React.FC = () => {
                 options={{ stroke: PALETTE.graphite, strokeWidth: 2.5, roughness: 1.2 }}
                 build={(g, o) => [g.rectangle(PANEL.x, top, PANEL.w, PANEL.h, o)]}
               />
-              <Clawd x={PANEL.x + PANEL.w / 2} y={top + PANEL.h - 70} seed={31 + i} {...clawdPose(w.pose, frame, fps)} />
+              <Clawd x={PANEL.x + PANEL.w / 2} y={top + PANEL.h - 70} seed={31 + i} {...clawdPose(w.pose, frame, fps)} {...(w.eyes && { eyes: w.eyes })} />
               <text x={PANEL.x + 16} y={top - 14} fontFamily={`"${HAND_FONT}", serif`} fontSize={32} fill={PALETTE.pencil}>
                 {w.label}
               </text>

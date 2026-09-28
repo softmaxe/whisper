@@ -1,6 +1,7 @@
 /**
- * Shared Film palette: warm paper, graphite pencil, ink, the red pen and the
- * app icon's black and white. Beats keep one-off colours as local constants.
+ * Shared Film palette: warm paper, graphite pencil, ink, the red pen, the app
+ * icon's black and white, and Clawd's terracotta. Beats keep one-off colours
+ * as local constants.
  */
 export const PALETTE = {
   paper: "#f4ead5",
@@ -17,6 +18,9 @@ export const PALETTE = {
   /** The app icon's black and white: the Recording pill and the logo. */
   iconBlack: "#1d1b1c",
   iconWhite: "#f7f3ea",
+  /** Clawd's terracotta body and its dark eyes. */
+  clawdOrange: "#d97757",
+  clawdEye: "#221a18",
   /** Watercolour wash keyframes over the working day. */
   washDawn: "#f3c89a",
   washDay: "#f6e3b0",

@@ -5,10 +5,10 @@ import { RoughDrawing, useWobbleSeed } from "../rough/RoughDrawing.tsx";
 import { PALETTE } from "../theme.ts";
 
 /**
- * Clawd, Whisper's mascot, drawn in the Film's paper style: a blocky black
- * body with the app icon's white waveform W on its front, two small white
- * eyes, stubby side arms and four short legs, with a pencil outline, waxy
- * crayon fill and light hatching.
+ * Clawd, the Claude Code mascot and Whisper's guide through the Film, drawn
+ * in the Film's paper style: a blocky terracotta body with two dark
+ * vertical-bar eyes, stubby side arms and four short legs, with a pencil
+ * outline, waxy crayon fill and light hatching.
  *
  * Renders an SVG <g>, so place it inside an <svg> (usually a full-canvas
  * 1920x1080 one):
@@ -19,7 +19,7 @@ import { PALETTE } from "../theme.ts";
  *   </svg>
  *
  * (x, y) is the ground point between the feet. At scale 1 Clawd is 296px wide
- * including arms (220px body) and 200px tall. Motion is driven by props, so
+ * including arms (220px body) and 180px tall. Motion is driven by props, so
  * animate by passing per-frame values. The pencil strokes "boil" (re-seed
  * every 4 frames) unless `wobble` is false; the wobble is held still while
  * `draw` < 1 so the stroke-by-stroke reveal doesn't jump.
@@ -41,7 +41,7 @@ export interface ClawdProps {
    */
   leftArm?: number;
   rightArm?: number;
-  /** Eye shape: open (white blocks), closed (blink line) or happy (^ ^). */
+  /** Eye shape: open (dark vertical bars), closed (blink line) or happy (^ ^). */
   eyes?: ClawdEyes;
   /** Gaze offset of the eyes, each in -1..1 ([1, 0] looks to the viewer's right, before `flip`). */
   look?: readonly [number, number];
@@ -51,9 +51,7 @@ export interface ClawdProps {
   legs?: boolean;
   /** Extra mark beside the head: a pencilled "?" (puzzled) or sparkle strokes (proud). */
   mark?: ClawdMark;
-  /** Stick a pointing finger out of the right arm's tip (the "point" pose). */
-  finger?: boolean;
-  /** Hand-drawn reveal, 0..1: outline first, then the black fill, then eyes and the W. */
+  /** Hand-drawn reveal, 0..1: outline first, then the crayon fill, then the eyes. */
   draw?: number;
   /** Base wobble seed. Keep it fixed per on-screen Clawd; change it for a differently sketched copy. */
   seed?: number;
@@ -78,8 +76,8 @@ export const CLAWD_POSES = {
   proud: { leftArm: -62, rightArm: -62 },
   /** Right arm raised to wave (swing ~±18). */
   wave: { leftArm: -18, rightArm: 54 },
-  /** Right arm held out, slightly raised, pointing at something on the viewer's right (flip to point left). */
-  point: { leftArm: -26, rightArm: 22 },
+  /** Whole right arm raised toward something up on the viewer's right, pointing at it (flip to point left). */
+  point: { leftArm: -34, rightArm: 36 },
 } as const satisfies Record<string, { leftArm: number; rightArm: number }>;
 
 export type ClawdPoseName = keyof typeof CLAWD_POSES;
@@ -97,7 +95,7 @@ export function isBlinking(frame: number, fps: number, periodSeconds = 2.8, offs
   return f >= period - 4;
 }
 
-type PoseProps = Required<Pick<ClawdProps, "leftArm" | "rightArm" | "eyes" | "look" | "squash" | "rotate" | "mark" | "finger">>;
+type PoseProps = Required<Pick<ClawdProps, "leftArm" | "rightArm" | "eyes" | "look" | "squash" | "rotate" | "mark">>;
 
 /**
  * A pose animated at `frame` (any frame counter; Beat-local is fine): arm
@@ -108,7 +106,7 @@ export function clawdPose(name: ClawdPoseName, frame: number, fps = 30): PosePro
   const base = CLAWD_POSES[name];
   const s = frame / fps; // seconds
   const blink = isBlinking(frame, fps) ? "closed" : "open";
-  const still = { ...base, eyes: blink, look: [0, 0], squash: 1, rotate: 0, mark: "none", finger: false } as const;
+  const still = { ...base, eyes: blink, look: [0, 0], squash: 1, rotate: 0, mark: "none" } as const;
   switch (name) {
     case "idle":
       return { ...still, squash: 1 + 0.012 * Math.sin(s * Math.PI * 1.2) };
@@ -140,16 +138,15 @@ export function clawdPose(name: ClawdPoseName, frame: number, fps = 30): PosePro
       return {
         ...still,
         rightArm: base.rightArm + 3 * Math.sin(s * Math.PI * 1.5),
-        look: [1, -0.1],
-        rotate: 2,
-        finger: true,
+        look: [1, -0.3],
+        rotate: 5,
       };
   }
 }
 
 /* Geometry at scale 1, origin = ground point between the feet, y up = negative. */
 const BODY_W = 220;
-const BODY_H = 170;
+const BODY_H = 150;
 const LEG_H = 30;
 const LEG_W = 22;
 const LEG_CENTRES = [-76, -42, 42, 76];
@@ -157,23 +154,16 @@ const BODY_TOP = -(LEG_H + BODY_H);
 const BODY_BOTTOM = -LEG_H + 2; // legs tuck slightly under the body
 const ARM_LEN = 38;
 const ARM_H = 30;
-/** Arm pivot height (centre of the shoulder), in the lower half of the body. */
-const SHOULDER_Y = BODY_TOP + 100;
-const EYE_W = 16;
-const EYE_H = 26;
-const EYE_X = 46;
-const EYE_Y = BODY_TOP + 18;
-/** Light paper rim around every block, so the black body stays separate from a dark (night) wash. */
+/** Arm pivot height (centre of the shoulder), just below the middle of the body. */
+const SHOULDER_Y = BODY_TOP + 84;
+const EYE_W = 18;
+const EYE_H = 38;
+const EYE_X = 50;
+const EYE_Y = BODY_TOP + 24;
+/** Light paper rim around every block, so the body stays separate from a dark (night) wash. */
 const RIM = 4;
-
-/**
- * The app icon's waveform W: fifteen bars whose tops trace the monogram.
- * Heights relative to the tallest bar, measured from resources' icon.
- */
-const W_BARS = [1, 0.76, 0.52, 0.29, 0.22, 0.37, 0.52, 0.67, 0.52, 0.37, 0.22, 0.29, 0.52, 0.76, 0.97];
-const W_SPAN = 140;
-const W_BOTTOM = BODY_BOTTOM - 16;
-const W_HEIGHT = 94;
+/** Darker terracotta for the crayon hatching over the body. */
+const CLAWD_SHADE = "#a9482f";
 
 const outline = (seed: number) => ({
   stroke: PALETTE.graphite,
@@ -183,10 +173,10 @@ const outline = (seed: number) => ({
   seed,
 });
 
-/** Light pencil hatching over the black crayon: gives the body its hand-coloured texture. */
+/** Light crayon hatching over the orange fill: gives the body its hand-coloured texture. */
 const hatch = {
   stroke: "none",
-  fill: PALETTE.iconWhite,
+  fill: CLAWD_SHADE,
   fillStyle: "hachure",
   hachureAngle: -52,
   hachureGap: 9,
@@ -207,7 +197,6 @@ export const Clawd: React.FC<ClawdProps> = ({
   squash = 1,
   legs = true,
   mark = "none",
-  finger = false,
   draw = 1,
   seed: baseSeed = 7,
   wobble = true,
@@ -217,8 +206,7 @@ export const Clawd: React.FC<ClawdProps> = ({
   const seed = useWobbleSeed(baseSeed, 4, !wobble || draw < 1);
   const outlineP = ramp(draw, 0, 0.6);
   const fillP = ramp(draw, 0.45, 0.85);
-  const eyesP = ramp(draw, 0.55, 0.8);
-  const wP = ramp(draw, 0.7, 1);
+  const eyesP = ramp(draw, 0.75, 1);
   const stretch = 1 + (1 - squash) * 0.5;
   const sx = scale * (flip ? -1 : 1) * stretch;
   const sy = scale * squash;
@@ -233,12 +221,7 @@ export const Clawd: React.FC<ClawdProps> = ({
     return { x: x0, y: SHOULDER_Y - ARM_H / 2, w: ARM_LEN + 10, h: ARM_H, transform: `rotate(${deg} ${pivotX} ${SHOULDER_Y})` };
   };
   const legBlocks = legs ? LEG_CENTRES.map((cx) => ({ x: cx - LEG_W / 2, y: BODY_BOTTOM - 4, w: LEG_W, h: LEG_H + 2 })) : [];
-  const right = armBlock(1, rightArm);
-  const arms = [armBlock(-1, leftArm), right];
-  if (finger) {
-    // A stubby pointing finger off the upper edge of the right arm's tip.
-    arms.push({ x: right.x + right.w - 3, y: right.y + 2, w: 24, h: 12, transform: right.transform });
-  }
+  const arms = [armBlock(-1, leftArm), armBlock(1, rightArm)];
   const rimOpacity = outlineP;
 
   return (
@@ -315,8 +298,6 @@ export const Clawd: React.FC<ClawdProps> = ({
           build={(g, o) => [g.rectangle(-BODY_W / 2, BODY_TOP, BODY_W, BODY_H, o)]}
         />
 
-        <WaveformW progress={wP} seed={seed + 50} />
-
         <g opacity={eyesP} transform={`translate(${look[0] * 12} ${look[1] * 6})`}>
           {[-1, 1].map((side) => (
             <Eye key={side} cx={side * EYE_X} top={EYE_Y} shape={eyes} seed={seed + 40 + side} />
@@ -332,7 +313,7 @@ export const Clawd: React.FC<ClawdProps> = ({
   );
 };
 
-/** Black crayon fill for one block: a waxy flat layer plus light diagonal hatching. */
+/** Terracotta crayon fill for one block: a waxy flat layer plus light diagonal hatching. */
 const CrayonBlock: React.FC<{ x: number; y: number; w: number; h: number; p: number; seed: number; filter: string }> = ({
   x,
   y,
@@ -345,40 +326,21 @@ const CrayonBlock: React.FC<{ x: number; y: number; w: number; h: number; p: num
   if (p <= 0) return null;
   return (
     <g opacity={p}>
-      {/* A dense charcoal base, then waxy black crayon whose grain lets the base show through. */}
-      <rect x={x + 1} y={y + 1} width={w - 2} height={h - 2} fill={PALETTE.iconBlack} opacity={0.82} />
-      <rect x={x + 2} y={y + 2} width={w - 4} height={h - 4} fill={PALETTE.iconBlack} filter={`url(#${filter})`} />
-      <g opacity={0.16}>
+      {/* A lighter base, then waxy orange crayon whose grain lets the base show through. */}
+      <rect x={x + 1} y={y + 1} width={w - 2} height={h - 2} fill={PALETTE.clawdOrange} opacity={0.72} />
+      <rect x={x + 2} y={y + 2} width={w - 4} height={h - 4} fill={PALETTE.clawdOrange} filter={`url(#${filter})`} />
+      <g opacity={0.3}>
         <RoughDrawing seed={seed + 100} options={hatch} build={(g, o) => [g.rectangle(x + 3, y + 3, w - 6, h - 6, o)]} />
       </g>
     </g>
   );
 };
 
-/** The app icon's white waveform W, pencilled bar by bar across the front of the body. */
-const WaveformW: React.FC<{ progress: number; seed: number }> = ({ progress, seed }) => {
-  if (progress <= 0) return null;
-  const step = W_SPAN / (W_BARS.length - 1);
-  return (
-    <RoughDrawing
-      seed={seed}
-      options={{ stroke: PALETTE.iconWhite, strokeWidth: 6.5, roughness: 0.55, bowing: 0.4, disableMultiStroke: true }}
-      progress={progress}
-      build={(g, o) =>
-        W_BARS.map((h, i) => {
-          const bx = -W_SPAN / 2 + i * step;
-          return g.line(bx, W_BOTTOM, bx, W_BOTTOM - h * W_HEIGHT, o);
-        })
-      }
-    />
-  );
-};
-
 const Eye: React.FC<{ cx: number; top: number; shape: ClawdEyes; seed: number }> = ({ cx, top, shape, seed }) => {
-  const ink = { stroke: PALETTE.iconWhite, strokeWidth: 5, roughness: 0.8, seed };
+  const ink = { stroke: PALETTE.clawdEye, strokeWidth: 6, roughness: 0.8, seed };
   if (shape === "closed") {
     return (
-      <RoughDrawing seed={seed} options={ink} build={(g, o) => [g.line(cx - EYE_W / 2 - 3, top + EYE_H * 0.62, cx + EYE_W / 2 + 3, top + EYE_H * 0.62, o)]} />
+      <RoughDrawing seed={seed} options={ink} build={(g, o) => [g.line(cx - EYE_W / 2 - 7, top + EYE_H * 0.62, cx + EYE_W / 2 + 7, top + EYE_H * 0.62, o)]} />
     );
   }
   if (shape === "happy") {
@@ -390,9 +352,9 @@ const Eye: React.FC<{ cx: number; top: number; shape: ClawdEyes; seed: number }>
         build={(g, o) => [
           g.linearPath(
             [
-              [cx - EYE_W / 2 - 5, top + EYE_H * 0.7],
-              [cx, top + EYE_H * 0.3],
-              [cx + EYE_W / 2 + 5, top + EYE_H * 0.7],
+              [cx - EYE_W / 2 - 8, top + EYE_H * 0.72],
+              [cx, top + EYE_H * 0.28],
+              [cx + EYE_W / 2 + 8, top + EYE_H * 0.72],
             ],
             o,
           ),
@@ -403,7 +365,7 @@ const Eye: React.FC<{ cx: number; top: number; shape: ClawdEyes; seed: number }>
   return (
     <RoughDrawing
       seed={seed}
-      options={{ ...ink, strokeWidth: 2.5, fill: PALETTE.iconWhite, fillStyle: "solid" }}
+      options={{ ...ink, strokeWidth: 2.5, fill: PALETTE.clawdEye, fillStyle: "solid" }}
       build={(g, o) => [g.rectangle(cx - EYE_W / 2, top, EYE_W, EYE_H, o)]}
     />
   );
