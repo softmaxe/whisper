@@ -31,6 +31,7 @@ import { useListeningEntrancePhase } from "./hooks/useListeningEntrancePhase";
 import { useLiveTranscriptPanel } from "./hooks/useLiveTranscriptPanel";
 import { useMainProcessNotifications } from "./hooks/useMainProcessNotifications";
 import { useMainWindowSizeOwner } from "./hooks/useMainWindowSizeOwner";
+import { usePillFinish } from "./hooks/usePillFinish";
 import { useWindowDrag } from "./hooks/useWindowDrag";
 import { useWindowResizeCompensation } from "./hooks/useWindowResizeCompensation";
 import "./index.css";
@@ -184,6 +185,11 @@ export default function App() {
     liveTranscriptApiRef.current = liveTranscript;
   });
 
+  const isPillFinishing = usePillFinish(
+    isRecording || isVisuallyProcessing,
+    toastCount > 0 || liveTranscript.mounted || Boolean(liveTranscript.copyFallback)
+  );
+
   // Must run before the size owner's ladder effect below: the error teardown
   // drops the live transcript's open ref, which the ladder reads this commit.
   useEffect(() => {
@@ -193,7 +199,8 @@ export default function App() {
   // Direction is part of the interaction's geometry, not a live decoration.
   // Hold the origin through processing and panel exit so every close animation
   // returns to the same side from which that voice session started.
-  const voiceDirectionLocked = isRecording || isVisuallyProcessing || liveTranscript.mounted;
+  const voiceDirectionLocked =
+    isRecording || isVisuallyProcessing || isPillFinishing || liveTranscript.mounted;
   useLayoutEffect(() => {
     if (voiceDirectionLocked) return;
     setVoiceHorizontalDirection(
@@ -227,6 +234,7 @@ export default function App() {
     isCommandMenuOpen,
     isCompactPill: windowFitsCompactPill,
     isDictationActive: isRecording || isVisuallyProcessing,
+    isPillFinishing,
     liveTranscriptOpen: liveTranscript.open,
     liveTranscriptMounted: liveTranscript.mounted,
     liveTranscriptOpenRef: liveTranscript.openRef,
@@ -343,7 +351,7 @@ export default function App() {
     isProcessing,
     isHovered,
   });
-  const pillIsInteractive = voicePillInteraction.pillInteractive;
+  const pillIsInteractive = !isPillFinishing && voicePillInteraction.pillInteractive;
   // The cancel button pours out of the pill as a fused liquid skin — except
   // inside the Live Transcript panel, where the pill is already headless and
   // the classic bordered circle stays (with the same emergence motion).
@@ -383,8 +391,7 @@ export default function App() {
     isStopping,
     isProcessing,
     micCaptureStatus,
-    isHovered,
-    isCommandMenuOpen,
+    isFinishing: isPillFinishing,
     entranceState: listeningEntrance.activeState,
   });
   // The pill shape tracks the pill's footprint through the entrance phases
@@ -418,20 +425,24 @@ export default function App() {
     dictationErrorSuppressed: dictationErrorSuppressesPill,
     panelReturnResizeActive,
   });
+  const pillFadingOut = pillVisuallySuppressed || isPillFinishing;
 
   return (
     <div className="dictation-window">
       {/* The panel footer can hide this pill, but never unmounts it. */}
       <div
         className={`voice-pill-position voice-pill-position-${voicePillDock} fixed z-50 transition-opacity duration-150 ease-out ${
-          pillVisuallySuppressed ? "pointer-events-none" : ""
-        } ${pillVisuallySuppressed ? "opacity-0" : "opacity-100"}`}
+          pillFadingOut ? "pointer-events-none" : ""
+        } ${pillFadingOut ? "opacity-0" : "opacity-100"}`}
         style={{
           "--voice-pill-travel-duration": `${voicePillTravelDuration}ms`,
-          visibility: !isRecording && !isVisuallyProcessing && !panelMounted ? "hidden" : undefined,
+          visibility:
+            !isRecording && !isVisuallyProcessing && !isPillFinishing && !panelMounted
+              ? "hidden"
+              : undefined,
         }}
         data-dictation-error-suppressed={dictationErrorSuppressesPill || undefined}
-        aria-hidden={pillVisuallySuppressed || undefined}
+        aria-hidden={pillFadingOut || undefined}
       >
         <div
           className="relative flex items-center"

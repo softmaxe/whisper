@@ -47,6 +47,12 @@ test("an idle floating pill renders no control", async () => {
   assert.equal(await renderPill("idle", false), "");
 });
 
+test("retired idle hover and menu inputs cannot start a sweep", async () => {
+  const { resolveRecordingPillState } = await import("../../src/helpers/voicePillPresentation.js");
+  const state = resolveRecordingPillState({ isHovered: true, isCommandMenuOpen: true });
+  assert.equal(await renderPill(state, false), "");
+});
+
 test("the floating pill's bars say what it is doing", async () => {
   const warmUp = await renderPill("processing", false);
   const thinking = await renderPill("thinking", false);

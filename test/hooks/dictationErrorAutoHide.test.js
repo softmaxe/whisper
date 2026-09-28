@@ -97,7 +97,7 @@ test("an error card dismissed while idle still auto-hides the window", async (t)
   assert.deepEqual(hideCalls, ["hide"]);
 });
 
-test("startup and completed dictation hide immediately without an idle grace period", async (t) => {
+test("idle without a pending finish hides immediately without a grace period", async (t) => {
   const h = await mountWithErrorCard(t, { dictationErrorActionCount: 0 });
   assert.deepEqual(h.hideCalls, ["hide"]);
   assert.deepEqual(h.showCalls, []);

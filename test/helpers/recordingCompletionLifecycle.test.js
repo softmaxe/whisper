@@ -25,6 +25,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   let root;
   let hook;
   let panel;
+  let isFinishing;
   t.after(async () => {
     if (root) await React.act(async () => root.unmount());
   });
@@ -38,6 +39,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   const lifecycle = [];
   const previewListeners = new Map();
   let hidden = 0;
+  let windowHides = 0;
   const noopDispose = () => () => {};
   installBrowserGlobals(t, {
     initialStorage: { onboardingCompleted: "true" },
@@ -66,6 +68,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
         dictationLifecycleStateChanged: (state) => lifecycle.push(state),
         completeDictationPreview: () => {},
         hideDictationPreview: () => hidden++,
+        hideWindow: () => windowHides++,
         recordAnalyticsEvent: async () => {},
         saveTranscription: (...args) => {
           const result = deferred();
@@ -147,6 +150,8 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
   const { useLiveTranscriptPanel } = await vite.ssrLoadModule("/hooks/useLiveTranscriptPanel.js");
+  const { usePillFinish } = await vite.ssrLoadModule("/hooks/usePillFinish.js");
+  const { useMainWindowSizeOwner } = await vite.ssrLoadModule("/hooks/useMainWindowSizeOwner.js");
   const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
   const { DictationErrorCard } = await vite.ssrLoadModule(
     "/components/dictation/DictationErrorCard.tsx"
@@ -180,6 +185,24 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
       isPreparing: hook.isPreparing,
       isProcessing: hook.isProcessing,
     });
+    const isActive = hook.isPreparing || hook.isRecording || hook.isStopping || hook.isProcessing;
+    isFinishing = usePillFinish(
+      isActive,
+      Boolean(activeError || panel.mounted || panel.copyFallback)
+    );
+    useMainWindowSizeOwner({
+      requestMainWindowSize: resizeToContent,
+      dictationErrorActionCount: activeError ? 1 : 0,
+      toastCount: activeError ? 1 : 0,
+      isCommandMenuOpen: false,
+      isCompactPill: hook.isRecording,
+      isDictationActive: isActive,
+      isPillFinishing: isFinishing,
+      liveTranscriptOpen: panel.open,
+      liveTranscriptMounted: panel.mounted,
+      liveTranscriptOpenRef: panel.openRef,
+      liveTranscriptCopyFallback: panel.copyFallback,
+    });
     return null;
   }
   root = createRoot(container);
@@ -192,7 +215,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     renderToStaticMarkup(
       React.createElement(VoicePill, {
         variant: "floating",
-        state: resolveRecordingPillState(hook),
+        state: resolveRecordingPillState({ ...hook, isFinishing }),
         getAudioLevel: hook.getAudioLevel,
       })
     );
@@ -216,6 +239,8 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
         : "",
     lifecycle,
     hidden: () => hidden,
+    windowHides: () => windowHides,
+    isFinishing: () => isFinishing,
     releases: () => releases,
     hook: () => hook,
     panel: () => panel,
@@ -223,6 +248,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     emitPreview: (method, payload) => act(() => previewListeners.get(method)(payload)),
     settings: useSettingsStore,
     act,
+    advance: (ms) => act(() => t.mock.timers.tick(ms)),
     start: async (value = 1) => {
       await act(() => hook.startRecording());
       assert.equal(hook.isRecording, true);
@@ -251,6 +277,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     },
     pillVisible: () =>
       renderPill() !== "" &&
+      !isFinishing &&
       !resolvePillVisualSuppression({
         liveTranscriptCopyFallback: panel.copyFallback,
         dictationErrorSuppressed: Boolean(activeError),
@@ -270,6 +297,14 @@ function assertPending(harness) {
   assert.deepEqual(harness.presentation(), { rendered: true, motion: "wave", width: 84 });
 }
 
+function assertFinishing(harness) {
+  assert.equal(harness.isFinishing(), true);
+  assert.equal(harness.hook().isRecording, false);
+  assert.equal(harness.hook().isProcessing, false);
+  assert.equal(harness.hook().getAudioLevel(), null, "the exit must not retain capture");
+  assert.deepEqual(harness.presentation(), { rendered: true, motion: null, width: 84 });
+}
+
 test("transcription failure presents an actionable retry that starts a new Dictation", async (t) => {
   const h = await setup(t, { retain: false });
   await h.start();
@@ -277,6 +312,7 @@ test("transcription failure presents an actionable retry that starts a new Dicta
   assertPending(h);
   await h.resolveRequest(0, { error: { message: "Service unavailable" } }, 401);
   assert.equal(h.hook().isProcessing, false);
+  assert.equal(h.isFinishing(), false, "an error replaces processing without a finish");
   assert.equal(h.lifecycle.at(-1), "idle");
   assert.match(h.recoveryMarkup(), /role="alert"/);
   assert.match(h.recoveryMarkup(), /Retry/);
@@ -321,7 +357,11 @@ for (const cleanup of [false, true, "fallback"]) {
     await h.act(() => h.pastes[0].resolve({ pasted: true }));
     assert.equal(h.hook().isProcessing, false);
     assert.equal(h.lifecycle.at(-1), "idle");
+    assertFinishing(h);
+    assert.equal(h.windowHides(), 1, "native hiding waits for the visual exit");
+    await h.advance(1000);
     assert.deepEqual(h.presentation(), { rendered: false, motion: null, width: null });
+    assert.equal(h.windowHides(), 2);
     assert.equal(h.hidden(), 1);
     assert.deepEqual(h.recoveries, []);
     assert.deepEqual(h.lifecycle, ["idle", "preparing", "recording", "processing", "idle"]);
@@ -341,6 +381,7 @@ for (const reject of [false, true]) {
         : h.pastes[0].resolve({ pasted: false })
     );
     assert.equal(h.hook().isProcessing, false);
+    assert.equal(h.isFinishing(), false, "manual recovery takes over without an exit");
     assert.deepEqual(h.writes, ["recoverable result"]);
     assert.deepEqual(h.recoveries, [
       { text: "recoverable result", options: { copyFallback: "copied" } },
@@ -415,6 +456,69 @@ for (const outcome of ["ready", "cancelled", "failed"]) {
   });
 }
 
+for (const stage of ["preparing", "recording", "processing"]) {
+  test(`cancelling ${stage} finishes visually before the window hides`, async (t) => {
+    const h = await setup(t, { retain: false });
+    const device = deferred();
+    let startup;
+    if (stage === "preparing") {
+      h.media.mediaDevices.getUserMedia = () => device.promise;
+      await h.act(() => {
+        startup = h.hook().startRecording();
+      });
+    } else {
+      await h.start();
+      if (stage === "processing") await h.stop();
+    }
+    await h.act(() =>
+      stage === "processing" ? h.hook().cancelProcessing() : h.hook().cancelRecording()
+    );
+    assert.equal(h.lifecycle.at(-1), "idle");
+    assertFinishing(h);
+    assert.equal(h.windowHides(), 1);
+    if (stage === "preparing") {
+      await h.act(async () => {
+        device.resolve(h.media.stream);
+        await startup;
+      });
+      assertFinishing(h);
+    }
+    assert.ok(h.releases() > 0, "the presentation exit must not retain the microphone");
+    await h.advance(1000);
+    assert.deepEqual(h.presentation(), { rendered: false, motion: null, width: null });
+    assert.equal(h.windowHides(), 2);
+    assert.deepEqual(h.pastes, []);
+    assert.deepEqual(h.recoveries, []);
+  });
+}
+
+test("a new preparation immediately replaces a finish and its old timer cannot hide the window", async (t) => {
+  const h = await setup(t, { retain: false });
+  await h.start();
+  await h.act(() => h.hook().cancelRecording());
+  assertFinishing(h);
+
+  const device = deferred();
+  h.media.mediaDevices.getUserMedia = () => device.promise;
+  let startup;
+  await h.act(() => {
+    startup = h.hook().startRecording();
+  });
+  assert.equal(h.isFinishing(), false);
+  assert.equal(h.pillVisible(), true);
+  assert.deepEqual(h.presentation(), { rendered: true, motion: "sweep", width: 84 });
+  await h.advance(1000);
+  assert.equal(h.hook().isPreparing, true);
+  assert.equal(h.windowHides(), 1, "the prior exit deadline cannot hide this request");
+  await h.act(async () => {
+    device.resolve(h.media.stream);
+    await startup;
+  });
+  assert.equal(h.hook().isRecording, true);
+  assert.equal(h.presentation().motion, "live");
+  assert.equal(h.windowHides(), 1);
+});
+
 test("cancelling queued recorder finalization prevents an old stop from starting processing", async (t) => {
   const h = await setup(t, { retain: false });
   const oldRecorder = await h.start();
@@ -437,7 +541,7 @@ for (const stage of ["transcription", "cleanup", "paste"]) {
       if (stage !== "transcription") await h.resolveRequest(0, { text: "previous result" });
       assertPending(h);
       await h.act(() => h.hook().cancelProcessing());
-      assert.deepEqual(h.presentation(), { rendered: false, motion: null, width: null });
+      assertFinishing(h);
       await h.start();
       const hidden = h.hidden();
       if (stage === "paste") {
