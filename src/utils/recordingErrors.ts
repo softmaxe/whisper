@@ -15,6 +15,10 @@ export function getRecordingErrorTitle(error: RecordingError, t: TFunction): str
   }
   if (error.code === "NETWORK_ERROR") return t(error.title);
   if (error.code === "OFFLINE") return t("hooks.audioRecording.errorTitles.offline");
+  if (error.code === "TRANSCRIPTION_CONNECTION_FAILED")
+    return t("hooks.audioRecording.errorTitles.transcriptionConnectionFailed");
+  if (error.code === "TRANSCRIPTION_REQUEST_TIMEOUT")
+    return t("hooks.audioRecording.errorTitles.transcriptionTimeout");
   if (error.code === "PROVIDER_RATE_LIMITED")
     return t("hooks.audioRecording.errorTitles.providerRateLimited");
   return error.title;

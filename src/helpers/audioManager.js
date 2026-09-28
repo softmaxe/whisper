@@ -43,6 +43,8 @@ import { evaluateFinishedRecording, withSalvageWarning } from "./recordingValida
 import { resolveTranscriptionRoute } from "./transcriptionRoute.ts";
 
 const REASONING_CACHE_TTL = 30000; // 30 seconds
+const TRANSCRIPTION_CONNECTION_TIMEOUT_MS = 3_000;
+const TRANSCRIPTION_REQUEST_TIMEOUT_MS = 30_000;
 const RECORDING_TIMESLICE_MS = 250; // flush chunks periodically so short recordings still carry audio frames. See #871.
 const neverCancelled = () => false;
 const SELF_HOSTED_SOURCE = "self-hosted";
@@ -1310,6 +1312,7 @@ class AudioManager {
   async processWithSelfHostedServer(audioBlob, metadata = {}, wasCancelled = neverCancelled) {
     const timings = {};
     let requestController = null;
+    let requestTimeout = null;
     const settings = getSettings();
     const language = getBaseLanguageCode(this.getEffectiveSttLanguage(settings));
     const { endpoint, model } = this.resolveTranscriptionTarget(settings);
@@ -1361,6 +1364,42 @@ class AudioManager {
       const apiCallStart = performance.now();
       requestController = new AbortController();
       this._activeTranscriptionAbortController = requestController;
+      const connectionError = Object.assign(
+        new Error("Could not reach the transcription server within 3 seconds"),
+        {
+          code: "TRANSCRIPTION_CONNECTION_FAILED",
+          messageKey: "hooks.audioRecording.errorDescriptions.transcriptionConnectionFailed",
+        }
+      );
+      requestTimeout = setTimeout(
+        () => requestController.abort(connectionError),
+        TRANSCRIPTION_CONNECTION_TIMEOUT_MS
+      );
+      try {
+        // Any HTTP response establishes reachability, including 404/405 from
+        // servers without HEAD support. Do not require a separate health route
+        // or confuse slow model inference with an unreachable server.
+        await fetch(endpoint, {
+          method: "HEAD",
+          cache: "no-store",
+          signal: requestController.signal,
+        });
+      } catch (error) {
+        if (requestController.signal.aborted) throw requestController.signal.reason;
+        throw connectionError;
+      } finally {
+        clearTimeout(requestTimeout);
+        requestTimeout = null;
+      }
+      requestController.signal.throwIfAborted();
+      requestTimeout = setTimeout(() => {
+        requestController.abort(
+          Object.assign(new Error("Transcription request timed out after 30 seconds"), {
+            code: "TRANSCRIPTION_REQUEST_TIMEOUT",
+            messageKey: "hooks.audioRecording.errorDescriptions.transcriptionTimeout",
+          })
+        );
+      }, TRANSCRIPTION_REQUEST_TIMEOUT_MS);
       const response = await fetch(endpoint, {
         method: "POST",
         body: formData,
@@ -1384,6 +1423,10 @@ class AudioManager {
       }
 
       const rawBody = await response.text();
+      // Cover the response body as well as connection setup, but leave text
+      // cleanup to its own request deadline.
+      clearTimeout(requestTimeout);
+      requestTimeout = null;
       let result;
       try {
         result = JSON.parse(rawBody);
@@ -1419,7 +1462,15 @@ class AudioManager {
         ? `${SELF_HOSTED_SOURCE}-reasoned`
         : SELF_HOSTED_SOURCE;
       return { success: true, text, rawText: result.text, source, timings };
+    } catch (error) {
+      // Aborting a response body can reject with AbortError instead of the
+      // supplied reason. Preserve the timeout code for the UI and History.
+      if (requestController?.signal.reason?.code === "TRANSCRIPTION_REQUEST_TIMEOUT") {
+        throw requestController.signal.reason;
+      }
+      throw error;
     } finally {
+      clearTimeout(requestTimeout);
       if (this._activeTranscriptionAbortController === requestController) {
         this._activeTranscriptionAbortController = null;
       }
