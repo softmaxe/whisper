@@ -14,9 +14,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
+import { FILM_COMPOSITION_IDS, WHIS_SHEET } from "../src/film/compositionIds.ts";
 import { FILM, LANGS } from "../timeline/index.ts";
 import { exportTimeline } from "./export-timeline.ts";
-import { cutPaths, FILM_COMPOSITION_IDS, OUT_DIR, PATHS, ROOT, WHIS_SHEET } from "./paths.ts";
+import { cutPaths, OUT_DIR, PATHS, ROOT } from "./paths.ts";
 import { reviewFrameTimes } from "./review-frames.ts";
 
 function run(cmd: string, args: string[], cwd = ROOT): void {

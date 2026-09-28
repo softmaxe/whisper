@@ -1,6 +1,7 @@
 import { Composition } from "remotion";
-import { FILM, toFrame } from "../../timeline/index.ts";
+import { FILM, LANGS, toFrame } from "../../timeline/index.ts";
 import { WhisSheet, WHIS_SHEET_FRAMES } from "./characters/WhisSheet.tsx";
+import { FILM_COMPOSITION_IDS, WHIS_SHEET } from "./compositionIds.ts";
 import { Film } from "./Film.tsx";
 import { loadFonts } from "./fonts.ts";
 
@@ -8,31 +9,24 @@ loadFonts();
 
 /**
  * The hand-drawn Film compositions: one per cut, sharing the timeline.
- * Composition ids are listed in scripts/paths.ts for the build. WhisSheet is
- * the mascot model sheet; the build exports one still of it.
+ * WhisSheet is the mascot model sheet; the build exports one still of it.
  */
 export const FilmCompositions: React.FC = () => (
   <>
+    {LANGS.map((lang) => (
+      <Composition
+        key={lang}
+        id={FILM_COMPOSITION_IDS[lang]}
+        component={Film}
+        durationInFrames={toFrame(FILM.durationSeconds)}
+        fps={FILM.fps}
+        width={FILM.width}
+        height={FILM.height}
+        defaultProps={{ lang }}
+      />
+    ))}
     <Composition
-      id="Film-en"
-      component={Film}
-      durationInFrames={toFrame(FILM.durationSeconds)}
-      fps={FILM.fps}
-      width={FILM.width}
-      height={FILM.height}
-      defaultProps={{ lang: "en" as const }}
-    />
-    <Composition
-      id="Film-zh"
-      component={Film}
-      durationInFrames={toFrame(FILM.durationSeconds)}
-      fps={FILM.fps}
-      width={FILM.width}
-      height={FILM.height}
-      defaultProps={{ lang: "zh-CN" as const }}
-    />
-    <Composition
-      id="WhisSheet"
+      id={WHIS_SHEET.id}
       component={WhisSheet}
       durationInFrames={WHIS_SHEET_FRAMES}
       fps={FILM.fps}

@@ -16,12 +16,6 @@ export const PATHS = {
   audioProject: path.join(ROOT, "audio"),
 };
 
-/** The Remotion composition id of each cut. */
-export const FILM_COMPOSITION_IDS: Record<Lang, string> = { en: "Film-en", "zh-CN": "Film-zh" };
-
-/** The Whis model sheet composition and the frame exported as its review still. */
-export const WHIS_SHEET = { id: "WhisSheet", frame: 45 } as const;
-
 /** Per-cut outputs: the silent render, the muxed Film and its review frames. */
 export function cutPaths(lang: Lang): { videoOnly: string; film: string; framesDir: string } {
   return {
