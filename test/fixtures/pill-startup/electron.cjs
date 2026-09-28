@@ -22,8 +22,14 @@ app.whenReady().then(async () => {
   const samples = [];
   let blockedAt = null;
   let frames = [];
+  let paintingReady = null;
   win.webContents.setFrameRate(60);
   win.webContents.on("paint", (_event, _dirty, image) => {
+    const hash = createHash("sha256").update(image.toBitmap()).digest("hex");
+    if (paintingReady) {
+      paintingReady.hashes.add(hash);
+      if (paintingReady.hashes.size >= 3) paintingReady.resolve();
+    }
     if (blockedAt === null) return;
     const elapsed = performance.now() - blockedAt;
     // Ignore dispatch and unblock boundaries. These frames must arrive while
@@ -31,12 +37,25 @@ app.whenReady().then(async () => {
     if (elapsed < 150 || elapsed > 1350) return;
     frames.push({
       elapsed,
-      hash: createHash("sha256").update(image.toBitmap()).digest("hex"),
+      hash,
     });
   });
   const checkBlockedAnimation = async (name) => {
+    // A VM may take longer than 100 ms to commit its first compositor frame.
+    // Observe real changing paints before blocking; the blocked-frame checks
+    // below still fail for the old renderer-driven animation.
+    let readyTimer;
+    const ready = new Promise((resolve, reject) => {
+      paintingReady = { hashes: new Set(), resolve };
+      readyTimer = setTimeout(() => reject(new Error(`${name}: no animated paints`)), 5000);
+    });
     await run('render("processing")');
-    await delay(100);
+    try {
+      await ready;
+    } finally {
+      clearTimeout(readyTimer);
+      paintingReady = null;
+    }
     frames = [];
     blockedAt = performance.now();
     const blockedMs = await run("block(1500)");
@@ -75,6 +94,13 @@ app.whenReady().then(async () => {
     assert.equal(await run("unmount()"), true, "unmount must cancel compositor animations");
     console.log(JSON.stringify({ samples }));
   } catch (error) {
+    console.error(
+      "Animation environment:",
+      JSON.stringify({
+        gpu: app.getGPUFeatureStatus(),
+        sample: await run("sample()"),
+      })
+    );
     console.error(error);
     process.exitCode = 1;
   } finally {
