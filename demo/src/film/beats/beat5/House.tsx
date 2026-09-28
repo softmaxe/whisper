@@ -1,5 +1,6 @@
 import { useId } from "react";
 import type { Point } from "../../pen/RedPen.tsx";
+import { emWidth } from "../../components/captionLayout.ts";
 import { HAND_FONT } from "../../fonts.ts";
 import { RoughDrawing, useWobbleSeed } from "../../rough/RoughDrawing.tsx";
 import { PALETTE } from "../../theme.ts";
@@ -174,7 +175,8 @@ export const Written: React.FC<{
 }> = ({ x, y, progress, fontSize, font, color, width, anchor = "start", children }) => {
   const clipId = useId();
   if (progress <= 0) return null;
-  const w = width ?? children.length * fontSize * 0.62 + fontSize;
+  // Generous: CJK advances a full em, Latin (and monospace) about 0.6 em.
+  const w = width ?? emWidth(children) * fontSize * 1.15 + fontSize;
   const left = anchor === "middle" ? x - w / 2 : x;
   return (
     <g>
