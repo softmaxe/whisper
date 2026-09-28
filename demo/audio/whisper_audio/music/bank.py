@@ -8,9 +8,10 @@ changing an instrument means changing the bank, not the score:
     MELODY   the tune above it
 
 A bank maps every role to a `NoteRenderer`, which turns one `Note` into a mono
-clip. `synth_bank()` wraps the numpy instruments in `instruments.py`;
-`default_bank()` is what the build uses. Tests pass their own bank to
-`render_layers`, so the audio suite never depends on the build's instruments.
+clip. `sampled_bank()` plays the recorded instruments in the sample cache
+(`samples.py`, `sfz.py`) and is the build's `default_bank()`; `synth_bank()`
+wraps the numpy instruments in `instruments.py`. Tests pass their own bank to
+`render_layers`, so the audio suite never needs the cache or the network.
 """
 
 from __future__ import annotations
@@ -72,6 +73,18 @@ def synth_bank() -> SampleBank:
     return {CHORDS: plucked_guitar, MELODY: kalimba}
 
 
+def sampled_bank() -> SampleBank:
+    """The recorded instruments in `samples.toml`, read from the sample cache: each library plays its role
+    (upright piano for the chords, Rhodes for the melody).
+
+    Only verifies the cache; the build's fetch step downloads it.
+    """
+    from ..samples import load_manifest
+    from .sfz import load_library
+
+    return check_bank({library.role: load_library(library) for library in load_manifest()})
+
+
 def default_bank() -> SampleBank:
     """The bank the build uses when `render_layers` is given none."""
-    return synth_bank()
+    return sampled_bank()

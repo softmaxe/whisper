@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import copy
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -21,8 +20,6 @@ from whisper_audio.mix import master, render_layers
 from whisper_audio.music.bank import CHORDS, MELODY, ROLES, Note
 from whisper_audio.music.score import bars
 from whisper_audio.timeline import all_cues, beat
-
-PACKAGE = Path(music.__file__).resolve().parents[2]
 
 
 def db(x: float) -> float:
@@ -220,16 +217,3 @@ def test_every_cue_stands_out_over_the_music(timeline, layers):
         cue_peak = np.max(np.abs(layers["sfx"][at : at + SR // 5]))
         bed = rms(layers["music"][max(at - SR // 2, 0) : at + SR // 2])
         assert db(cue_peak) - db(bed) > 10, f"{cue['type']} at {cue['at']}s is buried"
-
-
-def test_no_recorded_samples_are_used():
-    audio_files = [
-        p
-        for p in PACKAGE.rglob("*")
-        if p.suffix.lower() in {".wav", ".mp3", ".flac", ".ogg", ".aif", ".aiff", ".m4a", ".sf2"}
-        and ".venv" not in p.parts
-    ]
-    assert audio_files == []
-    for source in (PACKAGE / "whisper_audio").rglob("*.py"):
-        text = source.read_text(encoding="utf-8")
-        assert "http" not in text and "urllib" not in text, f"{source.name} fetches something"
