@@ -68,6 +68,9 @@ export const useAudioRecording = (toast, options = {}) => {
   const performStartRecording = useCallback(
     async ({ startupRequest } = {}) => {
       if (startLockRef.current) return false;
+      if (!audioManagerRef.current || !canStartDictation(audioManagerRef.current.getState())) {
+        return false;
+      }
       startLockRef.current = true;
       pushForceStoppedRef.current = false;
       let recordingStarted = false;
@@ -78,10 +81,6 @@ export const useAudioRecording = (toast, options = {}) => {
         manager === audioManagerRef.current;
       let startupTrace;
       try {
-        if (!audioManagerRef.current) return false;
-
-        if (!canStartDictation(audioManagerRef.current.getState())) return false;
-
         startupTrace = getStartupTrace(startupRequest);
         startupTrace.mark("preparationEntered");
         manager.selectMicrophoneForSession?.();
@@ -304,6 +303,10 @@ export const useAudioRecording = (toast, options = {}) => {
       onTranscriptionComplete: async (result) => {
         if (result.success) {
           const completedRecordingGeneration = preparationGenerationRef.current;
+          const manager = audioManagerRef.current;
+          const isCurrent = () =>
+            completedRecordingGeneration === preparationGenerationRef.current &&
+            manager === audioManagerRef.current;
           dismissDictationError?.();
           const transcribedText = result.text?.trim();
 
@@ -331,7 +334,7 @@ export const useAudioRecording = (toast, options = {}) => {
 
           const { autoPasteEnabled, keepTranscriptionInClipboard } = getSettings();
 
-          const persistencePromise = audioManagerRef.current
+          const persistencePromise = manager
             .saveTranscription(result.text, result.rawText ?? result.text, {
               clientTranscriptionId: result.clientTranscriptionId,
               // Spread rather than set: a result with no analytics timestamp
@@ -371,6 +374,7 @@ export const useAudioRecording = (toast, options = {}) => {
             );
 
           const keepInClipboard = async (delivery) => {
+            if (!isCurrent()) return false;
             try {
               const clipboardResult = await window.electronAPI.writeClipboard(result.text);
               if (clipboardResult?.success === false) {
@@ -392,6 +396,7 @@ export const useAudioRecording = (toast, options = {}) => {
             // down. Injecting the paste shortcut into those held modifiers is
             // what silently loses the transcript, so keep it instead.
             const keptInClipboard = await keepInClipboard("push-force-stopped");
+            if (!isCurrent()) return;
             window.electronAPI?.hideDictationPreview?.();
             showDictationError({
               title: t("hooks.audioRecording.pushForceStopped.title"),
@@ -408,7 +413,7 @@ export const useAudioRecording = (toast, options = {}) => {
             const pasteStart = performance.now();
             let pasteSucceeded = true;
             try {
-              pasteSucceeded = await audioManagerRef.current.safePaste(result.text, {
+              pasteSucceeded = await manager.safePaste(result.text, {
                 restoreClipboard: !keepTranscriptionInClipboard,
                 allowClipboardFallback: isAccessibilitySkipped(),
                 suppressError: true,
@@ -417,13 +422,10 @@ export const useAudioRecording = (toast, options = {}) => {
               pasteSucceeded = false;
               logger.warn("Failed to paste transcription", { error: error?.message }, "clipboard");
             }
-            if (
-              !pasteSucceeded &&
-              completedRecordingGeneration === preparationGenerationRef.current &&
-              localStorage.getItem("onboardingCompleted") === "true"
-            ) {
+            if (!isCurrent()) return;
+            if (!pasteSucceeded && localStorage.getItem("onboardingCompleted") === "true") {
               const copied = await keepInClipboard("paste-fallback");
-              if (completedRecordingGeneration === preparationGenerationRef.current) {
+              if (isCurrent()) {
                 onShowTranscriptRef.current?.(result.text, {
                   copyFallback: copied ? "copied" : "copy",
                 });
@@ -441,7 +443,7 @@ export const useAudioRecording = (toast, options = {}) => {
             );
             // Successful delivery closes the preview; failed delivery keeps
             // the final text available in the manual-copy panel.
-            if (pasteSucceeded) {
+            if (pasteSucceeded && isCurrent()) {
               window.electronAPI?.hideDictationPreview?.();
               if (result.cleanupFailure) recordCleanupFailure(result.cleanupFailure);
             }
@@ -565,10 +567,12 @@ export const useAudioRecording = (toast, options = {}) => {
 
   const cancelProcessing = useCallback(() => {
     if (audioManagerRef.current) {
+      invalidatePreparation();
+      window.electronAPI?.hideDictationPreview?.();
       return audioManagerRef.current.cancelProcessing();
     }
     return false;
-  }, []);
+  }, [invalidatePreparation]);
 
   const getAudioLevel = useCallback(
     () => audioManagerRef.current?.getRecordingAudioLevel() ?? null,
