@@ -89,6 +89,9 @@ export const useAudioRecording = (toast, options = {}) => {
         setIsPreparing(true);
         // Publish feedback while acquisition and target capture are pending.
         reportLifecycle("preparing");
+        // A retry owns the presentation as soon as it starts connecting. Keep
+        // the old error from covering a slow microphone's preparation feedback.
+        dismissDictationError?.();
         // Acquire alongside preparation feedback, even when the window cannot
         // draw. startRecording() joins this capture and retains its pre-roll.
         void audioManagerRef.current.prepareMicCapture?.(startupTrace);
@@ -110,7 +113,6 @@ export const useAudioRecording = (toast, options = {}) => {
         recordingStarted = didStart;
         if (didStart) startupTrace.startSettled();
         else startupTrace.finish("failed", "start_failed");
-        if (didStart) dismissDictationError?.();
 
         // A quick tap can end the recording inside the start call itself — don't
         // pause media for a recording that already ended. See #1060.
@@ -498,6 +500,7 @@ export const useAudioRecording = (toast, options = {}) => {
       preparationGenerationRef.current += 1;
       setIsPreparing(true);
       reportLifecycle("preparing");
+      dismissDictationError?.();
       void audioManagerRef.current.prepareMicCapture?.(startupTrace);
     });
 

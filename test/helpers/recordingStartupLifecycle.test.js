@@ -146,13 +146,23 @@ async function setup(t, { cues = false } = {}) {
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
   const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
+  const { DictationErrorCard } = await vite.ssrLoadModule(
+    "/components/dictation/DictationErrorCard.tsx"
+  );
   const { resolveRecordingPillState } = await vite.ssrLoadModule(
     "/helpers/voicePillPresentation.js"
   );
   const toasts = errors;
-  const toast = (error) => errors.push(error);
+  let activeError = null;
+  const toast = (error) => {
+    errors.push(error);
+    if (error.presentation === "dictation-error") activeError = error;
+  };
+  const dismissDictationError = () => {
+    activeError = null;
+  };
   function Harness() {
-    hook = useAudioRecording(toast);
+    hook = useAudioRecording(toast, { dismissDictationError });
     return null;
   }
   root = createRoot(container);
@@ -163,6 +173,16 @@ async function setup(t, { cues = false } = {}) {
     toasts,
     settings: useSettingsStore,
     errors,
+    recovery: () => activeError,
+    recoveryMarkup: () =>
+      activeError
+        ? renderToStaticMarkup(
+            React.createElement(DictationErrorCard, {
+              ...activeError,
+              onAction: (action) => action.onClick(),
+            })
+          )
+        : "",
     tones,
     unmount: () =>
       React.act(async () => {
@@ -718,6 +738,56 @@ test("a selected microphone disconnect ends Dictation and reports failure withou
   assert.equal(stopped, true);
   assert.deepEqual(opens, ["phone"]);
   assert.match(h.toasts.at(-1).description, /Reconnect it/);
+  assert.match(h.recoveryMarkup(), /role="alert"/);
+  assert.match(h.recoveryMarkup(), /Reconnect it/);
+  assert.match(h.recoveryMarkup(), /Retry/);
+});
+
+test("microphone recovery Retry gives a slow connection the presentation before readiness", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  h.media.mediaDevices.getUserMedia = async () => {
+    throw Object.assign(new Error("Device unavailable"), { name: "NotReadableError" });
+  };
+  await React.act(async () => h.events.StartDictation());
+  await React.act(async () => h.target.resolve());
+  assert.equal(h.hook().isPreparing, false);
+  assert.match(h.recoveryMarkup(), /Retry/);
+  const retry = h.recovery().actions.find((action) => action.icon === "retry");
+  const acquisition = deferred();
+  h.media.mediaDevices.getUserMedia = () => acquisition.promise;
+  let retryResult;
+  await React.act(async () => {
+    retryResult = retry.onClick();
+  });
+  assert.equal(h.recovery(), null, "the old error must not cover connection feedback");
+  assert.equal(h.hook().isPreparing, true);
+  assert.equal(h.presentation().motion, "sweep");
+  await React.act(async () => h.hook().cancelRecording());
+  await React.act(async () => {
+    acquisition.resolve(h.media.stream);
+    await retryResult;
+  });
+  assert.equal(h.recovery(), null, "cancelled retry must not restore its dismissed prompt");
+  assert.equal(h.presentation().shape, "sliver");
+  assert.equal(h.media.track.readyState, "ended");
+});
+
+test("a failed recovery Retry replaces its old prompt with the new actionable failure", async (t) => {
+  const h = await setup(t);
+  selectPhone(h);
+  h.media.mediaDevices.getUserMedia = async () => {
+    throw Object.assign(new Error("Device unavailable"), { name: "NotReadableError" });
+  };
+  await React.act(async () => h.events.StartDictation());
+  await React.act(async () => h.target.resolve());
+  const previous = h.recovery();
+  await React.act(async () => previous.actions[0].onClick());
+  assert.notEqual(h.recovery(), previous);
+  assert.match(h.recoveryMarkup(), /Retry/);
+  assert.equal(h.hook().isPreparing, false);
+  assert.equal(h.hook().isRecording, false);
+  assert.equal(h.lifecycle.at(-1), "idle");
 });
 
 test("a stale selected ID with only a label match fails instead of guessing physical identity", async (t) => {
