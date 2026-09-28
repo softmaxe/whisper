@@ -100,12 +100,9 @@ class Section:
     melody: str | None = None  # melody figures, a key of MELODY_FIGURES
     bass: bool = False
     drums: bool = False
-    pad: float = DAY_PAD
+    pad: float = DAY_PAD  # pad thickness
+    night: bool = False  # night voicings: a fuller pad, and the bass holds the root
     paper: float = 0.3  # paper rustles per second
-
-    @property
-    def night(self) -> bool:
-        return self.pad >= NIGHT_PAD
 
 
 # Arranged by Beat key: sparse opening, drums through the feature Beats, the pad under
@@ -117,10 +114,12 @@ SECTIONS: dict[str, Section] = {
         (FMAJ7, EM7, AM9, DM9), cadence=(G6SUS,), comp="rolling", melody="answer", bass=True, drums=True
     ),
     "review": Section(
-        (AM9, FMAJ7, CMAJ7), cadence=(G6SUS,), comp="night", melody="lullaby", bass=True, pad=NIGHT_PAD, paper=0.15
+        (AM9, FMAJ7, CMAJ7), cadence=(G6SUS,), comp="night", melody="lullaby", bass=True,
+        pad=NIGHT_PAD, night=True, paper=0.15,
     ),
     "servers": Section(
-        (FMAJ7, EM7, AM9), cadence=(G6SUS, HOME), comp="rolling", melody="home", bass=True, pad=NIGHT_PAD
+        (FMAJ7, EM7, AM9), cadence=(G6SUS, HOME), comp="rolling", melody="home", bass=True,
+        pad=NIGHT_PAD, night=True,
     ),
 }
 # A Beat added to the timeline without a Section here still gets a quiet bed.
