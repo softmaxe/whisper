@@ -3,11 +3,13 @@
 Nothing here makes sound. `layers/music.py` turns the bars into notes.
 
 The grid follows the timeline: every Beat starts on a downbeat. Each Beat is
-split into whole beats at a tempo as close to 84 BPM as fits the Beat exactly
-(so a 22 s Beat plays 31 beats at about 84.5 BPM), grouped into 4/4 bars. A
+split into whole beats at a tempo as close to 76 BPM as fits the Beat exactly
+(so a 22 s Beat plays 28 beats at about 76.4 BPM), grouped into 4/4 bars. A
 leftover of 2 or 3 beats becomes a short closing bar; a single leftover beat
 lengthens the last bar instead. The Film's last Beat always folds its leftover
-into the final bar, so the closing home chord rings as long as possible.
+into the final bar, and that bar lasts at least HOME_BEATS beats (borrowing
+from the bar before, which becomes a short pickup), so the closing home chord
+rings as long as possible.
 """
 
 from __future__ import annotations
@@ -16,49 +18,49 @@ from dataclasses import dataclass, field
 
 from ..timeline import Timeline
 
-BPM = 84
+BPM = 76
 BEATS_PER_BAR = 4
+HOME_BEATS = 6
 
 
 @dataclass(frozen=True)
 class Chord:
     name: str
-    bass: int  # MIDI note of the bass string
-    voicing: tuple[int, ...]  # guitar voicing, low to high (MIDI)
+    bass: int  # MIDI root for the bass
+    voicing: tuple[int, ...]  # accompaniment voicing, low to high (MIDI)
 
     @property
     def tones(self) -> tuple[int, ...]:
-        """Melody notes for the kalimba: the voicing's top four notes, an octave up."""
+        """Melody notes: the voicing's top four notes, an octave up."""
         return tuple(n + 12 for n in self.voicing[-4:])
 
 
-# D major, with guitar-like open voicings.
-D = Chord("D", 38, (50, 57, 62, 66, 69))
-G = Chord("G", 43, (55, 59, 62, 67, 71))
-GMAJ7 = Chord("Gmaj7", 43, (55, 59, 62, 66, 71))
-A = Chord("A", 45, (52, 57, 61, 64, 69))
-ASUS4 = Chord("Asus4", 45, (52, 57, 62, 64, 69))
-BM = Chord("Bm", 47, (54, 59, 62, 66, 71))
-FSM = Chord("F#m", 42, (54, 57, 61, 66, 69))
-# The closing home chord: D with the high D on top.
-HOME = Chord("D", 38, (50, 57, 62, 66, 69, 74))
+# C major in soft maj7/add9 colours: an open low note under a close upper voicing.
+CMAJ7 = Chord("Cmaj7", 36, (48, 55, 59, 64, 67))
+DM9 = Chord("Dm9", 38, (50, 57, 60, 64, 65))
+EM7 = Chord("Em7", 40, (52, 59, 62, 67, 71))
+FMAJ7 = Chord("Fmaj7", 41, (53, 57, 60, 64, 67))
+G6SUS = Chord("G6sus", 43, (55, 60, 62, 64, 67))
+AM9 = Chord("Am9", 45, (45, 55, 59, 60, 64))
+# The closing home chord: Cadd9 (no seventh), with the high C on top.
+HOME = Chord("Cadd9", 36, (48, 55, 62, 64, 67, 72))
 
-# A guitar pattern is a list of (beat position within the bar, voicing index, velocity).
+# An accompaniment pattern is a list of (beat position within the bar, voicing index, velocity).
 # Positions at or past a bar's length are skipped; a 5-beat bar repeats beat 0's notes on beat 4.
-GUITAR_PATTERNS: dict[str, list[tuple[float, int, float]]] = {
+CHORD_PATTERNS: dict[str, list[tuple[float, int, float]]] = {
     # Unhurried quarter-note arpeggio: the Opening's slow typing.
-    "sparse": [(0.0, 0, 0.9), (1.0, 2, 0.5), (2.0, 3, 0.6), (3.0, 4, 0.45)],
+    "sparse": [(0.0, 0, 0.85), (1.0, 2, 0.45), (2.0, 3, 0.55), (3.0, 4, 0.4)],
     # Rolling eighths: the feature Beats.
     "rolling": [
-        (0.0, 0, 0.95), (0.5, 2, 0.45), (1.0, 3, 0.6), (1.5, 2, 0.4),
-        (2.0, 1, 0.75), (2.5, 3, 0.45), (3.0, 4, 0.6), (3.5, 3, 0.4),
+        (0.0, 0, 0.85), (0.5, 2, 0.4), (1.0, 3, 0.55), (1.5, 2, 0.35),
+        (2.0, 1, 0.65), (2.5, 3, 0.4), (3.0, 4, 0.55), (3.5, 3, 0.35),
     ],
-    # Night: a bass note and one high note per bar, left to ring.
-    "night": [(0.0, 0, 0.8), (2.0, 3, 0.45)],
+    # Night: a low note and one high note per bar, left to ring.
+    "night": [(0.0, 0, 0.75), (2.0, 3, 0.4)],
 }
 
-# Kalimba figures: (beat position, chord-tone index into Chord.tones, velocity), one list per bar, cycled.
-KALIMBA_FIGURES: dict[str, list[list[tuple[float, int, float]]]] = {
+# Melody figures: (beat position, chord-tone index into Chord.tones, velocity), one list per bar, cycled.
+MELODY_FIGURES: dict[str, list[list[tuple[float, int, float]]]] = {
     "question": [
         [(2.0, 1, 0.7), (3.0, 2, 0.6)],
         [(2.0, 3, 0.65), (3.0, 2, 0.55)],
@@ -83,6 +85,10 @@ KALIMBA_FIGURES: dict[str, list[list[tuple[float, int, float]]]] = {
     ],
 }
 
+# Pad thickness: a thin warm floor by day, a fuller and louder pad at night.
+DAY_PAD = 0.4
+NIGHT_PAD = 1.0
+
 
 @dataclass(frozen=True)
 class Section:
@@ -90,25 +96,35 @@ class Section:
 
     chords: tuple[Chord, ...]
     cadence: tuple[Chord, ...] = ()
-    guitar: str = "sparse"
-    kalimba: str | None = None
+    comp: str = "sparse"  # accompaniment pattern, a key of CHORD_PATTERNS
+    melody: str | None = None  # melody figures, a key of MELODY_FIGURES
     bass: bool = False
     drums: bool = False
-    pad: bool = False
+    pad: float = DAY_PAD
     paper: float = 0.3  # paper rustles per second
 
+    @property
+    def night(self) -> bool:
+        return self.pad >= NIGHT_PAD
 
-# Arranged by Beat key: sparse opening, drums through the feature Beats, a soft pad at night,
-# and the home chord to close.
+
+# Arranged by Beat key: sparse opening, drums through the feature Beats, the pad under
+# everything and thicker at night (which lasts until the Film's end), and the home chord to close.
 SECTIONS: dict[str, Section] = {
-    "opening": Section((D, GMAJ7), cadence=(ASUS4,), guitar="sparse", kalimba="question", paper=0.8),
-    "speak": Section((D, A, BM, G), guitar="rolling", kalimba="tune", bass=True, drums=True),
-    "more": Section((G, A, FSM, BM), cadence=(A,), guitar="rolling", kalimba="answer", bass=True, drums=True),
-    "review": Section((BM, G, D), cadence=(A,), guitar="night", kalimba="lullaby", bass=True, pad=True, paper=0.15),
-    "servers": Section((G, A, BM), cadence=(ASUS4, HOME), guitar="rolling", kalimba="home", bass=True, pad=True),
+    "opening": Section((CMAJ7, FMAJ7), cadence=(G6SUS,), comp="sparse", melody="question", paper=0.8),
+    "speak": Section((CMAJ7, AM9, FMAJ7, G6SUS), comp="rolling", melody="tune", bass=True, drums=True),
+    "more": Section(
+        (FMAJ7, EM7, AM9, DM9), cadence=(G6SUS,), comp="rolling", melody="answer", bass=True, drums=True
+    ),
+    "review": Section(
+        (AM9, FMAJ7, CMAJ7), cadence=(G6SUS,), comp="night", melody="lullaby", bass=True, pad=NIGHT_PAD, paper=0.15
+    ),
+    "servers": Section(
+        (FMAJ7, EM7, AM9), cadence=(G6SUS, HOME), comp="rolling", melody="home", bass=True, pad=NIGHT_PAD
+    ),
 }
 # A Beat added to the timeline without a Section here still gets a quiet bed.
-DEFAULT_SECTION = Section((D, G), guitar="sparse", kalimba="lullaby")
+DEFAULT_SECTION = Section((CMAJ7, FMAJ7), comp="sparse", melody="lullaby")
 
 
 @dataclass(frozen=True)
@@ -144,6 +160,10 @@ def bar_lengths(total_beats: int, last_in_film: bool) -> list[int]:
         bars[-1] += rest
     elif rest:
         bars.append(rest)
+    if last_in_film and len(bars) > 1 and bars[-1] < HOME_BEATS:
+        borrow = min(HOME_BEATS - bars[-1], bars[-2] - 2)
+        bars[-2] -= borrow
+        bars[-1] += borrow
     return bars
 
 

@@ -19,7 +19,7 @@ from whisper_audio.layers import music
 from whisper_audio.dsp import seconds
 from whisper_audio.mix import master, render_layers
 from whisper_audio.music.bank import CHORDS, MELODY, ROLES, Note
-from whisper_audio.music.score import BPM, HOME, bars, chord_at
+from whisper_audio.music.score import bars
 from whisper_audio.timeline import all_cues, beat
 
 PACKAGE = Path(music.__file__).resolve().parents[2]
@@ -81,13 +81,13 @@ def test_the_score_lasts_exactly_the_film(any_timeline, bank):
         assert math.isclose(a.end, b.start), "bars are contiguous"
 
 
-def test_every_beat_starts_on_a_downbeat_near_84_bpm(any_timeline):
+def test_every_beat_starts_on_a_downbeat_near_76_bpm(any_timeline):
     grid = bars(any_timeline)
     starts = [bar.start for bar in grid]
     for b in any_timeline["beats"]:
         assert any(math.isclose(b["start"], s) for s in starts), f"{b['key']} starts mid-bar"
     for bar in grid:
-        assert abs(60.0 / bar.beat_len - BPM) <= 6, f"{bar.beat_key} bar {bar.index} is off tempo"
+        assert abs(60.0 / bar.beat_len - 76) <= 4, f"{bar.beat_key} bar {bar.index} is off tempo"
         assert 2 <= bar.beats <= 7
 
 
@@ -102,14 +102,22 @@ def test_drums_play_through_the_feature_beats_only(stems):
             assert db(rms(section(drums, t, t + 1))) > -50, f"drums missing at {t:.1f}s"
 
 
-def test_the_pad_comes_in_at_night(stems):
+# Night falls in the review Beat and lasts until the paper clears at the end of the Film.
+NIGHT = ("review", "servers")
+
+
+def test_the_pad_plays_throughout_and_is_louder_at_night(stems):
     timeline, parts = stems
     pad = parts["pad"]
-    review = beat(timeline, "review")
-    # Only the filter's pre-ring of a slow swell may reach back past the Beat start.
-    assert db(np.max(np.abs(section(pad, 0, review["start"] - 0.05)))) < -90
-    for t in np.arange(review["start"] + 1.5, timeline["durationSeconds"] - music.FADE_OUT, 1.0):
+    for t in np.arange(1.0, timeline["durationSeconds"] - 1, 1.0):
         assert db(rms(section(pad, t, t + 1))) > -50, f"pad missing at {t:.1f}s"
+    for day in (b for b in timeline["beats"] if b["key"] not in NIGHT):
+        for key in NIGHT:
+            night = beat(timeline, key)
+            # Skip each Beat's first bar, where the swell from the Beat before still overlaps.
+            quiet = db(rms(section(pad, day["start"] + 1.5, day["end"])))
+            loud = db(rms(section(pad, night["start"] + 1.5, night["end"])))
+            assert loud > quiet + 3, f"the pad in {key} is not louder than in {day['key']}"
 
 
 def test_the_opening_is_sparser_than_the_feature_beats(stems):
@@ -119,12 +127,35 @@ def test_the_opening_is_sparser_than_the_feature_beats(stems):
     assert db(rms(section(bed, 1, opening["end"]))) < db(rms(section(bed, speak["start"], speak["end"]))) - 2
 
 
-def test_the_score_resolves_on_the_home_chord(any_timeline):
-    end = any_timeline["durationSeconds"]
-    assert chord_at(any_timeline, end - 0.01) == HOME
-    last = bars(any_timeline)[-1]
-    assert last.last_in_film and last.chord == HOME
+PITCH_CLASSES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+
+
+def pitch_class_levels(x: np.ndarray) -> dict[str, float]:
+    """Spectral energy (dB) per pitch class, from about C2 to C7."""
+    mono = x.mean(axis=1) * np.hanning(x.shape[0])
+    power = np.abs(np.fft.rfft(mono)) ** 2
+    freqs = np.fft.rfftfreq(mono.shape[0], 1.0 / SR)
+    keep = (freqs > 60) & (freqs < 2100)
+    classes = np.round(12 * np.log2(freqs[keep] / 440.0) + 69).astype(int) % 12
+    energy = np.bincount(classes, weights=power[keep], minlength=12)
+    return {name: 10 * np.log10(e + 1e-30) for name, e in zip(PITCH_CLASSES, energy)}
+
+
+def test_the_score_resolves_on_cadd9(stems):
+    """The pitched parts end on C, D, E and G (Cadd9: no seventh), ringing through the fade."""
+    timeline, parts = stems
+    end = timeline["durationSeconds"]
+    last = bars(timeline)[-1]
     assert end - last.start >= music.FADE_OUT - 0.5, "the home chord rings through the fade"
+    window = (end - 3.5, end - 1.0)
+    levels = pitch_class_levels(section(parts[CHORDS] + parts[MELODY], *window))
+    home = [levels[name] for name in ("C", "D", "E", "G")]
+    assert min(home) > max(levels.values()) - 20, f"a Cadd9 tone is missing: {levels}"
+    for name, level in levels.items():
+        if name not in ("C", "D", "E", "G"):
+            assert level < min(home) - 6, f"{name} sounds in the home chord"
+    bass = pitch_class_levels(section(parts["bass"], *window))
+    assert max(bass, key=bass.get) == "C", "the bass lands on the root"
 
 
 def test_music_ignores_sound_cues(timeline, bank):

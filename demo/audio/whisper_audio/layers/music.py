@@ -1,15 +1,16 @@
 """Music layer: the Film's score, played from the bar grid in `music/score.py`.
 
-Warm plucked strings (Karplus-Strong guitar and bass), kalimba, brushed drums,
-a soft night pad and paper rustle, arranged by Beat and read from the timeline.
-The chords (guitar) and melody (kalimba) stems play their notes through a sample
-bank (`music/bank.py`); the other stems are synthesised here:
+A warm C major score at about 76 BPM: accompaniment chords, a melody above
+them, a round sine bass, light brushes, a soft pad and paper rustle, arranged
+by Beat and read from the timeline. The chords and melody stems play their notes
+through a sample bank (`music/bank.py`); the other stems are synthesised here:
 
-    opening   sparse guitar arpeggio, a questioning kalimba figure, paper rustle
-    speak     rolling guitar, plucked bass and brushed drums join on the downbeat
-    more      the band carries on under a lighter kalimba answer
-    review    drums drop out; night: a soft pad, ringing plucks, a kalimba lullaby
-    servers   the guitar rolls again over the pad and resolves on the home chord,
+    opening   a sparse arpeggio over a thin pad, a questioning melody, paper rustle
+    speak     rolling chords; the bass and light brushes join on the downbeat
+    more      the band carries on under a lighter melodic answer
+    review    the brushes drop out; night: the pad thickens under ringing chords
+              and a lullaby
+    servers   the chords roll again over the night pad and resolve on Cadd9,
               which rings through a fade to silence at the end of the Film
 
 The music reads only Beat keys and windows and the Film length from the
@@ -23,14 +24,15 @@ import numpy as np
 from ..dsp import fft_filter, place, seconds
 from ..music import instruments as inst
 from ..music.bank import CHORDS, MELODY, Note, SampleBank, check_bank
-from ..music.score import GUITAR_PATTERNS, KALIMBA_FIGURES, Bar, bars
+from ..music.score import CHORD_PATTERNS, MELODY_FIGURES, Bar, bars
 from ..timeline import Timeline, film_samples
 
 GAIN = 1.4
 SEED = 84
 
 # Level of each stem in the music bus, tuned so the bed sits about 12 dB under the sound cues.
-STEM_GAINS = {CHORDS: 0.3, "bass": 0.34, MELODY: 0.1, "drums": 0.2, "pad": 0.09, "paper": 0.07}
+# The round bass sustains where a plucked one decayed, so it sits much lower at the same loudness.
+STEM_GAINS = {CHORDS: 0.3, "bass": 0.055, MELODY: 0.1, "drums": 0.2, "pad": 0.09, "paper": 0.07}
 # How much of each stem goes to the shared room reverb.
 ROOM_SENDS = {CHORDS: 0.35, "bass": 0.1, MELODY: 0.5, "drums": 0.25, "pad": 0.4, "paper": 0.0}
 ROOM_LEVEL = 0.45
@@ -72,17 +74,19 @@ def render_chords(grid: list[Bar], n: int, sr: int, rng: np.random.Generator, ba
     for bar in grid:
         voicing = bar.chord.voicing
         if bar.last_in_film:
-            # The home chord, strummed slowly and left to ring through the fade.
+            # The home chord, rolled slowly from the bottom and left to ring through the fade.
+            ring = bar.end - bar.start + 0.5
             for j, note in enumerate(voicing):
-                clip = play(Note(note, 0.85 - 0.05 * j, 5.0, let_ring=True), sr, rng)
-                place(out, clip, seconds(bar.at(0.0) + 0.045 * j, sr), pan=-0.35 + 0.12 * j)
+                clip = play(Note(note, 0.7 - 0.05 * j, ring, let_ring=True), sr, rng)
+                place(out, clip, seconds(bar.at(0.0) + 0.06 * j, sr), pan=-0.3 + 0.1 * j)
             continue
-        ring = 1.2 if bar.section.guitar == "rolling" else 2.8
-        for pos, voice, vel in positions(GUITAR_PATTERNS[bar.section.guitar], bar):
+        # Held a little past the next note, like a pianist's half pedal.
+        ring = 1.6 if bar.section.comp == "rolling" else 3.2
+        for pos, voice, vel in positions(CHORD_PATTERNS[bar.section.comp], bar):
             note = voicing[min(voice, len(voicing) - 1)]
             clip = play(Note(note, vel * rng.uniform(0.85, 1.0), ring), sr, rng)
             place(out, clip, played(bar, pos, sr, rng), pan=-0.3 + 0.1 * voice)
-    return filtered(out, sr, lowpass=3600, highpass=70)
+    return filtered(out, sr, lowpass=4500, highpass=60)
 
 
 def render_bass(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> np.ndarray:
@@ -93,13 +97,13 @@ def render_bass(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> n
         root = bar.chord.bass
         # Root on the downbeat, the fifth on beat 3 in full bars (just the root at night).
         hits = [(0.0, root, 1.0)]
-        if bar.beats >= 4 and not bar.section.pad and not bar.last_in_film:
+        if bar.beats >= 4 and not bar.section.night and not bar.last_in_film:
             hits.append((2.0, root + 7, 0.7))
-        for pos, note, vel in hits:
-            length = min(bar.beats - pos, 2.0) * bar.beat_len + 0.6
-            if bar.last_in_film:
-                length = 5.0
-            clip = vel * inst.karplus_strong(note, length, sr, rng, brightness=0.2, decay=0.999)
+        for i, (pos, note, vel) in enumerate(hits):
+            # Each note is held until the next one, with a short overlap so the line stays legato.
+            until = hits[i + 1][0] if i + 1 < len(hits) else bar.beats
+            length = (until - pos) * bar.beat_len + (0.5 if bar.last_in_film else 0.12)
+            clip = vel * inst.round_bass(note, length, sr, decay=2.2 if bar.last_in_film else 1.6)
             place(out, clip, played(bar, pos, sr, rng, 0.004))
     return filtered(out, sr, lowpass=650, highpass=35)
 
@@ -108,16 +112,17 @@ def render_melody(grid: list[Bar], n: int, sr: int, rng: np.random.Generator, ba
     out = stereo(n)
     play = bank[MELODY]
     for bar in grid:
-        name = bar.section.kalimba
+        name = bar.section.melody
         if name is None:
             continue
         tones = bar.chord.tones
         if bar.last_in_film:
-            place(out, play(Note(tones[-1], 0.6, 5.0, let_ring=True), sr, rng), seconds(bar.at(1.0), sr), pan=0.3)
+            ring = bar.end - bar.at(1.0) + 0.5
+            place(out, play(Note(tones[-1], 0.6, ring, let_ring=True), sr, rng), seconds(bar.at(1.0), sr), pan=0.3)
             continue
-        figures = KALIMBA_FIGURES[name]
+        figures = MELODY_FIGURES[name]
         for pos, tone, vel in positions(figures[bar.index % len(figures)], bar):
-            clip = play(Note(tones[tone % len(tones)], vel, 1.8), sr, rng)
+            clip = play(Note(tones[tone % len(tones)], vel, 2.2), sr, rng)
             place(out, clip, played(bar, pos, sr, rng, 0.008), pan=0.25 + 0.05 * tone)
     return out
 
@@ -134,31 +139,36 @@ def render_drums(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> 
             continue
         for beat in range(bar.beats):
             if beat % 4 == 0:
-                place(out, 0.9 * kick, played(bar, beat, sr, rng, 0.003))
+                place(out, 0.7 * kick, played(bar, beat, sr, rng, 0.003))
             elif beat % 4 == 2:
-                place(out, 0.45 * kick, played(bar, beat, sr, rng, 0.003))
+                place(out, 0.3 * kick, played(bar, beat, sr, rng, 0.003))
             else:
                 tap = taps[rng.integers(len(taps))]
-                place(out, 0.7 * rng.uniform(0.85, 1.0) * tap, played(bar, beat, sr, rng, 0.005), pan=0.1)
+                place(out, 0.45 * rng.uniform(0.85, 1.0) * tap, played(bar, beat, sr, rng, 0.005), pan=0.1)
             tick = ticks[rng.integers(len(ticks))]
             swing = 0.58  # lightly swung off-beat, in beats
-            place(out, 0.25 * rng.uniform(0.7, 1.0) * tick, played(bar, beat + swing, sr, rng, 0.004), pan=0.35)
+            place(out, 0.14 * rng.uniform(0.7, 1.0) * tick, played(bar, beat + swing, sr, rng, 0.004), pan=0.35)
             if beat % 2 == 0:
                 length = min(2, bar.beats - beat) * bar.beat_len
                 pan = -0.2 if (beat // 2) % 2 == 0 else 0.2
-                place(out, 0.12 * inst.brush_sweep(length, sr, rng), seconds(bar.at(beat), sr), pan=pan)
+                place(out, 0.08 * inst.brush_sweep(length, sr, rng), seconds(bar.at(beat), sr), pan=pan)
     return out
 
 
 def render_pad(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> np.ndarray:
+    """A soft pad under the whole Film: a thin three-note floor by day, fuller and louder at night."""
     out = stereo(n)
     for bar in grid:
-        if not bar.section.pad:
+        thickness = bar.section.pad
+        if thickness <= 0:
             continue
-        notes = [bar.chord.bass + 12, *bar.chord.voicing[1:4]]
+        notes = [bar.chord.bass + 12, *bar.chord.voicing[1:3]]
+        if bar.section.night:
+            # Night adds the upper voices, which carry the chord's colour (its 7th, 9th or 6th).
+            notes += list(bar.chord.voicing[3:5])
         # Each chord overlaps the next a little so the pad never dips at a bar line.
-        length = bar.beats * bar.beat_len + (5.0 if bar.last_in_film else 0.8)
-        chunk = inst.pad(notes, length, sr, rng)
+        length = bar.beats * bar.beat_len + (0.5 if bar.last_in_film else 0.8)
+        chunk = thickness * inst.pad(notes, length, sr, rng)
         start = seconds(bar.start, sr)
         end = min(n, start + chunk.shape[0])
         out[start:end] += chunk[: end - start]

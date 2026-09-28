@@ -61,6 +61,26 @@ def kalimba(note: float, length: float, sr: int, rng: np.random.Generator, ring:
     return (out + click) * attack_release(n, seconds(0.001, sr), seconds(0.06, sr))
 
 
+# Round bass partials: (harmonic, amplitude). Almost a pure sine; the faint 2nd and 3rd
+# harmonics let the line be heard on small speakers without adding boom.
+_BASS_HARMONICS = ((1, 1.0), (2, 0.18), (3, 0.06))
+
+
+def round_bass(note: float, length: float, sr: int, decay: float = 1.6) -> np.ndarray:
+    """A round, sine-based bass note: a soft attack, a slow decay, and a little harmonic colour.
+
+    The upper harmonics fade faster than the fundamental, so the note warms as it sustains.
+    """
+    n = seconds(length, sr)
+    t = np.arange(n) / sr
+    f = midi_hz(note)
+    out = np.zeros(n)
+    for k, amp in _BASS_HARMONICS:
+        if f * k < sr / 2:
+            out += amp * np.sin(2 * np.pi * f * k * t) * np.exp(-t * k / decay)
+    return out * attack_release(n, seconds(0.012, sr), seconds(0.12, sr))
+
+
 def soft_kick(sr: int) -> np.ndarray:
     """A felt-beater kick: a short pitch-dropping sine, no click, so it thumps rather than knocks."""
     n = seconds(0.4, sr)
@@ -74,7 +94,7 @@ def brush_tap(sr: int, rng: np.random.Generator, length: float = 0.3) -> np.ndar
     """A brush slapped on the snare: band-passed noise with a soft attack and a faint drum-body tone."""
     n = seconds(length, sr)
     t = np.arange(n) / sr
-    noise = fft_filter(rng.standard_normal(n), sr, lowpass=5200, highpass=1100)
+    noise = fft_filter(rng.standard_normal(n), sr, lowpass=4200, highpass=1000)
     noise /= np.max(np.abs(noise)) + 1e-12
     env = attack_release(n, seconds(0.004, sr), seconds(0.05, sr)) * exp_decay(n, 0.07 * sr)
     body = 0.25 * np.sin(2 * np.pi * 190 * t) * exp_decay(n, 0.025 * sr)
@@ -84,7 +104,7 @@ def brush_tap(sr: int, rng: np.random.Generator, length: float = 0.3) -> np.ndar
 def brush_tick(sr: int, rng: np.random.Generator) -> np.ndarray:
     """The brush tip on the off-beat: a short, soft, high noise tick (a gentle hi-hat stand-in)."""
     n = seconds(0.06, sr)
-    noise = fft_filter(rng.standard_normal(n), sr, lowpass=9000, highpass=3500)
+    noise = fft_filter(rng.standard_normal(n), sr, lowpass=7000, highpass=3500)
     noise /= np.max(np.abs(noise)) + 1e-12
     return noise * exp_decay(n, 0.012 * sr) * attack_release(n, seconds(0.002, sr), seconds(0.01, sr))
 

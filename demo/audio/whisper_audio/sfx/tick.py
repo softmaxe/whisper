@@ -18,7 +18,7 @@ DOWN = 0.045
 TURN = 0.012
 UP = 0.085
 RING = 0.3
-BELL_HZ = 1567.98  # G6, in the score's D major
+BELL_HZ = 1567.98  # G6, in the score's C major
 
 
 def length() -> float:
