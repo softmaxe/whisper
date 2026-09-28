@@ -14,7 +14,7 @@ import soundfile
 
 from whisper_audio.dsp import midi_hz
 from whisper_audio.music.bank import Note, softly
-from whisper_audio.music.sfz import load_library
+from whisper_audio.music.sfz import load_instrument, load_library
 from whisper_audio.samples import Library, SampleCacheError, fetch, verified_archive
 
 SR = 48_000
@@ -112,6 +112,28 @@ def test_a_note_plays_the_nearest_sample_at_its_pitch_and_length(tmp_path, libra
     assert np.max(np.abs(clip)) == pytest.approx(0.6, rel=0.01)
     assert dominant_hz(clip[: SR // 2], SR) == pytest.approx(midi_hz(pitch), rel=0.01)
     assert np.max(np.abs(clip[-10:])) < 1e-3  # released to silence at the note's end
+
+
+# Every region maps A4 to a sample of a different pitch, so the pitch heard tells which region a note
+# struck. Only the plain attack region that comes first in its round robin should ever play.
+ROUND_ROBIN_SFZ = """
+<region> sample=release.wav key=69 trigger=release
+<region> sample=legato.wav key=69 trigger=legato
+<region> sample=second.wav key=69 seq_length=2 seq_position=2
+<region> sample=upper.wav key=69 lorand=0.5 hirand=1
+<region> sample=attack.wav key=69 seq_length=2 seq_position=1 lorand=0 hirand=0.5
+"""
+
+
+def test_a_note_strikes_its_attack_region_and_always_the_first_round_robin():
+    keys = {"release.wav": 81, "legato.wav": 76, "second.wav": 72, "upper.wav": 64, "attack.wav": 57}
+    files = {"inst.sfz": ROUND_ROBIN_SFZ.encode(), **{name: wav_bytes(key) for name, key in keys.items()}}
+    instrument = load_instrument(files, "inst.sfz")
+
+    clips = [instrument(Note(69, 0.6, 1.0), SR, np.random.default_rng(seed)) for seed in range(3)]
+    for clip in clips:
+        assert dominant_hz(clip[: SR // 2], SR) == pytest.approx(midi_hz(57), rel=0.01)
+        assert np.array_equal(clip, clips[0])  # the same take every time
 
 
 def test_a_soft_touch_strikes_softly_but_keeps_the_notes_level():

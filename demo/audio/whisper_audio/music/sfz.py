@@ -5,6 +5,11 @@ or `key`), velocity range (`lovel`/`hivel`) and `ampeg_release`, with
 `<global>`/`<master>`/`<group>` inheritance and `default_path`. Everything
 else (loops, crossfades, filters, LFOs, controllers) is ignored.
 
+Only regions struck on a note-on play: those with a `trigger` other than
+`attack` or `first` (release noises, legato transitions) are dropped. Round
+robins are played deterministically: only the first of a `seq_position`
+cycle and the `lorand`/`hirand` region that starts at 0 are kept.
+
 A note plays the region whose key and velocity ranges hold it (or, outside
 every range, the region with the nearest key centre at that velocity),
 repitched by resampling, cut to the note's duration with a release fade, and
@@ -31,6 +36,8 @@ from .bank import Note
 _NOTE_NAMES = {"c": 0, "d": 2, "e": 4, "f": 5, "g": 7, "a": 9, "b": 11}
 _TOKEN = re.compile(r"<(\w+)>|([A-Za-z_]\w*)=")
 _LEVELS = ("global", "master", "group", "region")
+# Triggers that sound on a plain note-on; `release`, `release_key` and `legato` regions never do here.
+_NOTE_ON_TRIGGERS = ("attack", "first")
 
 
 def midi_key(value: str) -> int:
@@ -92,12 +99,21 @@ class Region:
     release: float  # seconds
 
 
+def plays_on_note_on(op: Mapping[str, str]) -> bool:
+    """Whether the region sounds on a note-on here: an attack region, and the first of any round robin."""
+    return (
+        op.get("trigger", "attack") in _NOTE_ON_TRIGGERS
+        and int(op.get("seq_position", "1")) == 1
+        and float(op.get("lorand", "0")) <= 0.0
+    )
+
+
 def regions_from_sfz(text: str, sfz_path: str) -> list[Region]:
-    """The instrument's regions, with sample paths resolved against the SFZ file's folder."""
+    """The instrument's note-on regions, with sample paths resolved against the SFZ file's folder."""
     base = posixpath.dirname(sfz_path)
     out = []
     for op in parse_regions(text):
-        if "sample" not in op:
+        if "sample" not in op or not plays_on_note_on(op):
             continue
         sample = posixpath.normpath(posixpath.join(base, op.get("default_path", ""), op["sample"].replace("\\", "/")))
         key = op.get("key")
