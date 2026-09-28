@@ -69,7 +69,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   markMacAccessibilityFeaturesReady: () => ipcRenderer.send("mac-accessibility-features-ready"),
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
-  showDictationPanel: () => ipcRenderer.invoke("show-dictation-panel"),
+  showDictationPanel: (options) => ipcRenderer.invoke("show-dictation-panel", options),
   captureDictationTarget: () => ipcRenderer.invoke("capture-dictation-target"),
   onToggleDictation: registerListener(
     "toggle-dictation",
@@ -302,14 +302,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Notify main process of activation mode changes
   notifyActivationModeChanged: (mode) => ipcRenderer.send("activation-mode-changed", mode),
   notifyHotkeyChanged: (hotkey) => ipcRenderer.send("hotkey-changed", hotkey),
-
-  // Floating icon auto-hide
-  notifyFloatingIconAutoHideChanged: (enabled) =>
-    ipcRenderer.send("floating-icon-auto-hide-changed", enabled),
-  onFloatingIconAutoHideChanged: registerListener(
-    "floating-icon-auto-hide-changed",
-    (callback) => (_event, enabled) => callback(enabled)
-  ),
 
   // Panel start position
   notifyPanelStartPositionChanged: (position) =>

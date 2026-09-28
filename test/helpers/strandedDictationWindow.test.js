@@ -187,7 +187,6 @@ async function createManager(t, reachesScreen) {
   createdWindows.length = 0;
   nextWindowReachesScreen = reachesScreen;
   const manager = new WindowManager();
-  manager._floatingIconAutoHide = true;
   await manager.createMainWindow();
   manager.setOnboardingActive(false);
   const replacements = [];
@@ -196,6 +195,16 @@ async function createManager(t, reachesScreen) {
   nextWindowReachesScreen = true;
   return { manager, window: manager.mainWindow, replacements };
 }
+
+test("startup and onboarding completion keep the pill hidden until explicitly requested", async (t) => {
+  const { manager, window } = await createManager(t, true);
+  assert.equal(window.isVisible(), false);
+  window.emit("ready-to-show");
+  t.mock.timers.tick(10000);
+  assert.equal(window.isVisible(), false, "neither ready-to-show nor a startup timer reveals idle");
+  manager.showDictationPanel({ reposition: false });
+  assert.equal(window.isVisible(), true);
+});
 
 test("a dictation window that never reaches the screen is replaced once dictation is idle", async (t) => {
   const { manager, window: stranded, replacements } = await createManager(t, false);

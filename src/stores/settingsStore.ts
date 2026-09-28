@@ -52,7 +52,6 @@ export interface SettingsState {
   saveDiscardedTranscriptions: boolean;
   audioCuesEnabled: boolean;
   pauseMediaOnDictation: boolean;
-  floatingIconAutoHide: boolean;
   startMinimized: boolean;
   showMenuBarIcon: boolean;
   panelStartPosition: PanelStartPosition;
@@ -90,7 +89,6 @@ export interface SettingsState {
   setSaveDiscardedTranscriptions: (value: boolean) => void;
   setAudioCuesEnabled: (value: boolean) => void;
   setPauseMediaOnDictation: (value: boolean) => void;
-  setFloatingIconAutoHide: (enabled: boolean) => void;
   setStartMinimized: (enabled: boolean) => void;
   setShowMenuBarIcon: (visible: boolean) => void;
   setPanelStartPosition: (position: PanelStartPosition) => void;
@@ -136,8 +134,11 @@ function readJsonArray<T>(key: string, fallback: T[]): T[] {
   }
 }
 
-// Idle microphone capture is no longer supported. Remove only its retired preference.
-if (isBrowser) localStorage.removeItem("micWarmHoldSeconds");
+// Remove retired idle capture and idle pill preferences.
+if (isBrowser) {
+  localStorage.removeItem("micWarmHoldSeconds");
+  localStorage.removeItem("floatingIconAutoHide");
+}
 
 function migrateMicrophoneSelectionMode() {
   if (!isBrowser) return;
@@ -183,7 +184,6 @@ const BOOLEAN_SETTINGS = new Set([
   "saveDiscardedTranscriptions",
   "audioCuesEnabled",
   "pauseMediaOnDictation",
-  "floatingIconAutoHide",
   "startMinimized",
   "showMenuBarIcon",
   "autoPasteEnabled",
@@ -281,7 +281,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   saveDiscardedTranscriptions: readBoolean("saveDiscardedTranscriptions", false),
   audioCuesEnabled: readBoolean("audioCuesEnabled", true),
   pauseMediaOnDictation: readBoolean("pauseMediaOnDictation", false),
-  floatingIconAutoHide: readBoolean("floatingIconAutoHide", false),
   startMinimized: readBoolean("startMinimized", false),
   showMenuBarIcon: readBoolean("showMenuBarIcon", true),
   panelStartPosition: (() => {
@@ -450,12 +449,6 @@ export const useSettingsStore = create<SettingsState>()((set, get) => ({
   setAudioCuesEnabled: createBooleanSetter("audioCuesEnabled"),
   setPauseMediaOnDictation: createBooleanSetter("pauseMediaOnDictation"),
 
-  setFloatingIconAutoHide: (enabled: boolean) => {
-    if (get().floatingIconAutoHide === enabled) return;
-    persist("floatingIconAutoHide", String(enabled));
-    set({ floatingIconAutoHide: enabled });
-    if (isBrowser) window.electronAPI?.notifyFloatingIconAutoHideChanged?.(enabled);
-  },
   setStartMinimized: (enabled: boolean) => {
     if (get().startMinimized === enabled) return;
     persist("startMinimized", String(enabled));

@@ -13,7 +13,6 @@ const PERSISTED_KEYS = [
   ...SECRET_KEYS,
   "DICTATION_KEY",
   "ACTIVATION_MODE",
-  "FLOATING_ICON_AUTO_HIDE",
   "PANEL_START_POSITION",
   "START_MINIMIZED",
   "SHOW_MENU_BAR_ICON",
@@ -253,16 +252,6 @@ class EnvironmentManager {
   saveActivationMode(mode) {
     const validMode = mode === "push" ? "push" : "tap";
     const result = this._saveKey("ACTIVATION_MODE", validMode);
-    this.saveAllKeysToEnvFile().catch(() => {});
-    return result;
-  }
-
-  getFloatingIconAutoHide() {
-    return this._getKey("FLOATING_ICON_AUTO_HIDE") === "true";
-  }
-
-  saveFloatingIconAutoHide(enabled) {
-    const result = this._saveKey("FLOATING_ICON_AUTO_HIDE", String(enabled));
     this.saveAllKeysToEnvFile().catch(() => {});
     return result;
   }

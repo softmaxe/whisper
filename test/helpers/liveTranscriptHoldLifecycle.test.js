@@ -78,10 +78,6 @@ async function mountLiveTranscript(t, initialProps = {}, { trackWindowSizes = fa
   const container = installHookDom(t);
   const vite = await createRendererServer(t, {
     cachePrefix: "openwhispr-live-transcript-hold-test-",
-    mockModules: {
-      "/stores/settingsStore":
-        "export const useSettingsStore = { getState: () => ({ floatingIconAutoHide: false }) };",
-    },
   });
   const { useLiveTranscriptPanel } = await vite.ssrLoadModule("/hooks/useLiveTranscriptPanel.js");
   const useSizeOwner = trackWindowSizes

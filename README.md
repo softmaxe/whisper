@@ -63,6 +63,8 @@ Releases use the same self-signed certificate across versions and are not notari
 
 Using a modifier in another shortcut, such as Command+C, does not trigger dictation. If Whisper cannot paste into the target app, it shows the transcript in a panel where you can copy it and paste manually.
 
+The recording pill appears when you start dictation and disappears after the session and its feedback finish. It stays hidden while idle.
+
 ### File transcription
 
 Open Upload to transcribe audio or video files, one at a time or in batches. Upload uses the same speech recognition settings and saves raw transcripts to History when History is enabled. It skips text cleanup and Snippets, does not retain source audio, and does not count toward Insights. You can still copy results in Upload when History is disabled.

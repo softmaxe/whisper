@@ -4,15 +4,14 @@ import { cn } from "../lib/utils";
 import { FlowWaveform, type FlowMotion } from "./FlowWaveform";
 import { PillWaveform } from "./PillWaveform";
 import { VoiceIdentityIcon } from "./VoiceIdentityIcon";
-import { FLOW_PEEK_OPACITY, RESTING_WAVE_SILHOUETTE, WAVEFORM_BAR_COUNT } from "./waveformMath";
+import { RESTING_WAVE_SILHOUETTE, WAVEFORM_BAR_COUNT } from "./waveformMath";
 import {
   resolveVoicePillShape,
   VOICE_PILL_FOOTPRINT,
   VOICE_PILL_GROW_TRANSITION,
 } from "../../helpers/voicePillPresentation";
 
-export type VoicePillState =
-  "idle" | "hover" | "recording" | "processing" | "thinking" | "unavailable";
+export type VoicePillState = "idle" | "recording" | "processing" | "thinking" | "unavailable";
 
 interface VoicePillProps extends Omit<HTMLAttributes<HTMLDivElement>, "children"> {
   variant: "floating" | "panel";
@@ -48,7 +47,6 @@ const COMPACT_CONTENT_GAP_PX = 6;
 // .voice-pill-control[data-flow-bar] chrome.
 const STATE_APPEARANCE: Record<VoicePillState, string> = {
   idle: "border-border-hover bg-surface-1 text-muted-foreground dark:border-border/50",
-  hover: "border-border-hover bg-surface-3 text-foreground",
   recording: "border-border-hover bg-surface-1 text-foreground",
   processing: "border-border/60 bg-surface-1 text-foreground/70",
   thinking: "border-border/60 bg-surface-1 text-foreground",
@@ -94,13 +92,12 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
     waveformOnlyWhileRecording,
   });
   const showCompactPill = shape !== "idle";
-  // The floating pill is the icon-less Flow bar in every shape — sliver, peek,
-  // and listening; the panel pill keeps its identity beside the scrolling
-  // waveform.
+  // The floating pill is the icon-less Flow bar; the panel pill keeps its
+  // identity beside the scrolling waveform.
   const flowBar = !isPanel;
   // Warm-up sweeps resting dots; the waveform goes live the moment recording
   // starts (the entrance beats only stage the panel pill); thinking ripples a
-  // wave; the sliver, peek, and a lost microphone hold still.
+  // wave; a lost microphone holds still.
   const flowMotion: FlowMotion | null =
     shape !== "listening" || isUnavailable
       ? null
@@ -109,8 +106,7 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
         : isRecording
           ? "live"
           : "sweep";
-  const flowOpacity =
-    shape === "sliver" || showExpandChevron ? 0 : shape === "peek" ? FLOW_PEEK_OPACITY : 1;
+  const flowOpacity = showExpandChevron ? 0 : 1;
   const panelCompact = shape === "panel";
   const showDivider = panelCompact && waveformVisible && !isRecording;
   // The hidden divider's margins are what carry the compact pill's 6px
@@ -118,6 +114,8 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
   const dividerMargin = panelCompact ? (showDivider ? 4 : COMPACT_CONTENT_GAP_PX / 2) : 0;
   const identitySize = 22;
   const footprint = VOICE_PILL_FOOTPRINT[shape];
+
+  if (!isPanel && state === "idle") return null;
 
   const pill = (
     <div
@@ -145,11 +143,6 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
       data-expand-chevron={showExpandChevron || undefined}
       {...props}
     >
-      <div
-        className="pointer-events-none absolute inset-0 bg-gradient-to-br from-foreground/10 to-transparent transition-opacity duration-200 ease-out"
-        style={{ opacity: state === "hover" && !flowBar ? 0.72 : 0 }}
-      />
-
       <span
         className="voice-pill-identity-slot relative inline-block shrink-0"
         style={{
@@ -213,12 +206,11 @@ export const VoicePill = forwardRef<HTMLDivElement, VoicePillProps>(function Voi
           <FlowWaveform
             getLevel={getAudioLevel}
             motion={flowMotion}
-            resting={isUnavailable || shape === "peek"}
+            resting={isUnavailable}
             className={cn("absolute inset-0", isUnavailable && "animate-pulse")}
             style={{
               opacity: flowOpacity,
-              // Content fades out fast as the bar shrinks to the sliver, and in
-              // only once the capsule has mostly grown around it.
+              // Fade the waveform around the collapsed panel's expand control.
               transition:
                 flowOpacity > 0 ? "opacity 200ms ease-out 120ms" : "opacity 120ms ease-out",
             }}

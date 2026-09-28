@@ -20,8 +20,6 @@ test("rendered pill dimensions match the native window footprint across states",
   // Check shape selection through the rendered component so helper tests do not
   // repeat the same cases. Dimensions must agree with the native window sizing.
   for (const [state, expanded, overrides, shape] of [
-    ["idle", false, {}, "sliver"],
-    ["hover", false, {}, "peek"],
     ["processing", false, {}, "listening"],
     ["recording", false, {}, "listening"],
     ["recording", true, {}, "listening"],
@@ -45,17 +43,14 @@ test("rendered pill dimensions match the native window footprint across states",
   }
 });
 
+test("an idle floating pill renders no control", async () => {
+  assert.equal(await renderPill("idle", false), "");
+});
+
 test("the floating pill's bars say what it is doing", async () => {
-  const { FLOW_PEEK_OPACITY } = await import("../../src/components/dictation/waveformMath.ts");
-  const sliver = await renderPill("idle", false);
-  const peek = await renderPill("hover", false);
   const warmUp = await renderPill("processing", false);
   const thinking = await renderPill("thinking", false);
 
-  // The resting sliver is empty; hovering it previews dim dots.
-  assert.match(sliver, /voice-flow-waveform[^>]*opacity:0[;"]/);
-  assert.match(peek, new RegExp(`voice-flow-waveform[^>]*opacity:${FLOW_PEEK_OPACITY}[;"]`));
-  assert.doesNotMatch(peek, /data-motion/);
   // Warm-up sweeps a light across the dots; thinking ripples a travelling wave.
   assert.match(warmUp, /voice-flow-waveform[^>]*data-motion="sweep"[^>]*opacity:1/);
   assert.match(thinking, /voice-flow-waveform[^>]*data-motion="wave"[^>]*opacity:1/);

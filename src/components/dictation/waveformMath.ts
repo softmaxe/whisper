@@ -53,10 +53,6 @@ export const resolveFlowBarTarget = (rms: number, index: number, nowMs: number) 
 export const resolveFlowBarHeight = (lane: number) =>
   FLOW_BAR_MIN_PX + lane * (FLOW_BAR_MAX_PX - FLOW_BAR_MIN_PX);
 
-// Hovering the resting sliver previews the bar set dimmed, so it reads as an
-// invitation rather than listening.
-export const FLOW_PEEK_OPACITY = 0.55;
-
 // Loading motions for the Flow bar while no speech is being captured. Both are
 // level-independent, so they can never be mistaken for the live waveform.
 

@@ -105,7 +105,7 @@ test("a left-origin session keeps the speaking pill left while surfaces grow rig
   }
 });
 
-test("the idle pill keeps its configured resting dock", async () => {
+test("the floating pill keeps its configured dock outside Live Transcript", async () => {
   const { resolveVoicePillDock } = await load();
 
   assert.equal(

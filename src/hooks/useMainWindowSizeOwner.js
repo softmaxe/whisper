@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { useSettingsStore } from "../stores/settingsStore";
 import { createPillVisibilityHandoff } from "../utils/pillVisibilityHandoff";
 import { SIZE_RANK, resolveMainWindowSizeKey } from "../utils/windowSizeLadder";
 
@@ -11,7 +10,8 @@ const PANEL_RETURN_FADE_MS = 180;
 /**
  * Single owner of the main window size: panel > menu > toast > compact pill >
  * base. Grows apply immediately so content never clips; shrinks wait for the
- * content collapse animation to finish before the window snaps down. Also owns
+ * content collapse animation to finish before the window snaps down. Hides the
+ * window when no dictation or feedback owns it. Also owns
  * the two pill-visibility handoffs around risky native resizes: the
  * dictation-error handoff (pill hidden until the window leaves the error
  * footprint) and the panel-return handoff (pill faded out across the
@@ -31,7 +31,6 @@ export function useMainWindowSizeOwner({
 }) {
   const [handoffActive, setHandoffActive] = useState(false);
   const actionCountRef = useRef(dictationErrorActionCount);
-  const dictationActiveRef = useRef(isDictationActive);
   const handoffRef = useRef(null);
   // Same masking for the panel-return shrink: snapping the native window from
   // panel bounds back to the pill box paints one compositor frame of the old
@@ -43,12 +42,6 @@ export function useMainWindowSizeOwner({
   useEffect(() => {
     const handoff = createPillVisibilityHandoff({
       onSuppressedChange: setHandoffActive,
-      // Retry (and the hotkey) clear the error card by starting the next
-      // dictation. Handing the window back to auto-hide then would leave that
-      // recording running with no pill on screen (#2141).
-      shouldAutoHide: () =>
-        useSettingsStore.getState().floatingIconAutoHide && !dictationActiveRef.current,
-      hideWindow: () => window.electronAPI?.hideWindow?.(),
     });
     handoffRef.current = handoff;
     if (actionCountRef.current > 0) handoff.suppress();
@@ -69,9 +62,35 @@ export function useMainWindowSizeOwner({
     };
   }, []);
 
-  useLayoutEffect(() => {
-    dictationActiveRef.current = isDictationActive;
-  }, [isDictationActive]);
+  // Errors and notifications can arrive after recording has already returned
+  // to idle, including clipboard failures and hotkey registration failures.
+  const previousToastCountRef = useRef(0);
+  useEffect(() => {
+    if (toastCount > previousToastCountRef.current) {
+      window.electronAPI?.showDictationPanel?.({ reposition: false });
+    }
+    previousToastCountRef.current = toastCount;
+  }, [toastCount]);
+
+  useEffect(() => {
+    if (
+      !isDictationActive &&
+      toastCount === 0 &&
+      dictationErrorActionCount === 0 &&
+      !handoffActive &&
+      !liveTranscriptMounted &&
+      !liveTranscriptCopyFallback
+    ) {
+      window.electronAPI?.hideWindow?.();
+    }
+  }, [
+    isDictationActive,
+    toastCount,
+    dictationErrorActionCount,
+    handoffActive,
+    liveTranscriptMounted,
+    liveTranscriptCopyFallback,
+  ]);
 
   useLayoutEffect(() => {
     actionCountRef.current = dictationErrorActionCount;

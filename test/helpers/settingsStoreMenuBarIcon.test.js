@@ -38,3 +38,13 @@ test("menu bar settings hydrate the startup value and send changes to the main p
   const reloaded = await vite.ssrLoadModule("/stores/settingsStore.ts");
   assert.equal(reloaded.useSettingsStore.getState().showMenuBarIcon, false);
 });
+
+test("retired idle-pill preferences are removed while dictation placement survives", async (t) => {
+  const { storage } = installBrowserGlobals(t, {
+    initialStorage: { floatingIconAutoHide: "false", panelStartPosition: "bottom-left" },
+  });
+  const vite = await createRendererServer(t, { cachePrefix: "whisper-retired-idle-pill-" });
+  const { useSettingsStore } = await vite.ssrLoadModule("/stores/settingsStore.ts");
+  assert.equal(storage.getItem("floatingIconAutoHide"), null);
+  assert.equal(useSettingsStore.getState().panelStartPosition, "bottom-left");
+});
