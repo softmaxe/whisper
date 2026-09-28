@@ -219,7 +219,7 @@ const en: Copy = {
     settings: {
       speechToText: "Speech-to-Text",
       shared: "Dictation and file transcription share these settings.",
-      endpoint: "Endpoint URL",
+      endpoint: "Server URL",
       model: "Model",
       cleanup: "Text cleanup",
       enableCleanup: "Enable text cleanup",
@@ -346,7 +346,7 @@ const zh: Copy = {
     settings: {
       speechToText: "语音转文字",
       shared: "听写与文件转录共用此配置。",
-      endpoint: "端点 URL",
+      endpoint: "服务器 URL",
       model: "模型",
       cleanup: "文本整理",
       enableCleanup: "启用文本整理",
