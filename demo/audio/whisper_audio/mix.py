@@ -1,12 +1,15 @@
 """Mixes the layers in `whisper_audio.layers` into the final stereo track.
 
-Each layer module exposes
+Each layer module exposes an optional `GAIN: float` (default 1.0) and a
+`render` function that returns the whole Film as a float array of shape
+(film_samples(timeline, sr), 2):
 
-    GAIN: float                      # optional, default 1.0
-    def render(timeline, sr, ...) -> np.ndarray  # shape (n_samples, 2)
+    sfx.render(timeline, sr)
+    music.render(timeline, sr, bank)   # bank: the SampleBank (`music/bank.py`) for its melodic stems
 
-and is listed in `render_layers` below. The music layer also takes the sample
-bank (`music/bank.py`) that plays its melodic stems.
+`render_layers` below lists every layer with the arguments it takes, checks each
+output's shape, and scales it by the layer's GAIN; `render_mix` sums the layers
+and masters them.
 """
 
 from __future__ import annotations
