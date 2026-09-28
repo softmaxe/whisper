@@ -82,6 +82,10 @@ describe("Beat 3 sound", () => {
     ]);
   });
 
+  it("pastes with a sound when the snippet and the comment land", () => {
+    expect(cuesOf("paste")).toEqual([m.snippetPaste, m.holdPaste]);
+  });
+
   it("pats the files down when they are dropped", () => {
     expect(cuesOf("file_drop")).toEqual([m.drop]);
   });

@@ -112,6 +112,7 @@ export const FILE_TRANSCRIBE_SECONDS = 1;
 const cues: SoundCue[] = [
   ...doubleTapCues(tap),
   { type: "rec_stop", at: moments.snippetStop },
+  { type: "paste", at: moments.snippetPaste },
   { type: "pen_scratch", at: moments.triggerCircle, params: { strokes: 3, stroke: 0.1 } },
   { type: "pen_scratch", at: moments.expandArrow, params: { strokes: 3, stroke: 0.08, gain: 0.3 } },
   { type: "key_click", at: moments.holdPress, params: { key: "char" } },
@@ -120,6 +121,7 @@ const cues: SoundCue[] = [
   { type: "key_click", at: moments.holdRelease, params: { key: "char", gain: 0.26 } },
   { type: "rec_stop", at: moments.holdRelease },
   { type: "pen_scratch", at: moments.releaseNote, params: { strokes: 3, stroke: 0.07, gain: 0.3 } },
+  { type: "paste", at: moments.holdPaste },
   { type: "pen_scratch", at: moments.holdTick, params: { strokes: 2, stroke: 0.08 } },
   { type: "file_drop", at: moments.drop, params: { files: 3 } },
   ...moments.filesDone.map((at): SoundCue => ({ type: "pen_scratch", at, params: { strokes: 2, stroke: 0.07, gain: 0.32 } })),
