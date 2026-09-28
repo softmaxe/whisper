@@ -107,6 +107,15 @@ describe("Beat 2 text", () => {
       for (const text of handwritten) expect(missing(text), `${lang}: ${text}`).toEqual([]);
     }
   });
+
+  it("keeps the corrected chat reply and the Mail reply in History", () => {
+    for (const lang of LANGS) {
+      const copy = COPY[lang];
+      const texts = copy.whisper.history.map((e) => e.text);
+      expect(texts, lang).toContain(copy.chat.heard.replace(copy.chat.wrong, copy.chat.right));
+      expect(texts, lang).toContain(copy.mail.cleaned);
+    }
+  });
 });
 
 describe("Review frames", () => {

@@ -237,7 +237,7 @@ const en: Copy = {
       { time: "18:41", text: "Team sync: we agreed to move the launch review to Thursday." },
       { time: "15:05", text: "// Retry failed uploads with exponential backoff" },
       { time: "12:15", text: "Sounds great, grab any slot here: cal.com/alex/30min" },
-      { time: "09:30", text: "I'll join. Can you add Kaitlyn too?" },
+      { time: "09:30", text: "I'll join. Bring the Supabase migration plan." },
       {
         time: "07:45",
         text: "Friday works for me. Let's ship at 10, and I'll send the notes after.",
