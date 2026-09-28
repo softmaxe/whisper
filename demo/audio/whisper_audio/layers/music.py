@@ -1,7 +1,9 @@
-"""Music layer: the Film's score, synthesised from the bar grid in `music/score.py`.
+"""Music layer: the Film's score, played from the bar grid in `music/score.py`.
 
 Warm plucked strings (Karplus-Strong guitar and bass), kalimba, brushed drums,
-a soft night pad and paper rustle, arranged by Beat and read from the timeline:
+a soft night pad and paper rustle, arranged by Beat and read from the timeline.
+The chords (guitar) and melody (kalimba) stems play their notes through a sample
+bank (`music/bank.py`); the other stems are synthesised here:
 
     opening   sparse guitar arpeggio, a questioning kalimba figure, paper rustle
     speak     rolling guitar, plucked bass and brushed drums join on the downbeat
@@ -20,6 +22,7 @@ import numpy as np
 
 from ..dsp import fft_filter, place, seconds
 from ..music import instruments as inst
+from ..music.bank import CHORDS, MELODY, Note, SampleBank, check_bank
 from ..music.score import GUITAR_PATTERNS, KALIMBA_FIGURES, Bar, bars
 from ..timeline import Timeline, film_samples
 
@@ -27,9 +30,9 @@ GAIN = 1.4
 SEED = 84
 
 # Level of each stem in the music bus, tuned so the bed sits about 12 dB under the sound cues.
-STEM_GAINS = {"guitar": 0.3, "bass": 0.34, "kalimba": 0.1, "drums": 0.2, "pad": 0.09, "paper": 0.07}
+STEM_GAINS = {CHORDS: 0.3, "bass": 0.34, MELODY: 0.1, "drums": 0.2, "pad": 0.09, "paper": 0.07}
 # How much of each stem goes to the shared room reverb.
-ROOM_SENDS = {"guitar": 0.35, "bass": 0.1, "kalimba": 0.5, "drums": 0.25, "pad": 0.4, "paper": 0.0}
+ROOM_SENDS = {CHORDS: 0.35, "bass": 0.1, MELODY: 0.5, "drums": 0.25, "pad": 0.4, "paper": 0.0}
 ROOM_LEVEL = 0.45
 FADE_IN = 0.25
 # The fade to silence at the end: a squared raised cosine over the last FADE_OUT seconds
@@ -63,20 +66,21 @@ def positions(pattern: list, bar: Bar) -> list:
     return events
 
 
-def render_guitar(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> np.ndarray:
+def render_chords(grid: list[Bar], n: int, sr: int, rng: np.random.Generator, bank: SampleBank) -> np.ndarray:
     out = stereo(n)
+    play = bank[CHORDS]
     for bar in grid:
         voicing = bar.chord.voicing
         if bar.last_in_film:
             # The home chord, strummed slowly and left to ring through the fade.
             for j, note in enumerate(voicing):
-                clip = (0.85 - 0.05 * j) * inst.karplus_strong(note, 5.0, sr, rng, brightness=0.4, decay=0.998)
+                clip = play(Note(note, 0.85 - 0.05 * j, 5.0, let_ring=True), sr, rng)
                 place(out, clip, seconds(bar.at(0.0) + 0.045 * j, sr), pan=-0.35 + 0.12 * j)
             continue
         ring = 1.2 if bar.section.guitar == "rolling" else 2.8
         for pos, voice, vel in positions(GUITAR_PATTERNS[bar.section.guitar], bar):
             note = voicing[min(voice, len(voicing) - 1)]
-            clip = vel * rng.uniform(0.85, 1.0) * inst.karplus_strong(note, ring, sr, rng, brightness=0.35)
+            clip = play(Note(note, vel * rng.uniform(0.85, 1.0), ring), sr, rng)
             place(out, clip, played(bar, pos, sr, rng), pan=-0.3 + 0.1 * voice)
     return filtered(out, sr, lowpass=3600, highpass=70)
 
@@ -100,19 +104,20 @@ def render_bass(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> n
     return filtered(out, sr, lowpass=650, highpass=35)
 
 
-def render_kalimba(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> np.ndarray:
+def render_melody(grid: list[Bar], n: int, sr: int, rng: np.random.Generator, bank: SampleBank) -> np.ndarray:
     out = stereo(n)
+    play = bank[MELODY]
     for bar in grid:
         name = bar.section.kalimba
         if name is None:
             continue
         tones = bar.chord.tones
         if bar.last_in_film:
-            place(out, 0.6 * inst.kalimba(tones[-1], 5.0, sr, rng, ring=2.5), seconds(bar.at(1.0), sr), pan=0.3)
+            place(out, play(Note(tones[-1], 0.6, 5.0, let_ring=True), sr, rng), seconds(bar.at(1.0), sr), pan=0.3)
             continue
         figures = KALIMBA_FIGURES[name]
         for pos, tone, vel in positions(figures[bar.index % len(figures)], bar):
-            clip = vel * inst.kalimba(tones[tone % len(tones)], 1.8, sr, rng)
+            clip = play(Note(tones[tone % len(tones)], vel, 1.8), sr, rng)
             place(out, clip, played(bar, pos, sr, rng, 0.008), pan=0.25 + 0.05 * tone)
     return out
 
@@ -170,20 +175,24 @@ def render_paper(grid: list[Bar], n: int, sr: int, rng: np.random.Generator) -> 
     return out
 
 
-def stems(timeline: Timeline, sr: int) -> dict[str, np.ndarray]:
-    """Each stem, dry, at its mix level and before the fade. Shape (film_samples, 2)."""
+def stems(timeline: Timeline, sr: int, bank: SampleBank) -> dict[str, np.ndarray]:
+    """Each stem, dry, at its mix level and before the fade. Shape (film_samples, 2).
+
+    The melodic stems (CHORDS and MELODY) play their notes through `bank`; the rest are synthesised here.
+    """
+    check_bank(bank)
     n = film_samples(timeline, sr)
     grid = bars(timeline)
     rng = np.random.default_rng(SEED)
     renderers = {
-        "guitar": render_guitar,
-        "bass": render_bass,
-        "kalimba": render_kalimba,
-        "drums": render_drums,
-        "pad": render_pad,
-        "paper": render_paper,
+        CHORDS: lambda: render_chords(grid, n, sr, rng, bank),
+        "bass": lambda: render_bass(grid, n, sr, rng),
+        MELODY: lambda: render_melody(grid, n, sr, rng, bank),
+        "drums": lambda: render_drums(grid, n, sr, rng),
+        "pad": lambda: render_pad(grid, n, sr, rng),
+        "paper": lambda: render_paper(grid, n, sr, rng),
     }
-    return {name: STEM_GAINS[name] * fn(grid, n, sr, rng) for name, fn in renderers.items()}
+    return {name: STEM_GAINS[name] * fn() for name, fn in renderers.items()}
 
 
 def fade_envelope(n: int, sr: int) -> np.ndarray:
@@ -195,9 +204,9 @@ def fade_envelope(n: int, sr: int) -> np.ndarray:
     return env * (0.5 * (1.0 - np.cos(np.pi * remaining))) ** 2
 
 
-def render(timeline: Timeline, sr: int) -> np.ndarray:
+def render(timeline: Timeline, sr: int, bank: SampleBank) -> np.ndarray:
     n = film_samples(timeline, sr)
-    dry = stems(timeline, sr)
+    dry = stems(timeline, sr, bank)
     send = sum((ROOM_SENDS[name] * x for name, x in dry.items()), stereo(n))
     wet = inst.room(send, sr, np.random.default_rng(SEED + 1))
     bed = sum(dry.values(), stereo(n)) + ROOM_LEVEL * wet

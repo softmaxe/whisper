@@ -16,7 +16,9 @@ import pytest
 
 from whisper_audio import SAMPLE_RATE as SR
 from whisper_audio.layers import music
+from whisper_audio.dsp import seconds
 from whisper_audio.mix import master, render_layers
+from whisper_audio.music.bank import CHORDS, MELODY, ROLES, Note
 from whisper_audio.music.score import BPM, HOME, bars, chord_at
 from whisper_audio.timeline import all_cues, beat
 
@@ -56,22 +58,22 @@ def any_timeline(request, timeline):
 
 
 @pytest.fixture(scope="module")
-def layers(timeline):
-    return render_layers(timeline, SR)
+def layers(timeline, bank):
+    return render_layers(timeline, SR, bank)
 
 
 @pytest.fixture(scope="module")
-def stems(any_timeline):
-    return any_timeline, music.stems(any_timeline, SR)
+def stems(any_timeline, bank):
+    return any_timeline, music.stems(any_timeline, SR, bank)
 
 
 def section(stem: np.ndarray, start: float, end: float) -> np.ndarray:
     return stem[max(0, round(start * SR)) : max(0, round(end * SR))]
 
 
-def test_the_score_lasts_exactly_the_film(any_timeline):
+def test_the_score_lasts_exactly_the_film(any_timeline, bank):
     duration = any_timeline["durationSeconds"]
-    assert music.render(any_timeline, SR).shape == (round(duration * SR), 2)
+    assert music.render(any_timeline, SR, bank).shape == (round(duration * SR), 2)
     grid = bars(any_timeline)
     assert grid[0].start == 0.0
     assert math.isclose(grid[-1].end, duration)
@@ -125,10 +127,34 @@ def test_the_score_resolves_on_the_home_chord(any_timeline):
     assert end - last.start >= music.FADE_OUT - 0.5, "the home chord rings through the fade"
 
 
-def test_music_ignores_sound_cues(timeline):
+def test_music_ignores_sound_cues(timeline, bank):
     """The score and the sound effects are independent layers: adding cues never changes the music."""
     without_cues = reshaped(timeline, {b["key"]: (b["start"], b["end"]) for b in timeline["beats"]})
-    assert np.array_equal(music.render(without_cues, SR), music.render(timeline, SR))
+    assert np.array_equal(music.render(without_cues, SR, bank), music.render(timeline, SR, bank))
+
+
+def test_the_chords_and_melody_play_through_the_sample_bank(timeline, bank):
+    """Every chord and melody note comes from the bank: a silent bank silences those stems and nothing else."""
+    heard = {role: [] for role in ROLES}
+
+    def recording(role):
+        def render(note: Note, sr: int, rng: np.random.Generator) -> np.ndarray:
+            heard[role].append(note)
+            return np.zeros(seconds(note.duration, sr))
+
+        return render
+
+    parts = music.stems(timeline, SR, {role: recording(role) for role in ROLES})
+    for role in ROLES:
+        assert heard[role], f"no {role} notes reached the bank"
+        assert np.max(np.abs(parts[role])) == 0, f"{role} sounds without the bank"
+        assert any(note.let_ring for note in heard[role]), f"{role} has no closing note left to ring"
+    assert db(rms(parts["bass"])) > -60, "the synthesised stems still play"
+
+
+def test_a_bank_must_cover_every_role(timeline, bank):
+    with pytest.raises(ValueError, match=MELODY):
+        render_layers(timeline, SR, {CHORDS: bank[CHORDS]})
 
 
 def test_music_plays_until_the_fade(timeline, layers):
