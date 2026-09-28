@@ -9,8 +9,9 @@ This report tracks implementation and validation of [#111](https://github.com/so
 - [#114](https://github.com/softmaxe/whisper/issues/114): actionable recovery motion, retry, and dismissal. This depends on #113.
 
 The implementation preserves compact normal stages, existing recovery controls,
-and microphone release between Dictations. It introduces no signing, packaging,
-server, or settings changes.
+and microphone release between Dictations. Completion and cancellation freeze
+the waveform for a short fade before hiding the window. There is no persistent
+idle pill. It introduces no signing, packaging, server, or settings changes.
 
 ## Upstream inspection
 
@@ -23,7 +24,7 @@ these are the starting point for this change.
 
 Validated with Node.js 24 and dependencies installed by `npm ci`.
 `npm run quality-check` passed on the integrated implementation: lint,
-TypeScript, translation checks, and all 965 tests, with no skipped tests.
+TypeScript, translation checks, and all 988 tests, with no skipped tests.
 Lint retains three existing warnings.
 
 - `recordingStartupLifecycle.test.js` drives the real Dictation Hook,
@@ -37,7 +38,11 @@ Lint retains three existing warnings.
   audio ownership across sessions. A combined regression also mounts the real
   transcript panel hook: after manual-copy recovery, the next delayed device
   open must reveal connection feedback, including success, cancellation,
-  startup failure, and late preview events.
+  startup failure, and late preview events. The native window size owner is
+  included in finish regressions: successful delivery and cancellation retain
+  a frozen pill briefly, then remove it and hide the window. New preparation
+  cancels the previous exit timer; errors and manual-copy recovery take over
+  without a finish state. Capture is released before the visual finish ends.
 - Existing clipboard, paste-outcome, microphone-release, native-window geometry,
   and error auto-hide suites remain part of the full quality check.
 
@@ -46,10 +51,17 @@ Verification-document formatting and all five linked sources were checked.
 
 ## Code review
 
-Standards review found no actionable issues. Spec review found one issue: manual
-copy recovery still covered the next request until the microphone became ready.
+Standards review found no actionable issues. Spec review found that manual copy
+recovery still covered the next request until the microphone became ready.
 The fix hands presentation to the next request when preparation begins and
-invalidates stale panel callbacks. Both review axes passed the follow-up review.
+invalidates stale panel callbacks.
+
+Integration with main also removed the previous idle-pill return transition.
+A presentation-only finish now retains the pill briefly for its fade, without
+delaying capture release or completion. New requests and recovery feedback take
+over immediately. The integration tests also account for main's new ASR HEAD
+probe before the transcription POST.
+Both review axes passed the final follow-up review with no remaining findings.
 
 ## Visual inspection
 
@@ -68,10 +80,16 @@ This was visibly different from the moving processing wave.
 
 The real CopyRecoveryPanel copy button changed the prompt to its copied state,
 and Close removed the panel. Error-card Retry activated the preview's connection
-state. Cancelling the preview state returned its pill to the idle sliver. These
-checks establish component presentation and callbacks; the automated lifecycle
-tests establish request ownership and retry handoffs. The preview used the same
+state. Cancelling the preview state deactivated its pill. These checks establish
+component presentation and callbacks; the automated lifecycle tests establish
+request ownership and retry handoffs. The preview used the same
 `backgroundThrottling: false` setting as the production dictation window.
+
+The component review preceded integration of main commit `80545c5`, which removes
+the idle pill. The final branch preserves that behavior: no floating pill is
+rendered at idle. Active and recovery motion remain as reviewed. The final
+finish transition is covered by automated lifecycle checks; it has not been
+visually reviewed in the running app.
 
 ## Remaining device checks
 
@@ -96,7 +114,9 @@ In the app build containing this change:
    should differ from loading, and text and controls should stay usable.
 5. Cancel during connection and processing, then start another Dictation. Check
    that late results do not change the new session, and confirm that capture is
-   released between Dictations.
+   released between Dictations. Success and cancellation should end with a brief
+   fade, then leave no idle pill. Starting again during the fade should reveal
+   the new connection feedback immediately.
 
 Automated IPC outcomes establish behavior under controlled responses. Verify
 actual insertion in a live Target app separately.
