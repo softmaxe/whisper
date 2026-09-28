@@ -11,11 +11,13 @@
 
 Whisper turns speech into text and pastes it into the app you're using on your Mac. It connects to a speech recognition server that you deploy separately. Add a text cleanup server to fix punctuation and remove filler words.
 
+https://github.com/user-attachments/assets/49796a86-76de-455e-b4fe-166565becb4c
+
 <p align="center">
   <img src="docs/images/overview-en.png" alt="Whisper interface with local dictation history and navigation" width="800">
 </p>
 
-The screenshot uses sample data. See [demo](demo/README.md) to render the hand-drawn explainer video in English or Chinese.
+The video and the screenshot use sample data. The video is rendered from code in [demo](demo/README.md).
 
 ## Features
 

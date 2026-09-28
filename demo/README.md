@@ -24,6 +24,10 @@ npm run build
 
 The score's piano and Rhodes are recorded multisample libraries, listed with their source URL, version, and SHA-256 in [`audio/samples.toml`](audio/samples.toml). Before synthesising, the build downloads any missing library archive into the git-ignored `.cache/samples/` folder and verifies its checksum; the audio step reads the SFZ instruments straight from the verified archives. Later builds reuse the cache without network access. A missing download or a checksum mismatch fails the build with the library's name; to recover from a corrupted archive, delete it and rebuild. The first build downloads about 130 MB. Use `npm run studio` to preview and scrub the Film in a browser.
 
+## Publishing
+
+The root READMEs embed the English cut in [`README.md`](../README.md) and the Chinese cut in [`README.zh-CN.md`](../README.zh-CN.md) as GitHub attachment links. After changing the Film, rebuild both cuts, drag each MP4 into a comment on the pull request and submit the comment, then replace the matching link in each README. Links from an unsubmitted draft stop working, so take them only from a posted comment.
+
 ## Timeline and sound
 
 Each Beat has one timeline module in [`timeline/beats/`](timeline/beats) that defines its window, named moments, Captions (text per language, time, and position), and sound cues. The picture imports these modules; the audio step reads the exported JSON. Change a time in one place and picture and sound stay in sync.
