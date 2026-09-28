@@ -126,13 +126,23 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   });
   const { useAudioRecording } = await vite.ssrLoadModule("/hooks/useAudioRecording.js");
   const { VoicePill } = await vite.ssrLoadModule("/components/dictation/VoicePill.tsx");
+  const { DictationErrorCard } = await vite.ssrLoadModule(
+    "/components/dictation/DictationErrorCard.tsx"
+  );
   const { resolveRecordingPillState } = await vite.ssrLoadModule(
     "/helpers/voicePillPresentation.js"
   );
-  const toast = (error) => errors.push(error);
+  let activeError = null;
+  const toast = (error) => {
+    errors.push(error);
+    if (error.presentation === "dictation-error") activeError = error;
+  };
+  const dismissDictationError = () => {
+    activeError = null;
+  };
   const showTranscript = (text, options) => recoveries.push({ text, options });
   function Harness() {
-    hook = useAudioRecording(toast, { onShowTranscript: showTranscript });
+    hook = useAudioRecording(toast, { onShowTranscript: showTranscript, dismissDictationError });
     return null;
   }
   root = createRoot(container);
@@ -149,6 +159,16 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     writes,
     recoveries,
     errors,
+    recovery: () => activeError,
+    recoveryMarkup: () =>
+      activeError
+        ? renderToStaticMarkup(
+            React.createElement(DictationErrorCard, {
+              ...activeError,
+              onAction: (action) => action.onClick(),
+            })
+          )
+        : "",
     lifecycle,
     hidden: () => hidden,
     releases: () => releases,
@@ -199,6 +219,28 @@ function assertPending(harness) {
   assert.equal(harness.lifecycle.at(-1), "processing");
   assert.deepEqual(harness.presentation(), { motion: "wave", width: 84 });
 }
+
+test("transcription failure presents an actionable retry that starts a new Dictation", async (t) => {
+  const h = await setup(t, { retain: false });
+  await h.start();
+  await h.stop();
+  assertPending(h);
+  await h.resolveRequest(0, { error: { message: "Service unavailable" } }, 401);
+  assert.equal(h.hook().isProcessing, false);
+  assert.equal(h.lifecycle.at(-1), "idle");
+  assert.match(h.recoveryMarkup(), /role="alert"/);
+  assert.match(h.recoveryMarkup(), /Retry/);
+  assert.ok(h.releases() > 0);
+  assert.deepEqual(h.recoveries, []);
+  assert.equal(h.pastes.length, 0);
+  await h.act(() => h.recovery().actions[0].onClick());
+  assert.equal(h.recovery(), null);
+  assert.equal(h.hook().isRecording, true);
+  assert.equal(h.presentation().motion, "live");
+  await h.act(() => h.hook().cancelRecording());
+  assert.equal(h.recovery(), null);
+  assert.equal(h.presentation().motion, null);
+});
 
 for (const cleanup of [false, true, "fallback"]) {
   test(`real completion waits through ${cleanup || "disabled"} cleanup and deferred paste`, async (t) => {

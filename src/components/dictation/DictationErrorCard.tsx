@@ -123,6 +123,7 @@ export function DictationErrorCard({
       role="alert"
       aria-live="assertive"
       data-action-count={actions.length}
+      data-recovery-visible={ready || undefined}
       className={cn(
         "relative max-h-[calc(100vh-1.5rem)] w-full overflow-y-auto rounded-2xl border border-border/50 bg-surface-0",
         "shadow-[var(--shadow-modal)] transition-[opacity,transform] duration-200 ease-out",

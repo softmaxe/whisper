@@ -104,6 +104,7 @@ export function CopyRecoveryPanel({
       measurementRevision={text}
       onPreferredHeightChange={handlePreferredHeightChange}
       data-panel-mode="copy-recovery"
+      data-recovery-visible={visible || undefined}
       className="font-sans"
       aria-label={t("transcriptionPreview.recovery.title")}
       onMouseEnter={() => setHovered(true)}
