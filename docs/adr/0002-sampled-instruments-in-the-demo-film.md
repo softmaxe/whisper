@@ -7,6 +7,11 @@ that the demo used no samples and downloaded nothing but Remotion's browser.
 Synthesised plucked strings and kalimba sounded bright and cold, and a warm,
 acoustic score needs recorded instruments.
 
+The specification asks for a felt piano on the chords. No free, downloadable
+felt piano SFZ library was found, so an upright piano stands in for it: it is
+always struck on its soft velocity layer, scaled back to each note's level,
+and its stem is darkened with a low-pass for a felt-like tone.
+
 The samples are not committed and do not use Git LFS. `demo/audio/samples.toml`
 pins each library to an immutable archive URL (a commit or dated release) and
 its SHA-256. A build step downloads a missing archive into the git-ignored
@@ -15,7 +20,8 @@ verified, so a primed cache builds offline. A failed download or a checksum
 mismatch, including a corrupted cached archive, stops the build with the
 library's name instead of silently changing the sound. The audio step reads the
 SFZ instrument straight from the verified archive and plays it with a minimal
-SFZ reader (key, velocity, pitch centre, and release only).
+SFZ reader (key, velocity, pitch centre, and release only; release-triggered
+regions are skipped and round robins always play their first take).
 
 The music layer receives its melodic instruments through a sample bank. The
 build uses the sampled bank by default. The audio tests pass a deterministic
