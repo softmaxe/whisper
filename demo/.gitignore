@@ -1,7 +1,5 @@
 node_modules/
 out/
-.cache/
-public/music.wav
 .venv/
 __pycache__/
 .pytest_cache/

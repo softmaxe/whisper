@@ -51,8 +51,7 @@ const hash = (seed: number) => {
 
 /**
  * A speech-like microphone level (RMS, 0..~0.15) at a 30 fps frame: syllables
- * of varying loudness separated by short dips and the odd pause. Moved from
- * the old demo's src/lib/anim.ts so the Film no longer depends on it.
+ * of varying loudness separated by short dips and the odd pause.
  */
 export function speechLevel(frame: number): number {
   const syllable = Math.floor(frame / 5);

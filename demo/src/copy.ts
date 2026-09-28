@@ -12,23 +12,6 @@ export interface Copy {
   font: string;
   /** Joins spoken tokens: a space in English, nothing in Chinese. */
   gap: string;
-  slogan: string;
-  subtitle: string;
-  key: { doubleTap: string; hold: string };
-  clock: Record<"morning" | "chat" | "snippet" | "hold" | "upload" | "night", string>;
-  menuClock: Record<"morning" | "chat" | "snippet" | "hold" | "upload" | "night", string>;
-  caption: {
-    dictate: string;
-    cleanup: string;
-    learn: string;
-    snippet: string;
-    hold: string;
-    upload: string;
-    history: string;
-    insights: string;
-    servers: string;
-    serversNote: string;
-  };
   saidLabel: string;
   mail: {
     app: string;
@@ -115,37 +98,6 @@ const en: Copy = {
   lang: "en",
   font: '-apple-system, "SF Pro Display", "Helvetica Neue", sans-serif',
   gap: " ",
-  slogan: "Speak. It's typed.",
-  subtitle: "Whisper · dictation for your Mac, on your own servers",
-  key: { doubleTap: "Double-tap", hold: "Hold mode · set in Hotkeys" },
-  clock: {
-    morning: "7:45 AM",
-    chat: "9:30 AM",
-    snippet: "12:15 PM",
-    hold: "3:05 PM",
-    upload: "6:40 PM",
-    night: "10:20 PM",
-  },
-  menuClock: {
-    morning: "Mon 7:45 AM",
-    chat: "Mon 9:30 AM",
-    snippet: "Mon 12:15 PM",
-    hold: "Mon 3:05 PM",
-    upload: "Mon 6:40 PM",
-    night: "Mon 10:20 PM",
-  },
-  caption: {
-    dictate: "Double-tap fn, speak, and it's pasted",
-    cleanup: "Fillers gone, punctuation in",
-    learn: "Fix a word once. Whisper learns it.",
-    snippet: "Say a trigger, get the whole snippet",
-    hold: "Hold fn to talk, let go to paste",
-    upload: "Drop in recordings, transcribe in batches",
-    history: "Every dictation, searchable",
-    insights: "Your day, in words",
-    servers: "Your servers. Your data.",
-    serversNote: "Connect any OpenAI-compatible speech and cleanup server",
-  },
   saidLabel: "You said",
   mail: {
     app: "Mail",
@@ -287,37 +239,6 @@ const zh: Copy = {
   lang: "zh-CN",
   font: '-apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif',
   gap: "",
-  slogan: "开口，即成文。",
-  subtitle: "Whisper · Mac 听写，跑在你自己的服务器上",
-  key: { doubleTap: "双击", hold: "按住模式 · 在快捷键设置中切换" },
-  clock: {
-    morning: "上午 7:45",
-    chat: "上午 9:30",
-    snippet: "中午 12:15",
-    hold: "下午 3:05",
-    upload: "傍晚 6:40",
-    night: "晚上 10:20",
-  },
-  menuClock: {
-    morning: "周一 上午7:45",
-    chat: "周一 上午9:30",
-    snippet: "周一 中午12:15",
-    hold: "周一 下午3:05",
-    upload: "周一 下午6:40",
-    night: "周一 晚上10:20",
-  },
-  caption: {
-    dictate: "双击 fn，开口说，自动粘贴",
-    cleanup: "去掉语气词，补全标点",
-    learn: "改一次，Whisper 就记住了",
-    snippet: "说出触发词，展开整段内容",
-    hold: "按住 fn 说话，松开即粘贴",
-    upload: "拖入录音，批量转写",
-    history: "每一次听写，都能搜到",
-    insights: "今天的你，说了这么多",
-    servers: "你的服务器，你的数据。",
-    serversNote: "接入任意 OpenAI 兼容的语音识别与文本整理服务",
-  },
   saidLabel: "你说的",
   mail: {
     app: "邮件",

@@ -67,7 +67,7 @@ export const FnKey: React.FC<FnKeyProps> = ({ x, y, size = 70, depth = 0, progre
           deps={[x, y, size]}
           build={(r, o) => [
             r.path(roundedRect(x, y, w, h, size * 0.12), o),
-            // The Globe glyph (as in the old demo's key cap), bottom left.
+            // The Globe glyph, bottom left.
             r.circle(x + size * 0.12 + 12 * g * 0.5, y + h - size * 0.12 - 12 * g * 0.5, 18 * g * 0.5, {
               ...o,
               strokeWidth: pencil.strokeWidth * 0.8,
