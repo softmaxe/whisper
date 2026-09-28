@@ -173,15 +173,22 @@ class SfzInstrument:
 def load_instrument(files: Mapping[str, bytes], sfz_path: str) -> SfzInstrument:
     """An instrument from its SFZ file and samples, given as file contents keyed by archive path."""
     regions = regions_from_sfz(files[sfz_path].decode("utf-8", errors="replace"), sfz_path)
-    samples = {path: decode(files[path]) for path in {r.sample for r in regions}}
-    return SfzInstrument(regions, samples)
+    paths = {r.sample for r in regions}
+    missing = sorted(paths - files.keys())
+    if missing:
+        raise ValueError(f"no {', '.join(missing)} in the archive")
+    return SfzInstrument(regions, {path: decode(files[path]) for path in paths})
+
+
+# Sample formats an SFZ region may name; `load_library` reads them with the SFZ file in one pass.
+AUDIO_EXTENSIONS = (".wav", ".flac", ".ogg", ".aif", ".aiff")
 
 
 def load_library(library: Library, cache_dir: Path = CACHE_DIR) -> SfzInstrument:
     """The library's SFZ instrument, read from its verified archive in the sample cache."""
-    sfz = read_members(library, [library.sfz], cache_dir)
-    regions = regions_from_sfz(sfz[library.sfz].decode("utf-8", errors="replace"), library.sfz)
-    files = {**sfz, **read_members(library, {r.sample for r in regions}, cache_dir)}
+    files = read_members(library, lambda name: name == library.sfz or name.lower().endswith(AUDIO_EXTENSIONS), cache_dir)
+    if library.sfz not in files:
+        raise library.error(f"archive {library.archive(cache_dir)} has no {library.sfz}")
     try:
         return load_instrument(files, library.sfz)
     except (RuntimeError, ValueError) as err:  # soundfile raises LibsndfileError, a RuntimeError

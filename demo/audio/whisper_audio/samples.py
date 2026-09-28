@@ -3,7 +3,7 @@
 Every library is one archive, pinned by URL and SHA-256. `fetch` downloads a
 missing archive into the cache and verifies it; an archive already in the cache
 is only verified, so a primed cache needs no network. `read_members` reads files
-straight out of a verified archive, so nothing is unpacked on disk.
+straight out of a verified archive in one pass, so nothing is unpacked on disk.
 
 A missing download or a checksum mismatch raises `SampleCacheError` naming the
 library. A bad archive already in the cache is never replaced silently: delete
@@ -20,9 +20,8 @@ import shutil
 import sys
 import tarfile
 import tomllib
-import urllib.error
 import urllib.request
-from collections.abc import Collection
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,7 +92,7 @@ def download(library: Library, cache_dir: Path = CACHE_DIR) -> Path:
     try:
         with urllib.request.urlopen(request, timeout=60) as response, open(partial, "wb") as out:
             shutil.copyfileobj(response, out, 1 << 20)
-    except (urllib.error.URLError, OSError) as err:
+    except OSError as err:  # urllib's URLError is an OSError
         partial.unlink(missing_ok=True)
         raise library.error(f"download from {library.url} failed: {err}") from err
     actual = sha256_of(partial)
@@ -118,10 +117,10 @@ def fetch(libraries: list[Library], cache_dir: Path = CACHE_DIR, log=print) -> N
             log(f"  {library.id}: downloaded, verified")
 
 
-def read_members(library: Library, names: Collection[str], cache_dir: Path = CACHE_DIR) -> dict[str, bytes]:
-    """The named files from the library's verified archive (.7z or a tarball), keyed by their archive path."""
+def read_members(library: Library, wanted: Callable[[str], bool], cache_dir: Path = CACHE_DIR) -> dict[str, bytes]:
+    """Every file in the library's verified archive (.7z or a tarball) whose archive path `wanted` accepts,
+    keyed by that path. The archive is verified and decompressed once."""
     path = verified_archive(library, cache_dir)
-    wanted = set(names)
     found: dict[str, bytes] = {}
     if path.name.endswith(".7z"):
         import py7zr
@@ -129,7 +128,7 @@ def read_members(library: Library, names: Collection[str], cache_dir: Path = CAC
 
         factory = BytesIOFactory(limit=1 << 30)
         with py7zr.SevenZipFile(path) as archive:
-            targets = [n for n in archive.getnames() if n in wanted]
+            targets = [info.filename for info in archive.list() if not info.is_directory and wanted(info.filename)]
             archive.extract(targets=targets, factory=factory)
         for name in targets:
             product = factory.get(name)
@@ -138,11 +137,8 @@ def read_members(library: Library, names: Collection[str], cache_dir: Path = CAC
     else:
         with tarfile.open(path) as archive:
             for member in archive:
-                if member.isfile() and member.name in wanted:
+                if member.isfile() and wanted(member.name):
                     found[member.name] = archive.extractfile(member).read()
-    missing = wanted - found.keys()
-    if missing:
-        raise library.error(f"archive {path} has no {', '.join(sorted(missing))}")
     return found
 
 
