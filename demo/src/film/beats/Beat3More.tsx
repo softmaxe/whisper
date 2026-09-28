@@ -1,6 +1,6 @@
 import { AbsoluteFill, Easing, interpolate } from "remotion";
 import { BEAT3_TEXT, beat3 as beat, FILE_TRANSCRIBE_SECONDS } from "../../../timeline/beats/beat3-more.ts";
-import { clamp, ramp, useBeatTime } from "../anim.ts";
+import { clamp, moveEase, ramp, useBeatTime } from "../anim.ts";
 import { emWidth } from "../components/captionLayout.ts";
 import { FnKey, keyDepth } from "../chrome/FnKey.tsx";
 import { RecordingPill } from "../chrome/RecordingPill.tsx";
@@ -28,7 +28,6 @@ const pillAt = (sidebar: number) => ({
   cy: NOTE.y + NOTE_WINDOW.y + NOTE_WINDOW.h - 82,
   scale: 2.8,
 });
-const moveEase = Easing.bezier(0.45, 0, 0.2, 1);
 
 /**
  * Beat 3 · More ways to use it. Three notes are pinned up in turn, each

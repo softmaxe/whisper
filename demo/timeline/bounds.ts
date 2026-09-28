@@ -3,6 +3,9 @@ import type { BeatKey, Seconds } from "./types.ts";
 /** Length of the whole Film. */
 export const FILM_SECONDS: Seconds = 75;
 
+/** The Film's frame rate (FILM.fps). */
+export const FILM_FPS = 30;
+
 /**
  * Each Beat's [start, end) window. Beat modules read their own window from
  * here, so work on one Beat never edits a neighbour's file. Changing a window

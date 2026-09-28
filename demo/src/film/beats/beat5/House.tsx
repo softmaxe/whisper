@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { ramp } from "../../anim.ts";
 import type { Point } from "../../pen/RedPen.tsx";
 import { emWidth } from "../../components/captionLayout.ts";
 import { HAND_FONT } from "../../fonts.ts";
@@ -86,7 +87,7 @@ export const Mac: React.FC<{
   if (progress <= 0) return null;
   const cx = x + w / 2;
   const inset = 16;
-  const screenOpacity = Math.min(1, Math.max(0, (progress - 0.5) / 0.5));
+  const screenOpacity = ramp(progress, 0.5, 1);
   return (
     <g>
       <rect x={x + inset} y={y + inset} width={w - 2 * inset} height={h - 2 * inset} rx={6} fill={PALETTE.whitePaper} opacity={screenOpacity} />
@@ -132,7 +133,7 @@ export const Server: React.FC<{
 }> = ({ x, y, w, h, name, progress, nameProgress, light, seed }) => {
   const boil = useWobbleSeed(seed, 4, progress < 1);
   if (progress <= 0) return null;
-  const surface = Math.min(1, Math.max(0, (progress - 0.4) / 0.6));
+  const surface = ramp(progress, 0.4, 1);
   return (
     <g>
       <rect x={x} y={y} width={w} height={h} fill={PALETTE.whitePaper} opacity={surface} />

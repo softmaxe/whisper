@@ -1,3 +1,4 @@
+import { FILM_FPS } from "./bounds.ts";
 import type { CaptionPlacement, Moments, Seconds, SoundCue, Typing } from "./types.ts";
 
 /** Default placement for a narration Caption in the lower part of the paper. */
@@ -8,6 +9,12 @@ export const LOWER_CAPTION: CaptionPlacement = {
   align: "center",
   fontSize: 64,
 };
+
+/** `x` rounded to whole milliseconds, so timeline times print and compare cleanly. */
+export const roundMs = (x: Seconds): Seconds => Math.round(x * 1000) / 1000;
+
+/** How long after the key press the app opens the Recording pill: two frames. */
+export const PILL_OPEN_DELAY: Seconds = 2 / FILM_FPS;
 
 /** Deterministic pseudo-random value in [0, 1) for index `i` (no Math.random: frames render in parallel). */
 export function hash01(i: number): number {
@@ -35,7 +42,7 @@ export function keystrokeTimes(typing: Typing): Seconds[] {
     t += (g / total) * span;
     times.push(t);
   }
-  return times.map((x) => Math.round(x * 1000) / 1000);
+  return times.map(roundMs);
 }
 
 /** One `key_click` cue per keystroke; spaces get the deeper space-bar sound. */
@@ -62,9 +69,8 @@ export function doubleTapMoments(
   first: Seconds,
   gap: Seconds = DOUBLE_TAP_GAP,
 ): { taps: readonly [Seconds, Seconds]; listen: Seconds } {
-  const ms = (x: number) => Math.round(x * 1000) / 1000;
-  const second = ms(first + gap);
-  return { taps: [ms(first), second], listen: ms(second + 2 / 30) };
+  const second = roundMs(first + gap);
+  return { taps: [roundMs(first), second], listen: roundMs(second + PILL_OPEN_DELAY) };
 }
 
 /**

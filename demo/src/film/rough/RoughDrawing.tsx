@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useCurrentFrame } from "remotion";
+import { ramp } from "../anim.ts";
 import rough from "roughjs";
 import type { Drawable, Options } from "roughjs/bin/core";
 import type { RoughGenerator } from "roughjs/bin/generator";
@@ -69,7 +70,7 @@ export const RoughDrawing: React.FC<RoughDrawingProps> = ({ build, seed, options
     <g>
       {paths.map((p, i) => {
         // Each path owns an equal slice of the overall progress.
-        const local = Math.min(1, Math.max(0, progress * count - i));
+        const local = ramp(progress * count, i, i + 1);
         if (local <= 0) return null;
         const isFill = p.fill && p.fill !== "none";
         return (

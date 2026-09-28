@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { ramp } from "../anim.ts";
 import { HAND_FONT } from "../fonts.ts";
 import { RoughDrawing, useWobbleSeed } from "../rough/RoughDrawing.tsx";
 import { PALETTE } from "../theme.ts";
@@ -193,9 +194,6 @@ const hatch = {
   roughness: 1.6,
 } as const;
 
-/** Clamp to 0..1 and rescale a sub-range of the reveal. */
-const sub = (p: number, from: number, to: number) => Math.min(1, Math.max(0, (p - from) / (to - from)));
-
 export const Whis: React.FC<WhisProps> = ({
   x,
   y,
@@ -217,10 +215,10 @@ export const Whis: React.FC<WhisProps> = ({
 }) => {
   const crayonId = `whis-crayon-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const seed = useWobbleSeed(baseSeed, 4, !wobble || draw < 1);
-  const outlineP = sub(draw, 0, 0.6);
-  const fillP = sub(draw, 0.45, 0.85);
-  const eyesP = sub(draw, 0.55, 0.8);
-  const wP = sub(draw, 0.7, 1);
+  const outlineP = ramp(draw, 0, 0.6);
+  const fillP = ramp(draw, 0.45, 0.85);
+  const eyesP = ramp(draw, 0.55, 0.8);
+  const wP = ramp(draw, 0.7, 1);
   const stretch = 1 + (1 - squash) * 0.5;
   const sx = scale * (flip ? -1 : 1) * stretch;
   const sy = scale * squash;

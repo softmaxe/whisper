@@ -1,3 +1,4 @@
+import { ramp } from "../../anim.ts";
 import type { Box } from "../../chrome/AppWindow.tsx";
 import { HAND_FONT } from "../../fonts.ts";
 import { PenArrow, PenNote, PenStrike, PenTick } from "../../pen/RedPen.tsx";
@@ -41,7 +42,7 @@ export const DictionaryNotebook: React.FC<DictionaryNotebookProps> = ({ box, tit
   const left = x + 70;
   const row1 = firstRule - 14;
   const row2 = firstRule + RULE_GAP - 14;
-  const seg = (a: number, b: number) => Math.min(1, Math.max(0, (entry - a) / (b - a)));
+  const seg = (a: number, b: number) => ramp(entry, a, b);
   const wrongWidth = [...wrong].reduce((sum, ch) => sum + (ch.charCodeAt(0) > 0x2e80 ? 1 : 0.5), 0) * 46;
   return (
     <g transform={`rotate(-2 ${x + w / 2} ${y + h / 2})`}>
@@ -79,7 +80,7 @@ export const DictionaryNotebook: React.FC<DictionaryNotebookProps> = ({ box, tit
         fontFamily={`"${HAND_FONT}", serif`}
         fontSize={52}
         fill={PALETTE.graphite}
-        opacity={Math.min(1, Math.max(0, (progress - 0.5) / 0.5))}
+        opacity={ramp(progress, 0.5, 1)}
       >
         {title}
       </text>

@@ -1,5 +1,6 @@
 import type { Token } from "../../../copy.ts";
 import { useCopy } from "../../../lib/copy-context.tsx";
+import { ramp } from "../../anim.ts";
 import type { Box } from "../../chrome/AppWindow.tsx";
 import { HAND_FONT } from "../../fonts.ts";
 import { PenMark } from "../../pen/RedPen.tsx";
@@ -62,7 +63,7 @@ export const SaidCard: React.FC<SaidCardProps> = ({ box, tokens, shown, strikes,
           boxSizing: "border-box",
           fontFamily: copy.font,
           color: PALETTE.ink,
-          opacity: Math.min(1, Math.max(0, (progress - 0.4) / 0.6)),
+          opacity: ramp(progress, 0.4, 1),
         }}
       >
         <div style={{ fontFamily: `"${HAND_FONT}", serif`, fontSize: 30, color: PALETTE.pencil, marginBottom: 6 }}>{copy.saidLabel}</div>
@@ -100,7 +101,7 @@ export const SaidCard: React.FC<SaidCardProps> = ({ box, tokens, shown, strikes,
 const Caret: React.FC<{ mark: string; progress: number }> = ({ mark, progress }) => {
   if (progress <= 0) return null;
   const caret = Math.min(1, progress / 0.45);
-  const write = Math.min(1, Math.max(0, (progress - 0.35) / 0.65));
+  const write = ramp(progress, 0.35, 1);
   return (
     <span style={{ position: "absolute", left: "100%", top: 0, bottom: 0, width: 0, pointerEvents: "none" }}>
       <svg width={1} height={1} style={{ position: "absolute", left: 0, bottom: 10, overflow: "visible" }}>

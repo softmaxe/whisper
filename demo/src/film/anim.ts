@@ -1,7 +1,7 @@
 /**
  * Small animation helpers shared by the Beat visuals.
  */
-import { interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { Easing, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
 import type { Beat, Seconds } from "../../timeline/types.ts";
 
 /** `interpolate()` options that hold the end values outside the input range. */
@@ -9,6 +9,9 @@ export const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as 
 
 /** Clamped 0..1 ramp of `t` over [a, b]. */
 export const ramp = (t: number, a: number, b: number): number => interpolate(t, [a, b], [0, 1], clamp);
+
+/** Slow-in, gentle-out easing for paper moving across the desk (Beat 3's notes shrinking to thumbnails). */
+export const moveEase = Easing.bezier(0.45, 0, 0.2, 1);
 
 /**
  * Time inside a Beat's visuals, which are mounted in a <Sequence> starting at

@@ -1,5 +1,5 @@
 import { BEAT_BOUNDS } from "../bounds.ts";
-import { doubleTapCues, doubleTapMoments, LOWER_CAPTION } from "../helpers.ts";
+import { doubleTapCues, doubleTapMoments, LOWER_CAPTION, PILL_OPEN_DELAY, roundMs } from "../helpers.ts";
 import type { Beat, Caption, Lang, Moments, SoundCue } from "../types.ts";
 
 const [start, end] = BEAT_BOUNDS.more;
@@ -79,7 +79,7 @@ const moments = {
   /** fn is pressed and held. */
   holdPress: HOLD_PRESS,
   /** The pill opens with its Hold mode ring. */
-  holdListen: Math.round((HOLD_PRESS + 2 / 30) * 1000) / 1000,
+  holdListen: roundMs(HOLD_PRESS + PILL_OPEN_DELAY),
   /** "hold fn…" is written by the key. */
   holdNote: 37.2,
   /** fn is released; the pill stops listening. */

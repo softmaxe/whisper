@@ -9,7 +9,7 @@ import { beat2 } from "./beats/beat2-speak.ts";
 import { beat3 } from "./beats/beat3-more.ts";
 import { beat4 } from "./beats/beat4-review.ts";
 import { beat5 } from "./beats/beat5-servers.ts";
-import { FILM_SECONDS } from "./bounds.ts";
+import { FILM_FPS, FILM_SECONDS } from "./bounds.ts";
 import type { Beat, Caption, Film, Lang, Seconds, SoundCue } from "./types.ts";
 
 export type * from "./types.ts";
@@ -19,7 +19,7 @@ export const LANGS: readonly Lang[] = ["en", "zh-CN"];
 
 export const FILM: Film = {
   durationSeconds: FILM_SECONDS,
-  fps: 30,
+  fps: FILM_FPS,
   width: 1920,
   height: 1080,
   fadeOutSeconds: 1,

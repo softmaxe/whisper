@@ -1,4 +1,5 @@
 import { hash01 } from "../../../../timeline/helpers.ts";
+import { ramp } from "../../anim.ts";
 import { RoughDrawing, useWobbleSeed } from "../../rough/RoughDrawing.tsx";
 import { PALETTE } from "../../theme.ts";
 
@@ -75,7 +76,7 @@ export const Logo: React.FC<LogoProps> = ({ cx, cy, size, square, stroke, seed =
   if (square <= 0) return null;
   const k = size / ICON.size;
   const outline = roundedSquare(ICON.left, ICON.right, ICON.radius);
-  const fill = Math.min(1, Math.max(0, (square - 0.45) / 0.55));
+  const fill = ramp(square, 0.45, 1);
   return (
     <g transform={`translate(${cx - size / 2} ${cy - size / 2}) scale(${k})`}>
       {/* Paper rim, so the black square separates from a dark wash. */}

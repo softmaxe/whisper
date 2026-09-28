@@ -15,6 +15,7 @@ import {
   resolveFlowWaveOpacity,
   resolveFlowWaveTarget,
 } from "../../../../src/components/dictation/waveformMath.ts";
+import { hash01 } from "../../../timeline/helpers.ts";
 
 export { FLOW_BAR_COUNT as PILL_BAR_COUNT };
 
@@ -43,12 +44,6 @@ export interface PillTiming {
 
 export type PillPhase = "hidden" | "warming" | "listening" | "thinking" | "done";
 
-/** Stable pseudo-random value in 0..1 for an integer seed. */
-const hash = (seed: number) => {
-  const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
-  return x - Math.floor(x);
-};
-
 /**
  * A speech-like microphone level (RMS, 0..~0.15) at a 30 fps frame: syllables
  * of varying loudness separated by short dips and the odd pause.
@@ -56,9 +51,9 @@ const hash = (seed: number) => {
 export function speechLevel(frame: number): number {
   const syllable = Math.floor(frame / 5);
   const phase = (frame % 5) / 5;
-  const loudness = 0.05 + hash(syllable) * 0.1;
+  const loudness = 0.05 + hash01(syllable) * 0.1;
   const shape = Math.sin(Math.PI * phase);
-  const pause = hash(Math.floor(frame / 23) + 99) < 0.15 ? 0.25 : 1;
+  const pause = hash01(Math.floor(frame / 23) + 99) < 0.15 ? 0.25 : 1;
   return loudness * (0.35 + 0.65 * shape) * pause;
 }
 

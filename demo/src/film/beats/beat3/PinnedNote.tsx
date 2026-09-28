@@ -1,5 +1,5 @@
-import { Easing, interpolate } from "remotion";
-import { clamp } from "../../anim.ts";
+import { interpolate } from "remotion";
+import { clamp, moveEase, ramp } from "../../anim.ts";
 import type { Box } from "../../chrome/AppWindow.tsx";
 import { PenNote } from "../../pen/RedPen.tsx";
 import { RoughDrawing, useWobbleSeed } from "../../rough/RoughDrawing.tsx";
@@ -22,7 +22,6 @@ export const THUMB_SLOTS = [
 /** Offset of the note's hatched pencil shadow. */
 const SHADOW = 14;
 const PIN_RED = "#c94a3a";
-const ease = Easing.bezier(0.45, 0, 0.2, 1);
 
 export interface PinnedNoteProps {
   /** 0..1 sketch-in: the sheet and pin, then the title is written. 0 renders nothing. */
@@ -50,7 +49,7 @@ export const PinnedNote: React.FC<PinnedNoteProps> = ({ progress, move = 0, slot
   const boil = useWobbleSeed(seed, 4, progress < 1);
   if (progress <= 0) return null;
   const { w, h } = NOTE;
-  const e = ease(Math.min(1, Math.max(0, move)));
+  const e = moveEase(ramp(move, 0, 1));
   const to = slot ?? { x: NOTE.x, y: NOTE.y, rotate: 0 };
   const x = NOTE.x + (to.x - NOTE.x) * e;
   const y = NOTE.y + (to.y - NOTE.y) * e;
