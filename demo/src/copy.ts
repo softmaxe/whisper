@@ -1,6 +1,8 @@
 // On-screen words for each language. App labels match src/locales; the
 // dictated sentences are sample data written for the demo.
 
+import type { Lang } from "../timeline/types.ts";
+
 export interface Token {
   text: string;
   /** Spoken filler that text cleanup removes. */
@@ -8,9 +10,8 @@ export interface Token {
 }
 
 export interface Copy {
-  lang: "en" | "zh-CN";
   font: string;
-  /** Joins spoken tokens: a space in English, nothing in Chinese. */
+  /** Separates the `mail.spoken` tokens on the You said card: a space in English, nothing in Chinese. */
   gap: string;
   saidLabel: string;
   mail: {
@@ -95,7 +96,6 @@ export interface Copy {
 }
 
 const en: Copy = {
-  lang: "en",
   font: '-apple-system, "SF Pro Display", "Helvetica Neue", sans-serif',
   gap: " ",
   saidLabel: "You said",
@@ -236,7 +236,6 @@ const en: Copy = {
 };
 
 const zh: Copy = {
-  lang: "zh-CN",
   font: '-apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif',
   gap: "",
   saidLabel: "你说的",
@@ -363,5 +362,4 @@ const zh: Copy = {
   },
 };
 
-export const COPY = { en, "zh-CN": zh } as const;
-export type Lang = keyof typeof COPY;
+export const COPY: Record<Lang, Copy> = { en, "zh-CN": zh };
