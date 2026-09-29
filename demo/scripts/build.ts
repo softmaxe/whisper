@@ -3,7 +3,7 @@
  *   timeline JSON -> sample fetch into .cache/samples/ -> audio synthesis (Python/uv) -> bundle (Remotion)
  *   -> for each cut: render video -> mux with the audio (ffmpeg) -> review frames (ffmpeg).
  *
- * Usage: npm run build [-- --concurrency=N]
+ * Usage: pnpm run build [-- --concurrency=N]
  * Cache (git-ignored): .cache/samples/<library>/, the verified sample archives in audio/samples.toml.
  * Output (git-ignored): out/whisper-film-en.mp4, out/whisper-film-zh-CN.mp4,
  * out/audio.wav, out/frames/<lang>/*.png and the Clawd model sheet out/frames/clawd-sheet.png.

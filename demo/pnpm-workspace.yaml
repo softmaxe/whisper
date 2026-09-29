@@ -1,0 +1,9 @@
+# The demo is a separate package with its own lockfile; this file keeps pnpm
+# from treating it as part of the app's workspace in the parent directory.
+
+engineStrict: true
+
+# Dependency build scripts pnpm may run during install; anything else fails the install.
+allowBuilds:
+  esbuild: true
+  fsevents: false

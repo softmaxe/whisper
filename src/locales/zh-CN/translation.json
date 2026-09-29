@@ -63,7 +63,7 @@
       "details": {
         "unknown": "启动 Globe 监听器时发生未知错误。",
         "fallback": "Globe 键快捷键将保持禁用状态；现有的键盘快捷键仍可正常使用。",
-        "devHint": "运行 `npm run compile:globe` 并重新构建应用以重新生成监听器。",
+        "devHint": "运行 `pnpm run compile:globe` 并重新构建应用以重新生成监听器。",
         "reinstallHint": "请尝试重新安装 Whisper。"
       }
     }

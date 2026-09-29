@@ -25,7 +25,7 @@ regions are skipped and round robins always play their first take).
 
 The music layer receives its melodic instruments through a sample bank. The
 build uses the sampled bank by default. The audio tests pass a deterministic
-synthesised stand-in, so `npm run test:audio` needs neither the cache nor the
+synthesised stand-in, so `pnpm run test:audio` needs neither the cache nor the
 network.
 
 GitHub commit archives are generated on demand. If GitHub changes their bytes,

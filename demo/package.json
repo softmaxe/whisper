@@ -11,7 +11,7 @@
     "test": "vitest run --project unit",
     "test:film": "vitest run --project film",
     "test:audio": "uv run --project audio pytest audio/tests -q",
-    "test:all": "vitest run && npm run test:audio"
+    "test:all": "vitest run && pnpm run test:audio"
   },
   "dependencies": {
     "@remotion/bundler": "4.0.529",

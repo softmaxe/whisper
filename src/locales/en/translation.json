@@ -63,7 +63,7 @@
       "details": {
         "unknown": "Unknown error occurred while starting the Globe listener.",
         "fallback": "The Globe key shortcut will remain disabled; existing keyboard shortcuts continue to work.",
-        "devHint": "Run `npm run compile:globe` and rebuild the app to regenerate the listener binary.",
+        "devHint": "Run `pnpm run compile:globe` and rebuild the app to regenerate the listener binary.",
         "reinstallHint": "Try reinstalling Whisper."
       }
     }

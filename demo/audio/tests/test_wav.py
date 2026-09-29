@@ -1,6 +1,6 @@
 """The synthesiser against the real timeline (exported fresh from the TypeScript source).
 
-Run with `npm run test:audio` (or `uv run --project audio pytest audio/tests`).
+Run with `pnpm run test:audio` (or `uv run --project audio pytest audio/tests`).
 """
 
 from __future__ import annotations

@@ -12,17 +12,17 @@ The English and Chinese cuts share one timeline and differ only in on-screen tex
 
 ## Build
 
-This package is separate from the app and has its own dependencies. It needs Node.js 24, [uv](https://docs.astral.sh/uv/), and ffmpeg.
+This package is separate from the app and has its own dependencies. It needs the Node.js and pnpm versions pinned by [mise](https://mise.jdx.dev/) in the root [`mise.toml`](../mise.toml), [uv](https://docs.astral.sh/uv/), and ffmpeg.
 
 ```sh
 cd demo
-npm ci
-npm run build
+pnpm install --frozen-lockfile
+pnpm run build
 ```
 
-`npm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames at Beat midpoints, Caption ends, and key moments to `out/frames/<lang>/`. It also renders the `ClawdSheet` model sheet of Clawd to `out/frames/clawd-sheet.png`. Pass `-- --concurrency=N` to limit render threads. The first render downloads Chrome Headless Shell for Remotion.
+`pnpm run build` exports the timeline in [`timeline/`](timeline) to `out/timeline.json`, synthesises `out/audio.wav` with the Python package in [`audio/`](audio), renders the `Film-en` and `Film-zh` compositions, muxes them into `out/whisper-film-en.mp4` and `out/whisper-film-zh-CN.mp4`, and extracts PNG review frames at Beat midpoints, Caption ends, and key moments to `out/frames/<lang>/`. It also renders the `ClawdSheet` model sheet of Clawd to `out/frames/clawd-sheet.png`. Pass `-- --concurrency=N` to limit render threads. The first render downloads Chrome Headless Shell for Remotion.
 
-The score's piano and Rhodes are recorded multisample libraries, listed with their source URL, version, and SHA-256 in [`audio/samples.toml`](audio/samples.toml). Before synthesising, the build downloads any missing library archive into the git-ignored `.cache/samples/` folder and verifies its checksum; the audio step reads the SFZ instruments straight from the verified archives. Later builds reuse the cache without network access. A missing download or a checksum mismatch fails the build with the library's name; to recover from a corrupted archive, delete it and rebuild. The first build downloads about 130 MB. Use `npm run studio` to preview and scrub the Film in a browser.
+The score's piano and Rhodes are recorded multisample libraries, listed with their source URL, version, and SHA-256 in [`audio/samples.toml`](audio/samples.toml). Before synthesising, the build downloads any missing library archive into the git-ignored `.cache/samples/` folder and verifies its checksum; the audio step reads the SFZ instruments straight from the verified archives. Later builds reuse the cache without network access. A missing download or a checksum mismatch fails the build with the library's name; to recover from a corrupted archive, delete it and rebuild. The first build downloads about 130 MB. Use `pnpm run studio` to preview and scrub the Film in a browser.
 
 ## Publishing
 
@@ -36,10 +36,10 @@ The score is in C major at about 76 BPM. A sampled Rhodes carries the melody ove
 
 ## Tests
 
-- `npm test`: timeline rules (Caption length and overlap, Beat coverage, moment and cue order), Caption layout in both languages, and font coverage of every handwritten character.
-- `npm run test:audio`: the synthesiser writes a WAV of the right length with sound at every cue, and the sample cache and SFZ player work on a small test library. The score plays through a synthesised stand-in for the sampled instruments, so the tests need neither the cache nor the network.
-- `npm run test:film`: both rendered cuts' duration, resolution, frame rate, codecs, streams, music level, final fade, and blank last second. It rebuilds the cuts first when they are missing or stale.
-- `npm run typecheck`.
+- `pnpm test`: timeline rules (Caption length and overlap, Beat coverage, moment and cue order), Caption layout in both languages, and font coverage of every handwritten character.
+- `pnpm run test:audio`: the synthesiser writes a WAV of the right length with sound at every cue, and the sample cache and SFZ player work on a small test library. The score plays through a synthesised stand-in for the sampled instruments, so the tests need neither the cache nor the network.
+- `pnpm run test:film`: both rendered cuts' duration, resolution, frame rate, codecs, streams, music level, final fade, and blank last second. It rebuilds the cuts first when they are missing or stale.
+- `pnpm run typecheck`.
 
 ## Credits
 

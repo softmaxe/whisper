@@ -164,7 +164,8 @@ physical display presentation and built-in/iPhone latency trials remain pending.
    each run. For an already installed matching build, quit first, then run
    `open -a Whisper --args --log-level=debug`. A source checkout does not update
    that installed app. Development runs can use
-   `OPENWHISPR_LOG_LEVEL=debug npm run dev` after Node 24 and `npm ci` setup.
+   `OPENWHISPR_LOG_LEVEL=debug pnpm run dev` after `pnpm install` with the
+   toolchain pinned in `mise.toml`.
 5. Collect at least 20 trials per revision, device, and condition. Keep visible
    and hidden/occluded window trials separate. Use a fixed 30-second idle interval
    after capture is released; record cold launches separately from repeated

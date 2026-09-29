@@ -1,5 +1,5 @@
 /**
- * The built Film cuts, inspected with ffprobe. Run with `npm run test:film`:
+ * The built Film cuts, inspected with ffprobe. Run with `pnpm run test:film`:
  * the global setup (test/film/global-setup.ts) rebuilds both cuts first
  * whenever out/ is missing or older than any source file.
  */
