@@ -85,14 +85,15 @@ Local and private-network hosts can use HTTP. Public hosts require HTTPS. See [D
 
 ## Development
 
-Use Node.js 24 from [`.nvmrc`](.nvmrc).
+Install [mise](https://mise.jdx.dev/); it provides the Node.js and pnpm versions pinned in [`mise.toml`](mise.toml).
 
 ```sh
-npm ci
-npm run dev
+mise install
+pnpm install
+pnpm run dev
 ```
 
-Run `npm run quality-check` for lint, TypeScript, translation checks, and regression tests. `npm run pack` builds an ad-hoc signed development app.
+Run `pnpm run quality-check` for lint, TypeScript, translation checks, and regression tests. `pnpm run pack` builds an ad-hoc signed development app.
 
 See [Tests](test/README.md) for coverage and CI, and [macOS signing](docs/macos-signing.md) for release builds.
 

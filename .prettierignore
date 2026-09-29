@@ -3,4 +3,4 @@ dist
 build
 src/dist
 *.min.js
-package-lock.json
+pnpm-lock.yaml

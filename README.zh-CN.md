@@ -81,14 +81,15 @@ brew upgrade --cask softmaxe/tap/whisper
 
 ## 开发
 
-使用 [`.nvmrc`](.nvmrc) 指定的 Node.js 24。
+安装 [mise](https://mise.jdx.dev/)，由它提供 [`mise.toml`](mise.toml) 固定的 Node.js 和 pnpm 版本。
 
 ```sh
-npm ci
-npm run dev
+mise install
+pnpm install
+pnpm run dev
 ```
 
-`npm run quality-check` 执行 lint、TypeScript、翻译检查和回归测试。`npm run pack` 构建 ad-hoc 签名的开发版应用。
+`pnpm run quality-check` 执行 lint、TypeScript、翻译检查和回归测试。`pnpm run pack` 构建 ad-hoc 签名的开发版应用。
 
 测试范围与 CI 见[测试说明](test/README.md)，发布构建见 [macOS 签名说明](docs/macos-signing.md)。
 

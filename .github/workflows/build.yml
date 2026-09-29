@@ -41,11 +41,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
+      - name: Set up Node.js and pnpm
+        uses: jdx/mise-action@9149ea85001c7435d5a66bb127d6a1b6227cb0a5 # v5.0.0
 
       - name: Validate architecture and package version
         id: metadata
@@ -54,17 +51,17 @@ jobs:
         run: node scripts/check-package-version.js
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Check Whisper
-        run: npm run quality-check
+        run: pnpm run quality-check
 
       - name: Package development application
         if: inputs.release-tag == ''
         env:
           # Manual builds do not receive the release signing identity.
           CSC_FOR_PULL_REQUEST: "true"
-        run: npm run pack
+        run: pnpm run pack
 
       - name: Package release application with the persistent signing identity
         if: inputs.release-tag != ''
@@ -77,8 +74,8 @@ jobs:
             echo "::error::Release signing credentials are required; ad-hoc releases are not allowed."
             exit 1
           fi
-          npm run test:signing
-          npm run pack:release
+          pnpm run test:signing
+          pnpm run pack:release
 
       - name: Verify application
         env:

@@ -1,0 +1,27 @@
+# Single-package project: pnpm reads its settings from this file.
+# demo/ is a separate package with its own pnpm-workspace.yaml and lockfile.
+
+# Refuse dependencies whose engines field excludes the pinned Node.js version.
+engineStrict: true
+
+# electron-builder packages node_modules/** and unpacks native modules by path,
+# so keep a flat npm-style layout.
+nodeLinker: hoisted
+
+# Dependency build scripts pnpm may run during install; anything else fails the install.
+allowBuilds:
+  better-sqlite3: true
+  electron: true
+  esbuild: true
+  ffmpeg-static: true
+  electron-winstaller: false
+  fsevents: false
+
+overrides:
+  adm-zip: ^0.6.0
+  "@xmldom/xmldom": 0.8.15
+  fast-xml-builder: 1.2.0
+  fast-xml-parser: 5.7.2
+  ip-address: 10.2.0
+  markdown-it: 14.2.0
+  tmp: 0.2.7

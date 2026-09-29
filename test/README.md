@@ -5,14 +5,14 @@ The regression suite follows the supported features in the root README. Keep inh
 ## Run
 
 ```sh
-npm ci
-npm test
-npm run quality-check
+pnpm install --frozen-lockfile
+pnpm test
+pnpm run quality-check
 ```
 
-Use Node.js 24 to install dependencies and run npm. `npm test` runs the suite inside Electron's Node runtime, matching the SQLite binding built by `npm ci`. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the CI and Build workflows.
+Use the Node.js and pnpm versions pinned in [`mise.toml`](../mise.toml). `pnpm test` runs the suite inside Electron's Node runtime, matching the SQLite binding rebuilt for Electron by the install's `postinstall` script. Database tests must run; an unavailable native binding fails the command. `quality-check` adds lint, TypeScript, and translation checks and is the same command used by the CI and Build workflows.
 
-On macOS, run `npm run test:signing` with the original [release signing credentials](../docs/macos-signing.md#build-locally) to check identity continuity. The test signs two app versions and native helpers with different code, compares their designated requirements, and verifies that each version satisfies the other's requirement. It also rejects a helper matching the main app's identity. Release runs this test automatically before packaging. It does not install the app or request permissions and cannot replace the upgrade smoke check below.
+On macOS, run `pnpm run test:signing` with the original [release signing credentials](../docs/macos-signing.md#build-locally) to check identity continuity. The test signs two app versions and native helpers with different code, compares their designated requirements, and verifies that each version satisfies the other's requirement. It also rejects a helper matching the main app's identity. Release runs this test automatically before packaging. It does not install the app or request permissions and cannot replace the upgrade smoke check below.
 
 ## Coverage
 
@@ -87,7 +87,7 @@ Automated checks do not establish microphone, Accessibility, or server compatibi
 
 For changes to macOS signing, also test an upgrade between two release builds signed with the same saved certificate:
 
-1. Build version A with `npm run pack:release`. Record its designated requirement with `codesign -d -r- /path/to/version-a/Whisper.app` and verify its signature with `codesign --verify --deep --strict /path/to/version-a/Whisper.app`.
+1. Build version A with `pnpm run pack:release`. Record its designated requirement with `codesign -d -r- /path/to/version-a/Whisper.app` and verify its signature with `codesign --verify --deep --strict /path/to/version-a/Whisper.app`.
 2. Install version A at `/Applications/Whisper.app`. Grant microphone and Accessibility access, save a test server credential, and permit Keychain access when prompted. Dictate and verify automatic paste.
 3. Build version B with a higher app version using the same certificate and private key. Repeat the signature checks and compare its designated requirement with version A. The requirement must remain the same even though the version and code hash differ. Check the helper app requirements as well.
 4. Quit version A and upgrade to version B through the Homebrew cask, preserving the installation path. Launch it, dictate, verify automatic paste, and access the saved credential. Record whether microphone, Accessibility, or Keychain authorization appears again and the macOS version used.

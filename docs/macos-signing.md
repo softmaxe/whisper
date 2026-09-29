@@ -1,6 +1,6 @@
 # macOS signing
 
-Release builds use one persistent self-signed code signing certificate. This is a free option that does not require an Apple Developer account. Development builds made with `npm run pack` continue to use ad-hoc signing.
+Release builds use one persistent self-signed code signing certificate. This is a free option that does not require an Apple Developer account. Development builds made with `pnpm run pack` continue to use ad-hoc signing.
 
 An ad-hoc signature identifies a particular build by its code hash. Rebuilding the app changes that identity, which can trigger new microphone, Accessibility, or Keychain authorization. The release signing requirement binds each bundle identifier to the pinned certificate instead. Keeping the certificate, private key, and bundle identifiers unchanged gives macOS a stable identity across releases. See Apple's [code signing requirements](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) and [code signing guidance](https://developer.apple.com/library/archive/technotes/tn2206/).
 
@@ -11,7 +11,7 @@ Switching from an ad-hoc build may require authorization once more. Permission r
 The initial maintainer creates the identity on macOS:
 
 ```sh
-npm run signing:create
+pnpm run signing:create
 ```
 
 The command creates these files:
@@ -29,7 +29,7 @@ Keep an encrypted backup of both private files outside the repository, with acce
 ## Build locally
 
 ```sh
-npm run pack:release
+pnpm run pack:release
 ```
 
 The release build reads the saved identity and password from `~/.config/whisper/signing/`. It signs the app, helpers, and bundled executable code, then checks the result against the pinned public certificate. Missing or mismatched credentials fail the build instead of producing an ad-hoc signed release.
@@ -43,12 +43,12 @@ To supply credentials from a secret store, set both environment variables:
 
 Local files are used only when both environment variables are absent. Setting just one is an error. Avoid putting either value in shell history, logs, source files, or committed configuration.
 
-`npm run pack` remains available for development without release credentials. Installing that build over a release can change the identity again; use release builds for permission-retention testing.
+`pnpm run pack` remains available for development without release credentials. Installing that build over a release can change the identity again; use release builds for permission-retention testing.
 
 On macOS, check that changed app and native helper binaries keep the same signing identity:
 
 ```sh
-npm run test:signing
+pnpm run test:signing
 ```
 
 This test requires the original signing credentials, using the same local files or environment variables as the release build. It signs two temporary app versions with different code, compares their designated requirements, and checks that each version satisfies the other's requirement. It also checks that a native helper cannot satisfy the main app's requirement. The test does not install an app or request permissions, so it cannot replace the [upgrade smoke check](../test/README.md#release-smoke-check).
@@ -65,7 +65,7 @@ gh secret set TAP_GITHUB_TOKEN --env release
 
 Scope `TAP_GITHUB_TOKEN` to the Homebrew tap repository with contents write access only, and give it an expiration date.
 
-The Release workflow requires the tag to point at a commit on `main`. Its Build call uses the `release` environment for tagged releases and runs `npm run test:signing` before packaging. Pull requests and pushes to `main` run checks without packaging or signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. Release signing imports the identity into a temporary build keychain, verifies signatures against `resources/mac/signing-certificate.pem`, and cleans up its temporary keychain. A release cannot proceed with a different certificate or an ad-hoc signature.
+The Release workflow requires the tag to point at a commit on `main`. Its Build call uses the `release` environment for tagged releases and runs `pnpm run test:signing` before packaging. Pull requests and pushes to `main` run checks without packaging or signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. Release signing imports the identity into a temporary build keychain, verifies signatures against `resources/mac/signing-certificate.pem`, and cleans up its temporary keychain. A release cannot proceed with a different certificate or an ad-hoc signature.
 
 Restore these same secret values when moving the release workflow to another repository. Do not generate a fresh certificate on each runner or release. The private key is needed only to build releases; users do not need the signing files.
 

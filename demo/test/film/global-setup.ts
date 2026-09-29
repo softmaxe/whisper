@@ -1,7 +1,7 @@
 /**
  * Film test global setup: the tests must never pass on stale output. If a
  * built cut or any review frame is missing, or older than any source file
- * that goes into it, both cuts are rebuilt (`npm run build`) first.
+ * that goes into it, both cuts are rebuilt (`pnpm run build`) first.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -24,7 +24,7 @@ const SOURCES = [
   "audio/uv.lock",
   "scripts",
   "package.json",
-  "package-lock.json",
+  "pnpm-lock.yaml",
   "tsconfig.json",
 ];
 const IGNORED_DIRS = new Set(["__pycache__", ".venv", "node_modules"]);
@@ -115,8 +115,8 @@ export function staleReason(): string | null {
 export default function setup(): void {
   const reason = staleReason();
   if (!reason) return;
-  console.log(`\nFilm test: ${reason}; rebuilding both cuts before testing them (npm run build)…`);
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, stdio: "inherit" });
+  console.log(`\nFilm test: ${reason}; rebuilding both cuts before testing them (pnpm run build)…`);
+  execFileSync("pnpm", ["run", "build"], { cwd: ROOT, stdio: "inherit" });
   const still = staleReason();
   if (still) throw new Error(`Film test: the build did not refresh its output (${still})`);
 }

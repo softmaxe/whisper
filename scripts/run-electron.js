@@ -19,10 +19,10 @@ function resolveElectronPath() {
     return require("electron");
   } catch (err) {
     console.error(
-      "[run-electron] Electron is installed as an npm package, but its platform binary is missing."
+      "[run-electron] Electron is installed as a package, but its platform binary is missing."
     );
     console.error(
-      "[run-electron] This usually means npm lifecycle scripts were skipped or the Electron download failed."
+      "[run-electron] This usually means dependency build scripts were skipped or the Electron download failed."
     );
     if (process.env.ELECTRON_SKIP_BINARY_DOWNLOAD) {
       console.error(
@@ -30,10 +30,10 @@ function resolveElectronPath() {
       );
     }
     console.error(
-      "[run-electron] Try: npm config set ignore-scripts false && npm rebuild electron"
+      "[run-electron] Try: check that allowBuilds in pnpm-workspace.yaml allows electron, then run pnpm rebuild electron"
     );
     console.error(
-      "[run-electron] If that still fails, remove node_modules and run npm install again."
+      "[run-electron] If that still fails, remove node_modules and run pnpm install again."
     );
     console.error(err && err.stack ? err.stack : err);
     process.exit(1);

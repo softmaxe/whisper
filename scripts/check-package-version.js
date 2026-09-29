@@ -11,14 +11,14 @@ const path = require("path");
 
 const root = path.join(__dirname, "..");
 const pkg = require(path.join(root, "package.json"));
-const lock = require(path.join(root, "package-lock.json"));
-const nodeMajor = fs.readFileSync(path.join(root, ".nvmrc"), "utf8").trim();
+const miseConfig = fs.readFileSync(path.join(root, "mise.toml"), "utf8");
+const nodeMajor = miseConfig.match(/^node\s*=\s*"(\d+)"\s*$/m)?.[1];
+
+assert.ok(nodeMajor, "mise.toml must pin a Node.js major version");
 
 assert.equal(os.machine(), "arm64", "Whisper builds require an arm64 runner");
-assert.equal(process.versions.node.split(".")[0], nodeMajor, "Node.js must match .nvmrc");
+assert.equal(process.versions.node.split(".")[0], nodeMajor, "Node.js must match mise.toml");
 assert.match(pkg.version, /^[0-9]+\.[0-9]+\.[0-9]+$/);
-assert.equal(lock.version, pkg.version);
-assert.equal(lock.packages[""].version, pkg.version);
 
 if (process.env.RELEASE_TAG) {
   assert.equal(process.env.RELEASE_TAG, "v" + pkg.version);

@@ -73,7 +73,7 @@ def verified_archive(library: Library, cache_dir: Path = CACHE_DIR) -> Path:
     """The library's cached archive, checked against the manifest. Never touches the network."""
     path = library.archive(cache_dir)
     if not path.is_file():
-        raise library.error(f"not in the sample cache ({path}); run `npm run build` to download it")
+        raise library.error(f"not in the sample cache ({path}); run `pnpm run build` to download it")
     actual = sha256_of(path)
     if actual != library.sha256:
         raise library.error(

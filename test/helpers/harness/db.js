@@ -1,6 +1,6 @@
 const REQUIRED_DB_FAILURE =
   "DB-backed tests require the better-sqlite3 binding built for Electron. " +
-  "Run npm ci, then npm test so tests use the same runtime as the app. " +
+  "Run pnpm install, then pnpm test so tests use the same runtime as the app. " +
   "Database coverage cannot be skipped. Underlying error: ";
 
 function isNativeBindingUnavailable(error) {
@@ -13,7 +13,7 @@ function isNativeBindingUnavailable(error) {
   );
 }
 
-// npm test runs under Electron and requires database coverage. Direct runs may
+// pnpm test runs under Electron and requires database coverage. Direct runs may
 // opt out only when diagnosing a native binding mismatch.
 function skipOrFail(t, error) {
   if (!isNativeBindingUnavailable(error)) {

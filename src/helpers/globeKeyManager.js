@@ -202,7 +202,7 @@ class GlobeKeyManager extends EventEmitter {
       debugLogger.info("[GlobeKeyManager] Binary not found in any candidate path");
       this.reportError(
         new Error(
-          "macOS Globe listener binary not found. Run `npm run compile:globe` before packaging."
+          "macOS Globe listener binary not found. Run `pnpm run compile:globe` before packaging."
         )
       );
       return;
@@ -420,7 +420,7 @@ class GlobeKeyManager extends EventEmitter {
         return (
           `Globe listener binary architecture mismatch: binary is ${binaryArch} ` +
           `but this Mac requires ${process.arch}. The app may have been built incorrectly. ` +
-          `Try reinstalling or run \`TARGET_ARCH=${process.arch} npm run compile:globe\`.`
+          `Try reinstalling or run \`TARGET_ARCH=${process.arch} pnpm run compile:globe\`.`
         );
       }
 

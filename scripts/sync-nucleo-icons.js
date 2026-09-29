@@ -99,5 +99,5 @@ const barrel = [...components]
   .join("\n");
 fs.writeFileSync(path.join(VENDOR_DIR, "index.ts"), `${barrel}\n`);
 
-execFileSync("npx", ["prettier", "--write", ICONS_DIR], { stdio: "ignore" });
+execFileSync("pnpm", ["exec", "prettier", "--write", ICONS_DIR], { stdio: "ignore" });
 console.log(`Vendored ${components.size} Nucleo components for ${entries.length} icons.`);
