@@ -188,8 +188,11 @@ class EnvironmentManager {
   async _writeEnvFile(envPath) {
     // Only strip plaintext secrets once migration has fully completed —
     // otherwise a partial-migration recovery can lose unencrypted secrets.
+    // Probing encryption touches Keychain, so skip it when no secrets are present.
     const stripSecrets =
-      this._encryptionAvailable() && fs.existsSync(this._getMigrationSentinelPath());
+      SECRET_KEYS.some((key) => process.env[key]) &&
+      fs.existsSync(this._getMigrationSentinelPath()) &&
+      this._encryptionAvailable();
     let envContent = "# OpenWhispr Environment Variables\n";
     for (const key of PERSISTED_KEYS) {
       if (stripSecrets && SECRET_KEY_SET.has(key)) continue;
@@ -207,7 +210,8 @@ class EnvironmentManager {
   }
 
   _saveKey(envVarName, key) {
-    if (SECRET_KEY_SET.has(envVarName) && this._encryptionAvailable()) {
+    // Empty secrets only delete local ciphertext; they do not need a master key.
+    if (SECRET_KEY_SET.has(envVarName) && (!key || this._encryptionAvailable())) {
       this._saveSecretKey(envVarName, key).catch((error) => {
         debugLogger.error(
           "Failed to persist encrypted secret",
