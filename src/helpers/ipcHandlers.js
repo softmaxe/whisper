@@ -17,7 +17,6 @@ const { changeLanguage } = require("./i18nMain");
 const AudioStorageManager = require("./audioStorage");
 
 const AutomaticPaste = require("./automaticPaste");
-const { applyAutoLearnSetting } = require("./autoLearnSetting");
 const {
   DEFAULT_RETENTION_SETTINGS,
   createRetentionSettingsHandler,
@@ -584,8 +583,8 @@ class IPCHandlers {
     // Dictionary handlers
     ipcMain.on("auto-learn-changed", (_event, enabled) => {
       // Both renderer windows re-sync this on mount — ignore same-value updates (#1080).
-      const { changed, enabled: next } = applyAutoLearnSetting(this._autoLearnEnabled, enabled);
-      if (!changed) return;
+      const next = !!enabled;
+      if (next === !!this._autoLearnEnabled) return;
       this._autoLearnEnabled = next;
       if (!this._autoLearnEnabled) {
         if (this._autoLearnDebounceTimer) {

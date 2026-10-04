@@ -139,6 +139,7 @@ function createAutomaticPasteFixture(t, options = {}) {
     accessSync: () => {},
   };
   const handlers = new Map();
+  const listeners = new Map();
   const electron = {
     clipboard,
     app: {
@@ -147,7 +148,10 @@ function createAutomaticPasteFixture(t, options = {}) {
       getVersion: () => "0.0.0",
       on: () => {},
     },
-    ipcMain: { handle: (name, handler) => handlers.set(name, handler), on: () => {} },
+    ipcMain: {
+      handle: (name, handler) => handlers.set(name, handler),
+      on: (name, listener) => listeners.set(name, listener),
+    },
     systemPreferences: {
       isTrustedAccessibilityClient: () => {
         record("permission", { text: clipboard.readText() });
@@ -223,6 +227,7 @@ function createAutomaticPasteFixture(t, options = {}) {
       owner.automaticPaste.paste(text, { ...pasteOptions, webContents: sender }),
     invokePaste: (text, pasteOptions) => handlers.get("paste-text")({ sender }, text, pasteOptions),
     writeClipboard: (text) => handlers.get("write-clipboard")({ sender }, text),
+    emit: (channel, ...args) => listeners.get(channel)({ sender }, ...args),
     flush,
     advance: async (ms) => {
       t.mock.timers.tick(ms);
