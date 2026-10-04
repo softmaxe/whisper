@@ -6,7 +6,7 @@ import { getSettings } from "../stores/settingsStore";
 import { wrapCleanupTranscript } from "../config/prompts";
 import { stripThinkingTags } from "../helpers/stripThinking.js";
 import {
-  getLlmRequestTimeoutSeconds,
+  LLM_REQUEST_TIMEOUT_SECONDS,
   llmRequestTimeoutError,
 } from "../helpers/llmRequestTimeout.js";
 import { resolveSelfHostedOpenAIBase } from "./ai/openaiBase";
@@ -88,7 +88,7 @@ class ReasoningService extends BaseReasoningService {
       }
       const controller = new AbortController();
       this.activeRequestControllers.add(controller);
-      const timeoutSeconds = getLlmRequestTimeoutSeconds();
+      const timeoutSeconds = LLM_REQUEST_TIMEOUT_SECONDS;
       const timeoutId = setTimeout(() => controller.abort(), timeoutSeconds * 1000);
       try {
         const headers: Record<string, string> = {
