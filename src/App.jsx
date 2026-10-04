@@ -58,7 +58,7 @@ export default function App() {
   const { toast, dismiss, toastCount, dictationErrorActionCount, dismissByPresentation } =
     useToast();
   const { t } = useTranslation();
-  const { hotkey } = useHotkey();
+  const hotkey = useHotkey();
   const { isDragging, handleMouseDown, handleMouseUp } = useWindowDrag();
 
   const [dragStartPos, setDragStartPos] = useState(null);

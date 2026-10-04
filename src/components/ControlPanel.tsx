@@ -63,7 +63,7 @@ export default function ControlPanel({ initialSettingsSection }: ControlPanelPro
     hidePeek: hideSidebarPeek,
     leaveToggle: leaveSidebarToggle,
   } = useCollapsibleSidebar();
-  const { hotkey } = useHotkey();
+  const hotkey = useHotkey();
   const { toast } = useToast();
   const { useCleanupModel } = useSettings();
 
