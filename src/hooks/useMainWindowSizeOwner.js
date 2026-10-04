@@ -120,7 +120,6 @@ export function useMainWindowSizeOwner({
     const returningFromPanel = panelSizeReservationRef.current;
     panelSizeReservationRef.current = false;
     const target = resolveMainWindowSizeKey({
-      panelOpen: false,
       menuOpen: isCommandMenuOpen,
       toastCount,
       compactPill: isCompactPill,

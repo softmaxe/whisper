@@ -246,7 +246,6 @@ declare global {
           | "WITH_MENU"
           | "WITH_TOAST"
           | "EXPANDED"
-          | "ASSISTANT"
       ) => Promise<{
         success: boolean;
         bounds?: Electron.Rectangle;

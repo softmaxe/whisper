@@ -117,7 +117,6 @@ const WINDOW_SIZES = {
   WITH_MENU: { width: 240, height: 280 },
   WITH_TOAST: { width: 400, height: 500 },
   EXPANDED: { width: 400, height: 500 },
-  ASSISTANT: ASSISTANT_WINDOW_SIZE,
 };
 
 /**
