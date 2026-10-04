@@ -1,15 +1,13 @@
-import { Globe, Download, Trash2, X, ExternalLink } from "../icons";
+import { Globe, Download, Trash2, X } from "../icons";
 import { useTranslation } from "react-i18next";
 import { Button } from "./button";
 import { cn } from "../lib/utils";
 import type { ColorScheme } from "../../utils/modelPickerStyles";
-import { createExternalLinkHandler, withUtm } from "../../utils/externalLinks";
 
 export interface ModelCardOption {
   value: string;
   label: string;
   description?: string;
-  specUrl?: string;
   icon?: string;
   invertInDark?: boolean;
   // Explicit group for SearchableModelList; falls back to the "provider/"
@@ -73,7 +71,6 @@ export function ModelCard({
   const isDownloaded = model.isDownloaded;
   const isDownloading = model.isDownloading;
   const modelIsCancelling = model.isCancelling ?? false;
-  const specHref = model.specUrl ? withUtm(model.specUrl, "model_spec") : undefined;
 
   const handleCardClick = () => {
     if (isLocalMode) {
@@ -150,16 +147,6 @@ export function ModelCard({
           >
             {model.description}
           </span>
-        )}
-        {specHref && (
-          <a
-            href={specHref}
-            onClick={createExternalLinkHandler(specHref)}
-            className="inline-flex items-center gap-0.5 text-xs text-primary/60 hover:text-primary transition-colors shrink-0"
-          >
-            {t("models.learnMore")}
-            <ExternalLink size={9} />
-          </a>
         )}
 
         {model.recommended && (

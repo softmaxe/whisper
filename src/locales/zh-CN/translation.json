@@ -187,7 +187,6 @@
       "selectModelHint": "尚未选择模型 — 请从下方列表中选择一个。",
       "keyRequiredHint": "推理需要 API 密钥 — 请添加密钥以使用此提供商。"
     },
-    "getApiKey": "获取你的 API Key ->",
     "availableModels": "可用模型",
     "disableThinking": {
       "label": "禁用思考输出",
@@ -563,7 +562,6 @@
     }
   },
   "models": {
-    "learnMore": "了解更多",
     "noneAvailable": "没有可用的模型"
   },
   "notes": {
