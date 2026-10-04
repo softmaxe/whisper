@@ -1,4 +1,4 @@
-import { getCleanupSystemPrompt } from "../config/prompts";
+import { resolvePrompt } from "../config/prompts";
 import { getSettings } from "../stores/settingsStore";
 import { resolveCleanupLanguage } from "../utils/chineseScript";
 import { getDictionaryHintWords } from "../utils/snippets";
@@ -34,12 +34,12 @@ export abstract class BaseReasoningService {
   }
 
   protected getSystemPrompt(agentName: string | null): string {
-    return getCleanupSystemPrompt(
+    return resolvePrompt("cleanup", {
       agentName,
-      this.getCustomDictionary(),
-      this.getPreferredLanguage(),
-      this.getUiLanguage()
-    );
+      customDictionary: this.getCustomDictionary(),
+      language: this.getPreferredLanguage(),
+      uiLanguage: this.getUiLanguage(),
+    });
   }
 
   protected calculateMaxTokens(
