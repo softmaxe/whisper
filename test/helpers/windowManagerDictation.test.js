@@ -165,3 +165,34 @@ test("a Tap mode key combination starts Dictation, and pressing it again ends it
     { channel: "toggle-dictation", payload: undefined },
   ]);
 });
+
+test("a second Dictation hotkey press before the renderer's first report ends the Dictation", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  manager.mainWindow.messages.length = 0;
+  await manager.createHotkeyCallback()("Control+Shift+R");
+
+  assert.deepEqual(manager.mainWindow.messages, [
+    { channel: "toggle-dictation", payload: undefined },
+  ]);
+});
+
+test("the Dictation hotkey is ignored while a Dictation is processing", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  manager.setDictationLifecycleState("processing");
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  assert.deepEqual(manager.mainWindow.messages, []);
+
+  manager.setDictationLifecycleState("idle");
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  assert.deepEqual(
+    manager.mainWindow.messages.map(({ channel }) => channel),
+    ["prepare-dictation", "toggle-dictation"]
+  );
+});
