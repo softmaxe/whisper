@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { createDictation } from "../helpers/dictation";
+import { createDictation, IDLE_DICTATION_SNAPSHOT } from "../helpers/dictation";
 import { getRecordingErrorDescription, getRecordingErrorTitle } from "../utils/recordingErrors";
-
-const IDLE_SNAPSHOT = {
-  isRecording: false,
-  isProcessing: false,
-  isPreparing: false,
-  isStopping: false,
-  micCaptureStatus: "inactive",
-  transcript: "",
-};
 
 /**
  * React binding over the renderer `dictation` module, which owns Dictation
@@ -19,7 +10,7 @@ const IDLE_SNAPSHOT = {
  */
 export const useAudioRecording = (toast, options = {}) => {
   const { t } = useTranslation();
-  const [snapshot, setSnapshot] = useState(IDLE_SNAPSHOT);
+  const [snapshot, setSnapshot] = useState(IDLE_DICTATION_SNAPSHOT);
   const dictationRef = useRef(null);
 
   // The Dictation lives for the whole mount, so it reads the caller's latest

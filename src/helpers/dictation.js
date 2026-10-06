@@ -11,6 +11,16 @@ import logger from "../utils/logger";
 import { isAccessibilitySkipped } from "../utils/permissions";
 import { expandSnippets } from "../utils/snippets";
 
+/** The snapshot of a Dictation module with nothing in progress. */
+export const IDLE_DICTATION_SNAPSHOT = Object.freeze({
+  isRecording: false,
+  isProcessing: false,
+  isPreparing: false,
+  isStopping: false,
+  micCaptureStatus: "inactive",
+  transcript: "",
+});
+
 /**
  * The renderer's single owner of Dictation state (ADR-0003).
  *
@@ -108,14 +118,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
   const hidePreview = () => bridge()?.hideDictationPreview?.();
 
   // Snapshot for UI bindings.
-  let snapshot = {
-    isRecording: false,
-    isProcessing: false,
-    isPreparing: false,
-    isStopping: false,
-    micCaptureStatus: "inactive",
-    transcript: "",
-  };
+  let snapshot = IDLE_DICTATION_SNAPSHOT;
   const listeners = new Set();
   const update = (patch) => {
     let changed = false;
