@@ -78,20 +78,30 @@ export function createDictation({ onNotice, onCommand } = {}) {
   let feedbackTrace = null;
   let hidePreviewAtIdle = false;
 
-  // A Dictation's side effects belong to its transitions, never to the call
-  // sites that cause them. Media and the cancel hotkey are held exactly while
-  // recording, so every exit (stop, cancel, failure, teardown) releases them.
+  // A Dictation's side effects belong to this module, never to the UI call
+  // sites that cause them. Media and the cancel hotkey are held from a
+  // completed start until recording ends, so every exit (stop, cancel,
+  // failure, teardown) releases them.
+  let recordingEffectsHeld = false;
+  const holdRecordingEffects = (trace) => {
+    // A quick tap can end the recording inside the start call itself; a
+    // recording that already ended must not pause media or cue. See #1060.
+    if (state !== "recording" || !manager.getState().isRecording) return;
+    recordingEffectsHeld = true;
+    if (getSettings().pauseMediaOnDictation) bridge()?.pauseMediaPlayback?.();
+    bridge()?.registerCancelHotkey?.("Escape");
+    if (getSettings().audioCuesEnabled) trace.mark("readyCueRequested");
+    void playStartCue(() => trace.mark("readyCueScheduled"));
+  };
+
   const runTransitionEffects = (previous, next) => {
-    if (next === "recording") {
-      if (getSettings().pauseMediaOnDictation) bridge()?.pauseMediaPlayback?.();
-      bridge()?.registerCancelHotkey?.("Escape");
-      const trace = startupTrace;
-      if (getSettings().audioCuesEnabled) trace?.mark("readyCueRequested");
-      void playStartCue(() => trace?.mark("readyCueScheduled"));
-    } else if (previous === "recording") {
+    if (previous === "recording" && recordingEffectsHeld) {
+      recordingEffectsHeld = false;
       bridge()?.unregisterCancelHotkey?.();
       // Resume media the instant recording ends, not after transcription.
       if (getSettings().pauseMediaOnDictation) bridge()?.resumeMediaPlayback?.();
+    }
+    if (previous === "recording") {
       // Only a stop hands the recording to processing; cancel and failure
       // end it silently.
       if (next === "processing") void playStopCue();
@@ -191,8 +201,12 @@ export function createDictation({ onNotice, onCommand } = {}) {
       const didStart = await manager.startRecording(trace);
       if (!isCurrent()) return false;
       recordingStarted = didStart;
-      if (didStart) trace.startSettled();
-      else trace.finish("failed", "start_failed");
+      if (didStart) {
+        trace.startSettled();
+        holdRecordingEffects(trace);
+      } else {
+        trace.finish("failed", "start_failed");
+      }
       return didStart;
     } catch (error) {
       trace?.finish("failed", "start_exception");

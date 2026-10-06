@@ -42,10 +42,43 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   const previewListeners = new Map();
   let hidden = 0;
   let windowHides = 0;
+  let onReport = null;
   const noopDispose = () => () => {};
+  // Dictation cues are tones scheduled on the renderer's audio context; the
+  // first note of each cue names it.
+  const cueNotes = new Map([
+    [523.25, "start cue"],
+    [587.33, "stop cue"],
+  ]);
+  class FakeCueAudioContext {
+    state = "running";
+    currentTime = 0;
+    destination = {};
+    createOscillator() {
+      return {
+        frequency: {
+          setValueAtTime: (frequency) => {
+            if (cueNotes.has(frequency)) effects.push(cueNotes.get(frequency));
+          },
+        },
+        connect() {},
+        start() {},
+        stop() {},
+      };
+    }
+    createGain() {
+      const gain = {
+        setValueAtTime() {},
+        linearRampToValueAtTime() {},
+        exponentialRampToValueAtTime() {},
+      };
+      return { gain, connect() {} };
+    }
+  }
   installBrowserGlobals(t, {
     initialStorage: { onboardingCompleted: "true" },
     window: {
+      AudioContext: FakeCueAudioContext,
       electronAPI: {
         ...Object.fromEntries(
           [
@@ -71,6 +104,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
           lifecycle.push(state);
           reportIds.push(dictationId);
           effects.push(state);
+          onReport?.(state);
         },
         pauseMediaPlayback: async () => effects.push("pause media"),
         resumeMediaPlayback: async () => effects.push("resume media"),
@@ -250,6 +284,10 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
     lifecycle,
     effects,
     reportIds,
+    // Runs after each lifecycle report, as a user acting on that state would.
+    onReport: (callback) => {
+      onReport = callback;
+    },
     hidden: () => hidden,
     windowHides: () => windowHides,
     isFinishing: () => isFinishing,
@@ -366,6 +404,20 @@ test("a cancelled recording releases media and the cancel hotkey as it returns t
     "idle",
     ...RECORDING_EXIT_EFFECTS,
   ]);
+});
+
+test("a quick tap that ends the recording inside its start leaves media and the start cue alone", async (t) => {
+  const h = await setup(t, { retain: false });
+  h.settings.setState({ pauseMediaOnDictation: true, audioCuesEnabled: true });
+  h.onReport((state) => {
+    if (state === "recording") queueMicrotask(() => h.hook().stopRecording());
+  });
+  await h.act(() => h.hook().startRecording());
+  assert.equal(h.lifecycle.at(-1), "processing");
+  assert.deepEqual(
+    h.effects.filter((effect) => !h.lifecycle.includes(effect)),
+    ["stop cue"]
+  );
 });
 
 test("a Dictation that never records leaves media and the cancel hotkey alone", async (t) => {
