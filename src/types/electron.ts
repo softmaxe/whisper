@@ -92,13 +92,17 @@ declare global {
       pasteText: (
         text: string,
         options?: {
+          // Names the Dictation whose Target app receives the paste.
+          dictationId?: string | null;
           restoreClipboard?: boolean;
           allowClipboardFallback?: boolean;
         }
       ) => Promise<{ success: true; pasted: boolean }>;
       hideWindow: () => Promise<void>;
       showDictationPanel: (options?: { reposition?: boolean }) => Promise<void>;
-      captureDictationTarget?: () => Promise<{ success: boolean; pid: number | null }>;
+      captureDictationTarget?: (
+        dictationId: string | null
+      ) => Promise<{ success: boolean; pid: number | null }>;
       onToggleDictation: (callback: (options?: RecordingRequestOptions) => void) => () => void;
       onStartDictation?: (callback: (options?: RecordingRequestOptions) => void) => () => void;
       onStopDictation?: (callback: () => void) => () => void;
@@ -121,8 +125,11 @@ declare global {
       onDictationForceStopped?: (
         callback: (payload?: { reason?: "timeout" | "reset" | "manual" }) => void
       ) => () => void;
+      // `dictationId` is null only for the mount report, which belongs to no
+      // Dictation and resets main's record.
       dictationLifecycleStateChanged: (
-        state: "idle" | "preparing" | "recording" | "processing"
+        state: "idle" | "preparing" | "recording" | "processing",
+        dictationId: string | null
       ) => void;
 
       // Database operations

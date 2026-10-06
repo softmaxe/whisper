@@ -9,16 +9,17 @@ class AutomaticPaste {
     this.isAutoLearnEnabled = isAutoLearnEnabled;
   }
 
+  // `targetPid` is the Target app this request delivers to, bound to its
+  // Dictation when the Dictation started. Later target captures never move it.
   async paste(text, options = {}) {
+    const { targetPid = null, ...pasteOptions } = options;
     const mainWindow = this.getMainWindow();
     const monitor = this.getTextEditMonitor();
-    const targetPid = monitor?.lastTargetPid || null;
 
-    // Target capture belongs to Dictation startup. Activation stays outside the
-    // clipboard queue, while this request's PID survives later target captures.
+    // Activation stays outside the clipboard queue.
     let activated = false;
     if (monitor) {
-      activated = await monitor.activateTargetPid();
+      activated = await monitor.activatePid(targetPid);
     }
 
     if (!activated && mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()) {
@@ -31,7 +32,7 @@ class AutomaticPaste {
     // delayed restoration settles. Always request confirmation, even without a
     // monitor or captured target, so unconfirmed text remains available to copy.
     const pasteResult = await this.clipboardManager.pasteText(applySmartSpacing(text), {
-      ...options,
+      ...pasteOptions,
       checkPasteTarget: () => this.getTextEditMonitor()?.canPasteAtTarget(targetPid) ?? null,
     });
     const pasted = pasteResult?.pasted !== false;

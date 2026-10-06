@@ -3,20 +3,18 @@ const assert = require("node:assert/strict");
 
 const TextEditMonitor = require("../../src/helpers/textEditMonitor");
 
-test("activateTargetPid resolves false when no target PID was captured", async () => {
+test("activatePid resolves false when the Dictation has no Target app", async () => {
   const m = new TextEditMonitor();
-  m.lastTargetPid = null;
-  assert.equal(await m.activateTargetPid(), false);
+  assert.equal(await m.activatePid(null), false);
 });
 
-test("activateTargetPid resolves false for an unmapped PID", async () => {
+test("activatePid resolves false for an unmapped PID", async () => {
   const m = new TextEditMonitor();
   // No app exists to activate for a non-existent PID, so this resolves quickly
   // to false rather than reporting a target that never held keyboard focus as
   // active.
-  m.lastTargetPid = 99999999;
   const start = Date.now();
-  const result = await m.activateTargetPid();
+  const result = await m.activatePid(99999999);
   assert.equal(result, false);
   assert.ok(Date.now() - start < 3000);
 });

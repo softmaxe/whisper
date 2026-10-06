@@ -11,13 +11,6 @@ const { isAllowedAppNavigation, isExternalBrowserUrl } = require("./navigationGu
 const { pathToFileURL } = require("url");
 const dockManager = require("./dockManager");
 const { i18nMain } = require("./i18nMain");
-const {
-  DICTATION_LIFECYCLE,
-  normalizeDictationLifecycle,
-  shouldIgnoreDictationHotkey,
-  isDictationRecording,
-  isDictationActive,
-} = require("./dictationLifecycle");
 const { DEV_SERVER_PORT } = DevServerManager;
 const DRAG_MOVE_TOLERANCE_PX = 2;
 const {
@@ -39,6 +32,11 @@ const CONTROL_PANEL_RELEASE_DELAY_MS = 60_000;
 const MAIN_WINDOW_ON_SCREEN_TIMEOUT_MS = 500;
 const { centeredBounds, clampedBounds } = require("./onboardingWindowBounds");
 const { createHotkeyRepeatGate } = require("./hotkeyRepeatGate");
+
+// Lifecycle states the renderer reports for the current Dictation. Main adds
+// "requested" for the gap between asking the renderer to start and its first
+// report; any other report, "idle" included, ends the Dictation.
+const REPORTED_DICTATION_STATES = new Set(["preparing", "recording", "processing"]);
 
 class WindowManager {
   constructor() {
@@ -70,8 +68,15 @@ class WindowManager {
     this._cachedActivationMode = "tap";
     this._panelStartPosition = "bottom-right";
     this._activeHorizontalDirection = null;
-    this._isDictatingToggle = false;
-    this._dictationLifecycleState = DICTATION_LIFECYCLE.IDLE;
+    // The current Dictation, or null between Dictations:
+    // { dictationId, targetPid, acceptedAt, state }. The renderer owns the
+    // lifecycle; this record mirrors its reports for hotkey gating, the tray,
+    // and stranded-window replacement.
+    this._currentDictation = null;
+    // The latest hotkey press capture that starts a Dictation:
+    // { dictationId, bound }, where `bound` settles with the captured pid
+    // after binding it.
+    this._pressTargetCapture = null;
     // Follows Electron's macOS "show"/"hide", which report the window server's
     // occlusion state and so trail showInactive()/hide().
     this._mainWindowOnScreen = false;
@@ -480,7 +485,7 @@ class WindowManager {
     const downTime = Date.now();
 
     const startupRequest = this.createRecordingStartupRequest();
-    const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+    const targetPidPromise = this._captureTargetAtPress(startupRequest.requestId);
     this.showDictationPanel({ reposition: true, targetPidPromise });
     this.sendPrepareDictation({ startupRequest });
 
@@ -609,27 +614,121 @@ class WindowManager {
     return required;
   }
 
-  setDictationLifecycleState(state) {
-    const nextState = normalizeDictationLifecycle(state);
-    if (nextState === this._dictationLifecycleState) return;
+  // Applies a lifecycle report for the Dictation with `dictationId`. Reports
+  // for any other Dictation are stale and ignored. An idle report without an
+  // id belongs to no Dictation: the renderer sends it when it mounts, holding
+  // nothing, so main drops whatever it still records.
+  setDictationLifecycleState(state, dictationId = null) {
+    const current = this._currentDictation;
+    if (!REPORTED_DICTATION_STATES.has(state)) {
+      if (!current) return;
+      if (dictationId !== null && dictationId !== current.dictationId) return;
+      this._currentDictation = null;
+      this.onDictationStateChanged?.();
+      void this._replaceStrandedMainWindowWhenIdle();
+      return;
+    }
+    if (current && current.dictationId !== dictationId) return;
+    if (current?.state === state) return;
+    // A Dictation started from the renderer (pill click, Retry) is first
+    // seen here, under the id the renderer gave it. Every Dictation reports
+    // "preparing" first, so a later state with no current Dictation is a late
+    // report from one that already ended.
+    if (!current && (state !== "preparing" || !dictationId)) return;
 
-    this._dictationLifecycleState = nextState;
-    this._isDictatingToggle = isDictationRecording(nextState);
+    this._currentDictation = { ...(current ?? this._createDictationRecord(dictationId)), state };
     this.onDictationStateChanged?.();
-    if (nextState === DICTATION_LIFECYCLE.IDLE) void this._replaceStrandedMainWindowWhenIdle();
+  }
+
+  _createDictationRecord(dictationId, acceptedAt = null) {
+    return { dictationId, targetPid: null, acceptedAt, state: "requested" };
+  }
+
+  // Records a Dictation main has asked the renderer to start. It counts as
+  // active until the renderer's first report, so the next press ends it.
+  // The startup request is the IPC payload; its `requestId` is the
+  // Dictation's id.
+  _requestDictation(startupRequest) {
+    if (this._currentDictation) return;
+    this._currentDictation = this._createDictationRecord(
+      startupRequest.requestId,
+      startupRequest.acceptedAt ?? null
+    );
+    this.onDictationStateChanged?.();
+  }
+
+  // Reuses the current Dictation's startup request payload so prepare and
+  // start share one id.
+  _currentStartupRequest() {
+    const dictation = this._currentDictation;
+    if (!dictation?.dictationId) return null;
+    return { requestId: dictation.dictationId, acceptedAt: dictation.acceptedAt };
+  }
+
+  // Captures the app holding keyboard focus at a Dictation hotkey press. A
+  // press that starts a Dictation binds it as that Dictation's Target app.
+  // The returned promise also places the dictation panel.
+  _captureTargetAtPress(dictationId = null) {
+    const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+    if (dictationId && targetPidPromise) {
+      const bound = targetPidPromise.then(
+        (pid) => {
+          this._bindDictationTarget(dictationId, pid);
+          return pid ?? null;
+        },
+        () => null
+      );
+      this._pressTargetCapture = { dictationId, bound };
+    }
+    return targetPidPromise;
+  }
+
+  // The renderer captures the Target app as each recording starts. That binds
+  // it for a Dictation started from the renderer (pill, Retry). A Dictation
+  // started by a hotkey press keeps the app captured at the press, however
+  // slowly that capture settles; only a press that captured no app leaves the
+  // binding to this capture, which then reports the current focus as before.
+  async captureDictationTarget(dictationId) {
+    const press = this._pressTargetCapture;
+    if (dictationId && press?.dictationId === dictationId) {
+      const pressPid = await press.bound;
+      if (pressPid) return { success: true, pid: pressPid };
+    }
+    const pid = (await this.textEditMonitor?.captureTargetPid?.()) ?? null;
+    this._bindDictationTarget(dictationId, pid);
+    return { success: true, pid };
+  }
+
+  // The first capture for a Dictation is its Target app; later captures,
+  // including the text-edit monitor's own, never move it.
+  _bindDictationTarget(dictationId, pid) {
+    const current = this._currentDictation;
+    if (!pid || !dictationId || current?.dictationId !== dictationId) return;
+    if (current.targetPid !== null) return;
+    this._currentDictation = { ...current, targetPid: pid };
+  }
+
+  // Automatic paste delivers to the Target app of the Dictation it names. A
+  // Dictation that is no longer current has none.
+  getDictationTargetPid(dictationId) {
+    const current = this._currentDictation;
+    if (!dictationId || current?.dictationId !== dictationId) return null;
+    return current.targetPid;
   }
 
   // The tray's listen item is a toggle over this state, like the pill's.
   isDictating() {
-    return this._isDictatingToggle;
+    return this._currentDictation?.state === "recording";
   }
 
   isDictationProcessing() {
-    return shouldIgnoreDictationHotkey(this._dictationLifecycleState);
+    return this._currentDictation?.state === "processing";
   }
 
+  // Requested, opening the microphone, or recording: a hotkey press now ends
+  // Dictation.
   isDictationActive() {
-    return isDictationActive(this._dictationLifecycleState);
+    return Boolean(this._currentDictation) && !this.isDictationProcessing();
   }
 
   // A Tap mode key combination: the renderer owns the real recording state and
@@ -640,13 +739,19 @@ class WindowManager {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
-    if (shouldIgnoreDictationHotkey(this._dictationLifecycleState)) {
+    if (this.isDictationProcessing()) {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      const isStarting = !this._isDictatingToggle;
-      const startupRequest = isStarting ? this.createRecordingStartupRequest() : undefined;
-      const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+      const isStarting = !this.isDictationActive();
+      // A stop also names the Dictation, so a renderer that never took up
+      // the request reports under the id main records.
+      const startupRequest = isStarting
+        ? this.createRecordingStartupRequest()
+        : (this._currentStartupRequest() ?? undefined);
+      const targetPidPromise = this._captureTargetAtPress(
+        isStarting ? startupRequest.requestId : null
+      );
       if (!isStarting) {
         this._mainWindowPlacementCoordinator.cancelPending();
       }
@@ -654,7 +759,6 @@ class WindowManager {
       if (isStarting) {
         this.sendPrepareDictation({ startupRequest });
       }
-      this._preparedStartupRequest = null;
       this.mainWindow.webContents.send(
         "toggle-dictation",
         startupRequest ? { startupRequest } : undefined
@@ -667,20 +771,19 @@ class WindowManager {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
-    if (shouldIgnoreDictationHotkey(this._dictationLifecycleState)) {
+    if (this.isDictationProcessing()) {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      const startupRequest = this._preparedStartupRequest ?? this.createRecordingStartupRequest();
-      this._preparedStartupRequest = null;
-      const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+      const startupRequest = this._currentStartupRequest() ?? this.createRecordingStartupRequest();
+      this._requestDictation(startupRequest);
+      const targetPidPromise = this._captureTargetAtPress(startupRequest.requestId);
       this.showDictationPanel({ reposition: true, targetPidPromise });
       this.mainWindow.webContents.send("start-dictation", { startupRequest });
     }
   }
 
   sendStopDictation() {
-    this._preparedStartupRequest = null;
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
@@ -710,25 +813,23 @@ class WindowManager {
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
-    if (shouldIgnoreDictationHotkey(this._dictationLifecycleState)) {
+    if (this.isDictationProcessing()) {
       return;
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       startupRequest ??= this.createRecordingStartupRequest();
-      this._preparedStartupRequest = startupRequest;
+      this._requestDictation(startupRequest);
       this.mainWindow.webContents.send("prepare-dictation", { startupRequest });
     }
   }
 
   sendCancelDictationPreparation() {
-    this._preparedStartupRequest = null;
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("cancel-dictation-preparation");
     }
   }
 
   sendCancelDictation() {
-    this._preparedStartupRequest = null;
     if (this.hotkeyManager.isInListeningMode()) {
       return;
     }
@@ -1169,7 +1270,7 @@ class WindowManager {
     if (
       !this._mainWindowStranded ||
       this._replacingMainWindow ||
-      this._dictationLifecycleState !== DICTATION_LIFECYCLE.IDLE ||
+      this._currentDictation ||
       this.macCompoundPushState
     ) {
       return;

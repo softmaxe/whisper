@@ -406,10 +406,9 @@ class IPCHandlers {
       this.windowManager.showDictationPanel({ reposition: options?.reposition !== false });
     });
 
-    ipcMain.handle("capture-dictation-target", async () => {
-      const pid = (await this.textEditMonitor?.captureTargetPid?.()) ?? null;
-      return { success: true, pid };
-    });
+    ipcMain.handle("capture-dictation-target", (_event, dictationId) =>
+      this.windowManager.captureDictationTarget(dictationId)
+    );
 
     ipcMain.handle("force-stop-dictation", () => {
       if (this.windowManager?.forceStopMacCompoundPush) {
@@ -570,7 +569,7 @@ class IPCHandlers {
     // in the dictation renderer. Only confirmed renderer state may change the
     // main-process recording gate; raw key presses are merely requests and can
     // be declined while a transcript is still being finalized.
-    ipcMain.on("dictation-lifecycle-state-changed", (event, state) => {
+    ipcMain.on("dictation-lifecycle-state-changed", (event, state, dictationId) => {
       const dictationWindow = this.windowManager.mainWindow;
       if (
         !dictationWindow ||
@@ -579,7 +578,10 @@ class IPCHandlers {
       ) {
         return;
       }
-      this.windowManager.setDictationLifecycleState(state);
+      this.windowManager.setDictationLifecycleState(
+        state,
+        typeof dictationId === "string" ? dictationId : null
+      );
     });
 
     // Dictionary handlers
@@ -788,9 +790,13 @@ class IPCHandlers {
       }
     });
 
+    // A paste request names its Dictation and delivers to that Dictation's
+    // Target app, never to the text-edit monitor's most recent capture.
     ipcMain.handle("paste-text", async (event, text, options) => {
+      const { dictationId, ...pasteOptions } = options ?? {};
       return this.automaticPaste.paste(text, {
-        ...options,
+        ...pasteOptions,
+        targetPid: this.windowManager?.getDictationTargetPid?.(dictationId) ?? null,
         webContents: event.sender,
       });
     });

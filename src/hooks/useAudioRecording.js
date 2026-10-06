@@ -1,204 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import AudioManager from "../helpers/audioManager";
-import { RecordingStartupTrace } from "../helpers/recordingStartupTrace";
-import { recordCleanupFailure } from "../stores/cleanupFailureStore";
-import { getSettings } from "../stores/settingsStore";
-import { playStartCue, playStopCue } from "../utils/dictationCues";
-import { canStartDictation } from "../utils/dictationReadiness";
-import logger from "../utils/logger";
-import { isAccessibilitySkipped } from "../utils/permissions";
+import { createDictation, IDLE_DICTATION_SNAPSHOT } from "../helpers/dictation";
 import { getRecordingErrorDescription, getRecordingErrorTitle } from "../utils/recordingErrors";
-import { expandSnippets } from "../utils/snippets";
 
+/**
+ * React binding over the renderer `dictation` module, which owns Dictation
+ * state, locks, and lifecycle reports (ADR-0003). This hook mirrors the
+ * module's snapshot into React state and turns its notices into toasts.
+ */
 export const useAudioRecording = (toast, options = {}) => {
   const { t } = useTranslation();
-  const [isRecording, setIsRecording] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isPreparing, setIsPreparing] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
-  const [micCaptureStatus, setMicCaptureStatus] = useState("inactive");
-  const [transcript, setTranscript] = useState("");
-  const audioManagerRef = useRef(null);
-  const startupTraceRef = useRef(null);
-  const feedbackTraceRef = useRef(null);
-  const startLockRef = useRef(false);
-  const pushForceStoppedRef = useRef(false);
-  const stopLockRef = useRef(false);
-  const preparationGenerationRef = useRef(0);
-  const wasRecordingRef = useRef(false);
-  const wasMicUnavailableRef = useRef(false);
-  const reportedLifecycleRef = useRef(null);
-  const { onToggle, dismissDictationError, onDictationError, onShowTranscript } = options;
+  const [snapshot, setSnapshot] = useState(IDLE_DICTATION_SNAPSHOT);
+  const dictationRef = useRef(null);
 
-  // Read through a ref so a re-render never tears down the AudioManager
-  // (the mount effect below must not depend on this callback).
-  const onShowTranscriptRef = useRef(onShowTranscript);
+  // The Dictation lives for the whole mount, so it reads the caller's latest
+  // callbacks through a ref instead of being recreated when they change.
+  const presentationRef = useRef({ toast, t, ...options });
   useEffect(() => {
-    onShowTranscriptRef.current = onShowTranscript;
+    presentationRef.current = { toast, t, ...options };
   });
 
-  // Reads only refs and the global electronAPI bridge, so a single stable
-  // instance is safe to share between the mount effect (recording/processing
-  // transitions) and performStartRecording (the toggle path's own "preparing"
-  // report).
-  const reportLifecycle = useCallback((state) => {
-    if (reportedLifecycleRef.current === state) return;
-    reportedLifecycleRef.current = state;
-    window.electronAPI?.dictationLifecycleStateChanged?.(state);
-  }, []);
-
-  const invalidatePreparation = useCallback(() => {
-    preparationGenerationRef.current += 1;
-    startLockRef.current = false;
-    setIsPreparing(false);
-    setIsStopping(false);
-  }, []);
-
-  const getStartupTrace = useCallback((request) => {
-    let trace = startupTraceRef.current;
-    if (!trace || (request ? trace.requestId !== request.requestId : trace.outcome !== "pending")) {
-      trace?.finish("incomplete", "superseded");
-      trace = new RecordingStartupTrace(request);
-      startupTraceRef.current = trace;
-    }
-    return trace;
-  }, []);
-
-  const performStartRecording = useCallback(
-    async ({ startupRequest } = {}) => {
-      if (startLockRef.current) return false;
-      if (!audioManagerRef.current || !canStartDictation(audioManagerRef.current.getState())) {
-        return false;
-      }
-      startLockRef.current = true;
-      pushForceStoppedRef.current = false;
-      let recordingStarted = false;
-      const preparationGeneration = ++preparationGenerationRef.current;
-      const manager = audioManagerRef.current;
-      const isCurrent = () =>
-        preparationGeneration === preparationGenerationRef.current &&
-        manager === audioManagerRef.current;
-      let startupTrace;
-      try {
-        startupTrace = getStartupTrace(startupRequest);
-        startupTrace.mark("preparationEntered");
-        manager.selectMicrophoneForSession?.();
-
-        setIsStopping(false);
-        setIsPreparing(true);
-        // Publish feedback while acquisition and target capture are pending.
-        reportLifecycle("preparing");
-        // A retry owns the presentation as soon as it starts connecting. Keep
-        // the old error from covering a slow microphone's preparation feedback.
-        dismissDictationError?.();
-        // Acquire alongside preparation feedback, even when the window cannot
-        // draw. startRecording() joins this capture and retains its pre-roll.
-        void audioManagerRef.current.prepareMicCapture?.(startupTrace);
-
-        // The floating dictation panel is non-focusable, so the foreground app is
-        // still the user's actual editing target here. Refresh it for recordings
-        // started from the panel itself as well as from global hotkeys; otherwise
-        // paste can reactivate a stale target from the preceding dictation.
-        try {
-          await window.electronAPI.captureDictationTarget?.();
-        } catch (error) {
-          logger.warn("Failed to refresh dictation target", { error: error?.message });
-        }
-
-        if (!isCurrent()) return false;
-        audioManagerRef.current.resetRecordingRequest();
-        const didStart = await audioManagerRef.current.startRecording(startupTrace);
-        if (!isCurrent()) return false;
-        recordingStarted = didStart;
-        if (didStart) startupTrace.startSettled();
-        else startupTrace.finish("failed", "start_failed");
-
-        // A quick tap can end the recording inside the start call itself — don't
-        // pause media for a recording that already ended. See #1060.
-        if (didStart && audioManagerRef.current.getState().isRecording) {
-          if (getSettings().pauseMediaOnDictation) {
-            window.electronAPI?.pauseMediaPlayback?.();
-          }
-          window.electronAPI?.registerCancelHotkey?.("Escape");
-          if (getSettings().audioCuesEnabled) startupTrace.mark("readyCueRequested");
-          void playStartCue(() => startupTrace.mark("readyCueScheduled"));
-        }
-
-        return didStart;
-      } catch (error) {
-        startupTrace?.finish("failed", "start_exception");
-        throw error;
-      } finally {
-        if (!recordingStarted) startupTrace?.finish("incomplete", "start_abandoned");
-        if (isCurrent()) {
-          startLockRef.current = false;
-          if (!recordingStarted) {
-            manager?.cancelPreparedMicCapture?.();
-            setIsPreparing(false);
-            // Covers every exit above that never started a recording — the
-            // policy-block early return, the mic-open failure, a stale
-            // preparation generation, etc. Without this, a failed start leaves
-            // the main process stuck reporting "preparing" forever, since
-            // startRecording's failure path only fires onError, never the
-            // onStateChange that normally reports "idle". The dedup makes this
-            // a no-op when onStateChange already reported it first.
-            if (reportedLifecycleRef.current === "preparing") reportLifecycle("idle");
-          }
-        }
-      }
-    },
-    [dismissDictationError, reportLifecycle, getStartupTrace]
+  const startRecording = useCallback(
+    async (startOptions) =>
+      dictationRef.current ? dictationRef.current.start(startOptions) : false,
+    []
   );
 
-  const performStopRecording = useCallback(async () => {
-    startupTraceRef.current?.finish("incomplete", "stopped_before_observation");
-    if (
-      !audioManagerRef.current?.getState().isRecording &&
-      (startLockRef.current || reportedLifecycleRef.current === "preparing")
-    ) {
-      invalidatePreparation();
-      audioManagerRef.current?.cancelRecording();
-      window.electronAPI?.unregisterCancelHotkey?.();
-      reportLifecycle("idle");
-      return true;
-    }
-    if (stopLockRef.current) return false;
-    stopLockRef.current = true;
-    try {
-      if (!audioManagerRef.current) return false;
-
-      const currentState = audioManagerRef.current.getState();
-      if (!currentState.isRecording) return false;
-
-      window.electronAPI?.unregisterCancelHotkey?.();
-      setIsPreparing(false);
-      setIsStopping(true);
-
-      const didStop = audioManagerRef.current.stopRecording();
-
-      if (didStop) {
-        void playStopCue();
-      }
-
-      return didStop;
-    } finally {
-      stopLockRef.current = false;
-      setIsStopping(false);
-    }
-  }, [invalidatePreparation, reportLifecycle]);
-
   useEffect(() => {
-    audioManagerRef.current = new AudioManager();
-
-    // Resolve and pin the input device now, not on the first hotkey press, which
-    // would otherwise wait on the device lookup before the mic can open.
-    void audioManagerRef.current.cacheMicrophoneDeviceId?.();
-
-    // Reset stale main-process state after a renderer reload or crash recovery.
-    reportLifecycle("idle");
-
-    const showDictationError = ({ title, description, transcript = "", duration }) => {
+    const showDictationError = ({ title, description, transcript = "" }) => {
+      const { toast, t, onDictationError } = presentationRef.current;
       onDictationError?.();
       const recoverableTranscript = transcript.trim();
       const actions = [
@@ -206,7 +36,7 @@ export const useAudioRecording = (toast, options = {}) => {
           label: t("common.retry"),
           icon: "retry",
           dismissOnClick: false,
-          onClick: () => performStartRecording(),
+          onClick: () => startRecording(),
         },
       ];
 
@@ -215,7 +45,7 @@ export const useAudioRecording = (toast, options = {}) => {
           label: t("hooks.audioRecording.errorActions.viewTranscript"),
           icon: "transcript",
           onClick: () => {
-            onShowTranscriptRef.current?.(recoverableTranscript);
+            presentationRef.current.onShowTranscript?.(recoverableTranscript);
           },
         });
       }
@@ -225,386 +55,110 @@ export const useAudioRecording = (toast, options = {}) => {
         description,
         variant: "destructive",
         presentation: "dictation-error",
-        duration,
         actions,
       });
     };
 
-    audioManagerRef.current.setCallbacks({
-      onStateChange: ({ isRecording, isProcessing, micCaptureStatus, startupTrace }) => {
-        if (isRecording && startupTrace) {
-          feedbackTraceRef.current = startupTrace;
-          startupTrace.mark("recordingStarted");
-        }
-        reportLifecycle(isRecording ? "recording" : isProcessing ? "processing" : "idle");
-        if (!isRecording) {
-          window.electronAPI?.unregisterCancelHotkey?.();
-          // Resume media the instant recording ends, not after transcription.
-          if (wasRecordingRef.current && getSettings().pauseMediaOnDictation) {
-            window.electronAPI?.resumeMediaPlayback?.();
-          }
-        }
-        wasRecordingRef.current = isRecording;
-        setIsRecording(isRecording);
-        setIsProcessing(isProcessing);
-        if (isRecording) setIsPreparing(false);
-        if (!isRecording) setIsStopping(false);
-        if (micCaptureStatus) {
-          setMicCaptureStatus(micCaptureStatus);
-          const unavailable = micCaptureStatus === "unavailable";
-          if (unavailable && !wasMicUnavailableRef.current) {
-            wasMicUnavailableRef.current = true;
-            toast({
-              title: t("hooks.audioRecording.micDisconnected.title"),
-              description: t("hooks.audioRecording.micDisconnected.description"),
-              variant: "default",
-            });
-          } else if (micCaptureStatus === "active" && wasMicUnavailableRef.current) {
-            wasMicUnavailableRef.current = false;
-            toast({
-              title: t("hooks.audioRecording.micRestored.title"),
-              description: t("hooks.audioRecording.micRestored.description"),
-              variant: "default",
-            });
-          } else if (micCaptureStatus === "inactive") {
-            wasMicUnavailableRef.current = false;
-          }
-        }
-      },
-      onError: (error) => {
-        if (error?.code === "MIC_CAPTURE_FAILED") {
-          startupTraceRef.current?.finish("failed", "microphone_unavailable");
-          invalidatePreparation();
-          reportLifecycle("idle");
-        }
-        setIsPreparing(false);
-        setIsStopping(false);
-        if (error?.code === "TRANSCRIPTION_CANCELLED" || error?.code === "REASON_CANCELLED") return;
-        if (error?.title !== "Paste Error") {
-          window.electronAPI?.hideDictationPreview?.();
-        }
-        const title = getRecordingErrorTitle(error, t);
-        const description = getRecordingErrorDescription(error, t);
-        showDictationError({ title, description });
-        if (getSettings().pauseMediaOnDictation) {
-          window.electronAPI?.resumeMediaPlayback?.();
-        }
-      },
-      onNoAudio: () => {
-        setIsPreparing(false);
-        setIsStopping(false);
-        window.electronAPI?.hideDictationPreview?.();
-        if (getSettings().pauseMediaOnDictation) {
-          window.electronAPI?.resumeMediaPlayback?.();
-        }
-        showDictationError({
-          title: t("hooks.audioRecording.noAudio.title"),
-          description: t("hooks.audioRecording.noAudio.description"),
-        });
-      },
-      onTranscriptionComplete: async (result) => {
-        if (result.success) {
-          const completedRecordingGeneration = preparationGenerationRef.current;
-          const manager = audioManagerRef.current;
-          const isCurrent = () =>
-            completedRecordingGeneration === preparationGenerationRef.current &&
-            manager === audioManagerRef.current;
-          dismissDictationError?.();
-          const transcribedText = result.text?.trim();
+    const showNotice = (key) => {
+      const { toast, t } = presentationRef.current;
+      toast({
+        title: t(`hooks.audioRecording.${key}.title`),
+        description: t(`hooks.audioRecording.${key}.description`),
+        variant: "default",
+      });
+    };
 
-          if (!transcribedText) {
-            window.electronAPI?.hideDictationPreview?.();
-            showDictationError({
-              title: t("hooks.audioRecording.noAudio.title"),
-              description: t("hooks.audioRecording.noAudio.description"),
-            });
-            return;
-          }
-
-          result.text = expandSnippets(result.text, getSettings().snippets);
-
-          setTranscript(result.text);
-          window.electronAPI?.completeDictationPreview?.({ text: result.text });
-
-          if (result.warning) {
-            toast({
-              title: t("hooks.audioRecording.partialTranscription.title"),
-              description: t("hooks.audioRecording.partialTranscription.description"),
-              variant: "default",
-            });
-          }
-
-          const { autoPasteEnabled, keepTranscriptionInClipboard } = getSettings();
-
-          const persistencePromise = manager
-            .saveTranscription(result.text, result.rawText ?? result.text, {
-              clientTranscriptionId: result.clientTranscriptionId,
-              // Spread rather than set: a result with no analytics timestamp
-              // must not gain the key as undefined, matching how audioManager
-              // carries this field and keeping the options object exactly what
-              // callers without Insights data expect.
-              ...(result.analyticsOccurredAt
-                ? { analyticsOccurredAt: result.analyticsOccurredAt }
-                : {}),
-            })
-            .then(
-              (persisted) => {
-                if (!persisted) {
-                  logger.error(
-                    "Failed to persist transcription",
-                    {
-                      clientTranscriptionId: result.clientTranscriptionId,
-                      source: result.source,
-                    },
-                    "audio"
-                  );
-                }
-                return persisted;
-              },
-              (error) => {
-                logger.error(
-                  "Failed to persist transcription",
-                  {
-                    clientTranscriptionId: result.clientTranscriptionId,
-                    error: error?.message,
-                    source: result.source,
-                  },
-                  "audio"
-                );
-                return false;
-              }
-            );
-
-          const keepInClipboard = async (delivery) => {
-            if (!isCurrent()) return false;
-            try {
-              const clipboardResult = await window.electronAPI.writeClipboard(result.text);
-              if (clipboardResult?.success === false) {
-                throw new Error("clipboard-write-failed");
-              }
-              return true;
-            } catch (error) {
-              logger.warn(
-                "Failed to keep transcription in clipboard",
-                { delivery, error: error?.message },
-                "clipboard"
-              );
-              return false;
-            }
-          };
-
-          if (pushForceStoppedRef.current && autoPasteEnabled) {
-            // The push hit its safety ceiling while the trigger keys were still
-            // down. Injecting the paste shortcut into those held modifiers is
-            // what silently loses the transcript, so keep it instead.
-            const keptInClipboard = await keepInClipboard("push-force-stopped");
-            if (!isCurrent()) return;
-            window.electronAPI?.hideDictationPreview?.();
-            showDictationError({
-              title: t("hooks.audioRecording.pushForceStopped.title"),
-              // Never promise a clipboard that rejected the write; the transcript
-              // action on this pill is the recovery path either way.
-              description: t(
-                keptInClipboard
-                  ? "hooks.audioRecording.pushForceStopped.description"
-                  : "hooks.audioRecording.pushForceStopped.descriptionClipboardFailed"
-              ),
-              transcript: result.rawText ?? result.text,
-            });
-          } else if (autoPasteEnabled) {
-            const pasteStart = performance.now();
-            let pasteSucceeded = true;
-            try {
-              pasteSucceeded = await manager.safePaste(result.text, {
-                restoreClipboard: !keepTranscriptionInClipboard,
-                allowClipboardFallback: isAccessibilitySkipped(),
-                suppressError: true,
-              });
-            } catch (error) {
-              pasteSucceeded = false;
-              logger.warn("Failed to paste transcription", { error: error?.message }, "clipboard");
-            }
-            if (!isCurrent()) return;
-            if (!pasteSucceeded && localStorage.getItem("onboardingCompleted") === "true") {
-              const copied = await keepInClipboard("paste-fallback");
-              if (isCurrent()) {
-                onShowTranscriptRef.current?.(result.text, {
-                  copyFallback: copied ? "copied" : "copy",
-                });
-              }
-            }
-            logger.info(
-              "Paste timing",
-              {
-                pasteMs: Math.round(performance.now() - pasteStart),
-                source: result.source,
-                textLength: result.text.length,
-                success: pasteSucceeded,
-              },
-              "clipboard"
-            );
-            // Successful delivery closes the preview; failed delivery keeps
-            // the final text available in the manual-copy panel.
-            if (pasteSucceeded && isCurrent()) {
-              window.electronAPI?.hideDictationPreview?.();
-              if (result.cleanupFailure) recordCleanupFailure(result.cleanupFailure);
-            }
-          } else if (keepTranscriptionInClipboard) {
-            await keepInClipboard("clipboard-only");
-          }
-
-          await persistencePromise;
-        }
-      },
-    });
-
-    const handleToggle = async ({ startupRequest } = {}) => {
-      if (!audioManagerRef.current) return;
-      const currentState = audioManagerRef.current.getState();
-
-      // A start still awaiting the mic open leaves isRecording false, so without
-      // the lock check this toggle-off would take the start branch and be lost.
-      // A prepare event alone is only a hint: the main process sends it before
-      // the first toggle, which must adopt that capture rather than stop it.
-      if (startLockRef.current || currentState.isRecording) {
-        await performStopRecording();
-      } else if (canStartDictation(currentState)) {
-        await performStartRecording({ startupRequest });
+    const handleNotice = (notice) => {
+      const { t } = presentationRef.current;
+      switch (notice.type) {
+        case "dismissError":
+          presentationRef.current.dismissDictationError?.();
+          break;
+        case "error":
+          showDictationError({
+            title: getRecordingErrorTitle(notice.error, t),
+            description: getRecordingErrorDescription(notice.error, t),
+          });
+          break;
+        case "noAudio":
+          showDictationError({
+            title: t("hooks.audioRecording.noAudio.title"),
+            description: t("hooks.audioRecording.noAudio.description"),
+          });
+          break;
+        case "pushForceStopped":
+          showDictationError({
+            title: t("hooks.audioRecording.pushForceStopped.title"),
+            // Never promise a clipboard that rejected the write; the transcript
+            // action on this pill is the recovery path either way.
+            description: t(
+              notice.keptInClipboard
+                ? "hooks.audioRecording.pushForceStopped.description"
+                : "hooks.audioRecording.pushForceStopped.descriptionClipboardFailed"
+            ),
+            transcript: notice.transcript,
+          });
+          break;
+        case "deliveryFallback":
+          presentationRef.current.onShowTranscript?.(notice.text, {
+            copyFallback: notice.copyFallback,
+          });
+          break;
+        case "micUnavailable":
+          showNotice("micDisconnected");
+          break;
+        case "micRestored":
+          showNotice("micRestored");
+          break;
+        case "partialTranscription":
+          showNotice("partialTranscription");
+          break;
       }
     };
 
-    const handleStart = async (options) => {
-      await performStartRecording(options);
-    };
-
-    const handleStop = async () => {
-      await performStopRecording();
-    };
-
-    const disposeToggle = window.electronAPI.onToggleDictation((options) => {
-      handleToggle(options);
-      onToggle?.();
+    const dictation = createDictation({
+      onNotice: handleNotice,
+      onCommand: () => presentationRef.current.onToggle?.(),
     });
+    dictationRef.current = dictation;
+    const unsubscribe = dictation.subscribe(setSnapshot);
 
-    const disposeStart = window.electronAPI.onStartDictation?.((options) => {
-      handleStart(options);
-      onToggle?.();
-    });
-
-    const disposePrepare = window.electronAPI.onPrepareDictation?.((options) => {
-      if (!audioManagerRef.current || startLockRef.current) return;
-      if (!canStartDictation(audioManagerRef.current.getState())) return;
-      const startupTrace = getStartupTrace(options?.startupRequest);
-      startupTrace.mark("preparationEntered");
-      audioManagerRef.current.selectMicrophoneForSession?.();
-      preparationGenerationRef.current += 1;
-      setIsPreparing(true);
-      reportLifecycle("preparing");
-      dismissDictationError?.();
-      void audioManagerRef.current.prepareMicCapture?.(startupTrace);
-    });
-
-    const disposeCancelPreparation = window.electronAPI.onCancelDictationPreparation?.(() => {
-      startupTraceRef.current?.finish("cancelled", "preparation_cancelled");
-      invalidatePreparation();
-      audioManagerRef.current?.cancelRecording();
-      if (reportedLifecycleRef.current === "preparing") reportLifecycle("idle");
-    });
-
-    const disposeStop = window.electronAPI.onStopDictation?.(() => {
-      handleStop();
-      onToggle?.();
-    });
-
-    const disposeForceStopped = window.electronAPI.onDictationForceStopped?.((payload) => {
-      // Listed rather than negated: a future renderer-initiated stop would not
-      // leave the keys down, and must not be swept in here.
-      if (payload?.reason === "timeout" || payload?.reason === "reset") {
-        pushForceStoppedRef.current = true;
-      }
-    });
-
-    // Cleanup
     return () => {
-      preparationGenerationRef.current += 1;
-      startLockRef.current = false;
-      startupTraceRef.current?.finish("incomplete", "renderer_teardown");
-      reportLifecycle("idle");
-      disposeToggle?.();
-      disposeStart?.();
-      disposePrepare?.();
-      disposeCancelPreparation?.();
-      disposeStop?.();
-      disposeForceStopped?.();
-      if (audioManagerRef.current) {
-        audioManagerRef.current.cleanup();
-      }
+      unsubscribe();
+      dictation.dispose();
+      if (dictationRef.current === dictation) dictationRef.current = null;
     };
-  }, [
-    toast,
-    onToggle,
-    performStartRecording,
-    performStopRecording,
-    dismissDictationError,
-    onDictationError,
-    reportLifecycle,
-    invalidatePreparation,
-    getStartupTrace,
-    t,
-  ]);
+  }, [startRecording]);
 
-  const cancelRecording = useCallback(async () => {
-    startupTraceRef.current?.finish("cancelled", "recording_cancelled");
-    if (audioManagerRef.current) {
-      invalidatePreparation();
-      reportLifecycle("idle");
-      audioManagerRef.current.cancelPreparedMicCapture?.();
-      window.electronAPI?.unregisterCancelHotkey?.();
-      if (getSettings().pauseMediaOnDictation) {
-        window.electronAPI?.resumeMediaPlayback?.();
-      }
-      return audioManagerRef.current.cancelRecording();
-    }
-    return false;
-  }, [invalidatePreparation, reportLifecycle]);
-
-  const cancelProcessing = useCallback(() => {
-    if (audioManagerRef.current) {
-      invalidatePreparation();
-      window.electronAPI?.hideDictationPreview?.();
-      return audioManagerRef.current.cancelProcessing();
-    }
-    return false;
-  }, [invalidatePreparation]);
-
-  const getAudioLevel = useCallback(
-    () => audioManagerRef.current?.getRecordingAudioLevel() ?? null,
+  const stopRecording = useCallback(
+    async () => (dictationRef.current ? dictationRef.current.stop() : false),
     []
   );
 
-  useEffect(() => {
-    if (isRecording) feedbackTraceRef.current?.mark("readyFeedback");
-  }, [isRecording]);
+  const cancelRecording = useCallback(
+    async () => (dictationRef.current ? dictationRef.current.cancelRecording() : false),
+    []
+  );
 
-  const toggleListening = async () => {
-    if (startLockRef.current || isPreparing) {
-      await performStopRecording();
-    } else if (!isRecording && !isProcessing) {
-      await performStartRecording();
-    } else if (isRecording) {
-      await performStopRecording();
-    }
-  };
+  const cancelProcessing = useCallback(
+    () => (dictationRef.current ? dictationRef.current.cancelProcessing() : false),
+    []
+  );
+
+  const toggleListening = useCallback(async () => {
+    await dictationRef.current?.toggleListening();
+  }, []);
+
+  const getAudioLevel = useCallback(() => dictationRef.current?.getAudioLevel() ?? null, []);
+
+  useEffect(() => {
+    if (snapshot.isRecording) dictationRef.current?.markReadyFeedback();
+  }, [snapshot.isRecording]);
 
   return {
-    isRecording,
-    isProcessing,
-    isPreparing,
-    isStopping,
-    micCaptureStatus,
-    transcript,
-    startRecording: performStartRecording,
-    stopRecording: performStopRecording,
+    ...snapshot,
+    startRecording,
+    stopRecording,
     cancelRecording,
     cancelProcessing,
     toggleListening,

@@ -2,14 +2,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createAutomaticPasteFixture } = require("../lib/automaticPasteFixture");
 
-test("paste-text forwards unchanged text, options and the actual sender to AutomaticPaste", async (t) => {
+test("paste-text forwards unchanged text, options, the Dictation's Target app and the actual sender to AutomaticPaste", async (t) => {
   const f = createAutomaticPasteFixture(t);
   let finish;
   const pending = new Promise((resolve) => {
     finish = resolve;
   });
   const paste = t.mock.method(f.owner.automaticPaste, "paste", () => pending);
+  const dictationId = await f.pressDictationHotkey();
   const options = {
+    dictationId,
     restoreClipboard: false,
     allowClipboardFallback: true,
     webContents: { id: 999 },
@@ -26,6 +28,7 @@ test("paste-text forwards unchanged text, options and the actual sender to Autom
     {
       restoreClipboard: false,
       allowClipboardFallback: true,
+      targetPid: 42,
       webContents: f.sender,
     },
   ]);
@@ -41,7 +44,10 @@ test("paste-text preserves a serializable clipboard-only outcome and omitted opt
     pasted: false,
   }));
   const result = await f.invokePaste("manual transcript");
-  assert.deepEqual(paste.mock.calls[0].arguments, ["manual transcript", { webContents: f.sender }]);
+  assert.deepEqual(paste.mock.calls[0].arguments, [
+    "manual transcript",
+    { targetPid: null, webContents: f.sender },
+  ]);
   assert.deepEqual(structuredClone(result), { success: true, pasted: false });
 });
 

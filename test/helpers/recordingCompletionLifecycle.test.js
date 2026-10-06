@@ -37,13 +37,48 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   const recoveries = [];
   const errors = [];
   const lifecycle = [];
+  const effects = [];
+  const reportIds = [];
   const previewListeners = new Map();
   let hidden = 0;
   let windowHides = 0;
+  let onReport = null;
   const noopDispose = () => () => {};
+  // Dictation cues are tones scheduled on the renderer's audio context; the
+  // first note of each cue names it.
+  const cueNotes = new Map([
+    [523.25, "start cue"],
+    [587.33, "stop cue"],
+  ]);
+  class FakeCueAudioContext {
+    state = "running";
+    currentTime = 0;
+    destination = {};
+    createOscillator() {
+      return {
+        frequency: {
+          setValueAtTime: (frequency) => {
+            if (cueNotes.has(frequency)) effects.push(cueNotes.get(frequency));
+          },
+        },
+        connect() {},
+        start() {},
+        stop() {},
+      };
+    }
+    createGain() {
+      const gain = {
+        setValueAtTime() {},
+        linearRampToValueAtTime() {},
+        exponentialRampToValueAtTime() {},
+      };
+      return { gain, connect() {} };
+    }
+  }
   installBrowserGlobals(t, {
     initialStorage: { onboardingCompleted: "true" },
     window: {
+      AudioContext: FakeCueAudioContext,
       electronAPI: {
         ...Object.fromEntries(
           [
@@ -65,7 +100,16 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
         captureDictationTarget: async () => {},
         onToggleDictation: noopDispose,
         onLaptopLidStateChanged: noopDispose,
-        dictationLifecycleStateChanged: (state) => lifecycle.push(state),
+        dictationLifecycleStateChanged: (state, dictationId) => {
+          lifecycle.push(state);
+          reportIds.push(dictationId);
+          effects.push(state);
+          onReport?.(state);
+        },
+        pauseMediaPlayback: async () => effects.push("pause media"),
+        resumeMediaPlayback: async () => effects.push("resume media"),
+        registerCancelHotkey: async (key) => effects.push(`register ${key}`),
+        unregisterCancelHotkey: async () => effects.push("unregister cancel hotkey"),
         completeDictationPreview: () => {},
         hideDictationPreview: () => hidden++,
         hideWindow: () => windowHides++,
@@ -238,6 +282,12 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
           )
         : "",
     lifecycle,
+    effects,
+    reportIds,
+    // Runs after each lifecycle report, as a user acting on that state would.
+    onReport: (callback) => {
+      onReport = callback;
+    },
     hidden: () => hidden,
     windowHides: () => windowHides,
     isFinishing: () => isFinishing,
@@ -305,6 +355,81 @@ function assertFinishing(harness) {
   assert.deepEqual(harness.presentation(), { rendered: true, motion: null, width: 84 });
 }
 
+const RECORDING_EFFECTS = ["recording", "pause media", "register Escape"];
+const RECORDING_EXIT_EFFECTS = ["unregister cancel hotkey", "resume media"];
+
+test("a delivered Dictation pauses media and holds the cancel hotkey only while recording", async (t) => {
+  const h = await setup(t, { retain: false });
+  h.settings.setState({ pauseMediaOnDictation: true });
+  await h.start();
+  await h.stop();
+  await h.resolveRequest(0, { text: "delivered" });
+  await h.act(() => h.pastes[0].resolve({ pasted: true }));
+  assert.deepEqual(h.effects, [
+    "idle",
+    "preparing",
+    ...RECORDING_EFFECTS,
+    "processing",
+    ...RECORDING_EXIT_EFFECTS,
+    "idle",
+  ]);
+});
+
+test("a failed transcription releases media and the cancel hotkey once, when recording ends", async (t) => {
+  const h = await setup(t, { retain: false });
+  h.settings.setState({ pauseMediaOnDictation: true });
+  await h.start();
+  await h.stop();
+  await h.resolveRequest(0, { error: { message: "Service unavailable" } }, 401);
+  assert.equal(h.lifecycle.at(-1), "idle");
+  assert.deepEqual(h.effects, [
+    "idle",
+    "preparing",
+    ...RECORDING_EFFECTS,
+    "processing",
+    ...RECORDING_EXIT_EFFECTS,
+    "idle",
+  ]);
+});
+
+test("a cancelled recording releases media and the cancel hotkey as it returns to idle", async (t) => {
+  const h = await setup(t, { retain: false });
+  h.settings.setState({ pauseMediaOnDictation: true });
+  await h.start();
+  await h.act(() => h.hook().cancelRecording());
+  assert.deepEqual(h.effects, [
+    "idle",
+    "preparing",
+    ...RECORDING_EFFECTS,
+    "idle",
+    ...RECORDING_EXIT_EFFECTS,
+  ]);
+});
+
+test("a quick tap that ends the recording inside its start leaves media and the start cue alone", async (t) => {
+  const h = await setup(t, { retain: false });
+  h.settings.setState({ pauseMediaOnDictation: true, audioCuesEnabled: true });
+  h.onReport((state) => {
+    if (state === "recording") queueMicrotask(() => h.hook().stopRecording());
+  });
+  await h.act(() => h.hook().startRecording());
+  assert.equal(h.lifecycle.at(-1), "processing");
+  assert.deepEqual(
+    h.effects.filter((effect) => !h.lifecycle.includes(effect)),
+    ["stop cue"]
+  );
+});
+
+test("a Dictation that never records leaves media and the cancel hotkey alone", async (t) => {
+  const h = await setup(t, { retain: false });
+  h.settings.setState({ pauseMediaOnDictation: true });
+  h.media.mediaDevices.getUserMedia = () =>
+    Promise.reject(Object.assign(new Error("Microphone unavailable"), { name: "NotAllowedError" }));
+  await h.act(() => h.hook().startRecording());
+  assert.ok(h.recovery(), "the microphone failure is presented");
+  assert.deepEqual(h.effects, ["idle", "preparing", "idle"]);
+});
+
 test("transcription failure presents an actionable retry that starts a new Dictation", async (t) => {
   const h = await setup(t, { retain: false });
   await h.start();
@@ -365,6 +490,12 @@ for (const cleanup of [false, true, "fallback"]) {
     assert.equal(h.hidden(), 1);
     assert.deepEqual(h.recoveries, []);
     assert.deepEqual(h.lifecycle, ["idle", "preparing", "recording", "processing", "idle"]);
+    // A Dictation started from the renderer reports under one id of its own;
+    // the mount report names no Dictation.
+    const [mountId, dictationId, ...laterIds] = h.reportIds;
+    assert.equal(mountId, null);
+    assert.equal(typeof dictationId, "string");
+    assert.deepEqual(laterIds, [dictationId, dictationId, dictationId]);
   });
 }
 
@@ -582,6 +713,19 @@ test("teardown prevents pending delivery from reopening recovery", async (t) => 
   await h.act(() => h.pastes[0].resolve({ pasted: false }));
   assert.deepEqual(h.recoveries, []);
   assert.deepEqual(h.writes, []);
+});
+
+test("a successful paste closes the dictation preview while History is still saving", async (t) => {
+  const h = await setup(t, { delayedSave: true });
+  await h.start();
+  await h.stop();
+  await h.resolveRequest(0, { text: "delivered" });
+  await h.act(() => h.pastes[0].resolve({ pasted: true }));
+  assertPending(h);
+  assert.equal(h.hidden(), 1);
+  await h.act(() => h.saves[0].resolve({ id: 1 }));
+  assert.equal(h.lifecycle.at(-1), "idle");
+  assert.equal(h.hidden(), 1);
 });
 
 test("cancelled delivery persistence retains its own recording audio after a subsequent result", async (t) => {

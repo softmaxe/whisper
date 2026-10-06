@@ -70,7 +70,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   pasteText: (text, options) => ipcRenderer.invoke("paste-text", text, options),
   hideWindow: () => ipcRenderer.invoke("hide-window"),
   showDictationPanel: (options) => ipcRenderer.invoke("show-dictation-panel", options),
-  captureDictationTarget: () => ipcRenderer.invoke("capture-dictation-target"),
+  captureDictationTarget: (dictationId) =>
+    ipcRenderer.invoke("capture-dictation-target", dictationId),
   onToggleDictation: registerListener(
     "toggle-dictation",
     (callback) => (_event, options) => callback(options)
@@ -92,8 +93,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
     "dictation-force-stopped",
     (callback) => (_event, payload) => callback(payload)
   ),
-  dictationLifecycleStateChanged: (state) =>
-    ipcRenderer.send("dictation-lifecycle-state-changed", state),
+  dictationLifecycleStateChanged: (state, dictationId) =>
+    ipcRenderer.send("dictation-lifecycle-state-changed", state, dictationId),
 
   // Database functions
   saveTranscription: (text, rawText, options) =>
