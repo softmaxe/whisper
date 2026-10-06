@@ -41,8 +41,10 @@ export function createDictation({ onNotice, onCommand } = {}) {
   let state = null;
   const transition = (next) => {
     if (state === next) return;
+    const previous = state;
     state = next;
     bridge()?.dictationLifecycleStateChanged?.(next);
+    runTransitionEffects(previous, next);
   };
 
   // Locks, generation, and per-Dictation latches.
@@ -50,10 +52,41 @@ export function createDictation({ onNotice, onCommand } = {}) {
   let stopLock = false;
   let generation = 0;
   let pushForceStopped = false;
-  let wasRecording = false;
   let wasMicUnavailable = false;
   let startupTrace = null;
   let feedbackTrace = null;
+  let hidePreviewAtIdle = false;
+
+  // A Dictation's side effects belong to its transitions, never to the call
+  // sites that cause them. Media and the cancel hotkey are held exactly while
+  // recording, so every exit (stop, cancel, failure, teardown) releases them.
+  const runTransitionEffects = (previous, next) => {
+    if (next === "recording") {
+      if (getSettings().pauseMediaOnDictation) bridge()?.pauseMediaPlayback?.();
+      bridge()?.registerCancelHotkey?.("Escape");
+      const trace = startupTrace;
+      if (getSettings().audioCuesEnabled) trace?.mark("readyCueRequested");
+      void playStartCue(() => trace?.mark("readyCueScheduled"));
+    } else if (previous === "recording") {
+      bridge()?.unregisterCancelHotkey?.();
+      // Resume media the instant recording ends, not after transcription.
+      if (getSettings().pauseMediaOnDictation) bridge()?.resumeMediaPlayback?.();
+      // Only a stop hands the recording to processing; cancel and failure
+      // end it silently.
+      if (next === "processing") void playStopCue();
+    }
+    if (next === "idle" && hidePreviewAtIdle) {
+      hidePreviewAtIdle = false;
+      bridge()?.hideDictationPreview?.();
+    }
+  };
+
+  // The dictation preview closes when the Dictation returns to idle. Outcomes
+  // that leave the text for manual recovery never ask for this.
+  const hidePreviewOnIdle = () => {
+    if (state === "idle") bridge()?.hideDictationPreview?.();
+    else hidePreviewAtIdle = true;
+  };
 
   // Snapshot for UI bindings.
   let snapshot = {
@@ -137,18 +170,6 @@ export function createDictation({ onNotice, onCommand } = {}) {
       recordingStarted = didStart;
       if (didStart) trace.startSettled();
       else trace.finish("failed", "start_failed");
-
-      // A quick tap can end the recording inside the start call itself — don't
-      // pause media for a recording that already ended. See #1060.
-      if (didStart && manager.getState().isRecording) {
-        if (getSettings().pauseMediaOnDictation) {
-          bridge()?.pauseMediaPlayback?.();
-        }
-        bridge()?.registerCancelHotkey?.("Escape");
-        if (getSettings().audioCuesEnabled) trace.mark("readyCueRequested");
-        void playStartCue(() => trace.mark("readyCueScheduled"));
-      }
-
       return didStart;
     } catch (error) {
       trace?.finish("failed", "start_exception");
@@ -176,7 +197,6 @@ export function createDictation({ onNotice, onCommand } = {}) {
     if (!disposed && !manager.getState().isRecording && (startLock || state === "preparing")) {
       invalidatePreparation();
       manager.cancelRecording();
-      bridge()?.unregisterCancelHotkey?.();
       transition("idle");
       return true;
     }
@@ -185,15 +205,8 @@ export function createDictation({ onNotice, onCommand } = {}) {
     try {
       if (disposed) return false;
       if (!manager.getState().isRecording) return false;
-
-      bridge()?.unregisterCancelHotkey?.();
       update({ isPreparing: false, isStopping: true });
-
-      const didStop = manager.stopRecording();
-      if (didStop) {
-        void playStopCue();
-      }
-      return didStop;
+      return manager.stopRecording();
     } finally {
       stopLock = false;
       update({ isStopping: false });
@@ -250,19 +263,18 @@ export function createDictation({ onNotice, onCommand } = {}) {
     startupTrace?.finish("cancelled", "recording_cancelled");
     if (disposed) return false;
     invalidatePreparation();
-    transition("idle");
     manager.cancelPreparedMicCapture?.();
-    bridge()?.unregisterCancelHotkey?.();
-    if (getSettings().pauseMediaOnDictation) {
-      bridge()?.resumeMediaPlayback?.();
-    }
-    return manager.cancelRecording();
+    // Cancel capture before reporting idle: ending the capture session can
+    // still publish a recording status, which must not re-enter recording.
+    const cancelled = manager.cancelRecording();
+    transition("idle");
+    return cancelled;
   };
 
   const cancelProcessing = () => {
     if (disposed) return false;
     invalidatePreparation();
-    bridge()?.hideDictationPreview?.();
+    hidePreviewOnIdle();
     return manager.cancelProcessing();
   };
 
@@ -280,7 +292,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
     const transcribedText = result.text?.trim();
 
     if (!transcribedText) {
-      bridge()?.hideDictationPreview?.();
+      hidePreviewOnIdle();
       notify({ type: "noAudio" });
       return;
     }
@@ -354,7 +366,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
       // silently loses the transcript, so keep it instead.
       const keptInClipboard = await keepInClipboard("push-force-stopped");
       if (!isCurrent()) return;
-      bridge()?.hideDictationPreview?.();
+      hidePreviewOnIdle();
       notify({
         type: "pushForceStopped",
         keptInClipboard,
@@ -397,7 +409,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
       // Successful delivery closes the preview; failed delivery keeps the
       // final text available in the manual-copy panel.
       if (pasteSucceeded && isCurrent()) {
-        bridge()?.hideDictationPreview?.();
+        hidePreviewOnIdle();
         if (result.cleanupFailure) recordCleanupFailure(result.cleanupFailure);
       }
     } else if (keepTranscriptionInClipboard) {
@@ -417,14 +429,6 @@ export function createDictation({ onNotice, onCommand } = {}) {
         trace.mark("recordingStarted");
       }
       transition(isRecording ? "recording" : isProcessing ? "processing" : "idle");
-      if (!isRecording) {
-        bridge()?.unregisterCancelHotkey?.();
-        // Resume media the instant recording ends, not after transcription.
-        if (wasRecording && getSettings().pauseMediaOnDictation) {
-          bridge()?.resumeMediaPlayback?.();
-        }
-      }
-      wasRecording = isRecording;
       const patch = { isRecording, isProcessing };
       if (isRecording) patch.isPreparing = false;
       if (!isRecording) patch.isStopping = false;
@@ -451,20 +455,12 @@ export function createDictation({ onNotice, onCommand } = {}) {
       }
       update({ isPreparing: false, isStopping: false });
       if (error?.code === "TRANSCRIPTION_CANCELLED" || error?.code === "REASON_CANCELLED") return;
-      if (error?.title !== "Paste Error") {
-        bridge()?.hideDictationPreview?.();
-      }
+      if (error?.title !== "Paste Error") hidePreviewOnIdle();
       notify({ type: "error", error });
-      if (getSettings().pauseMediaOnDictation) {
-        bridge()?.resumeMediaPlayback?.();
-      }
     },
     onNoAudio: () => {
       update({ isPreparing: false, isStopping: false });
-      bridge()?.hideDictationPreview?.();
-      if (getSettings().pauseMediaOnDictation) {
-        bridge()?.resumeMediaPlayback?.();
-      }
+      hidePreviewOnIdle();
       notify({ type: "noAudio" });
     },
     onTranscriptionComplete: async (result) => {

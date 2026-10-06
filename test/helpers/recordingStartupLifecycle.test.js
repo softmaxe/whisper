@@ -1074,3 +1074,19 @@ for (const cues of [true, false]) {
     assert.equal(h.tones.length, cues ? 2 : 0);
   });
 }
+
+for (const action of ["stop", "cancel"]) {
+  test("ending a recording by " + action + " plays the stop cue only for a stop", async (t) => {
+    const h = await setup(t, { cues: true });
+    await React.act(async () => h.events.StartDictation({ startupRequest: h.request }));
+    await React.act(async () => h.target.resolve());
+    await h.deliver();
+    assert.equal(h.hook().isRecording, true);
+    assert.equal(h.tones.length, 2, "the start cue plays once recording begins");
+    await React.act(async () =>
+      action === "stop" ? h.events.StopDictation() : h.hook().cancelRecording()
+    );
+    assert.equal(h.hook().isRecording, false);
+    assert.equal(h.tones.length, action === "stop" ? 4 : 2);
+  });
+}
