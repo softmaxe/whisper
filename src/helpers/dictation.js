@@ -36,15 +36,36 @@ export function createDictation({ onNotice, onCommand } = {}) {
   const manager = new AudioManager();
   let disposed = false;
 
-  // State machine and the transition publisher. `state` is what main has been
-  // told; repeated transitions to the same state are not re-sent.
+  // State machine and the transition publisher. `state` and `reportedId` are
+  // what main has been told; repeated transitions are not re-sent. Every
+  // report names its Dictation, so main can discard stale ones. Main assigns
+  // the id when it starts a Dictation; a renderer-started one (pill, Retry)
+  // uses its startup trace's id. The mount report alone carries no id: it
+  // belongs to no Dictation and resets main's record.
   let state = null;
+  let dictationId = null;
+  let reportedId = null;
   const transition = (next) => {
-    if (state === next) return;
+    if (next !== "idle") dictationId ??= crypto.randomUUID();
+    if (state === next && (next === "idle" || reportedId === dictationId)) return;
     const previous = state;
     state = next;
-    bridge()?.dictationLifecycleStateChanged?.(next);
-    runTransitionEffects(previous, next);
+    reportedId = dictationId;
+    bridge()?.dictationLifecycleStateChanged?.(next, dictationId);
+    if (next === "idle") dictationId = null;
+    // An id-only re-report (main's id adopted) is not a state change and
+    // must not repeat the state's side effects.
+    if (previous !== next) runTransitionEffects(previous, next);
+  };
+
+  // Main's id wins: a command naming another id while a Dictation is in
+  // progress (for example a hotkey press racing a pill click) renames it, so
+  // the reports that follow match main's record.
+  const adoptDictationId = (startupRequest) => {
+    const id = startupRequest?.requestId;
+    if (!id || state === null || state === "idle" || id === dictationId) return;
+    dictationId = id;
+    transition(state);
   };
 
   // Locks, generation, and per-Dictation latches.
@@ -140,6 +161,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
     let trace;
     try {
       trace = getStartupTrace(startupRequest);
+      dictationId = trace.requestId;
       trace.mark("preparationEntered");
       manager.selectMicrophoneForSession?.();
 
@@ -243,6 +265,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
     if (disposed || startLock) return;
     if (!canStartDictation(manager.getState())) return;
     const trace = getStartupTrace(startupRequest);
+    dictationId = trace.requestId;
     trace.mark("preparationEntered");
     manager.selectMicrophoneForSession?.();
     generation += 1;
@@ -471,14 +494,19 @@ export function createDictation({ onNotice, onCommand } = {}) {
   const api = bridge();
   const disposers = [
     api.onToggleDictation((options) => {
+      adoptDictationId(options?.startupRequest);
       toggle(options);
       onCommand?.();
     }),
     api.onStartDictation?.((options) => {
+      adoptDictationId(options?.startupRequest);
       start(options);
       onCommand?.();
     }),
-    api.onPrepareDictation?.((options) => prepare(options)),
+    api.onPrepareDictation?.((options) => {
+      adoptDictationId(options?.startupRequest);
+      prepare(options);
+    }),
     api.onCancelDictationPreparation?.(() => cancelPreparation()),
     api.onStopDictation?.(() => {
       stop();

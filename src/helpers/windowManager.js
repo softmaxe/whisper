@@ -610,20 +610,27 @@ class WindowManager {
     return required;
   }
 
-  setDictationLifecycleState(state) {
+  // Applies a lifecycle report for the Dictation with `dictationId`. Reports
+  // for any other Dictation are stale and ignored. An idle report without an
+  // id belongs to no Dictation: the renderer sends it when it mounts, holding
+  // nothing, so main drops whatever it still records.
+  setDictationLifecycleState(state, dictationId = null) {
+    const current = this._currentDictation;
     if (!REPORTED_DICTATION_STATES.has(state)) {
-      if (!this._currentDictation) return;
+      if (!current) return;
+      if (dictationId !== null && dictationId !== current.dictationId) return;
       this._currentDictation = null;
       this.onDictationStateChanged?.();
       void this._replaceStrandedMainWindowWhenIdle();
       return;
     }
-    if (this._currentDictation?.state === state) return;
+    if (current && current.dictationId !== dictationId) return;
+    if (current?.state === state) return;
 
     // A Dictation started from the renderer (pill click, Retry) is first
-    // seen here, without a request from main.
+    // seen here, under the id the renderer gave it.
     this._currentDictation = {
-      ...(this._currentDictation ?? this._createDictationRecord()),
+      ...(current ?? this._createDictationRecord({ requestId: dictationId })),
       state,
     };
     this.onDictationStateChanged?.();
@@ -682,7 +689,11 @@ class WindowManager {
     }
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       const isStarting = !this.isDictationActive();
-      const startupRequest = isStarting ? this.createRecordingStartupRequest() : undefined;
+      // A stop also names the Dictation, so a renderer that never took up
+      // the request reports under the id main records.
+      const startupRequest = isStarting
+        ? this.createRecordingStartupRequest()
+        : (this._currentStartupRequest() ?? undefined);
       const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
       if (!isStarting) {
         this._mainWindowPlacementCoordinator.cancelPending();

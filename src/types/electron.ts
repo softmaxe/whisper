@@ -121,8 +121,11 @@ declare global {
       onDictationForceStopped?: (
         callback: (payload?: { reason?: "timeout" | "reset" | "manual" }) => void
       ) => () => void;
+      // `dictationId` is null only for the mount report, which belongs to no
+      // Dictation and resets main's record.
       dictationLifecycleStateChanged: (
-        state: "idle" | "preparing" | "recording" | "processing"
+        state: "idle" | "preparing" | "recording" | "processing",
+        dictationId: string | null
       ) => void;
 
       // Database operations

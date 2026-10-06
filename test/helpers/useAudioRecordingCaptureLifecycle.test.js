@@ -40,6 +40,7 @@ async function mountCapture(
   });
   const events = {};
   const lifecycle = [];
+  const reports = [];
   const toasts = [];
   const pastes = [];
   const saved = [];
@@ -156,7 +157,10 @@ async function mountCapture(
       targetCaptures.push("editor");
       targetApp = (await captureTarget?.()) ?? "editor";
     },
-    dictationLifecycleStateChanged: (state) => lifecycle.push(state),
+    dictationLifecycleStateChanged: (state, dictationId) => {
+      lifecycle.push(state);
+      reports.push({ state, dictationId });
+    },
     pasteText: async (text) => {
       pastes.push(text);
       pasteTargets.push(targetApp);
@@ -218,6 +222,7 @@ async function mountCapture(
     api: () => api,
     events,
     lifecycle,
+    reports,
     toasts,
     pastes,
     pasteTargets,
@@ -483,9 +488,48 @@ for (const input of ["built-in", "external"]) {
       assert.equal(h.api().isRecording, false);
       assert.equal(h.requests.length, 1);
       assert.equal(h.pastes.length, 1);
+
+      // The mount report belongs to no Dictation; every later report names
+      // this one, under main's id when main started it.
+      const [mount, ...dictationReports] = h.reports;
+      assert.deepEqual(mount, { state: "idle", dictationId: null });
+      assert.deepEqual(
+        dictationReports.map(({ state }) => state),
+        ["preparing", "recording", "processing", "idle"]
+      );
+      const dictationId =
+        mode === "panel" ? dictationReports[0].dictationId : request.startupRequest.requestId;
+      assert.equal(typeof dictationId, "string");
+      for (const report of dictationReports) assert.equal(report.dictationId, dictationId);
     });
   }
 }
+
+test("a hotkey press racing a panel start ends that Dictation under main's id", async (t) => {
+  const target = deferred();
+  const h = await mountCapture(t, { holdFrames: true, captureTarget: () => target.promise });
+  await h.act(() => void h.api().startRecording());
+  const panelId = h.reports.at(-1).dictationId;
+  assert.deepEqual(h.reports.at(-1), { state: "preparing", dictationId: panelId });
+
+  const startupRequest = {
+    requestId: "00000000-0000-4000-8000-000000000027",
+    acceptedAt: performance.timeOrigin + performance.now(),
+  };
+  await h.act(() => {
+    h.events.onPrepareDictation({ startupRequest });
+    h.events.onToggleDictation({ startupRequest });
+  });
+  await h.act(() => target.resolve("editor"));
+
+  assert.equal(h.api().isPreparing, false);
+  assert.equal(h.api().isRecording, false);
+  assert.deepEqual(h.reports.slice(1), [
+    { state: "preparing", dictationId: panelId },
+    { state: "preparing", dictationId: startupRequest.requestId },
+    { state: "idle", dictationId: startupRequest.requestId },
+  ]);
+});
 
 test("retired idle-hold preferences are removed without changing microphone selection", async (t) => {
   const h = await mountCapture(t);
