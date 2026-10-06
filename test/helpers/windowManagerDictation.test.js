@@ -389,3 +389,21 @@ test("a late report from an ended Dictation does not block the next hotkey press
     ["prepare-dictation", "toggle-dictation"]
   );
 });
+
+test("an unknown lifecycle state fails closed to idle", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const dictationId = pressedDictationId(manager);
+  manager.setDictationLifecycleState("recording", dictationId);
+  manager.setDictationLifecycleState("starting-a-new-recording", dictationId);
+  assert.equal(manager.isDictating(), false);
+  assert.equal(manager.isDictationActive(), false);
+  assert.equal(manager.isDictationProcessing(), false);
+
+  manager.setDictationLifecycleState(undefined, "pill-dictation");
+  manager.setDictationLifecycleState({}, "pill-dictation");
+  assert.equal(manager.isDictationActive(), false);
+});

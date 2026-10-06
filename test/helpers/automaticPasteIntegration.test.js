@@ -78,3 +78,20 @@ test("a Dictation back at idle no longer names a Target app for Automatic paste"
   assert.equal(f.clipboard.readText(), "manual transcript ");
   assert.equal(f.nativePastes.length, 0);
 });
+
+test("a lifecycle report with a malformed Dictation id names no Dictation", async (t) => {
+  const f = createAutomaticPasteFixture(t, { autoLearn: false, focusPid: 42 });
+  const dictationId = await f.pressDictationHotkey();
+  f.reportLifecycle("recording", { requestId: dictationId });
+  f.reportLifecycle("preparing", 7);
+  assert.equal(f.windowManager.isDictating(), false);
+
+  f.reportLifecycle("recording", dictationId);
+  assert.equal(f.windowManager.isDictating(), true);
+  assert.equal(f.windowManager.getDictationTargetPid(dictationId), 42);
+
+  // An idle naming no Dictation is the renderer's reset, so it fails closed.
+  f.reportLifecycle("idle", { requestId: dictationId });
+  assert.equal(f.windowManager.isDictationActive(), false);
+  assert.equal(f.windowManager.getDictationTargetPid(dictationId), null);
+});

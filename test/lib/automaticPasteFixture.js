@@ -140,6 +140,7 @@ function createAutomaticPasteFixture(t, options = {}) {
     accessSync: () => {},
   };
   const handlers = new Map();
+  const listeners = new Map();
   const electron = {
     clipboard,
     app: {
@@ -149,7 +150,10 @@ function createAutomaticPasteFixture(t, options = {}) {
       on: () => {},
     },
     screen: { on: () => {} },
-    ipcMain: { handle: (name, handler) => handlers.set(name, handler), on: () => {} },
+    ipcMain: {
+      handle: (name, handler) => handlers.set(name, handler),
+      on: (name, listener) => listeners.set(name, listener),
+    },
     systemPreferences: {
       isTrustedAccessibilityClient: () => {
         record("permission", { text: clipboard.readText() });
@@ -247,6 +251,13 @@ function createAutomaticPasteFixture(t, options = {}) {
       return events.find(({ channel }) => channel === "prepare-dictation").payload.startupRequest
         .requestId;
     },
+    // A lifecycle report from the dictation renderer, over IPC.
+    reportLifecycle: (state, dictationId) =>
+      listeners.get("dictation-lifecycle-state-changed")(
+        { sender: window.webContents },
+        state,
+        dictationId
+      ),
     invokePaste: (text, pasteOptions) => handlers.get("paste-text")({ sender }, text, pasteOptions),
     writeClipboard: (text) => handlers.get("write-clipboard")({ sender }, text),
     flush,
