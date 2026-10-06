@@ -148,6 +148,26 @@ export function createDictation({ onNotice, onCommand } = {}) {
     return trace;
   };
 
+  // Enters "preparing" for the Dictation the request names, shared by a
+  // prepare hint and a start.
+  const beginPreparation = (startupRequest) => {
+    const trace = getStartupTrace(startupRequest);
+    dictationId = trace.requestId;
+    trace.mark("preparationEntered");
+    manager.selectMicrophoneForSession?.();
+
+    update({ isStopping: false, isPreparing: true });
+    // Publish feedback while acquisition and target capture are pending.
+    transition("preparing");
+    // A retry owns the presentation as soon as it starts connecting. Keep
+    // the old error from covering a slow microphone's preparation feedback.
+    notify({ type: "dismissError" });
+    // Acquire alongside preparation feedback, even when the window cannot
+    // draw. startRecording() joins this capture and retains its pre-roll.
+    void manager.prepareMicCapture?.(trace);
+    return trace;
+  };
+
   const start = async ({ startupRequest } = {}) => {
     if (startLock) return false;
     if (disposed || !canStartDictation(manager.getState())) return false;
@@ -158,20 +178,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
     const isCurrent = runIsCurrent();
     let trace;
     try {
-      trace = getStartupTrace(startupRequest);
-      dictationId = trace.requestId;
-      trace.mark("preparationEntered");
-      manager.selectMicrophoneForSession?.();
-
-      update({ isStopping: false, isPreparing: true });
-      // Publish feedback while acquisition and target capture are pending.
-      transition("preparing");
-      // A retry owns the presentation as soon as it starts connecting. Keep
-      // the old error from covering a slow microphone's preparation feedback.
-      notify({ type: "dismissError" });
-      // Acquire alongside preparation feedback, even when the window cannot
-      // draw. startRecording() joins this capture and retains its pre-roll.
-      void manager.prepareMicCapture?.(trace);
+      trace = beginPreparation(startupRequest);
 
       // The floating dictation panel is non-focusable, so the foreground app is
       // still the user's actual editing target here. Refresh it for recordings
@@ -271,15 +278,8 @@ export function createDictation({ onNotice, onCommand } = {}) {
   const prepare = ({ startupRequest } = {}) => {
     if (disposed || startLock) return;
     if (!canStartDictation(manager.getState())) return;
-    const trace = getStartupTrace(startupRequest);
-    dictationId = trace.requestId;
-    trace.mark("preparationEntered");
-    manager.selectMicrophoneForSession?.();
     generation += 1;
-    update({ isPreparing: true });
-    transition("preparing");
-    notify({ type: "dismissError" });
-    void manager.prepareMicCapture?.(trace);
+    beginPreparation(startupRequest);
   };
 
   const cancelPreparation = () => {
