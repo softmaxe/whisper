@@ -179,8 +179,9 @@ export function createDictation({ onNotice, onCommand } = {}) {
       // still the user's actual editing target here. Refresh it for recordings
       // started from the panel itself as well as from global hotkeys; otherwise
       // paste can reactivate a stale target from the preceding dictation.
+      // Main binds the target to this Dictation; paste requests name it.
       try {
-        await bridge().captureDictationTarget?.();
+        await bridge().captureDictationTarget?.(dictationId);
       } catch (error) {
         logger.warn("Failed to refresh dictation target", { error: error?.message });
       }
@@ -400,6 +401,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
       let pasteSucceeded = true;
       try {
         pasteSucceeded = await manager.safePaste(result.text, {
+          dictationId,
           restoreClipboard: !keepTranscriptionInClipboard,
           allowClipboardFallback: isAccessibilitySkipped(),
           suppressError: true,

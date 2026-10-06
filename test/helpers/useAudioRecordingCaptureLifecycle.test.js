@@ -46,7 +46,9 @@ async function mountCapture(
   const saved = [];
   const savedAudio = [];
   const targetCaptures = [];
+  const targetCaptureIds = [];
   const pasteTargets = [];
+  const pasteDictationIds = [];
   let targetApp = "previous-editor";
   const requests = [];
   const recorders = [];
@@ -153,16 +155,18 @@ async function mountCapture(
     };
   }
   Object.assign(window.electronAPI, {
-    captureDictationTarget: async () => {
+    captureDictationTarget: async (dictationId) => {
       targetCaptures.push("editor");
+      targetCaptureIds.push(dictationId);
       targetApp = (await captureTarget?.()) ?? "editor";
     },
     dictationLifecycleStateChanged: (state, dictationId) => {
       lifecycle.push(state);
       reports.push({ state, dictationId });
     },
-    pasteText: async (text) => {
+    pasteText: async (text, options) => {
       pastes.push(text);
+      pasteDictationIds.push(options?.dictationId);
       pasteTargets.push(targetApp);
       return { success: true, pasted: true };
     },
@@ -226,9 +230,11 @@ async function mountCapture(
     toasts,
     pastes,
     pasteTargets,
+    pasteDictationIds,
     saved,
     savedAudio,
     targetCaptures,
+    targetCaptureIds,
     requests,
     recorders,
     streams,
@@ -501,6 +507,9 @@ for (const input of ["built-in", "external"]) {
         mode === "panel" ? dictationReports[0].dictationId : request.startupRequest.requestId;
       assert.equal(typeof dictationId, "string");
       for (const report of dictationReports) assert.equal(report.dictationId, dictationId);
+      // Main binds the Target app to this Dictation and pastes to it by id.
+      assert.deepEqual(h.targetCaptureIds, [dictationId]);
+      assert.deepEqual(h.pasteDictationIds, [dictationId]);
     });
   }
 }
