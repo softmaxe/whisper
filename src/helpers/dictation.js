@@ -101,11 +101,6 @@ export function createDictation({ onNotice, onCommand } = {}) {
       // Resume media the instant recording ends, not after transcription.
       if (getSettings().pauseMediaOnDictation) bridge()?.resumeMediaPlayback?.();
     }
-    if (previous === "recording") {
-      // Only a stop hands the recording to processing; cancel and failure
-      // end it silently.
-      if (next === "processing") void playStopCue();
-    }
     if (next === "idle" && hidePreviewAtIdle) {
       hidePreviewAtIdle = false;
       bridge()?.hideDictationPreview?.();
@@ -243,7 +238,11 @@ export function createDictation({ onNotice, onCommand } = {}) {
       if (disposed) return false;
       if (!manager.getState().isRecording) return false;
       update({ isPreparing: false, isStopping: true });
-      return manager.stopRecording();
+      const didStop = manager.stopRecording();
+      // The stop cue answers the user's stop; cancel, failure, and stops the
+      // recorder makes on its own end the recording silently.
+      if (didStop) void playStopCue();
+      return didStop;
     } finally {
       stopLock = false;
       update({ isStopping: false });
