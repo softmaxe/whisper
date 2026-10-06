@@ -715,6 +715,19 @@ test("teardown prevents pending delivery from reopening recovery", async (t) => 
   assert.deepEqual(h.writes, []);
 });
 
+test("a successful paste closes the dictation preview while History is still saving", async (t) => {
+  const h = await setup(t, { delayedSave: true });
+  await h.start();
+  await h.stop();
+  await h.resolveRequest(0, { text: "delivered" });
+  await h.act(() => h.pastes[0].resolve({ pasted: true }));
+  assertPending(h);
+  assert.equal(h.hidden(), 1);
+  await h.act(() => h.saves[0].resolve({ id: 1 }));
+  assert.equal(h.lifecycle.at(-1), "idle");
+  assert.equal(h.hidden(), 1);
+});
+
 test("cancelled delivery persistence retains its own recording audio after a subsequent result", async (t) => {
   const h = await setup(t, { delayedSave: true });
   await h.start(1);

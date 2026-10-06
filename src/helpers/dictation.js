@@ -53,9 +53,9 @@ export function createDictation({ onNotice, onCommand } = {}) {
     reportedId = dictationId;
     bridge()?.dictationLifecycleStateChanged?.(next, dictationId);
     if (next === "idle") dictationId = null;
-    // An id-only re-report (main's id adopted) is not a state change and
-    // must not repeat the state's side effects.
-    if (previous !== next) runTransitionEffects(previous, next);
+    // An id-only re-report (main's id adopted) leaves the state, and so
+    // the held recording effects, unchanged.
+    if (previous === "recording" && next !== "recording") releaseRecordingEffects();
   };
 
   // Main's id wins: a command naming another id while a Dictation is in
@@ -76,7 +76,6 @@ export function createDictation({ onNotice, onCommand } = {}) {
   let wasMicUnavailable = false;
   let startupTrace = null;
   let feedbackTrace = null;
-  let hidePreviewAtIdle = false;
 
   // A Dictation's side effects belong to this module, never to the UI call
   // sites that cause them. Media and the cancel hotkey are held from a
@@ -94,25 +93,19 @@ export function createDictation({ onNotice, onCommand } = {}) {
     void playStartCue(() => trace.mark("readyCueScheduled"));
   };
 
-  const runTransitionEffects = (previous, next) => {
-    if (previous === "recording" && recordingEffectsHeld) {
-      recordingEffectsHeld = false;
-      bridge()?.unregisterCancelHotkey?.();
-      // Resume media the instant recording ends, not after transcription.
-      if (getSettings().pauseMediaOnDictation) bridge()?.resumeMediaPlayback?.();
-    }
-    if (next === "idle" && hidePreviewAtIdle) {
-      hidePreviewAtIdle = false;
-      bridge()?.hideDictationPreview?.();
-    }
+  // Runs as the Dictation leaves recording.
+  const releaseRecordingEffects = () => {
+    if (!recordingEffectsHeld) return;
+    recordingEffectsHeld = false;
+    bridge()?.unregisterCancelHotkey?.();
+    // Resume media the instant recording ends, not after transcription.
+    if (getSettings().pauseMediaOnDictation) bridge()?.resumeMediaPlayback?.();
   };
 
-  // The dictation preview closes when the Dictation returns to idle. Outcomes
-  // that leave the text for manual recovery never ask for this.
-  const hidePreviewOnIdle = () => {
-    if (state === "idle") bridge()?.hideDictationPreview?.();
-    else hidePreviewAtIdle = true;
-  };
+  // The dictation preview closes as soon as an outcome settles it, without
+  // waiting for History. Outcomes that leave the text for manual recovery
+  // never ask for this.
+  const hidePreview = () => bridge()?.hideDictationPreview?.();
 
   // Snapshot for UI bindings.
   let snapshot = {
@@ -311,7 +304,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
   const cancelProcessing = () => {
     if (disposed) return false;
     invalidatePreparation();
-    hidePreviewOnIdle();
+    hidePreview();
     return manager.cancelProcessing();
   };
 
@@ -329,7 +322,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
     const transcribedText = result.text?.trim();
 
     if (!transcribedText) {
-      hidePreviewOnIdle();
+      hidePreview();
       notify({ type: "noAudio" });
       return;
     }
@@ -403,7 +396,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
       // silently loses the transcript, so keep it instead.
       const keptInClipboard = await keepInClipboard("push-force-stopped");
       if (!isCurrent()) return;
-      hidePreviewOnIdle();
+      hidePreview();
       notify({
         type: "pushForceStopped",
         keptInClipboard,
@@ -447,7 +440,7 @@ export function createDictation({ onNotice, onCommand } = {}) {
       // Successful delivery closes the preview; failed delivery keeps the
       // final text available in the manual-copy panel.
       if (pasteSucceeded && isCurrent()) {
-        hidePreviewOnIdle();
+        hidePreview();
         if (result.cleanupFailure) recordCleanupFailure(result.cleanupFailure);
       }
     } else if (keepTranscriptionInClipboard) {
@@ -493,12 +486,12 @@ export function createDictation({ onNotice, onCommand } = {}) {
       }
       update({ isPreparing: false, isStopping: false });
       if (error?.code === "TRANSCRIPTION_CANCELLED" || error?.code === "REASON_CANCELLED") return;
-      if (error?.title !== "Paste Error") hidePreviewOnIdle();
+      if (error?.title !== "Paste Error") hidePreview();
       notify({ type: "error", error });
     },
     onNoAudio: () => {
       update({ isPreparing: false, isStopping: false });
-      hidePreviewOnIdle();
+      hidePreview();
       notify({ type: "noAudio" });
     },
     onTranscriptionComplete: async (result) => {
