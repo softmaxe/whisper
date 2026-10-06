@@ -10,6 +10,11 @@ discards any report for a Dictation that is no longer current. Automatic paste
 uses the Target app recorded for the Dictation, not whichever app was captured
 most recently.
 
+A Dictation started in the renderer, from the Recording pill or Retry, supplies
+its own id, and main adopts it from the first "preparing" report when no
+Dictation is current. If main's id and the renderer's conflict, main's id wins
+and the renderer reports under it from then on.
+
 This replaces state that was mirrored in about eight places in both processes
 and reported by hand from many call sites. In that design, a missed report
 could leave main stuck in "preparing".
