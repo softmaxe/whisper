@@ -636,32 +636,29 @@ class WindowManager {
     // report from one that already ended.
     if (!current && (state !== "preparing" || !dictationId)) return;
 
-    this._currentDictation = {
-      ...(current ?? this._createDictationRecord({ requestId: dictationId })),
-      state,
-    };
+    this._currentDictation = { ...(current ?? this._createDictationRecord(dictationId)), state };
     this.onDictationStateChanged?.();
   }
 
-  _createDictationRecord(startupRequest) {
-    return {
-      dictationId: startupRequest?.requestId ?? null,
-      targetPid: null,
-      acceptedAt: startupRequest?.acceptedAt ?? null,
-      state: "requested",
-    };
+  _createDictationRecord(dictationId, acceptedAt = null) {
+    return { dictationId, targetPid: null, acceptedAt, state: "requested" };
   }
 
   // Records a Dictation main has asked the renderer to start. It counts as
   // active until the renderer's first report, so the next press ends it.
+  // The startup request is the IPC payload; its `requestId` is the
+  // Dictation's id.
   _requestDictation(startupRequest) {
     if (this._currentDictation) return;
-    this._currentDictation = this._createDictationRecord(startupRequest);
+    this._currentDictation = this._createDictationRecord(
+      startupRequest.requestId,
+      startupRequest.acceptedAt ?? null
+    );
     this.onDictationStateChanged?.();
   }
 
-  // Reuses the current Dictation's startup request so prepare and start share
-  // one id.
+  // Reuses the current Dictation's startup request payload so prepare and
+  // start share one id.
   _currentStartupRequest() {
     const dictation = this._currentDictation;
     if (!dictation?.dictationId) return null;
