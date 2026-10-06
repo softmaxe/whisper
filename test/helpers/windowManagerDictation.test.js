@@ -156,13 +156,14 @@ test("a Tap mode key combination starts Dictation, and pressing it again ends it
   await manager.createHotkeyCallback()("Control+Shift+R");
   const startMessages = manager.mainWindow.messages.map(({ channel }) => channel);
   assert.deepEqual(startMessages, ["prepare-dictation", "toggle-dictation"]);
-  assert.ok(manager.mainWindow.messages[1].payload.startupRequest.requestId);
+  const { startupRequest } = manager.mainWindow.messages[1].payload;
+  assert.ok(startupRequest.requestId);
 
   manager.mainWindow.messages.length = 0;
-  manager.setDictationLifecycleState("recording");
+  manager.setDictationLifecycleState("recording", startupRequest.requestId);
   await manager.createHotkeyCallback()("Control+Shift+R");
   assert.deepEqual(manager.mainWindow.messages, [
-    { channel: "toggle-dictation", payload: undefined },
+    { channel: "toggle-dictation", payload: { startupRequest } },
   ]);
 });
 
@@ -172,11 +173,14 @@ test("a second Dictation hotkey press before the renderer's first report ends th
   manager.showDictationPanel = () => undefined;
 
   await manager.createHotkeyCallback()("Control+Shift+R");
+  const { startupRequest } = manager.mainWindow.messages[1].payload;
   manager.mainWindow.messages.length = 0;
   await manager.createHotkeyCallback()("Control+Shift+R");
 
+  // The stop carries the Dictation's id, so a renderer that never took up the
+  // request still reports under the id main records.
   assert.deepEqual(manager.mainWindow.messages, [
-    { channel: "toggle-dictation", payload: undefined },
+    { channel: "toggle-dictation", payload: { startupRequest } },
   ]);
 });
 
@@ -195,4 +199,70 @@ test("the Dictation hotkey is ignored while a Dictation is processing", async ()
     manager.mainWindow.messages.map(({ channel }) => channel),
     ["prepare-dictation", "toggle-dictation"]
   );
+});
+
+function pressedDictationId(manager) {
+  const prepare = manager.mainWindow.messages.find(
+    ({ channel }) => channel === "prepare-dictation"
+  );
+  return prepare.payload.startupRequest.requestId;
+}
+
+test("a late idle from the previous Dictation does not end the current one", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const previous = pressedDictationId(manager);
+  manager.setDictationLifecycleState("preparing", previous);
+  manager.setDictationLifecycleState("idle", previous);
+
+  manager.mainWindow.messages.length = 0;
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const current = pressedDictationId(manager);
+  assert.notEqual(current, previous);
+
+  manager.setDictationLifecycleState("idle", previous);
+  assert.equal(manager.isDictationActive(), true);
+  manager.setDictationLifecycleState("recording", previous);
+  assert.equal(manager.isDictating(), false);
+
+  manager.setDictationLifecycleState("recording", current);
+  assert.equal(manager.isDictating(), true);
+  manager.setDictationLifecycleState("idle", current);
+  assert.equal(manager.isDictationActive(), false);
+});
+
+test("a renderer-started Dictation is tracked under the renderer's id", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  manager.setDictationLifecycleState("preparing", "pill-dictation");
+  manager.setDictationLifecycleState("recording", "pill-dictation");
+  assert.equal(manager.isDictating(), true);
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  assert.deepEqual(manager.mainWindow.messages, [
+    {
+      channel: "toggle-dictation",
+      payload: { startupRequest: { requestId: "pill-dictation", acceptedAt: null } },
+    },
+  ]);
+
+  manager.setDictationLifecycleState("idle", "pill-dictation");
+  assert.equal(manager.isDictationActive(), false);
+});
+
+test("the renderer's mount report clears a Dictation it never took up", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  assert.equal(manager.isDictationActive(), true);
+
+  manager.setDictationLifecycleState("idle");
+  assert.equal(manager.isDictationActive(), false);
 });
