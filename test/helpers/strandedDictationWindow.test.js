@@ -210,7 +210,8 @@ test("a dictation window that never reaches the screen is replaced once dictatio
   const { manager, window: stranded, replacements } = await createManager(t, false);
 
   manager.showDictationPanel({ reposition: false });
-  manager.setDictationLifecycleState("recording");
+  manager.setDictationLifecycleState("preparing", "pill-dictation");
+  manager.setDictationLifecycleState("recording", "pill-dictation");
   t.mock.timers.tick(ON_SCREEN_TIMEOUT_MS);
   await flushPromises();
 
@@ -218,8 +219,8 @@ test("a dictation window that never reaches the screen is replaced once dictatio
   assert.equal(manager.mainWindow, stranded);
   assert.equal(stranded.isDestroyed(), false);
 
-  manager.setDictationLifecycleState("processing");
-  manager.setDictationLifecycleState("idle");
+  manager.setDictationLifecycleState("processing", "pill-dictation");
+  manager.setDictationLifecycleState("idle", "pill-dictation");
   await flushPromises();
 
   assert.equal(stranded.isDestroyed(), true);

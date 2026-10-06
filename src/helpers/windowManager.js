@@ -630,9 +630,12 @@ class WindowManager {
     }
     if (current && current.dictationId !== dictationId) return;
     if (current?.state === state) return;
-
     // A Dictation started from the renderer (pill click, Retry) is first
-    // seen here, under the id the renderer gave it.
+    // seen here, under the id the renderer gave it. Every Dictation reports
+    // "preparing" first, so a later state with no current Dictation is a late
+    // report from one that already ended.
+    if (!current && (state !== "preparing" || !dictationId)) return;
+
     this._currentDictation = {
       ...(current ?? this._createDictationRecord({ requestId: dictationId })),
       state,
