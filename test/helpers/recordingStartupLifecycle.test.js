@@ -34,6 +34,7 @@ async function setup(t, { cues = false } = {}) {
   const events = {};
   const logs = [];
   const lifecycle = [];
+  const reportIds = [];
   const errors = [];
   const tones = [];
   const target = deferred();
@@ -45,7 +46,10 @@ async function setup(t, { cues = false } = {}) {
       events.LidChanged = callback;
       return () => delete events.LidChanged;
     },
-    dictationLifecycleStateChanged: (state) => lifecycle.push(state),
+    dictationLifecycleStateChanged: (state, dictationId) => {
+      lifecycle.push(state);
+      reportIds.push(dictationId);
+    },
   };
   for (const name of [
     "ToggleDictation",
@@ -191,6 +195,7 @@ async function setup(t, { cues = false } = {}) {
       }),
     logs,
     lifecycle,
+    reportIds,
     target,
     media,
     recorders,
@@ -273,12 +278,15 @@ test("Dictation acquisition overlaps pending visual frames and target capture", 
   assert.equal(h.hook().isPreparing, true);
   const trace = h.timing().at(-1);
   assert.equal(trace.requestId, h.request.requestId);
+  assert.equal(h.reportIds.at(-1), trace.requestId, "the trace and reports share main's id");
   assert.equal(trace.stages.acquisitionCompleted, 160);
   assert.equal(trace.stages.readyFeedback, undefined);
   assert.equal(trace.stages.firstAudio, undefined);
   assert.equal(trace.outcome, "pending");
   assert.equal(h.presentation().motion, "sweep");
   await h.deliver();
+  assert.equal(h.lifecycle.at(-1), "recording");
+  assert.equal(h.reportIds.at(-1), h.request.requestId);
   assert.equal(h.timing().at(-1).outcome, "completed");
   assert.equal(h.timing().at(-1).stages.firstAudio, 190);
   assert.equal(h.timing().at(-1).stages.readyFeedback, 190);
@@ -448,6 +456,18 @@ test("cancelling preparation preserves the old identity when its acquisition res
   assert.equal(completed.stages.acquisitionCompleted, 70);
   assert.equal(completed.stages.firstAudio, 70);
   assert.equal(opens, 2);
+  // The late acquisition of the cancelled Dictation reports nothing under
+  // either id; each Dictation's reports name only that Dictation.
+  assert.deepEqual(
+    h.lifecycle.map((state, index) => [state, h.reportIds[index]]),
+    [
+      ["idle", null],
+      ["preparing", h.request.requestId],
+      ["idle", h.request.requestId],
+      ["preparing", nextRequest.requestId],
+      ["recording", nextRequest.requestId],
+    ]
+  );
 });
 
 test("cancelling before visual frames arrive releases late acquisition without ready feedback", async (t) => {

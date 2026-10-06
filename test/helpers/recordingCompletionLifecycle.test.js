@@ -37,6 +37,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
   const recoveries = [];
   const errors = [];
   const lifecycle = [];
+  const reportIds = [];
   const previewListeners = new Map();
   let hidden = 0;
   let windowHides = 0;
@@ -65,7 +66,10 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
         captureDictationTarget: async () => {},
         onToggleDictation: noopDispose,
         onLaptopLidStateChanged: noopDispose,
-        dictationLifecycleStateChanged: (state) => lifecycle.push(state),
+        dictationLifecycleStateChanged: (state, dictationId) => {
+          lifecycle.push(state);
+          reportIds.push(dictationId);
+        },
         completeDictationPreview: () => {},
         hideDictationPreview: () => hidden++,
         hideWindow: () => windowHides++,
@@ -238,6 +242,7 @@ async function setup(t, { cleanup = false, retain = true, delayedSave = false } 
           )
         : "",
     lifecycle,
+    reportIds,
     hidden: () => hidden,
     windowHides: () => windowHides,
     isFinishing: () => isFinishing,
@@ -365,6 +370,12 @@ for (const cleanup of [false, true, "fallback"]) {
     assert.equal(h.hidden(), 1);
     assert.deepEqual(h.recoveries, []);
     assert.deepEqual(h.lifecycle, ["idle", "preparing", "recording", "processing", "idle"]);
+    // A Dictation started from the renderer reports under one id of its own;
+    // the mount report names no Dictation.
+    const [mountId, dictationId, ...laterIds] = h.reportIds;
+    assert.equal(mountId, null);
+    assert.equal(typeof dictationId, "string");
+    assert.deepEqual(laterIds, [dictationId, dictationId, dictationId]);
   });
 }
 
