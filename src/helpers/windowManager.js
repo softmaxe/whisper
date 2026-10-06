@@ -73,6 +73,10 @@ class WindowManager {
     // lifecycle; this record mirrors its reports for hotkey gating, the tray,
     // and stranded-window replacement.
     this._currentDictation = null;
+    // The latest hotkey press capture that starts a Dictation:
+    // { dictationId, bound }, where `bound` settles with the captured pid
+    // after binding it.
+    this._pressTargetCapture = null;
     // Follows Electron's macOS "show"/"hide", which report the window server's
     // occlusion state and so trail showInactive()/hide().
     this._mainWindowOnScreen = false;
@@ -666,19 +670,30 @@ class WindowManager {
   // The returned promise also places the dictation panel.
   _captureTargetAtPress(dictationId = null) {
     const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
-    if (dictationId) {
-      targetPidPromise?.then(
-        (pid) => this._bindDictationTarget(dictationId, pid),
-        () => undefined
+    if (dictationId && targetPidPromise) {
+      const bound = targetPidPromise.then(
+        (pid) => {
+          this._bindDictationTarget(dictationId, pid);
+          return pid ?? null;
+        },
+        () => null
       );
+      this._pressTargetCapture = { dictationId, bound };
     }
     return targetPidPromise;
   }
 
   // The renderer captures the Target app as each recording starts. That binds
-  // it for a Dictation started from the renderer (pill, Retry); a hotkey
-  // press has already bound its own.
+  // it for a Dictation started from the renderer (pill, Retry). A Dictation
+  // started by a hotkey press keeps the app captured at the press, however
+  // slowly that capture settles; only a press that captured no app leaves the
+  // binding to this capture, which then reports the current focus as before.
   async captureDictationTarget(dictationId) {
+    const press = this._pressTargetCapture;
+    if (dictationId && press?.dictationId === dictationId) {
+      const pressPid = await press.bound;
+      if (pressPid) return { success: true, pid: pressPid };
+    }
     const pid = (await this.textEditMonitor?.captureTargetPid?.()) ?? null;
     this._bindDictationTarget(dictationId, pid);
     return { success: true, pid };

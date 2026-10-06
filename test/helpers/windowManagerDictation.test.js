@@ -318,3 +318,49 @@ test("a renderer-started Dictation binds the Target app at its recording start",
   assert.equal(manager.getDictationTargetPid("stale-dictation"), null);
   assert.equal(manager.getDictationTargetPid("pill-dictation"), 42);
 });
+
+// A text-edit monitor whose first capture, the hotkey press's, settles only
+// when the test resolves it; later captures report `laterPid` at once.
+function createSlowPressMonitor(laterPid) {
+  const press = createDeferred();
+  let captures = 0;
+  return {
+    press,
+    captureTargetPid: () => (captures++ === 0 ? press.promise : Promise.resolve(laterPid)),
+  };
+}
+
+test("a slow hotkey press capture still binds the Target app over the renderer's capture", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+  const monitor = createSlowPressMonitor(99);
+  manager.textEditMonitor = monitor;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const dictationId = pressedDictationId(manager);
+  manager.setDictationLifecycleState("preparing", dictationId);
+  const rendererCapture = manager.captureDictationTarget(dictationId);
+  await new Promise(setImmediate);
+  monitor.press.resolve(42);
+
+  assert.deepEqual(await rendererCapture, { success: true, pid: 42 });
+  assert.equal(manager.getDictationTargetPid(dictationId), 42);
+});
+
+test("a hotkey press that captures no app leaves the Target app to the renderer's capture", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+  const monitor = createSlowPressMonitor(99);
+  manager.textEditMonitor = monitor;
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const dictationId = pressedDictationId(manager);
+  manager.setDictationLifecycleState("preparing", dictationId);
+  const rendererCapture = manager.captureDictationTarget(dictationId);
+  monitor.press.resolve(null);
+
+  assert.deepEqual(await rendererCapture, { success: true, pid: 99 });
+  assert.equal(manager.getDictationTargetPid(dictationId), 99);
+});
