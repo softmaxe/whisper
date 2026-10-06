@@ -481,7 +481,7 @@ class WindowManager {
     const downTime = Date.now();
 
     const startupRequest = this.createRecordingStartupRequest();
-    const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+    const targetPidPromise = this._captureTargetAtPress(startupRequest.requestId);
     this.showDictationPanel({ reposition: true, targetPidPromise });
     this.sendPrepareDictation({ startupRequest });
 
@@ -661,6 +661,46 @@ class WindowManager {
     return { requestId: dictation.dictationId, acceptedAt: dictation.acceptedAt };
   }
 
+  // Captures the app holding keyboard focus at a Dictation hotkey press. A
+  // press that starts a Dictation binds it as that Dictation's Target app.
+  // The returned promise also places the dictation panel.
+  _captureTargetAtPress(dictationId = null) {
+    const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+    if (dictationId) {
+      targetPidPromise?.then(
+        (pid) => this._bindDictationTarget(dictationId, pid),
+        () => undefined
+      );
+    }
+    return targetPidPromise;
+  }
+
+  // The renderer captures the Target app as each recording starts. That binds
+  // it for a Dictation started from the renderer (pill, Retry); a hotkey
+  // press has already bound its own.
+  async captureDictationTarget(dictationId) {
+    const pid = (await this.textEditMonitor?.captureTargetPid?.()) ?? null;
+    this._bindDictationTarget(dictationId, pid);
+    return { success: true, pid };
+  }
+
+  // The first capture for a Dictation is its Target app; later captures,
+  // including the text-edit monitor's own, never move it.
+  _bindDictationTarget(dictationId, pid) {
+    const current = this._currentDictation;
+    if (!pid || !dictationId || current?.dictationId !== dictationId) return;
+    if (current.targetPid !== null) return;
+    this._currentDictation = { ...current, targetPid: pid };
+  }
+
+  // Automatic paste delivers to the Target app of the Dictation it names. A
+  // Dictation that is no longer current has none.
+  getDictationTargetPid(dictationId) {
+    const current = this._currentDictation;
+    if (!dictationId || current?.dictationId !== dictationId) return null;
+    return current.targetPid;
+  }
+
   // The tray's listen item is a toggle over this state, like the pill's.
   isDictating() {
     return this._currentDictation?.state === "recording";
@@ -694,7 +734,9 @@ class WindowManager {
       const startupRequest = isStarting
         ? this.createRecordingStartupRequest()
         : (this._currentStartupRequest() ?? undefined);
-      const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+      const targetPidPromise = this._captureTargetAtPress(
+        isStarting ? startupRequest.requestId : null
+      );
       if (!isStarting) {
         this._mainWindowPlacementCoordinator.cancelPending();
       }
@@ -720,7 +762,7 @@ class WindowManager {
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       const startupRequest = this._currentStartupRequest() ?? this.createRecordingStartupRequest();
       this._requestDictation(startupRequest);
-      const targetPidPromise = this.textEditMonitor?.captureTargetPid?.();
+      const targetPidPromise = this._captureTargetAtPress(startupRequest.requestId);
       this.showDictationPanel({ reposition: true, targetPidPromise });
       this.mainWindow.webContents.send("start-dictation", { startupRequest });
     }

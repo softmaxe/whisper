@@ -189,7 +189,7 @@ class TextEditMonitor extends EventEmitter {
   }
 
   /**
-   * macOS: give the captured target app keyboard focus before pasting, so the
+   * macOS: give a Dictation's Target app keyboard focus before pasting, so the
    * global Cmd+V lands in its focused field (#668). Resolves true once the target
    * is confirmed to hold keyboard focus. If it already does we do nothing:
    * re-activating an already-active Chromium app (e.g. Claude Desktop) drops its
@@ -197,11 +197,6 @@ class TextEditMonitor extends EventEmitter {
    * avoids a needless activation round-trip. Otherwise we activate and poll until
    * the target holds keyboard focus.
    */
-  async activateTargetPid() {
-    if (!this.lastTargetPid) return false;
-    return this.activatePid(this.lastTargetPid);
-  }
-
   async activatePid(pid) {
     if (!pid) return false;
     if ((await this._readKeyboardFocusPid()) === pid) return true;

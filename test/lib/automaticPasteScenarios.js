@@ -179,8 +179,7 @@ function automaticPasteScenarios(createFixture) {
   test("successive requests activate before the queue but wait for the prior restoration before writing", async (t) => {
     const f = createFixture(t, { autoLearn: false });
     await completePaste(f, "first");
-    f.monitor.lastTargetPid = 84;
-    const second = f.paste("second");
+    const second = f.paste("second", { targetPid: 84 });
     await f.flush();
     assert.equal(f.events.find(({ kind }) => kind === "activate").pid, 84);
     await f.advance(25);

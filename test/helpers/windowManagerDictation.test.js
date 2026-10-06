@@ -266,3 +266,55 @@ test("the renderer's mount report clears a Dictation it never took up", async ()
   manager.setDictationLifecycleState("idle");
   assert.equal(manager.isDictationActive(), false);
 });
+
+// A text-edit monitor whose captures report whichever app holds keyboard focus.
+function createFocusMonitor(focusPid) {
+  const monitor = {
+    focusPid,
+    lastTargetPid: null,
+    captureTargetPid: async () => {
+      monitor.lastTargetPid = monitor.focusPid;
+      return monitor.focusPid;
+    },
+  };
+  return monitor;
+}
+
+test("the Target app captured at the hotkey press stays with its Dictation until idle", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+  manager.textEditMonitor = createFocusMonitor(42);
+
+  await manager.createHotkeyCallback()("Control+Shift+R");
+  const dictationId = pressedDictationId(manager);
+  await new Promise(setImmediate);
+
+  // Focus moves before the renderer's own capture and later captures.
+  manager.textEditMonitor.focusPid = 99;
+  await manager.captureDictationTarget(dictationId);
+  manager.setDictationLifecycleState("recording", dictationId);
+  manager.setDictationLifecycleState("processing", dictationId);
+  await manager.textEditMonitor.captureTargetPid();
+  assert.equal(manager.textEditMonitor.lastTargetPid, 99);
+  assert.equal(manager.getDictationTargetPid(dictationId), 42);
+
+  manager.setDictationLifecycleState("idle", dictationId);
+  assert.equal(manager.getDictationTargetPid(dictationId), null);
+});
+
+test("a renderer-started Dictation binds the Target app at its recording start", async () => {
+  const manager = createNormalWindowManager();
+  manager.mainWindow = new FakeBrowserWindow({});
+  manager.showDictationPanel = () => undefined;
+  manager.textEditMonitor = createFocusMonitor(42);
+
+  manager.setDictationLifecycleState("preparing", "pill-dictation");
+  assert.deepEqual(await manager.captureDictationTarget("pill-dictation"), {
+    success: true,
+    pid: 42,
+  });
+  await manager.captureDictationTarget("stale-dictation");
+  assert.equal(manager.getDictationTargetPid("stale-dictation"), null);
+  assert.equal(manager.getDictationTargetPid("pill-dictation"), 42);
+});

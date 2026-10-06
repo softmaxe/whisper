@@ -66,7 +66,10 @@ cover target confirmation, spacing, permissions, native failure and retry,
 clipboard restoration and queue timing, and correction monitoring. The
 [fixture](lib/automaticPasteFixture.js) controls OS clipboard access, native
 process responses, executable discovery, windows and time. It uses production
-IPC dependency wiring while isolating unrelated startup services. A dedicated
+IPC dependency wiring while isolating unrelated startup services. It also holds
+the real WindowManager, whose current-Dictation record binds the Target app at
+the Dictation hotkey press, so paste requests that name a Dictation reach that
+app even after later target captures. A dedicated
 failure-isolation case injects a synchronous monitoring-start exception. Small
 [IPC adapter tests](helpers/ipcPasteOutcome.test.js) cover argument forwarding,
 sender context, serializable outcomes and error propagation.

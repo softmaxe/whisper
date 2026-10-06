@@ -9,6 +9,7 @@ const modulePaths = {
   automaticPaste: require.resolve("../../src/helpers/automaticPaste"),
   clipboard: require.resolve("../../src/helpers/clipboard"),
   monitor: require.resolve("../../src/helpers/textEditMonitor"),
+  windowManager: require.resolve("../../src/helpers/windowManager"),
 };
 
 // Keep production AutomaticPaste wiring, the clipboard queue, native adapters
@@ -147,6 +148,7 @@ function createAutomaticPasteFixture(t, options = {}) {
       getVersion: () => "0.0.0",
       on: () => {},
     },
+    screen: { on: () => {} },
     ipcMain: { handle: (name, handler) => handlers.set(name, handler), on: () => {} },
     systemPreferences: {
       isTrustedAccessibilityClient: () => {
@@ -159,7 +161,9 @@ function createAutomaticPasteFixture(t, options = {}) {
   for (const file of Object.values(modulePaths)) delete require.cache[file];
   Module._load = function loadExternalSeams(request, parent, isMain) {
     if (request === "electron") return electron;
-    if (request === "./debugLogger") return { debug: () => {} };
+    if (request === "./debugLogger") {
+      return { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+    }
     if (parent?.filename === modulePaths.ipc) {
       // Constructor services outside Automatic paste must not touch disk or
       // query microphone hardware while these scenarios exercise real wiring.
@@ -177,16 +181,17 @@ function createAutomaticPasteFixture(t, options = {}) {
   let IPCHandlers;
   let ClipboardManager;
   let TextEditMonitor;
+  let WindowManager;
   try {
     IPCHandlers = require(modulePaths.ipc);
     ClipboardManager = require(modulePaths.clipboard);
     TextEditMonitor = require(modulePaths.monitor);
+    WindowManager = require(modulePaths.windowManager);
   } finally {
     Module._load = originalLoad;
   }
   t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 10000 });
   const monitor = new TextEditMonitor();
-  monitor.lastTargetPid = state.targetPid;
   // This spy delegates to the real monitor, including its native adapter.
   const monitorStart = t.mock.method(monitor, "startMonitoring");
   const window = {
@@ -194,11 +199,19 @@ function createAutomaticPasteFixture(t, options = {}) {
     isFocused: () => state.windowFocused,
     hide: () => record("hide"),
     showInactive: () => record("show-inactive"),
+    webContents: { send: (channel, payload) => record("renderer", { channel, payload }) },
   };
+  // The real WindowManager holds the current-Dictation record that binds a
+  // Dictation to its Target app. Panel placement is outside these scenarios.
+  const windowManager = new WindowManager();
+  windowManager.setOnboardingActive(false);
+  windowManager.showDictationPanel = () => {};
+  windowManager.textEditMonitor = state.missingMonitor ? null : monitor;
+  windowManager.mainWindow = window;
   const owner = new IPCHandlers({
     clipboardManager: new ClipboardManager(),
     textEditMonitor: state.missingMonitor ? null : monitor,
-    windowManager: { mainWindow: window },
+    windowManager,
   });
   owner._autoLearnEnabled = options.autoLearn !== false;
   const sender = { id: 1 };
@@ -219,8 +232,21 @@ function createAutomaticPasteFixture(t, options = {}) {
     monitorStart,
     owner,
     sender,
+    windowManager,
+    // A request for the fixture's Target app unless it names another.
     paste: (text, pasteOptions) =>
-      owner.automaticPaste.paste(text, { ...pasteOptions, webContents: sender }),
+      owner.automaticPaste.paste(text, {
+        targetPid: state.targetPid,
+        ...pasteOptions,
+        webContents: sender,
+      }),
+    // A Tap mode Dictation hotkey press; resolves with the Dictation's id.
+    pressDictationHotkey: async () => {
+      windowManager.sendToggleDictation();
+      await flush();
+      return events.find(({ channel }) => channel === "prepare-dictation").payload.startupRequest
+        .requestId;
+    },
     invokePaste: (text, pasteOptions) => handlers.get("paste-text")({ sender }, text, pasteOptions),
     writeClipboard: (text) => handlers.get("write-clipboard")({ sender }, text),
     flush,
