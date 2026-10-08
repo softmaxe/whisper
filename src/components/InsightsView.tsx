@@ -116,7 +116,7 @@ function Heatmap({ daily }: { daily: AnalyticsDailyBucket[] }) {
                       <div
                         key={dayIndex}
                         aria-hidden="true"
-                        className="size-6 justify-self-center"
+                        className="size-4 justify-self-center"
                       />
                     );
                   }
@@ -135,10 +135,10 @@ function Heatmap({ daily }: { daily: AnalyticsDailyBucket[] }) {
                           role="img"
                           aria-label={tooltip}
                           className={cn(
-                            "size-6 rounded-sm",
+                            "size-4 rounded-[3px]",
                             ACTIVITY_INTENSITY_CLASSES[intensity],
                             day.date === calendar.todayDate &&
-                              "ring-1 ring-primary ring-offset-1 ring-offset-card"
+                              "ring-1 ring-primary ring-offset-1 ring-offset-background"
                           )}
                         />
                       </Tooltip>
@@ -180,15 +180,15 @@ function MetricCard({
   largeValue?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-border/70 dark:border-white/10 bg-card/70 p-4">
+    <div className="border-t border-border pt-4">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Icon size={14} />
         <span className="text-xs">{label}</span>
       </div>
       <p
         className={cn(
-          "mt-3 font-semibold tracking-tight text-foreground",
-          largeValue ? "text-3xl" : "text-2xl"
+          "mt-3 font-serif font-normal leading-tight tracking-tight text-foreground",
+          largeValue ? "text-[44px]" : "text-[40px]"
         )}
       >
         {value}
@@ -311,7 +311,7 @@ function YourUsage({ dataRetentionEnabled }: { dataRetentionEnabled: boolean }) 
             />
           </div>
 
-          <div className="mt-5 rounded-2xl border border-border/70 bg-card/70 px-5 py-2.5 dark:border-white/10">
+          <div className="mt-8 border-t border-border pt-4">
             <h2 className="text-base font-medium text-foreground">{t("insights.activity")}</h2>
             <div className="mt-2">
               <Heatmap daily={summary.daily} />
@@ -331,11 +331,9 @@ export default function InsightsView() {
     <div className="mx-auto flex min-h-full w-full max-w-5xl flex-col px-6 py-6">
       <div className="flex flex-1 flex-col">
         <div className="flex min-h-8 cursor-default items-center justify-between gap-4">
-          <div className="inline-flex h-7 items-center justify-center rounded-[7px] bg-muted p-0.5 text-muted-foreground dark:bg-surface-raised">
-            <span className="inline-flex h-6 items-center justify-center whitespace-nowrap rounded-[5px] bg-card px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm">
-              {t("insights.yourUsage")}
-            </span>
-          </div>
+          <span className="whitespace-nowrap text-[15px] font-medium text-foreground">
+            {t("insights.yourUsage")}
+          </span>
 
           <div className="flex shrink-0 items-center gap-3">
             <div className="flex items-center gap-2 text-[11px] text-muted-foreground">

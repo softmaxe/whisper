@@ -143,7 +143,7 @@ export default function DictionaryView() {
       />
 
       <div className="px-5 pt-4">
-        <TabsList className="h-7 p-0.5 rounded-[7px]">
+        <TabsList className="h-7 p-0 rounded-[7px] bg-transparent dark:bg-transparent">
           <TabsTrigger value="dictionary" className="h-6 px-2.5 text-xs rounded-[5px]">
             {t("dictionary.tabDictionary")}
           </TabsTrigger>

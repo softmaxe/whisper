@@ -47,7 +47,7 @@ export default function ControlPanelSidebar({
                 "group relative flex items-center gap-2.5 w-full h-8 px-2.5 rounded-md outline-none transition-colors duration-150 text-start",
                 "focus-visible:ring-1 focus-visible:ring-primary/30",
                 isActive
-                  ? "bg-primary/8 dark:bg-primary/10"
+                  ? "bg-primary/8 dark:bg-white/6"
                   : "hover:bg-foreground/4 dark:hover:bg-white/4 active:bg-foreground/6"
               )}
             >

@@ -8,7 +8,7 @@ Whisper uses its own W monogram for the app and menu bar icons, and provider ico
 - `iconTemplate@3x.png` is the macOS menu bar template icon.
 - `icon.png` is the favicon and fallback icon.
 - `icons/providers/` supplies `src/utils/providerIcons.ts`.
-- [JetBrains Mono](fonts/jetbrains-mono/) provides Latin fonts and their OFL-1.1 license. Chinese text uses system PingFang on macOS.
+- [JetBrains Mono](fonts/jetbrains-mono/) provides the monospaced font for code-like values, with its OFL-1.1 license. Interface text uses the macOS system fonts: SF and PingFang for body text, Songti for headings.
 - `fonts/noto-sans.css` defines the bundled Noto Sans fallback loaded by `src/index.html`.
 
 Packaging excludes these Markdown files and the Icon Composer source. Preserve the upstream attribution and bundled font licenses when changing assets.

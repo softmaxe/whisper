@@ -103,7 +103,7 @@ export function DictationErrorCard({
         type="button"
         onClick={() => onAction(action)}
         className={cn(
-          "inline-flex h-8 min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-full px-4",
+          "inline-flex h-8 min-w-0 shrink-0 items-center justify-center gap-1.5 rounded-md px-4",
           "text-sm font-medium transition-[background-color,color,transform] duration-150",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 active:scale-[0.98]",
           primary
@@ -125,7 +125,7 @@ export function DictationErrorCard({
       data-action-count={actions.length}
       data-recovery-visible={ready || undefined}
       className={cn(
-        "relative max-h-[calc(100vh-1.5rem)] w-full overflow-y-auto rounded-2xl border border-border/50 bg-surface-0",
+        "relative max-h-[calc(100vh-1.5rem)] w-full overflow-y-auto rounded-[10px] border border-border bg-surface-0",
         "shadow-[var(--shadow-modal)] transition-[opacity,transform] duration-200 ease-out",
         ready ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-1 opacity-0"
       )}
