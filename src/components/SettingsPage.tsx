@@ -18,7 +18,7 @@ import { useHotkeyRegistration } from "../hooks/useHotkeyRegistration";
 import { useTheme } from "../hooks/useTheme";
 import type { ChineseScriptPreference } from "../types/electron";
 import { formatBytes } from "../utils/formatBytes";
-import { validateHotkeyForSlot } from "../utils/hotkeyValidation";
+import { getValidationMessage } from "../utils/hotkeyValidator";
 import { formatHotkeyLabel } from "../utils/hotkeys";
 import logger from "../utils/logger";
 import InferenceConfigEditor from "./settings/InferenceConfigEditor";
@@ -228,11 +228,6 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
     showErrorToast: true,
     showAlert: showAlertDialog,
   });
-
-  const validateDictationHotkey = useCallback(
-    (hotkey: string) => validateHotkeyForSlot(hotkey, {}, t),
-    [t]
-  );
 
   const { supportsPushToTalk, pushToTalkUnavailableReason } = useHotkeyModeInfo(
     "settings",
@@ -632,7 +627,7 @@ export default function SettingsPage({ activeSection = "general" }: SettingsPage
                   <HotkeyListInput
                     value={dictationKey}
                     onChange={(list) => registerHotkey(list)}
-                    validate={validateDictationHotkey}
+                    validate={getValidationMessage}
                     disabled={isHotkeyRegistering}
                     required
                     footerEnd={
