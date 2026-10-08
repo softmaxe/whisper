@@ -5,6 +5,7 @@
 - Keep changes within the scope in [README.md](README.md). For behavior or test changes, follow [test/README.md](test/README.md).
 - Before fixing a problem or adding a feature, inspect upstream OpenWhispr. Reuse its code or adapt it with minimal changes before writing a new implementation.
 - Use the Node.js and pnpm versions pinned in `mise.toml` and install dependencies with `pnpm install --frozen-lockfile`. Build-script approvals, overrides, and the hoisted linker live in `pnpm-workspace.yaml`. Run `pnpm run quality-check` for code changes. Documentation-only changes need formatting and link checks.
+- Merge PRs with `gh pr merge <number> --squash --auto`. The `main` ruleset requires a PR and a passing `Check Whisper` on a branch that is up to date with `main`, and nobody can bypass it. When the branch is behind, run `gh pr update-branch <number>`. A PR is merged once `gh pr view <number>` shows `MERGED`; queued auto-merge is not a merge.
 - Treat the repository and release artifacts as public. Use portable paths and secret placeholders; keep credentials out of source, logs, and artifacts. The pinned `resources/mac/signing-certificate.pem` must contain only the public certificate.
 
 ## Signing and releases
@@ -13,7 +14,7 @@
 - Reuse the original certificate and private key. Preserve app and helper identifiers, certificate-bound designated requirements, and Keychain-backed secret storage. If the original signing credentials are unavailable or do not match the pinned certificate, stop release packaging and report the problem. Restore credentials instead of generating a replacement identity or falling back to ad-hoc signing.
 - Before changing CI or the release process, read [package.json](package.json), [Build](.github/workflows/build.yml), and [Release](.github/workflows/release.yml). Pass named secrets only to trusted release jobs; keep PR builds credential-free.
 - After signing or packaging changes, run `pnpm run test:signing` and `pnpm run pack:release` on macOS. Verify temporary private files and keychains are cleaned up on success and failure.
-- Publish only when requested. Before reporting a release complete, verify all Release workflow jobs, the published archive and checksum, and the Homebrew cask version.
+- Publish only when requested. To release, merge a PR that sets `version` in `package.json`, then push an annotated tag `v<version>` (message `Release v<version>`) on that merge commit on `main`; the tag starts the Release workflow. Published releases are immutable, so fix a bad release with a new patch version. Before reporting a release complete, verify all Release workflow jobs, the published archive and checksum, and the Homebrew cask version.
 - For release readiness or permission-retention validation, follow the [release smoke check](test/README.md#release-smoke-check). Report automated signature checks separately from actual microphone, Accessibility, and Keychain behavior after a Homebrew upgrade.
 
 ## Agent skills
