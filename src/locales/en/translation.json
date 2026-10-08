@@ -85,9 +85,7 @@
   "common": {
     "retry": "Retry",
     "refresh": "Refresh",
-    "download": "Download",
     "cancel": "Cancel",
-    "recommended": "Recommended",
     "active": "Active",
     "model": "Model",
     "loading": "Loading...",

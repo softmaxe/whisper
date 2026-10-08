@@ -85,9 +85,7 @@
   "common": {
     "retry": "重试",
     "refresh": "刷新",
-    "download": "下载",
     "cancel": "取消",
-    "recommended": "推荐",
     "active": "已激活",
     "model": "模型",
     "loading": "加载中...",
