@@ -7,7 +7,6 @@ import ModelCardList from "./ui/ModelCardList";
 import SearchableModelList, { MODEL_SEARCH_THRESHOLD } from "./ui/SearchableModelList";
 import { buildApiUrl, getModelListBaseCandidates, normalizeBaseUrl } from "../config/constants";
 import { isSecureHttpEndpoint } from "../utils/urlUtils";
-import { GetApiKeyLink } from "./ui/GetApiKeyLink";
 
 interface ModelOption {
   value: string;
@@ -30,7 +29,6 @@ interface OpenAICompatiblePanelProps {
   lockedBaseUrl?: boolean;
   // Providers whose /models is public but whose inference needs a key.
   apiKeyRequired?: boolean;
-  getKeyUrl?: string;
 }
 
 export default function OpenAICompatiblePanel({
@@ -45,7 +43,6 @@ export default function OpenAICompatiblePanel({
   helpExamples,
   lockedBaseUrl = false,
   apiKeyRequired = false,
-  getKeyUrl,
 }: OpenAICompatiblePanelProps) {
   const { t } = useTranslation();
   const [draftBase, setDraftBase] = useState(baseUrl);
@@ -311,12 +308,9 @@ export default function OpenAICompatiblePanel({
       )}
 
       <div className="space-y-2 pt-3">
-        <div className="flex items-baseline justify-between">
-          <h4 className="font-medium text-foreground">
-            {t(apiKeyRequired ? "common.apiKey" : "reasoning.custom.apiKeyOptional")}
-          </h4>
-          {getKeyUrl && <GetApiKeyLink url={getKeyUrl} />}
-        </div>
+        <h4 className="font-medium text-foreground">
+          {t(apiKeyRequired ? "common.apiKey" : "reasoning.custom.apiKeyOptional")}
+        </h4>
         <ApiKeyInput
           apiKey={apiKey}
           setApiKey={setApiKey}
