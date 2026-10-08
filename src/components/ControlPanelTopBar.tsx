@@ -67,7 +67,7 @@ export default function ControlPanelTopBar({
             <PanelLeftClose size={16} className={toggleIconClass} />
           </button>
           {/* Global h1 styles are display-sized; this is chrome, so pin it down. */}
-          <h1 className="truncate text-sm! font-medium! leading-none! tracking-normal! text-foreground">
+          <h1 className="truncate text-lg! font-medium! leading-none! tracking-normal! text-foreground">
             {title}
           </h1>
         </>
@@ -79,7 +79,7 @@ export default function ControlPanelTopBar({
           onClick={onOpenSearch}
           data-no-window-drag=""
           style={noDragStyle}
-          className="flex h-8 w-full items-center gap-2.5 rounded-full border border-border bg-foreground/4 px-4 text-start outline-none transition-colors duration-150 hover:bg-foreground/6 focus-visible:ring-1 focus-visible:ring-primary/30 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/8"
+          className="flex h-8 w-full items-center gap-2.5 rounded-md border border-border bg-foreground/4 px-4 text-start outline-none transition-colors duration-150 hover:bg-foreground/6 focus-visible:ring-1 focus-visible:ring-primary/30 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/8"
         >
           <Search size={14} className="shrink-0 text-muted-foreground/70" />
           <span className="flex-1 truncate text-[13px] text-muted-foreground/70">
@@ -87,7 +87,7 @@ export default function ControlPanelTopBar({
           </span>
           <kbd
             dir="ltr"
-            className="shrink-0 rounded-full bg-foreground/6 px-1.5 py-px font-sans text-[10px] font-medium text-muted-foreground/70 dark:bg-white/8"
+            className="shrink-0 font-sans text-[10px] font-medium tracking-wide text-muted-foreground/70"
           >
             ⌘ + K
           </kbd>

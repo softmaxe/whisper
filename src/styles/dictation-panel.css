@@ -310,9 +310,9 @@
 }
 
 .processing-signal-glow {
-  --signal-bright: #38bdf8;
-  --signal-core: #2563eb;
-  --signal-deep: #6366f1;
+  --signal-bright: #f5f5f5;
+  --signal-core: #a3a3a3;
+  --signal-deep: #525252;
   --signal-head: #eaf6ff;
   --signal-halo-opacity: 0.8;
   --signal-comet-opacity: 0.95;

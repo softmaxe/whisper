@@ -217,7 +217,7 @@ export default function TranscriptionItem({
           ) : (
             <p
               dir="auto"
-              className="text-base leading-normal wrap-break-word whitespace-pre-wrap text-foreground"
+              className="text-[15.5px] leading-[1.75] wrap-break-word whitespace-pre-wrap text-foreground"
             >
               {item.text}
             </p>
