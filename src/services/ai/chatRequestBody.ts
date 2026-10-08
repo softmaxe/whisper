@@ -1,4 +1,4 @@
-import type { ReasoningConfig } from "../BaseReasoningService";
+import type { ReasoningConfig } from "../ReasoningService";
 import { getModelFamilyConstraints } from "./modelFamilyConstraints";
 import { suppressThinking } from "./thinkingSuppressionDialects";
 
