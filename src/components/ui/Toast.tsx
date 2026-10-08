@@ -12,7 +12,6 @@ import { isDictationPanelWindow } from "../../utils/windowContext";
 import {
   getDictationErrorActionCount,
   getDictationErrorDuration,
-  resolveToastPresentation,
 } from "../../helpers/toastPresentation";
 import { useCopyFeedback } from "../../hooks/useCopyFeedback";
 import { DictationErrorCard } from "../dictation/DictationErrorCard";
@@ -51,11 +50,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const toast = React.useCallback(
     (props: Omit<ToastProps, "id">): string => {
       const id = Math.random().toString(36).substring(2, 11);
-      const presentation = resolveToastPresentation({
-        presentation: props.presentation,
-        variant: props.variant,
-        isDictationPanel: isDictationPanelWindow(),
-      });
+      // Only callers that ask for the shared error surface get it. A destructive
+      // variant alone is a red toast: promoting every destructive notice (mic
+      // disconnect, cleanup failure, hotkey/GPU fallback) hid the pill, resized the
+      // window and tore down the live transcript for unrelated notices.
+      const presentation: ToastPresentation =
+        props.presentation === "dictation-error" ? "dictation-error" : "standard";
       const duration =
         props.duration ??
         (presentation === "dictation-error"
