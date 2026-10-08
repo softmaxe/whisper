@@ -30,6 +30,8 @@ https://github.com/user-attachments/assets/e843849f-951e-49a4-bb52-a283c7349164
 
 此分支专注于听写和文件转录，不包含 OpenWhispr Cloud、账号、同步、会议、笔记、AI 助手或内置模型服务。
 
+仅支持自建服务。托管服务商的 API 不在支持范围内，即使以 OpenAI 兼容服务地址的形式填写也是如此。Whisper 发送通用的 OpenAI 兼容请求，不针对特定服务商处理地址、请求头或参数，托管接口可能会拒绝这些请求。服务地址需要手动明确配置。
+
 ## 安装
 
 需要搭载 Apple Silicon 的 Mac，运行 macOS 12 Monterey 或更高版本。
@@ -63,6 +65,8 @@ brew upgrade --cask softmaxe/tap/whisper
 
 将修饰键用于 Command+C 等其他快捷键时，不会触发听写。如果 Whisper 无法粘贴到目标应用，会弹出转录文本面板，供你复制后手动粘贴。
 
+开始听写时会出现录音悬浮条，听写及其反馈结束后消失，空闲时不显示。
+
 ### 文件转录
 
 打开「上传」转录音频或视频文件，支持单个文件和批量上传。上传使用相同的语音识别配置，开启历史记录时会保存原始转录。上传不进行文本整理或片段展开，不保留源音频，也不计入听写统计。关闭历史记录后，仍可在上传页面复制结果。
@@ -85,7 +89,7 @@ brew upgrade --cask softmaxe/tap/whisper
 
 ```sh
 mise install
-pnpm install
+pnpm install --frozen-lockfile
 pnpm run dev
 ```
 

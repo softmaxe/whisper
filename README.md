@@ -89,7 +89,7 @@ Install [mise](https://mise.jdx.dev/); it provides the Node.js and pnpm versions
 
 ```sh
 mise install
-pnpm install
+pnpm install --frozen-lockfile
 pnpm run dev
 ```
 
