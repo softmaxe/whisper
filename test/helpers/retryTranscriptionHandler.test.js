@@ -195,7 +195,6 @@ for (const extension of ["webm", "aiff"]) {
     { timeout: 5000 },
     async (t) => {
       const { getFFmpegPath } = require("../../src/helpers/ffmpegUtils");
-      const { getSafeTempDir } = require("../../src/helpers/safeTempDir");
       const source = pathNode.join(uploadTempDir, `cancel.${extension}`);
       if (extension === "aiff")
         execFileSync(getFFmpegPath(), [
@@ -239,7 +238,7 @@ for (const extension of ["webm", "aiff"]) {
       await received.promise;
       const filename = fetches[0].init.body.toString().match(/filename="([^"]+)"/)[1];
       if (extension === "aiff") {
-        convertedPath = pathNode.join(getSafeTempDir(), filename);
+        convertedPath = pathNode.join(osNode.tmpdir(), filename);
         assert.ok(fsNode.existsSync(convertedPath));
       }
       const cancelled = await handlers.get("cancel-upload-transcription")({}, "cancel-upload");

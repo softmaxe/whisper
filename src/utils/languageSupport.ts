@@ -1,20 +1,5 @@
 import registry from "../config/languageRegistry.json";
 
-function buildLanguageSet(key: "whisper" | "assemblyai"): Set<string> {
-  const set = new Set<string>();
-  for (const lang of registry.languages) {
-    if (lang[key]) {
-      set.add(lang.code);
-      const base = lang.code.split("-")[0];
-      if (base !== lang.code) set.add(base);
-    }
-  }
-  return set;
-}
-
-const WHISPER_LANGUAGES = buildLanguageSet("whisper");
-const ASSEMBLYAI_UNIVERSAL3_PRO_LANGUAGES = buildLanguageSet("assemblyai");
-
 const LANGUAGE_INSTRUCTIONS: Record<string, string> = Object.fromEntries(
   registry.languages
     .filter(
@@ -38,5 +23,3 @@ function buildGenericInstruction(langCode: string): string {
   const template = registry._genericTemplate || "";
   return template.replace("{{code}}", langCode);
 }
-
-export { WHISPER_LANGUAGES, ASSEMBLYAI_UNIVERSAL3_PRO_LANGUAGES };
