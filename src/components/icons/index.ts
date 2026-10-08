@@ -23,7 +23,6 @@ export const Copy = createIcon("copy", Nucleo.Copy2Outline24);
 export const CornerDownLeft = createIcon("corner-down-left", Nucleo.ArrowTurnLeftOutline24);
 export const Download = createIcon("download", Nucleo.DownloadOutline24);
 export const Edit3 = createIcon("edit-3", Nucleo.PenOutline24);
-export const ExternalLink = createIcon("external-link", Nucleo.ExternalLinkOutline24);
 export const Eye = createIcon("eye", Nucleo.EyeOutline24);
 export const FileAudio = createIcon("file-audio", Nucleo.FileMusicOutline24);
 export const FileText = createIcon("file-text", Nucleo.FileContentOutline24);

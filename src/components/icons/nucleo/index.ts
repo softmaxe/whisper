@@ -20,7 +20,6 @@ export { Copy2Outline24 } from "./Copy2Outline24";
 export { Cursor2Outline24 } from "./Cursor2Outline24";
 export { DotsVerticalOutline24 } from "./DotsVerticalOutline24";
 export { DownloadOutline24 } from "./DownloadOutline24";
-export { ExternalLinkOutline24 } from "./ExternalLinkOutline24";
 export { EyeOutline24 } from "./EyeOutline24";
 export { FileContentOutline24 } from "./FileContentOutline24";
 export { FileMusicOutline24 } from "./FileMusicOutline24";
