@@ -84,13 +84,9 @@
   },
   "common": {
     "retry": "重试",
-    "reset": "重置",
     "refresh": "刷新",
-    "download": "下载",
     "cancel": "取消",
-    "recommended": "推荐",
     "active": "已激活",
-    "apiKey": "API Key",
     "model": "模型",
     "loading": "加载中...",
     "hold": "按住",
@@ -184,10 +180,8 @@
       "selectedGroup": "已选择",
       "otherGroup": "其他",
       "noSearchResults": "没有与“{{query}}”匹配的模型",
-      "selectModelHint": "尚未选择模型 — 请从下方列表中选择一个。",
-      "keyRequiredHint": "推理需要 API 密钥 — 请添加密钥以使用此提供商。"
+      "selectModelHint": "尚未选择模型 — 请从下方列表中选择一个。"
     },
-    "getApiKey": "获取你的 API Key ->",
     "availableModels": "可用模型",
     "disableThinking": {
       "label": "禁用思考输出",
@@ -563,7 +557,6 @@
     }
   },
   "models": {
-    "learnMore": "了解更多",
     "noneAvailable": "没有可用的模型"
   },
   "notes": {

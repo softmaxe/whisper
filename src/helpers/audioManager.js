@@ -38,8 +38,11 @@ import {
 } from "../utils/dictionaryEchoFilter.js";
 import { WHISPER_PROMPT_CHARS, trimDictionaryPrompt } from "../utils/dictionaryPromptCap.js";
 import { getDictionaryHintWords } from "../utils/snippets";
-import { isEmptyRecording } from "./recordingGuard";
-import { evaluateFinishedRecording, withSalvageWarning } from "./recordingValidation";
+import {
+  evaluateFinishedRecording,
+  isEmptyRecording,
+  withSalvageWarning,
+} from "./recordingValidation";
 import { resolveTranscriptionRoute } from "./transcriptionRoute.ts";
 
 const REASONING_CACHE_TTL = 30000; // 30 seconds

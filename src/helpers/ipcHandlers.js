@@ -32,8 +32,7 @@ const AUTO_LEARN_DEBOUNCE_MS = 1500;
 // approvedAudioPaths, so a compromised renderer can't read arbitrary files.
 function getCanonicalAllowedAudioDirs() {
   const os = require("os");
-  const { getSafeTempDir } = require("./safeTempDir");
-  const dirs = [os.tmpdir(), getSafeTempDir(), app.getPath("userData")];
+  const dirs = [os.tmpdir(), app.getPath("userData")];
   return dirs.map((d) => {
     try {
       return fs.realpathSync(d);

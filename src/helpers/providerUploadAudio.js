@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { convertToMp3 } = require("./ffmpegUtils");
-const { getSafeTempDir } = require("./safeTempDir");
 
 // Containers every transcription provider we post to accepts as-is. Anything
 // else the upload picker admits is re-encoded to MP3 before it leaves the app,
@@ -34,7 +34,7 @@ async function prepareProviderUpload(sourcePath, { signal } = {}) {
   }
 
   const mp3Path = path.join(
-    getSafeTempDir(),
+    os.tmpdir(),
     `ow-upload-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.mp3`
   );
   try {

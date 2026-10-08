@@ -4,7 +4,7 @@ import {
   getDefaultPromptText,
   resolvePromptTemplate,
   wrapCleanupTranscript,
-} from "../../config/prompts";
+} from "../../config/prompts/index";
 import { useDialogs } from "../../hooks/useDialogs";
 import ReasoningService from "../../services/ReasoningService";
 import { useSettingsStore } from "../../stores/settingsStore";

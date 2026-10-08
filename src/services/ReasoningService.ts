@@ -1,9 +1,10 @@
-import { BaseReasoningService, ReasoningConfig } from "./BaseReasoningService";
 import { withRetry, createApiRetryStrategy, httpError } from "../utils/retry";
 import { TOKEN_LIMITS, buildApiUrl } from "../config/constants";
 import logger from "../utils/logger";
 import { getSettings } from "../stores/settingsStore";
-import { wrapCleanupTranscript } from "../config/prompts";
+import { resolvePrompt, wrapCleanupTranscript } from "../config/prompts/index";
+import { resolveCleanupLanguage } from "../utils/chineseScript";
+import { getDictionaryHintWords } from "../utils/snippets";
 import { stripThinkingTags } from "../helpers/stripThinking.js";
 import {
   getLlmRequestTimeoutSeconds,
@@ -21,21 +22,45 @@ import { extractApiErrorMessage } from "./ai/apiErrorMessage";
 
 const PROVIDER_NAME = "LAN";
 
+export interface ReasoningConfig {
+  maxTokens?: number;
+  temperature?: number;
+  contextSize?: number;
+  systemPrompt?: string;
+  lanUrl?: string;
+  customApiKey?: string;
+  disableThinking?: boolean;
+  language?: string;
+  requireCompleteOutput?: boolean;
+}
+
 function logParamFallback(logEvent: string) {
   return (details: { status: number; stripped: string[] }) =>
     logger.logReasoning(logEvent, details);
 }
 
 // Text cleanup through the user's self-hosted OpenAI-compatible server.
-class ReasoningService extends BaseReasoningService {
+class ReasoningService {
   private activeRequestControllers = new Set<AbortController>();
   private requestCancellationGeneration = 0;
 
   constructor() {
-    super();
     if (typeof window !== "undefined") {
       window.addEventListener("beforeunload", () => this.destroy());
     }
+  }
+
+  private getSystemPrompt(agentName: string | null): string {
+    const settings = getSettings();
+    return resolvePrompt("cleanup", {
+      agentName,
+      customDictionary: getDictionaryHintWords(settings),
+      // Auto must remain auto here: zh-CN/zh-TW instructions make cleanup write its
+      // entire response in Chinese before the transcription language is known. The
+      // final deterministic script pass handles likely-Chinese output instead. See #975.
+      language: resolveCleanupLanguage(settings.preferredLanguage),
+      uiLanguage: settings.uiLanguage || "en",
+    });
   }
 
   private async callChatCompletionsApi(
@@ -65,11 +90,9 @@ class ReasoningService extends BaseReasoningService {
         config.maxTokens ||
         Math.max(
           4096,
-          this.calculateMaxTokens(
-            text.length,
+          Math.max(
             TOKEN_LIMITS.MIN_TOKENS,
-            TOKEN_LIMITS.MAX_TOKENS,
-            TOKEN_LIMITS.TOKEN_MULTIPLIER
+            Math.min(text.length * TOKEN_LIMITS.TOKEN_MULTIPLIER, TOKEN_LIMITS.MAX_TOKENS)
           )
         ),
     });
