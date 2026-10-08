@@ -1,6 +1,6 @@
 import type { ReasoningConfig } from "../BaseReasoningService";
 import { getModelFamilyConstraints } from "./modelFamilyConstraints";
-import { applyThinkingSuppression } from "./thinkingSuppression";
+import { suppressThinking } from "./thinkingSuppressionDialects";
 
 /**
  * Single place that turns a model and configuration into the
@@ -28,14 +28,14 @@ export function applyChatCompletionsParams(
   requestBody.temperature = config.temperature ?? defaultTemperature;
 
   // Deterministic transforms (cleanup) pin the family's preferred effort — see
-  // modelFamilyConstraints for the gpt-oss rationale. applyThinkingSuppression
+  // modelFamilyConstraints for the gpt-oss rationale. Thinking suppression
   // still wins when thinking is disabled by the user.
   const familyEffort = getModelFamilyConstraints(model)?.reasoningEffort;
   if (familyEffort?.cleanupValue && (!config.systemPrompt || config.requireCompleteOutput)) {
     requestBody.reasoning_effort = familyEffort.cleanupValue;
   }
 
-  applyThinkingSuppression(requestBody, model, config);
+  if (config.disableThinking === true) suppressThinking(requestBody, model);
 }
 
 /** Finish reasons that mean the output hit the token cap, across providers. */
