@@ -84,13 +84,11 @@
   },
   "common": {
     "retry": "Retry",
-    "reset": "Reset",
     "refresh": "Refresh",
     "download": "Download",
     "cancel": "Cancel",
     "recommended": "Recommended",
     "active": "Active",
-    "apiKey": "API Key",
     "model": "Model",
     "loading": "Loading...",
     "hold": "Hold",
@@ -184,8 +182,7 @@
       "selectedGroup": "Selected",
       "otherGroup": "Other",
       "noSearchResults": "No models match \"{{query}}\"",
-      "selectModelHint": "No model selected yet — choose one from the list below.",
-      "keyRequiredHint": "An API key is required for inference — add one to use this provider."
+      "selectModelHint": "No model selected yet — choose one from the list below."
     },
     "availableModels": "Available Models",
     "disableThinking": {

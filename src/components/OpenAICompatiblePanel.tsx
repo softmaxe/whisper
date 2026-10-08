@@ -22,13 +22,8 @@ interface OpenAICompatiblePanelProps {
   setApiKey: (value: string) => void;
   model: string;
   setModel: (value: string) => void;
-  defaultBaseUrl?: string;
   baseUrlPlaceholder?: string;
   helpExamples?: ReactNode;
-  // Hide the endpoint editor when the URL is fixed by the caller.
-  lockedBaseUrl?: boolean;
-  // Providers whose /models is public but whose inference needs a key.
-  apiKeyRequired?: boolean;
 }
 
 export default function OpenAICompatiblePanel({
@@ -38,11 +33,8 @@ export default function OpenAICompatiblePanel({
   setApiKey,
   model,
   setModel,
-  defaultBaseUrl,
   baseUrlPlaceholder = "http://localhost:8080/v1",
   helpExamples,
-  lockedBaseUrl = false,
-  apiKeyRequired = false,
 }: OpenAICompatiblePanelProps) {
   const { t } = useTranslation();
   const [draftBase, setDraftBase] = useState(baseUrl);
@@ -171,7 +163,7 @@ export default function OpenAICompatiblePanel({
 
         // When the entered base yields no models, fall back through sibling
         // bases and adopt the working one so inference targets it too.
-        const candidates = lockedBaseUrl ? [normalized] : getModelListBaseCandidates(normalized);
+        const candidates = getModelListBaseCandidates(normalized);
         let mapped: ModelOption[] = [];
         let resolvedBase = normalized;
         let primaryError: Error | null = null;
@@ -226,7 +218,7 @@ export default function OpenAICompatiblePanel({
         }
       }
     },
-    [baseUrl, apiKey, lockedBaseUrl, setBaseUrl, t]
+    [baseUrl, apiKey, setBaseUrl, t]
   );
 
   useEffect(() => {
@@ -258,14 +250,6 @@ export default function OpenAICompatiblePanel({
     }
   }, [trimmedDraft, baseUrl, applyBase]);
 
-  const handleReset = useCallback(() => {
-    const target = defaultBaseUrl ?? "";
-    setDraftBase(target);
-    setBaseUrl(target);
-    lastLoadedBaseRef.current = null;
-    loadRemoteModels(target, true);
-  }, [defaultBaseUrl, setBaseUrl, loadRemoteModels]);
-
   const handleRefresh = useCallback(() => {
     if (isDraftDirty) {
       applyBase();
@@ -280,63 +264,45 @@ export default function OpenAICompatiblePanel({
 
   return (
     <>
-      {!lockedBaseUrl && (
-        <div className="space-y-2">
-          <h4 className="font-medium text-foreground">{t("reasoning.custom.endpointTitle")}</h4>
-          <Input
-            dir="ltr"
-            value={draftBase}
-            onChange={(event) => setDraftBase(event.target.value)}
-            onBlur={handleBlur}
-            placeholder={baseUrlPlaceholder}
-            className="text-sm"
-          />
-          {helpExamples ?? (
-            <p className="text-xs text-muted-foreground">
-              {t("reasoning.custom.endpointExamples")}{" "}
-              <code dir="ltr" className="text-primary">
-                http://localhost:1234/v1
-              </code>{" "}
-              (LM Studio),{" "}
-              <code dir="ltr" className="text-primary">
-                http://localhost:11434/v1
-              </code>{" "}
-              (Ollama).
-            </p>
-          )}
-        </div>
-      )}
+      <div className="space-y-2">
+        <h4 className="font-medium text-foreground">{t("reasoning.custom.endpointTitle")}</h4>
+        <Input
+          dir="ltr"
+          value={draftBase}
+          onChange={(event) => setDraftBase(event.target.value)}
+          onBlur={handleBlur}
+          placeholder={baseUrlPlaceholder}
+          className="text-sm"
+        />
+        {helpExamples ?? (
+          <p className="text-xs text-muted-foreground">
+            {t("reasoning.custom.endpointExamples")}{" "}
+            <code dir="ltr" className="text-primary">
+              http://localhost:1234/v1
+            </code>{" "}
+            (LM Studio),{" "}
+            <code dir="ltr" className="text-primary">
+              http://localhost:11434/v1
+            </code>{" "}
+            (Ollama).
+          </p>
+        )}
+      </div>
 
       <div className="space-y-2 pt-3">
-        <h4 className="font-medium text-foreground">
-          {t(apiKeyRequired ? "common.apiKey" : "reasoning.custom.apiKeyOptional")}
-        </h4>
+        <h4 className="font-medium text-foreground">{t("reasoning.custom.apiKeyOptional")}</h4>
         <ApiKeyInput
           apiKey={apiKey}
           setApiKey={setApiKey}
           label=""
-          helpText={apiKeyRequired ? "" : t("reasoning.custom.apiKeyHelp")}
+          helpText={t("reasoning.custom.apiKeyHelp")}
         />
-        {apiKeyRequired && !apiKey?.trim() && (
-          <p className="text-xs text-warning">{t("reasoning.custom.keyRequiredHint")}</p>
-        )}
       </div>
 
       <div className="space-y-2 pt-3">
         <div className="flex items-center justify-between">
           <h4 className="text-sm font-medium text-foreground">{t("reasoning.availableModels")}</h4>
           <div className="flex gap-2">
-            {defaultBaseUrl !== undefined && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={handleReset}
-                className="text-xs"
-              >
-                {t("common.reset")}
-              </Button>
-            )}
             <Button
               type="button"
               size="sm"
