@@ -9,6 +9,8 @@
 
 @theme {
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Display serif for headings, date labels and large figures; system faces on macOS. */
+  --font-serif: "Songti SC", STSong, Georgia, serif;
   /* Strong ease-out for UI enter/exit motion. Overrides Tailwind's default
      (0, 0, 0.2, 1), which starts too slowly to feel responsive, so every
      `ease-out` utility and animate-in/out recipe shares this curve. */
@@ -61,11 +63,11 @@
 }
 
 :root {
-  /* Bundle JetBrains Mono for Latin text; use system PingFang for Chinese on macOS. */
+  /* Body text uses the system UI faces (SF and PingFang on macOS); headings use the display serif. */
   --font-family-sans:
-    "JetBrains Mono", "PingFang SC", "PingFang TC", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "PingFang TC", "Segoe UI",
     "Microsoft YaHei", "Noto Sans CJK SC", "Noto Sans", sans-serif;
-  --font-family-display: var(--font-family-sans);
+  --font-family-display: var(--font-serif);
 
   /* Opacities */
   --opacity-subtle: 0.1;
@@ -109,65 +111,63 @@
 }
 
 .dark {
-  /* Dark mode — charcoal surfaces with clear elevation hierarchy
-     Base L=0.22 (charcoal) with 0.05 steps between layers.
-     Hue 260 (neutral blue) with minimal chroma for sophistication. */
-  --color-background: oklch(0.22 0.006 260);
-  --color-foreground: oklch(0.93 0 0);
-  --color-card: oklch(0.27 0.008 260);
-  --color-card-foreground: oklch(0.93 0 0);
-  --color-popover: oklch(0.29 0.009 260);
-  --color-popover-foreground: oklch(0.93 0 0);
-  --color-primary: oklch(0.65 0.2 260);
-  --color-primary-foreground: oklch(0.99 0 0);
-  --color-secondary: oklch(0.28 0.007 260);
-  --color-secondary-foreground: oklch(0.9 0 0);
-  --color-muted: oklch(0.24 0.006 260);
-  --color-muted-foreground: oklch(0.65 0 0);
-  --color-accent: oklch(0.68 0.18 285);
-  --color-accent-foreground: oklch(0.99 0 0);
+  /* Dark mode — neutral graphite surfaces with white as the only accent.
+     Hue-free greys keep the palette quiet; elevation comes from small
+     lightness steps rather than borders or glow. */
+  --color-background: #161616;
+  --color-foreground: #ececec;
+  --color-card: #1b1b1b;
+  --color-card-foreground: #ececec;
+  --color-popover: #1d1d1d;
+  --color-popover-foreground: #ececec;
+  --color-primary: #ededed;
+  --color-primary-foreground: #111111;
+  --color-secondary: #202020;
+  --color-secondary-foreground: #e5e5e5;
+  --color-muted: #1d1d1d;
+  --color-muted-foreground: #8b8b8b;
+  --color-accent: #262626;
+  --color-accent-foreground: #ececec;
   --color-destructive: oklch(0.62 0.22 25);
   --color-destructive-foreground: oklch(0.99 0 0);
-  --color-border: oklch(0.35 0.007 260);
-  --color-input: oklch(0.19 0.005 260);
-  --color-ring: oklch(0.65 0.2 260);
+  --color-border: #262626;
+  --color-input: #121212;
+  --color-ring: #888888;
   --color-success: oklch(0.7 0.18 145);
   --color-success-foreground: oklch(0.99 0 0);
   --color-warning: oklch(0.75 0.15 70);
   --color-warning-foreground: oklch(0.15 0 0);
-  --color-info: oklch(0.68 0.18 240);
-  --color-info-foreground: oklch(0.99 0 0);
+  --color-info: #bbbbbb;
+  --color-info-foreground: #111111;
 
-  /* Surface hierarchy — charcoal depth system (0.22 → 0.33) */
-  --color-surface-0: oklch(0.22 0.006 260);
-  --color-surface-1: oklch(0.25 0.007 260);
-  --color-surface-2: oklch(0.27 0.008 260);
-  --color-surface-3: oklch(0.3 0.009 260);
-  --color-surface-raised: oklch(0.33 0.01 260);
-  --color-surface-window: oklch(0.19 0.005 260);
+  /* Surface hierarchy — graphite depth system */
+  --color-surface-0: #161616;
+  --color-surface-1: #191919;
+  --color-surface-2: #1c1c1c;
+  --color-surface-3: #222222;
+  --color-surface-raised: #2a2a2a;
+  --color-surface-window: #0f0f0f;
 
   /* Border states */
-  --color-border-subtle: oklch(0.33 0.006 260);
-  --color-border-hover: oklch(0.42 0.01 260);
-  --color-border-active: oklch(0.5 0.15 260);
-  --color-link: oklch(0.67 0.1 250);
+  --color-border-subtle: #222222;
+  --color-border-hover: #333333;
+  --color-border-active: #8b8b8b;
+  --color-link: #ededed;
 
-  /* Card depth shadows — softer for charcoal, with top highlight for premium depth */
-  --shadow-card: 0 1px 3px oklch(0 0 0 / 0.2), inset 0 1px 0 oklch(1 0 0 / 0.03);
-  --shadow-card-hover: 0 4px 12px oklch(0 0 0 / 0.25), inset 0 1px 0 oklch(1 0 0 / 0.04);
-  --shadow-elevated: 0 8px 24px oklch(0 0 0 / 0.3);
-  --shadow-modal: 0 24px 48px -12px oklch(0 0 0 / 0.4);
+  /* Flat surfaces: depth only where something floats above the window */
+  --shadow-card: none;
+  --shadow-card-hover: none;
+  --shadow-elevated: 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-modal: 0 30px 60px -20px rgb(0 0 0 / 0.7);
 
-  /* Premium effects */
-  --shadow-metallic-dark: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 8px rgba(0, 0, 0, 0.2);
-  --shadow-selected-glow:
-    inset 0 0 0 1px oklch(0.65 0.2 260 / 0.2), 0 0 16px -4px oklch(0.65 0.2 260 / 0.2);
-  --shadow-card-hover-subtle: 0 2px 8px -2px rgba(0, 0, 0, 0.12);
+  --shadow-metallic-dark: none;
+  --shadow-selected-glow: none;
+  --shadow-card-hover-subtle: none;
+  --shadow-glass: inset 0 0 0 1px rgb(255 255 255 / 0.05), 0 2px 12px rgb(0 0 0 / 0.35);
 
-  /* Liquid-glass edge — faint rim on charcoal, deeper lift */
-  --shadow-glass:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1), inset 0 0 0 1px rgba(255, 255, 255, 0.05),
-    0 2px 12px rgba(0, 0, 0, 0.35);
+  /* Floating recording pill */
+  --voice-flow-ink: #1a1a1a;
+  --voice-flow-rim: rgb(255 255 255 / 0.08);
 }
 
 @layer base {

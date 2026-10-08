@@ -146,12 +146,12 @@ export default function HistoryView({
                 {groupedHistory.map((group, index) => (
                   <div key={group.label} className={index > 0 ? "mt-8" : ""}>
                     <div className="sticky -top-1 z-10 -mx-4 px-4 pt-2 pb-2 bg-background flex items-center gap-3">
-                      <span className="shrink-0 text-xs font-medium text-muted-foreground">
+                      <span className="shrink-0 font-serif text-[15px] font-medium tracking-[0.04em] text-muted-foreground dark:text-foreground/75">
                         {group.label}
                       </span>
                       <span aria-hidden="true" className="h-px flex-1 bg-border/70" />
                       {index === 0 && (
-                        <div className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
+                        <div className="absolute end-4 flex items-center gap-1.5 bg-background ps-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity duration-200">
                           {discardedToggle}
                           <button
                             onClick={clearAllTranscriptions}

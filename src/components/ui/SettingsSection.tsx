@@ -23,7 +23,7 @@ export const SettingsRow: React.FC<SettingsRowProps> = ({
       } ${className}`}
     >
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-medium text-foreground">{label}</p>
+        <p className="text-[13px] font-medium text-foreground">{label}</p>
         {description && (
           <p className="text-xs text-muted-foreground/80 mt-0.5 leading-relaxed">{description}</p>
         )}

@@ -81,7 +81,7 @@ function SettingsPanelRow({
 function SectionHeader({ title, description }: { title: string; description?: string }) {
   return (
     <div className="mb-3">
-      <h3 className="text-xs font-semibold text-foreground tracking-tight">{title}</h3>
+      <h3 className="text-lg font-semibold text-foreground tracking-tight">{title}</h3>
       {description && (
         <p className="text-xs text-muted-foreground/80 mt-0.5 leading-relaxed">{description}</p>
       )}

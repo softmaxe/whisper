@@ -251,7 +251,7 @@ function FooterHint({ keys, label }: { keys: string[]; label: string }) {
         {keys.map((k) => (
           <kbd
             key={k}
-            className="text-[10px] px-1 py-px rounded border border-border/70 bg-muted/50 text-muted-foreground/55 font-mono leading-tight"
+            className="text-[10px] px-1 py-px rounded border border-border/70 bg-muted/50 text-muted-foreground/55 font-sans leading-tight"
           >
             {k}
           </kbd>
