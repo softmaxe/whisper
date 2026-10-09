@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { useSettingsStore } from "../../stores/settingsStore";
 import OpenAICompatiblePanel from "../OpenAICompatiblePanel";
+import { SectionHeader, SettingsPanel, SettingsPanelRow, SettingsRow } from "../ui/SettingsSection";
 import { Toggle } from "../ui/toggle";
 
 // Server, key, model, and thinking controls for the self-hosted cleanup model.
@@ -16,29 +17,31 @@ export default function InferenceConfigEditor() {
   const setCleanupDisableThinking = useSettingsStore((s) => s.setCleanupDisableThinking);
 
   return (
-    <div className="space-y-3">
-      <OpenAICompatiblePanel
-        baseUrl={cleanupRemoteUrl}
-        setBaseUrl={setCleanupRemoteUrl}
-        apiKey={cleanupCustomApiKey}
-        setApiKey={setCleanupCustomApiKey}
-        model={cleanupModel}
-        setModel={setCleanupModel}
-        baseUrlPlaceholder="http://192.168.1.126:11434/v1"
-        helpExamples={
-          <p className="text-xs text-muted-foreground">{t("reasoning.selfHosted.endpointHelp")}</p>
-        }
+    <div>
+      <SectionHeader
+        title={t("settingsPage.llms.server.title")}
+        description={t("settingsPage.llms.server.description")}
       />
-
-      <div className="flex items-start justify-between gap-3 pt-1">
-        <div className="flex-1 min-w-0">
-          <h4 className="text-sm font-medium text-foreground">
-            {t("reasoning.disableThinking.label")}
-          </h4>
-          <p className="text-xs text-muted-foreground">{t("reasoning.disableThinking.help")}</p>
-        </div>
-        <Toggle checked={cleanupDisableThinking} onChange={setCleanupDisableThinking} />
-      </div>
+      <SettingsPanel>
+        <OpenAICompatiblePanel
+          baseUrl={cleanupRemoteUrl}
+          setBaseUrl={setCleanupRemoteUrl}
+          apiKey={cleanupCustomApiKey}
+          setApiKey={setCleanupCustomApiKey}
+          model={cleanupModel}
+          setModel={setCleanupModel}
+          baseUrlPlaceholder="http://192.168.1.126:11434/v1"
+          helpExamples={t("reasoning.selfHosted.endpointHelp")}
+        />
+        <SettingsPanelRow>
+          <SettingsRow
+            label={t("reasoning.disableThinking.label")}
+            description={t("reasoning.disableThinking.help")}
+          >
+            <Toggle checked={cleanupDisableThinking} onChange={setCleanupDisableThinking} />
+          </SettingsRow>
+        </SettingsPanelRow>
+      </SettingsPanel>
     </div>
   );
 }

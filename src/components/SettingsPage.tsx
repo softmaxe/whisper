@@ -26,10 +26,9 @@ import { ActivationModeSelector } from "./ui/ActivationModeSelector";
 import { HotkeyListInput } from "./ui/HotkeyListInput";
 import LanguageSelector from "./ui/LanguageSelector";
 import PromptStudio from "./ui/PromptStudio";
-import { SettingsRow } from "./ui/SettingsSection";
+import { SectionHeader, SettingsPanel, SettingsPanelRow, SettingsRow } from "./ui/SettingsSection";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Toggle } from "./ui/toggle";
-import { useSettingsLayout } from "./ui/useSettingsLayout";
 import { useToast } from "./ui/useToast";
 
 export type SettingsSectionType = "general" | "hotkeys" | "speechToText" | "llms" | "privacyData";
@@ -48,47 +47,6 @@ const RETENTION_DAY_OPTIONS = [1, 7, 14, 30, 60, 90];
 const RETENTION_SELECT_CLASS =
   "h-7 rounded border border-border/70 bg-surface-1/80 px-2.5 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm hover:border-border-hover hover:bg-surface-2/70 focus:outline-none focus:ring-2 focus:ring-ring/30 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 transition-colors duration-200";
 
-function SettingsPanel({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <div
-      className={`rounded-lg border border-border/70 dark:border-border-subtle/70 bg-card/50 dark:bg-surface-2/50 backdrop-blur-sm divide-y divide-border/60 dark:divide-border-subtle/50 ${className}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-function SettingsPanelRow({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  const { isCompact } = useSettingsLayout();
-
-  return (
-    <div className={`${isCompact ? "px-3 py-2.5" : "px-4 py-3"} ${className}`}>{children}</div>
-  );
-}
-
-function SectionHeader({ title, description }: { title: string; description?: string }) {
-  return (
-    <div className="mb-3">
-      <h3 className="text-lg font-semibold text-foreground tracking-tight">{title}</h3>
-      {description && (
-        <p className="text-xs text-muted-foreground/80 mt-0.5 leading-relaxed">{description}</p>
-      )}
-    </div>
-  );
-}
-
 interface AiModelsSectionProps {
   useCleanupModel: boolean;
   setUseCleanupModel: (value: boolean) => void;
@@ -98,7 +56,7 @@ function AiModelsSection({ useCleanupModel, setUseCleanupModel }: AiModelsSectio
   const { t } = useTranslation();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <SettingsPanel>
         <SettingsPanelRow>
           <SettingsRow

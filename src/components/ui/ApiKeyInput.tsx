@@ -109,7 +109,7 @@ export default function ApiKeyInput({
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               aria-label={ariaLabel || resolvedLabel || t("apiKeyInput.label")}
-              className={`h-8 text-sm font-mono pr-16 ${variantClasses}`}
+              className={`h-8 text-[13px] font-mono pr-16 ${variantClasses}`}
               autoComplete="off"
               spellCheck={false}
             />
@@ -152,7 +152,7 @@ export default function ApiKeyInput({
                 {maskKey(apiKey)}
               </span>
             ) : (
-              <span className="text-muted-foreground/70 text-xs">{resolvedPlaceholder}</span>
+              <span className="text-muted-foreground/70 text-[13px]">{resolvedPlaceholder}</span>
             )}
             <span className="ms-auto text-muted-foreground/70 text-xs group-hover:text-muted-foreground/70 transition-colors">
               {hasKey ? t("apiKeyInput.editButton") : t("apiKeyInput.addButton")}
