@@ -67,7 +67,7 @@ export function ModelCard({
         <span
           dir="ltr"
           className={cn(
-            "text-sm font-semibold text-foreground truncate tracking-tight",
+            "text-[13px] font-medium text-foreground truncate",
             truncateDescription && (model.description ? "shrink-0 max-w-[60%]" : "min-w-0 flex-1")
           )}
         >
@@ -113,7 +113,7 @@ export default function ModelCardList({
   const { t } = useTranslation();
 
   if (models.length === 0) {
-    return <p className="text-sm text-muted-foreground py-2">{t("models.noneAvailable")}</p>;
+    return <p className="text-xs text-muted-foreground">{t("models.noneAvailable")}</p>;
   }
 
   return (

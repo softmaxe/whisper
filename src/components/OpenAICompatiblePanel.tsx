@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import ApiKeyInput from "./ui/ApiKeyInput";
 import ModelCardList from "./ui/ModelCardList";
 import SearchableModelList, { MODEL_SEARCH_THRESHOLD } from "./ui/SearchableModelList";
+import { SettingsField, SettingsPanelRow } from "./ui/SettingsSection";
 import { buildApiUrl, getModelListBaseCandidates, normalizeBaseUrl } from "../config/constants";
 import { isSecureHttpEndpoint } from "../utils/urlUtils";
 
@@ -37,6 +38,7 @@ export default function OpenAICompatiblePanel({
   helpExamples,
 }: OpenAICompatiblePanelProps) {
   const { t } = useTranslation();
+  const fieldId = useId();
   const [draftBase, setDraftBase] = useState(baseUrl);
   const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -264,45 +266,65 @@ export default function OpenAICompatiblePanel({
 
   return (
     <>
-      <div className="space-y-2">
-        <h4 className="font-medium text-foreground">{t("reasoning.custom.endpointTitle")}</h4>
-        <Input
-          dir="ltr"
-          value={draftBase}
-          onChange={(event) => setDraftBase(event.target.value)}
-          onBlur={handleBlur}
-          placeholder={baseUrlPlaceholder}
-          className="text-sm"
-        />
-        {helpExamples ?? (
-          <p className="text-xs text-muted-foreground">
-            {t("reasoning.custom.endpointExamples")}{" "}
-            <code dir="ltr" className="text-primary">
-              http://localhost:1234/v1
-            </code>{" "}
-            (LM Studio),{" "}
-            <code dir="ltr" className="text-primary">
-              http://localhost:11434/v1
-            </code>{" "}
-            (Ollama).
-          </p>
-        )}
-      </div>
+      <SettingsPanelRow>
+        <SettingsField
+          label={t("reasoning.custom.endpointTitle")}
+          htmlFor={`${fieldId}-url`}
+          description={
+            helpExamples ?? (
+              <>
+                {t("reasoning.custom.endpointExamples")}{" "}
+                <code dir="ltr" className="text-primary">
+                  http://localhost:1234/v1
+                </code>{" "}
+                (LM Studio),{" "}
+                <code dir="ltr" className="text-primary">
+                  http://localhost:11434/v1
+                </code>{" "}
+                (Ollama).
+              </>
+            )
+          }
+        >
+          <Input
+            id={`${fieldId}-url`}
+            dir="ltr"
+            value={draftBase}
+            onChange={(event) => setDraftBase(event.target.value)}
+            onBlur={handleBlur}
+            placeholder={baseUrlPlaceholder}
+            className="h-8 text-[13px]"
+          />
+        </SettingsField>
+      </SettingsPanelRow>
 
-      <div className="space-y-2 pt-3">
-        <h4 className="font-medium text-foreground">{t("reasoning.custom.apiKeyOptional")}</h4>
-        <ApiKeyInput
-          apiKey={apiKey}
-          setApiKey={setApiKey}
-          label=""
-          helpText={t("reasoning.custom.apiKeyHelp")}
-        />
-      </div>
+      <SettingsPanelRow>
+        <SettingsField
+          label={t("reasoning.custom.apiKeyOptional")}
+          description={t("reasoning.custom.apiKeyHelp")}
+        >
+          <ApiKeyInput
+            apiKey={apiKey}
+            setApiKey={setApiKey}
+            label=""
+            ariaLabel={t("reasoning.custom.apiKeyOptional")}
+          />
+        </SettingsField>
+      </SettingsPanelRow>
 
-      <div className="space-y-2 pt-3">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium text-foreground">{t("reasoning.availableModels")}</h4>
-          <div className="flex gap-2">
+      <SettingsPanelRow>
+        <SettingsField
+          label={t("common.model")}
+          description={
+            <>
+              {t("reasoning.custom.queryPrefix")}{" "}
+              <code dir="ltr" className="break-all">
+                {queryUrl}
+              </code>{" "}
+              {t("reasoning.custom.querySuffix")}
+            </>
+          }
+          action={
             <Button
               type="button"
               size="sm"
@@ -317,48 +339,44 @@ export default function OpenAICompatiblePanel({
                   ? t("reasoning.custom.applyAndRefresh")
                   : t("common.refresh")}
             </Button>
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {t("reasoning.custom.queryPrefix")}{" "}
-          <code dir="ltr" className="break-all">
-            {queryUrl}
-          </code>{" "}
-          {t("reasoning.custom.querySuffix")}
-        </p>
-        {isDraftDirty && (
-          <p className="text-xs text-primary">{t("reasoning.custom.modelsReloadHint")}</p>
-        )}
-        {!hasBase && <p className="text-xs text-warning">{t("reasoning.custom.enterEndpoint")}</p>}
-        {hasBase && (
-          <>
-            {modelsLoading && (
-              <p className="text-xs text-primary">{t("reasoning.custom.fetchingModels")}</p>
-            )}
-            {modelsError && <p className="text-xs text-destructive">{modelsError}</p>}
-            {!modelsLoading && !modelsError && modelOptions.length === 0 && (
-              <p className="text-xs text-warning">{t("reasoning.custom.noModels")}</p>
-            )}
-            {!modelsLoading && displayedModels.length > 0 && !model && (
-              <p className="text-xs text-warning">{t("reasoning.custom.selectModelHint")}</p>
-            )}
-          </>
-        )}
-        {displayedModels.length > MODEL_SEARCH_THRESHOLD ? (
-          <SearchableModelList
-            models={displayedModels}
-            selectedModel={model}
-            onModelSelect={setModel}
-          />
-        ) : (
-          <ModelCardList
-            models={displayedModels}
-            selectedModel={model}
-            onModelSelect={setModel}
-            truncateDescription
-          />
-        )}
-      </div>
+          }
+        >
+          {isDraftDirty && (
+            <p className="text-xs text-primary">{t("reasoning.custom.modelsReloadHint")}</p>
+          )}
+          {!hasBase && (
+            <p className="text-xs text-warning">{t("reasoning.custom.enterEndpoint")}</p>
+          )}
+          {hasBase && (
+            <>
+              {modelsLoading && (
+                <p className="text-xs text-primary">{t("reasoning.custom.fetchingModels")}</p>
+              )}
+              {modelsError && <p className="text-xs text-destructive">{modelsError}</p>}
+              {!modelsLoading && !modelsError && modelOptions.length === 0 && (
+                <p className="text-xs text-warning">{t("reasoning.custom.noModels")}</p>
+              )}
+              {!modelsLoading && displayedModels.length > 0 && !model && (
+                <p className="text-xs text-warning">{t("reasoning.custom.selectModelHint")}</p>
+              )}
+            </>
+          )}
+          {displayedModels.length > MODEL_SEARCH_THRESHOLD ? (
+            <SearchableModelList
+              models={displayedModels}
+              selectedModel={model}
+              onModelSelect={setModel}
+            />
+          ) : (
+            <ModelCardList
+              models={displayedModels}
+              selectedModel={model}
+              onModelSelect={setModel}
+              truncateDescription
+            />
+          )}
+        </SettingsField>
+      </SettingsPanelRow>
     </>
   );
 }

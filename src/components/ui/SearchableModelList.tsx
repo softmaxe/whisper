@@ -197,7 +197,7 @@ export default function SearchableModelList({
           aria-expanded={rows.length > 0}
           aria-controls={listboxId}
           aria-activedescendant={activeId}
-          className="h-9 pl-8 text-sm"
+          className="h-8 pl-8 text-[13px]"
         />
       </div>
 

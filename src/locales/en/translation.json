@@ -182,7 +182,6 @@
       "noSearchResults": "No models match \"{{query}}\"",
       "selectModelHint": "No model selected yet — choose one from the list below."
     },
-    "availableModels": "Available Models",
     "disableThinking": {
       "label": "Disable thinking output",
       "help": "Skips reasoning tokens for cleaner output. Recommended for cleanup. Some servers ignore this hint."
@@ -545,7 +544,11 @@
       "sharedDescription": "Dictation and file transcription share these settings."
     },
     "llms": {
-      "title": "Text cleanup"
+      "title": "Text cleanup",
+      "server": {
+        "title": "Server",
+        "description": "OpenAI-compatible server that cleans up dictated text"
+      }
     },
     "transcription": {
       "modes": {
