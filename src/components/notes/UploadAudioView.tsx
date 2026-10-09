@@ -11,7 +11,11 @@ import type { FileTranscriptionConfig } from "../../services/fileTranscription";
 import BatchQueueView from "./BatchQueueView";
 import { getBaseLanguageCode } from "../../utils/languageSupport";
 import { saveUploadTranscription } from "../../services/uploadNotes";
-import { UploadCompleteWarnings, UploadModelSettingsButton } from "./UploadAudioFeedback";
+import {
+  UploadCompleteWarnings,
+  UploadModelFooterButton,
+  UploadModelSettingsButton,
+} from "./UploadAudioFeedback";
 import { isSupportedUploadFile } from "../../utils/uploadAudioFormats";
 import { setControlPanelHold } from "../../utils/controlPanelRetention";
 
@@ -243,7 +247,7 @@ export default function UploadAudioView({
         )}
         style={{ animation: "float-up 0.4s ease-out" }}
       >
-        <div className={cn("mx-auto", state !== "complete" && "max-w-[320px]")}>
+        <div className={cn("mx-auto", state !== "complete" && state !== "idle" && "max-w-[320px]")}>
           {state === "idle" && !providerReady && (
             <NoProviderView t={t} onOpenSettings={() => onOpenSettings?.("uploadTranscription")} />
           )}
@@ -391,79 +395,74 @@ function IdleView({
   };
 
   return (
-    <>
-      <div className="flex flex-col items-center mb-5">
-        <div className="w-10 h-10 rounded-[10px] bg-linear-to-b from-foreground/5 to-foreground/[0.02] dark:from-white/8 dark:to-white/3 border border-foreground/8 dark:border-white/10 flex items-center justify-center mb-4">
-          <Upload
-            size={17}
-            strokeWidth={1.5}
-            className="text-foreground/45 dark:text-foreground/45"
-          />
-        </div>
-        <h2 className="text-xs font-semibold text-foreground mb-1">{t("notes.upload.title")}</h2>
-        <UploadModelSettingsButton
-          label={t("notes.upload.using", { model: getActiveModelLabel() })}
-          actionLabel={t("notes.upload.noProviderAction")}
-          onOpenSettings={onOpenSettings}
-          className="text-xs text-foreground/70"
-        />
-      </div>
-
+    <div
+      onDrop={handleDrop}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+      }}
+      className={cn(
+        "rounded-xl overflow-hidden transition-[background-color,border-color,transform] duration-300",
+        "bg-card border border-foreground/10 dark:border-white/12",
+        isDragOver && "border-primary/30 bg-primary/[0.04] dark:bg-primary/[0.06] scale-[1.01]"
+      )}
+      style={isDragOver ? { animation: "drag-pulse 1.5s ease-in-out infinite" } : undefined}
+    >
       <div
         role="button"
         tabIndex={0}
         aria-label={t("notes.upload.dropOrBrowse")}
-        onDrop={handleDrop}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setIsDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          e.preventDefault();
-          setIsDragOver(false);
-        }}
         onClick={handleBrowse}
         onKeyDown={handleKeyDown}
         className={cn(
-          "relative rounded-lg p-8 text-center cursor-pointer transition-[background-color,border-color,transform] duration-300 group",
-          "bg-surface-1/40 dark:bg-white/[0.03] backdrop-blur-sm",
-          "border border-foreground/6 dark:border-white/10",
-          "hover:bg-surface-1/60 dark:hover:bg-white/[0.05] hover:border-foreground/12 dark:hover:border-white/10",
-          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/30",
-          isDragOver && "border-primary/30 bg-primary/[0.04] dark:bg-primary/[0.06] scale-[1.01]"
+          "relative px-9 pt-11 pb-9 text-center cursor-pointer group transition-colors",
+          "hover:bg-foreground/[0.02] dark:hover:bg-white/[0.02]",
+          "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/30"
         )}
-        style={isDragOver ? { animation: "drag-pulse 1.5s ease-in-out infinite" } : undefined}
       >
-        <div className="absolute inset-0 rounded-lg overflow-hidden pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500">
+        <div className="absolute inset-0 overflow-hidden pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-500">
           <div
             className="absolute inset-0 bg-gradient-to-r from-transparent via-foreground/[0.02] dark:via-white/[0.03] to-transparent"
             style={{ animation: "shimmer-slide 3s ease-in-out infinite" }}
           />
         </div>
 
-        {!isDragOver ? (
-          <div className="flex flex-col items-center gap-2 relative">
-            <div className="w-8 h-8 rounded-full bg-foreground/[0.03] dark:bg-white/[0.04] flex items-center justify-center mb-1">
-              <Upload
-                size={14}
-                className="text-foreground/45 dark:text-foreground/45 transition-colors"
-              />
-            </div>
-            <p className="text-xs text-foreground/45 group-hover:text-foreground/50 transition-colors">
-              {t("notes.upload.dropOrBrowse")}
-            </p>
-            <p className="text-xs text-foreground/45 tracking-wide">
-              {t("notes.upload.supportedFormats")}
-            </p>
+        <div className="flex flex-col items-center gap-2.5 relative">
+          <div className="w-[52px] h-[52px] rounded-[13px] bg-foreground/[0.04] dark:bg-white/6 border border-foreground/10 dark:border-white/12 flex items-center justify-center mb-2">
+            <Upload
+              size={22}
+              strokeWidth={1.7}
+              className={cn(
+                "transition-colors",
+                isDragOver ? "text-primary/70" : "text-foreground/80"
+              )}
+            />
           </div>
-        ) : (
-          <div className="flex flex-col items-center gap-2 relative">
-            <Upload size={18} className="text-primary/60" />
-            <p className="text-xs text-primary/60 font-medium">{t("notes.upload.dropToUpload")}</p>
-          </div>
-        )}
+          <h2 className="text-[22px] leading-tight text-foreground">{t("notes.upload.title")}</h2>
+          {!isDragOver ? (
+            <>
+              <p className="text-sm text-foreground/80">{t("notes.upload.dropOrBrowse")}</p>
+              <p className="text-xs leading-relaxed text-foreground/60 max-w-80">
+                {t("notes.upload.supportedFormats")}
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-primary/70 font-medium">{t("notes.upload.dropToUpload")}</p>
+          )}
+        </div>
       </div>
-    </>
+
+      <UploadModelFooterButton
+        label={getActiveModelLabel()}
+        changeLabel={t("notes.upload.changeModel")}
+        actionLabel={t("notes.upload.noProviderAction")}
+        onOpenSettings={onOpenSettings}
+      />
+    </div>
   );
 }
 
