@@ -58,6 +58,27 @@ test("the model button opens the upload-scoped transcription settings", async (t
   assert.equal(element.props.type, "button");
 });
 
+test("the upload card footer names the model and opens upload transcription settings", async (t) => {
+  const { UploadModelFooterButton } = await loadFeedback(t);
+
+  const openedSections = [];
+  const props = {
+    label: "Self-Hosted · Qwen3-ASR",
+    changeLabel: "Change",
+    actionLabel: "Open Transcription Settings",
+    onOpenSettings: (section) => openedSections.push(section),
+  };
+  const markup = renderToStaticMarkup(createElement(UploadModelFooterButton, props));
+
+  // The visible model and Change text form the accessible name (WCAG 2.5.3).
+  assert.doesNotMatch(markup, /aria-label=/);
+  assert.match(markup, /Self-Hosted · Qwen3-ASR/);
+  assert.match(markup, />Change</);
+
+  UploadModelFooterButton(props).props.onClick();
+  assert.deepEqual(openedSections, ["uploadTranscription"]);
+});
+
 test("the batch warning indicator renders nothing when neither warning is set", async (t) => {
   const { BatchWarningIndicator } = await loadBatchQueueView(t);
 
