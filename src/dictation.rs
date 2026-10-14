@@ -66,6 +66,9 @@ pub enum DictationNotice {
     HotkeyHint {
         hold: bool,
     },
+    /// The transcript reached its destination: pasted, or saved when
+    /// auto-paste is off. Sent just before the phase returns to idle.
+    Delivered,
 }
 
 /// Lock-free mirror of the phase for the hotkey layer.
@@ -557,6 +560,7 @@ impl Dictation {
                         return;
                     }
                     if pasted {
+                        cx.emit(DictationNotice::Delivered);
                         if let Some(failure) = cleanup_failure {
                             let title = failure
                                 .message_key
@@ -602,6 +606,7 @@ impl Dictation {
             if settings.keep_transcription_in_clipboard {
                 backend::write_clipboard(&text);
             }
+            cx.emit(DictationNotice::Delivered);
             self.set_phase(Phase::Idle, cx);
         }
     }

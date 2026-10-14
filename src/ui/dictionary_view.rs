@@ -1,5 +1,7 @@
 //! Dictionary and Snippets.
 
+use std::time::Duration;
+
 use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -19,8 +21,26 @@ use super::overlays::{
 };
 use super::text_input::{FieldKind, text_field, text_field_sized, textarea_field};
 use super::theme::{
-    FONT_MONO, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE,
+    DUR_BASE, FONT_MONO, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL,
+    TEXT_TITLE, delayed, ease_out,
 };
+
+/// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
+/// per row, capped at the ninth so long lists do not drag.
+/// Keyed by the row's content so a row animates once, when it first appears.
+fn stagger_in(
+    row: Stateful<Div>,
+    key: impl Into<SharedString>,
+    index: usize,
+) -> AnimationElement<Stateful<Div>> {
+    let delay = 50 + index.min(8) as u64 * 30;
+    row.relative().with_animation(
+        ElementId::Name(key.into()),
+        Animation::new(Duration::from_millis(delay + DUR_BASE))
+            .with_easing(delayed(delay, DUR_BASE, ease_out)),
+        |d, t| d.opacity(t).top(px(3. * (1. - t))),
+    )
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -713,7 +733,7 @@ impl DictionaryView {
                                 ),
                         );
                 }
-                list = list.child(row);
+                list = list.child(stagger_in(row, format!("dict-in-{word}"), index));
             }
         }
 
@@ -1002,7 +1022,8 @@ impl DictionaryView {
                 let group: SharedString = format!("snippet-row-{index}").into();
                 let for_edit = snippet.clone();
                 let remove = snippet.trigger.clone();
-                list = list.child(
+                let trigger_key = snippet.trigger.clone();
+                list = list.child(stagger_in(
                     Self::row(("snippet-row", index), group.clone(), &p)
                         .child(
                             div()
@@ -1051,7 +1072,9 @@ impl DictionaryView {
                                         }),
                                 ),
                         ),
-                );
+                    format!("snippet-in-{trigger_key}"),
+                    index,
+                ));
             }
         }
 

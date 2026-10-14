@@ -1,10 +1,16 @@
 //! AppKit calls GPUI does not expose: click-through, ordering and moving
-//! the borderless recording-pill window.
+//! the borderless recording-pill window, and the Reduce Motion setting.
 
 use gpui_kit::{App, Bounds, Pixels, Point, Window, point, px};
+use std::ptr::NonNull;
+
+use block2::RcBlock;
 use objc2::rc::Retained;
-use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSView, NSWindow, NSWindowStyleMask};
-use objc2_foundation::{MainThreadMarker, NSPoint};
+use objc2_app_kit::{
+    NSApplication, NSEvent, NSScreen, NSView, NSWindow, NSWindowStyleMask, NSWorkspace,
+    NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification,
+};
+use objc2_foundation::{MainThreadMarker, NSNotification, NSOperationQueue, NSPoint};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 fn ns_window(window: &Window) -> Option<Retained<NSWindow>> {
@@ -57,6 +63,31 @@ pub fn order_front(window: &Window, cx: &App) {
 
 pub fn order_out(window: &Window, cx: &App) {
     after_update(window, cx, |w| w.orderOut(None));
+}
+
+/// Mirrors the system Reduce Motion setting into GPUI, which then settles
+/// transitions and `with_animation` at their end state, and follows changes.
+pub fn track_reduce_motion(cx: &mut App) {
+    let workspace = NSWorkspace::sharedWorkspace();
+    cx.set_reduce_motion(workspace.accessibilityDisplayShouldReduceMotion());
+    let app = cx.to_async();
+    let block = RcBlock::new(move |_: NonNull<NSNotification>| {
+        let reduce = NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion();
+        app.update(|cx| cx.set_reduce_motion(reduce));
+    });
+    // SAFETY: the block runs on the main queue, where GPUI's app lives.
+    let observer = unsafe {
+        workspace
+            .notificationCenter()
+            .addObserverForName_object_queue_usingBlock(
+                Some(NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification),
+                None,
+                Some(&NSOperationQueue::mainQueue()),
+                &block,
+            )
+    };
+    // The observer lives as long as the app.
+    std::mem::forget(observer);
 }
 
 /// The standard About panel.

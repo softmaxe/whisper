@@ -10,7 +10,8 @@ use gpui_kit::*;
 
 use super::components::{Button, ButtonVariant, icon};
 use super::theme::{
-    FONT_MONO, LINE_TITLE, PaletteExt, TEXT_BODY, TEXT_SMALL, TEXT_TITLE, ease_out,
+    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_TITLE, PaletteExt, TEXT_BODY, TEXT_SMALL,
+    TEXT_TITLE, ease_out, ease_snap,
 };
 
 pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -171,7 +172,7 @@ impl Overlays {
             cx.notify();
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
-                    .timer(Duration::from_millis(200))
+                    .timer(Duration::from_millis(DUR_SNAP))
                     .await;
                 let _ = this.update(cx, |this, cx| {
                     this.toasts.retain(|t| t.id != id);
@@ -256,7 +257,7 @@ pub fn modal_frame(
                 )
                 .with_animation(
                     "modal-in",
-                    Animation::new(Duration::from_millis(200)).with_easing(ease_out),
+                    Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
                     |d, t| d.opacity(t).mt(px(8. * (1. - t))),
                 ),
         )
@@ -398,7 +399,7 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         )
         .with_animation(
             "dialog-in",
-            Animation::new(Duration::from_millis(200)).with_easing(ease_out),
+            Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
             |d, t| d.opacity(t).mt(px(8. * (1. - t))),
         );
 
@@ -416,7 +417,7 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .child(card)
             .with_animation(
                 "dialog-backdrop-in",
-                Animation::new(Duration::from_millis(200)).with_easing(ease_out),
+                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
                 |d, t| d.opacity(t),
             )
             .into_any_element(),
@@ -586,11 +587,19 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let closing = active.closing;
         let card = card.with_animation(
             ("toast-anim", id as usize * 2 + closing as usize),
-            Animation::new(Duration::from_millis(if closing { 200 } else { 300 }))
-                .with_easing(ease_out),
+            Animation::new(Duration::from_millis(if closing {
+                DUR_SNAP
+            } else {
+                DUR_SHEET
+            }))
+            .with_easing(if closing { ease_snap } else { ease_out }),
+            // Slides in from the edge; leaves quickly with only a nudge.
             move |d, t| {
-                let v = if closing { 1. - t } else { t };
-                d.opacity(v).ml(px(16. * (1. - v)))
+                if closing {
+                    d.opacity(1. - t).ml(px(4. * t))
+                } else {
+                    d.opacity(t).ml(px(16. * (1. - t)))
+                }
             },
         );
         stack = stack.child(card);

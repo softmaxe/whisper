@@ -18,14 +18,17 @@ use super::insights_view::InsightsView;
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::theme::{
-    FONT_MONO, FONT_UI, LINE_TITLE, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_TITLE, ease_out,
+    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_MONO, FONT_UI, LINE_TITLE, PaletteExt, TEXT_BODY,
+    TEXT_CAPTION, TEXT_TITLE, ease_out, ease_snap,
 };
 use super::upload_view::{UploadEvent, UploadView};
 
 actions!(control_panel, [OpenSearch, OpenSettings, CloseOverlay]);
 
 pub const SIDEBAR_WIDTH: f32 = 192.;
-const PEEK_CLOSE_DELAY: Duration = Duration::from_millis(120);
+const PEEK_CLOSE_DELAY: Duration = Duration::from_millis(DUR_SNAP);
+/// Height of the fade that softens content scrolled under the top bar.
+const SCROLL_FADE: f32 = 28.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PanelView {
@@ -71,6 +74,7 @@ pub struct ControlPanel {
     dictionary: Option<Entity<DictionaryView>>,
     upload: Entity<UploadView>,
     settings: Option<Entity<SettingsModal>>,
+    scroll: ScrollHandle,
 }
 
 impl ControlPanel {
@@ -117,6 +121,7 @@ impl ControlPanel {
             dictionary: None,
             upload,
             settings: None,
+            scroll: ScrollHandle::new(),
         }
     }
 
@@ -331,7 +336,7 @@ impl ControlPanel {
         let start_pad = f32_tx(
             "topbar-start-pad",
             if clear_traffic_lights { 76. } else { 12. },
-            300,
+            DUR_SHEET,
             ease_out,
             window,
             cx,
@@ -498,7 +503,7 @@ impl Render for ControlPanel {
         let spacer = f32_tx(
             "sidebar-spacer",
             if collapsed { 0. } else { SIDEBAR_WIDTH },
-            300,
+            DUR_SHEET,
             ease_out,
             window,
             cx,
@@ -507,7 +512,7 @@ impl Render for ControlPanel {
         let offset = f32_tx(
             "sidebar-offset",
             if visible { 0. } else { -SIDEBAR_WIDTH },
-            300,
+            DUR_SHEET,
             ease_out,
             window,
             cx,
@@ -515,7 +520,27 @@ impl Render for ControlPanel {
         let peeking = collapsed && self.peek;
         let sidebar = self.render_sidebar(cx);
         let top_bar = self.render_top_bar(window, cx);
-        let content = self.render_content(window, cx);
+        // Each view eases in 3 px as it replaces the last.
+        // Insights fills the viewport, so its wrapper must too.
+        let fill = self.active == PanelView::Insights;
+        let content = div()
+            .relative()
+            .when(fill, |d| d.h_full())
+            .child(self.render_content(window, cx))
+            .with_animation(
+                ("view-in", self.active as usize),
+                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                |d, t| d.opacity(t).top(px(3. * (1. - t))),
+            );
+        let scrolled = self.scroll.offset().y < px(-4.);
+        let fade = f32_tx(
+            "scroll-fade",
+            if scrolled { 1. } else { 0. },
+            if scrolled { DUR_SNAP } else { DUR_FAST },
+            ease_snap,
+            window,
+            cx,
+        );
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();
         let dialog = render_dialog(window, cx);
@@ -566,11 +591,41 @@ impl Render for ControlPanel {
                                     .child(top_bar)
                                     .child(
                                         div()
-                                            .id("panel-scroll")
+                                            .relative()
                                             .flex_1()
                                             .min_h_0()
-                                            .overflow_y_scroll()
-                                            .child(content),
+                                            .flex()
+                                            .flex_col()
+                                            .child(
+                                                div()
+                                                    .id("panel-scroll")
+                                                    .flex_1()
+                                                    .min_h_0()
+                                                    .overflow_y_scroll()
+                                                    .track_scroll(&self.scroll)
+                                                    .child(content),
+                                            )
+                                            // Content scrolled under the top bar fades out
+                                            // instead of meeting its border at a hard edge.
+                                            .when(fade > 0.001, |d| {
+                                                d.child(
+                                                    div()
+                                                        .absolute()
+                                                        .top_0()
+                                                        .left_0()
+                                                        .right(px(12.))
+                                                        .h(px(SCROLL_FADE))
+                                                        .opacity(fade)
+                                                        .bg(linear_gradient(
+                                                            180.,
+                                                            linear_color_stop(p.background, 0.),
+                                                            linear_color_stop(
+                                                                p.background.opacity(0.),
+                                                                1.,
+                                                            ),
+                                                        )),
+                                                )
+                                            }),
                                     ),
                             ),
                     )

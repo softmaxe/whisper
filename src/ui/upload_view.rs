@@ -21,8 +21,8 @@ use crate::app_state::AppState;
 use super::components::{Button, ButtonSize, ButtonVariant, f32_tx, icon, spinner};
 use super::history_view::copy_with_toast;
 use super::theme::{
-    FONT_VOICE, LINE_READING, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_DISPLAY,
-    TEXT_READING, TEXT_SMALL, ease_out,
+    DUR_SHEET, FONT_VOICE, LINE_READING, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_CAPTION,
+    TEXT_DISPLAY, TEXT_READING, TEXT_SMALL, ease_out,
 };
 
 pub enum UploadEvent {
@@ -1337,7 +1337,7 @@ impl Render for UploadView {
                     )
                     .with_animation(
                         SharedString::from(format!("upload-stage-{}", stage_key(&stage))),
-                        Animation::new(Duration::from_millis(350)).with_easing(ease_out),
+                        Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_out),
                         |d, t| d.opacity(t).mt(px(8. * (1. - t))),
                     ),
             )

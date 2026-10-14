@@ -7,7 +7,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::components::{f32_tx, icon};
-use super::theme::{PaletteExt, TEXT_BODY, TEXT_SMALL, ease_out};
+use super::theme::{DUR_BASE, DUR_SNAP, PaletteExt, TEXT_BODY, TEXT_SMALL, ease_out, ease_snap};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectOption {
@@ -263,7 +263,7 @@ impl Render for Select {
         let chevron_turn = f32_tx(
             ("select-chevron", cx.entity_id().as_u64() as usize),
             if open { 0.5 } else { 0.0 },
-            200,
+            DUR_BASE,
             ease_out,
             window,
             cx,
@@ -486,7 +486,7 @@ impl Select {
             )
             .with_animation(
                 "select-menu-in",
-                Animation::new(std::time::Duration::from_millis(160)).with_easing(ease_out),
+                Animation::new(std::time::Duration::from_millis(DUR_SNAP)).with_easing(ease_snap),
                 |d, t| d.opacity(t),
             )
             .into_any_element()

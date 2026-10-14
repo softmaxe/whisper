@@ -218,14 +218,63 @@ pub const LINE_SMALL: f32 = 19.;
 pub const LINE_READING: f32 = 25.;
 pub const LINE_TITLE: f32 = 22.;
 
-/// Strong ease-out shared by enter/exit motion.
+/// Motion durations, in ms. Five steps replace one-off timings:
+///
+/// - `FAST`: exits and press-in
+/// - `SNAP`: hover reveals, menus and quick fades
+/// - `BASE`: enters, reveals and view changes
+/// - `SHEET`: layout morphs such as the sidebar
+/// - `SLOW`: the press spring settling
+pub const DUR_FAST: u64 = 60;
+pub const DUR_SNAP: u64 = 120;
+pub const DUR_BASE: u64 = 200;
+pub const DUR_SHEET: u64 = 300;
+pub const DUR_SLOW: u64 = 450;
+
+/// Strong ease-out shared by enter motion.
 pub fn ease_out(t: f32) -> f32 {
-    cubic_bezier(0.23, 1.0, 0.32, 1.0, t)
+    cubic_bezier(0.165, 0.84, 0.44, 1.0, t)
 }
 
-/// `cubic-bezier(0.2, 0, 0, 1)`: the pill's footprint morph.
-pub fn ease_grow(t: f32) -> f32 {
-    cubic_bezier(0.2, 0.0, 0.0, 1.0, t)
+/// `cubic-bezier(0.32, 0.72, 0, 1)`: quick settles for exits, menus and reveals.
+pub fn ease_snap(t: f32) -> f32 {
+    cubic_bezier(0.32, 0.72, 0.0, 1.0, t)
+}
+
+/// `cubic-bezier(0.34, 1.3, 0.64, 1)`: overshoots about 6% before settling.
+pub fn ease_overshoot(t: f32) -> f32 {
+    cubic_bezier(0.34, 1.3, 0.64, 1.0, t)
+}
+
+/// The button release spring, sampled into 15 evenly spaced stops and
+/// interpolated linearly, like CSS `linear()`.
+pub fn spring(t: f32) -> f32 {
+    const STOPS: [f32; 15] = [
+        0., 0.2459, 0.6526, 0.9468, 1.0764, 1.0915, 1.0585, 1.0219, 0.9993, 0.9914, 0.9921, 0.9957,
+        0.9988, 1.0004, 1.,
+    ];
+    if t <= 0. {
+        return 0.;
+    }
+    if t >= 1. {
+        return 1.;
+    }
+    let x = t * (STOPS.len() - 1) as f32;
+    let i = x.floor() as usize;
+    STOPS[i] + (STOPS[i + 1] - STOPS[i]) * (x - i as f32)
+}
+
+/// Holds at 0 for `delay_ms`, then runs `ease` over `duration_ms`. For
+/// staggering a `with_animation` that lasts `delay_ms + duration_ms`.
+pub fn delayed(delay_ms: u64, duration_ms: u64, ease: fn(f32) -> f32) -> impl Fn(f32) -> f32 {
+    let total = (delay_ms + duration_ms) as f32;
+    let start = delay_ms as f32 / total;
+    move |t| ease(((t - start) / (1. - start)).clamp(0., 1.))
+}
+
+/// Progress of a one-shot animation that started `elapsed` ago.
+pub fn progress(elapsed: std::time::Duration, duration_ms: u64) -> f32 {
+    (elapsed.as_secs_f32() * 1000. / duration_ms as f32).clamp(0., 1.)
 }
 
 /// The standard `ease` curve.
@@ -285,11 +334,32 @@ mod tests {
         assert_eq!(ease_out(1.0), 1.0);
         let mut last = 0.0;
         for i in 1..=20 {
-            let v = ease_grow(i as f32 / 20.0);
+            let v = ease_snap(i as f32 / 20.0);
             assert!(v >= last - 1e-4);
             last = v;
         }
         // Strong ease-out is well past half way at a quarter of the time.
         assert!(ease_out(0.25) > 0.6);
+    }
+
+    #[test]
+    fn overshoot_and_spring_pass_the_target_then_settle() {
+        let peak = (1..20)
+            .map(|i| ease_overshoot(i as f32 / 20.))
+            .fold(0., f32::max);
+        assert!(peak > 1.02 && peak < 1.1, "{peak}");
+        assert_eq!(spring(0.), 0.);
+        assert_eq!(spring(1.), 1.);
+        assert!((spring(5. / 14.) - 1.0915).abs() < 1e-4);
+        assert!(spring(0.5) > 1.);
+    }
+
+    #[test]
+    fn delayed_holds_then_runs() {
+        let f = delayed(100, 200, ease_out);
+        assert_eq!(f(0.), 0.);
+        assert_eq!(f(1. / 3.), 0.);
+        assert_eq!(f(1.), 1.);
+        assert!(f(2. / 3.) > 0.5);
     }
 }
