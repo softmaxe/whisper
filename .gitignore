@@ -1,0 +1,8 @@
+/target
+/resources/bin/*
+!/resources/bin/.gitkeep
+/dist
+.DS_Store
+*.swp
+/.e2e
+/.claude

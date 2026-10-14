@@ -1,0 +1,528 @@
+import Cocoa
+import Darwin
+
+var fnIsDown = false
+// Hotkey candidates currently held: "fn", right-side modifiers, and suppressed
+// mouse buttons. Any other key or mouse button pressed while one is held turns
+// that press into part of a shortcut, which the app reads as HOTKEY_INTERRUPTED.
+var heldTriggers: Set<String> = []
+var lastModifierFlags: NSEvent.ModifierFlags = []
+var lastDeviceModifiers: UInt64 = 0
+var suppressedMouseButtons: Set<String> = []
+// The system's keyDown count when a trigger last went down or was interrupted.
+var keyDownCountAtLastInterrupt: UInt32 = 0
+var heldStateTimer: DispatchSourceTimer?
+
+struct ListenerConfig: Decodable {
+    var mouseButtons: Set<String> = []
+    var suppressGlobeAction: Bool = false
+}
+
+func emit(_ message: String) {
+    FileHandle.standardOutput.write((message + "\n").data(using: .utf8)!)
+    fflush(stdout)
+}
+
+func emitWarning(_ message: String) {
+    FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+}
+
+// Mouse buttons arrive as a positional comma-separated list; everything else is
+// an explicit flag.
+func parseArguments() -> (config: ListenerConfig, statePath: String?, restoreLeftoverPreferenceOnly: Bool) {
+    var config = ListenerConfig()
+    var statePath: String?
+    var restoreLeftoverPreferenceOnly = false
+    var arguments = CommandLine.arguments.dropFirst().makeIterator()
+
+    while let argument = arguments.next() {
+        switch argument {
+        case "--suppress-system-globe-action":
+            config.suppressGlobeAction = true
+        case "--globe-preference-state":
+            statePath = arguments.next()
+        case "--restore-leftover-globe-preference":
+            restoreLeftoverPreferenceOnly = true
+        default:
+            config.mouseButtons.formUnion(
+                argument.split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            )
+        }
+    }
+
+    return (config, statePath, restoreLeftoverPreferenceOnly)
+}
+
+struct GlobePreferenceState: Codable {
+    let version: Int
+    let originalValue: Int32
+    let keyExisted: Bool
+}
+
+// macOS runs the standalone Globe action (emoji viewer, input-source switch,
+// dictation) from WindowServer ahead of every event tap, so a listener cannot
+// consume the key — the only way to stop it firing alongside a Whisper Globe
+// hotkey is to hold AppleFnUsageType at "Do Nothing" while we own the key.
+// TISUpdateFnUsageType is what System Settings itself calls: it persists the
+// preference and broadcasts the change so it applies live. Writing the
+// preference directly is ignored until the user's next login.
+enum GlobeSystemAction {
+    private typealias GetUsageType = @convention(c) () -> Int32
+    private typealias UpdateUsageType = @convention(c) (Int32) -> Void
+
+    private static let doNothing: Int32 = 0
+    private static let stateVersion = 1
+    private static let domain = "com.apple.HIToolbox" as CFString
+    private static let key = "AppleFnUsageType" as CFString
+
+    private static let entryPoints: (get: GetUsageType, update: UpdateUsageType)? = {
+        guard let carbon = dlopen("/System/Library/Frameworks/Carbon.framework/Carbon", RTLD_LAZY),
+              let get = dlsym(carbon, "TISGetFnUsageType"),
+              let update = dlsym(carbon, "TISUpdateFnUsageType")
+        else { return nil }
+        return (unsafeBitCast(get, to: GetUsageType.self), unsafeBitCast(update, to: UpdateUsageType.self))
+    }()
+
+    static var statePath: String?
+    private static var owned: GlobePreferenceState?
+
+    // Adopts a marker left by a crashed run so its recorded original value is
+    // used instead of mistaking our own override for the user's preference.
+    static func recoverLeftoverState() {
+        guard let state = readMarker(), let entryPoints else { return }
+        if entryPoints.get() == doNothing {
+            owned = state
+        } else {
+            // The user picked a new action since we died — theirs wins.
+            removeMarker()
+        }
+    }
+
+    static func apply() {
+        guard owned == nil else { return }
+        guard let entryPoints else {
+            emitWarning("Cannot suppress the macOS Globe action: TISUpdateFnUsageType unavailable")
+            return
+        }
+
+        let original = entryPoints.get()
+        guard original != doNothing else { return }
+
+        let state = GlobePreferenceState(
+            version: stateVersion,
+            originalValue: original,
+            keyExisted: rawValueExists()
+        )
+        // Record how to get back before changing anything.
+        guard writeMarker(state) else { return }
+
+        owned = state
+        entryPoints.update(doNothing)
+    }
+
+    static func restore() {
+        guard let state = owned, let entryPoints else { return }
+        owned = nil
+
+        // Only put the value back while it is still ours: if the user picked a
+        // new action while we were running, that choice wins.
+        if entryPoints.get() == doNothing {
+            entryPoints.update(state.originalValue)
+            // The value was a macOS-computed default before we touched it, so
+            // clear the key again to keep it tracking hardware and input sources.
+            if !state.keyExisted {
+                clearRawValue()
+            }
+        }
+
+        removeMarker()
+    }
+
+    // CFPreferencesCopyAppValue caches foreign domains for the life of the
+    // process and would miss changes made after launch.
+    private static func rawValueExists() -> Bool {
+        CFPreferencesSynchronize(domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        return CFPreferencesCopyValue(key, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) != nil
+    }
+
+    private static func clearRawValue() {
+        CFPreferencesSetValue(key, nil, domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+        CFPreferencesSynchronize(domain, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+    }
+
+    private static func readMarker() -> GlobePreferenceState? {
+        guard let statePath, let data = FileManager.default.contents(atPath: statePath) else { return nil }
+        guard let state = try? JSONDecoder().decode(GlobePreferenceState.self, from: data),
+              state.version == stateVersion
+        else {
+            removeMarker()
+            return nil
+        }
+        return state
+    }
+
+    private static func writeMarker(_ state: GlobePreferenceState) -> Bool {
+        guard let statePath else {
+            emitWarning("Cannot suppress the macOS Globe action: no state path provided")
+            return false
+        }
+        do {
+            try JSONEncoder().encode(state).write(to: URL(fileURLWithPath: statePath), options: .atomic)
+            return true
+        } catch {
+            emitWarning("Cannot suppress the macOS Globe action: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private static func removeMarker() {
+        guard let statePath else { return }
+        try? FileManager.default.removeItem(atPath: statePath)
+    }
+}
+
+func applyConfiguration(_ config: ListenerConfig) {
+    suppressedMouseButtons = config.mouseButtons
+    updateMouseEventTap()
+    if config.suppressGlobeAction {
+        GlobeSystemAction.apply()
+    } else {
+        GlobeSystemAction.restore()
+    }
+}
+
+let launchOptions = parseArguments()
+GlobeSystemAction.statePath = launchOptions.statePath
+GlobeSystemAction.recoverLeftoverState()
+if launchOptions.restoreLeftoverPreferenceOnly {
+    GlobeSystemAction.restore()
+    exit(0)
+}
+
+// Device-dependent modifier bits (NX_DEVICE*KEYMASK in IOLLEvent.h) tell the
+// left and right keys apart; the generic .command flag stays set while either
+// Command key is down.
+let rightModifiers: [(UInt16, UInt64, String)] = [
+    (61, 0x0040, "RightOption"),
+    (54, 0x0010, "RightCommand"),
+    (62, 0x2000, "RightControl"),
+    (60, 0x0004, "RightShift"),
+]
+
+// Both sides of Control, Shift, Command, and Option. Caps Lock is left out.
+let deviceModifierKeysMask: UInt64 = 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040 | 0x2000
+
+// Sent before a newly pressed key is recorded, so only presses already held
+// become part of the shortcut.
+func interruptHeldTriggers() {
+    if !heldTriggers.isEmpty {
+        emit("HOTKEY_INTERRUPTED")
+    }
+    keyDownCountAtLastInterrupt = systemKeyDownCount()
+}
+
+// Secure Input (password fields, Terminal's Secure Keyboard Entry) hides other
+// apps' key presses from the keyDown monitor, but they still advance this count.
+func systemKeyDownCount() -> UInt32 {
+    CGEventSource.counterForEventType(.hidSystemState, eventType: .keyDown)
+}
+
+let modifierMask: NSEvent.ModifierFlags = [.control, .command, .option, .shift]
+
+let releases: [(NSEvent.ModifierFlags, String)] = [
+    (.control, "control"),
+    (.command, "command"),
+    (.option, "option"),
+    (.shift, "shift"),
+]
+
+func mouseButtonName(_ buttonNumber: Int) -> String? {
+    switch buttonNumber {
+    case 3:
+        return "MouseButton4"
+    case 4:
+        return "MouseButton5"
+    default:
+        return nil
+    }
+}
+
+let mouseButtonNumbers: [(UInt32, String)] = [(3, "MouseButton4"), (4, "MouseButton5")]
+
+// Monitors miss events while macOS does not deliver them, such as across sleep
+// or while another app holds Secure Input. A missed release would leave a key
+// held until its next press, so while anything is held the reported state is
+// checked against the keyboard and mouse themselves.
+let heldStateCheckInterval: DispatchTimeInterval = .milliseconds(100)
+
+func interruptIfKeysPressed() {
+    if !heldTriggers.isEmpty && systemKeyDownCount() != keyDownCountAtLastInterrupt {
+        interruptHeldTriggers()
+    }
+}
+
+func checkHeldState() {
+    interruptIfKeysPressed()
+
+    let flags = CGEventSource.flagsState(.hidSystemState)
+    let deviceModifiers = UInt64(flags.rawValue) & deviceModifierKeysMask
+    lastDeviceModifiers &= deviceModifiers
+
+    if fnIsDown && !flags.contains(.maskSecondaryFn) {
+        fnIsDown = false
+        heldTriggers.remove("fn")
+        emit("FN_UP")
+    }
+    for (_, mask, name) in rightModifiers where heldTriggers.contains(name) && deviceModifiers & mask == 0 {
+        heldTriggers.remove(name)
+        emit("RIGHT_MOD_UP:\(name)")
+    }
+    for (number, name) in mouseButtonNumbers where heldTriggers.contains(name) {
+        guard let button = CGMouseButton(rawValue: number),
+              !CGEventSource.buttonState(.hidSystemState, button: button)
+        else { continue }
+        heldTriggers.remove(name)
+        emit("MOUSE_BUTTON_UP:\(name)")
+    }
+
+    let released = lastModifierFlags.subtracting(
+        NSEvent.ModifierFlags(rawValue: UInt(flags.rawValue)).intersection(modifierMask)
+    )
+    for (flag, name) in releases where released.contains(flag) {
+        emit("MODIFIER_UP:\(name)")
+    }
+    lastModifierFlags.subtract(released)
+
+    updateHeldStateTimer()
+}
+
+func updateHeldStateTimer() {
+    let anythingHeld = !heldTriggers.isEmpty || !lastModifierFlags.isEmpty
+    if !anythingHeld {
+        heldStateTimer?.cancel()
+        heldStateTimer = nil
+    } else if heldStateTimer == nil {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + heldStateCheckInterval, repeating: heldStateCheckInterval)
+        timer.setEventHandler { checkHeldState() }
+        timer.resume()
+        heldStateTimer = timer
+    }
+}
+
+func emitMouseEvent(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    guard type == .otherMouseDown || type == .otherMouseUp else { return false }
+
+    let buttonNumber = Int(event.getIntegerValueField(.mouseEventButtonNumber))
+    guard let buttonName = mouseButtonName(buttonNumber) else { return false }
+
+    let suppressed = suppressedMouseButtons.contains(buttonName)
+    if type == .otherMouseDown {
+        // Suppressed buttons never reach the global click monitor below.
+        if suppressed {
+            interruptHeldTriggers()
+            heldTriggers.insert(buttonName)
+        }
+        emit("MOUSE_BUTTON_DOWN:\(buttonName)")
+    } else {
+        interruptIfKeysPressed()
+        heldTriggers.remove(buttonName)
+        emit("MOUSE_BUTTON_UP:\(buttonName)")
+    }
+    updateHeldStateTimer()
+    return suppressed
+}
+
+let mouseEventMask =
+    (1 << CGEventType.otherMouseDown.rawValue) |
+    (1 << CGEventType.otherMouseUp.rawValue)
+
+var mouseEventTapPort: CFMachPort?
+var mouseRunLoopSource: CFRunLoopSource?
+
+// The active tap can suppress configured side buttons and is Accessibility-
+// protected, so keep it absent until a mouse-button hotkey actually needs it.
+func updateMouseEventTap() {
+    if suppressedMouseButtons.isEmpty {
+        if let mouseEventTapPort {
+            CGEvent.tapEnable(tap: mouseEventTapPort, enable: false)
+            if let mouseRunLoopSource {
+                CFRunLoopRemoveSource(CFRunLoopGetMain(), mouseRunLoopSource, .commonModes)
+            }
+        }
+        mouseEventTapPort = nil
+        mouseRunLoopSource = nil
+        return
+    }
+    if mouseEventTapPort != nil { return }
+
+    guard let tap = CGEvent.tapCreate(
+        tap: .cgSessionEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: CGEventMask(mouseEventMask),
+        callback: { _, type, event, _ in
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                // Releases may have been dropped while the tap was off.
+                checkHeldState()
+                if let mouseEventTapPort {
+                    CGEvent.tapEnable(tap: mouseEventTapPort, enable: true)
+                }
+                return Unmanaged.passUnretained(event)
+            }
+
+            if emitMouseEvent(type, event) {
+                return nil
+            }
+
+            return Unmanaged.passUnretained(event)
+        },
+        userInfo: nil
+    ) else {
+        emitWarning("Failed to create mouse event tap")
+        return
+    }
+
+    mouseEventTapPort = tap
+    mouseRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetMain(), mouseRunLoopSource, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+}
+
+guard let monitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged, handler: { event in
+    // A key pressed during the hold, but hidden by Secure Input, makes the
+    // hold a shortcut before any release below is reported.
+    interruptIfKeysPressed()
+    let flags = event.modifierFlags
+    let containsFn = flags.contains(.function)
+    let deviceModifiers = UInt64(flags.rawValue) & deviceModifierKeysMask
+    let pressedModifiers = deviceModifiers & ~lastDeviceModifiers
+    lastDeviceModifiers = deviceModifiers
+
+    if containsFn && !fnIsDown {
+        interruptHeldTriggers()
+        fnIsDown = true
+        heldTriggers.insert("fn")
+        emit("FN_DOWN")
+    } else if !containsFn && fnIsDown {
+        fnIsDown = false
+        heldTriggers.remove("fn")
+        emit("FN_UP")
+    }
+
+    var rightModifierChanged = false
+    for (code, mask, name) in rightModifiers where event.keyCode == code {
+        rightModifierChanged = true
+        if deviceModifiers & mask != 0 {
+            interruptHeldTriggers()
+            heldTriggers.insert(name)
+            emit("RIGHT_MOD_DOWN:\(name)")
+        } else {
+            heldTriggers.remove(name)
+            emit("RIGHT_MOD_UP:\(name)")
+        }
+    }
+
+    // Any other modifier pressed during a hold, such as Shift joining Command,
+    // makes the held key part of a shortcut. Releases do not.
+    if !rightModifierChanged && pressedModifiers != 0 {
+        interruptHeldTriggers()
+    }
+
+    let currentModifiers = flags.intersection(modifierMask)
+    if currentModifiers != lastModifierFlags {
+        let released = lastModifierFlags.subtracting(currentModifiers)
+        for (flag, name) in releases {
+            if released.contains(flag) {
+                emit("MODIFIER_UP:\(name)")
+            }
+        }
+        lastModifierFlags = currentModifiers
+    }
+    updateHeldStateTimer()
+}) else {
+    emitWarning("Failed to create event monitor")
+    GlobeSystemAction.restore()
+    exit(1)
+}
+
+// Another key or a click during a hold, such as Command+C, Fn+Arrow, or
+// Command-click, means the held key is being used as a modifier.
+let keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+    if !event.isARepeat {
+        interruptHeldTriggers()
+    }
+}
+
+let clickMonitor = NSEvent.addGlobalMonitorForEvents(
+    matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+) { _ in
+    interruptHeldTriggers()
+}
+
+func shutdownListener() -> Never {
+    GlobeSystemAction.restore()
+    NSEvent.removeMonitor(monitor)
+    if let keyMonitor {
+        NSEvent.removeMonitor(keyMonitor)
+    }
+    if let clickMonitor {
+        NSEvent.removeMonitor(clickMonitor)
+    }
+    if let mouseEventTapPort {
+        CGEvent.tapEnable(tap: mouseEventTapPort, enable: false)
+    }
+    if let mouseRunLoopSource {
+        CFRunLoopRemoveSource(CFRunLoopGetMain(), mouseRunLoopSource, .commonModes)
+    }
+    exit(0)
+}
+
+// Only take over the system Globe action once the listener is known to work.
+applyConfiguration(launchOptions.config)
+
+// Reconfiguration arrives as one JSON object per line so the hotkey can change
+// without restarting; EOF means the app is gone and the Globe key goes back.
+var stdinBuffer = [UInt8]()
+let stdinSource = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
+stdinSource.setEventHandler {
+    var chunk = [UInt8](repeating: 0, count: 4096)
+    let bytesRead = read(STDIN_FILENO, &chunk, chunk.count)
+
+    guard bytesRead > 0 else {
+        if bytesRead == 0 || (errno != EAGAIN && errno != EINTR) {
+            shutdownListener()
+        }
+        return
+    }
+
+    stdinBuffer.append(contentsOf: chunk[0..<bytesRead])
+    while let newline = stdinBuffer.firstIndex(of: UInt8(ascii: "\n")) {
+        let line = Data(stdinBuffer[..<newline])
+        stdinBuffer.removeSubrange(...newline)
+        if let config = try? JSONDecoder().decode(ListenerConfig.self, from: line) {
+            applyConfiguration(config)
+        } else {
+            emitWarning("Ignored malformed configuration line")
+        }
+    }
+}
+stdinSource.resume()
+
+func installTerminationSource(for signalNumber: Int32) -> DispatchSourceSignal {
+    signal(signalNumber, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+    source.setEventHandler { shutdownListener() }
+    source.resume()
+    return source
+}
+
+// Held for the process lifetime: releasing these sources would drop the signal
+// handlers and with them the preference restore on quit.
+let terminationSources = [SIGTERM, SIGINT].map(installTerminationSource(for:))
+
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+app.run()

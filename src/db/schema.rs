@@ -1,0 +1,67 @@
+//! Schema setup. Every statement is idempotent, so opening a database runs the
+//! whole script; `user_version` records which schema the file holds.
+
+use anyhow::Result;
+use rusqlite::Connection;
+
+use super::timestamp::SQL_NOW;
+
+const SCHEMA_VERSION: i64 = 1;
+
+pub(super) fn init(conn: &Connection) -> Result<()> {
+    // Wait briefly rather than fail when another connection holds the lock.
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
+
+    conn.execute_batch(&format!(
+        "CREATE TABLE IF NOT EXISTS transcriptions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          text TEXT NOT NULL,
+          raw_text TEXT,
+          -- When the dictation was spoken.
+          timestamp TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT ({SQL_NOW}),
+          has_audio INTEGER NOT NULL DEFAULT 0,
+          audio_duration_ms INTEGER,
+          provider TEXT,
+          model TEXT,
+          status TEXT NOT NULL DEFAULT 'completed',
+          error_message TEXT,
+          error_code TEXT,
+          -- The dictation intent (e.g. 'translation') so retry re-runs the same route.
+          route_kind TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_transcriptions_timestamp ON transcriptions(timestamp);
+
+        CREATE TABLE IF NOT EXISTS custom_dictionary (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          word TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          source TEXT NOT NULL DEFAULT 'manual',
+          use_count INTEGER NOT NULL DEFAULT 0,
+          last_used_at TEXT,
+          created_at TEXT NOT NULL DEFAULT ({SQL_NOW}),
+          updated_at TEXT NOT NULL DEFAULT ({SQL_NOW})
+        );
+
+        CREATE TABLE IF NOT EXISTS snippets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          trigger TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          replacement TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT ({SQL_NOW})
+        );
+
+        CREATE TABLE IF NOT EXISTS analytics_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          occurred_at TEXT NOT NULL,
+          local_date TEXT NOT NULL,
+          word_count INTEGER NOT NULL CHECK (word_count > 0),
+          spoken_duration_ms INTEGER CHECK (spoken_duration_ms > 0),
+          provider TEXT,
+          model TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_local_date ON analytics_events(local_date);
+
+        PRAGMA user_version = {SCHEMA_VERSION};"
+    ))?;
+    Ok(())
+}

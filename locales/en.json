@@ -1,0 +1,588 @@
+{
+  "settings": {
+    "language": {
+      "sectionTitle": "Language",
+      "sectionDescription": "Set interface and transcription languages independently",
+      "uiLabel": "Interface language",
+      "uiDescription": "Choose the language used throughout Whisper's interface",
+      "transcriptionLabel": "Transcription language",
+      "transcriptionDescription": "Choose the language you speak for more accurate transcription",
+      "chineseScriptLabel": "Chinese script (dictation)",
+      "chineseScriptDescription": "When Chinese is detected, convert dictated transcripts to Simplified or Traditional characters. Spoken Chinese is the same either way; Whisper only returns one script.",
+      "chineseScriptAsTranscribed": "Keep as transcribed",
+      "chineseScriptSimplified": "Simplified (简体)",
+      "chineseScriptTraditional": "Traditional (繁體)"
+    },
+    "groups": {
+      "app": "App",
+      "aiModels": "AI Models",
+      "system": "System"
+    },
+    "sections": {
+      "general": {
+        "label": "Preferences"
+      },
+      "hotkeys": {
+        "label": "Hotkeys"
+      },
+      "speechToText": {
+        "label": "Speech-to-Text"
+      },
+      "llms": {
+        "label": "Text cleanup"
+      },
+      "privacyData": {
+        "label": "Privacy & Data"
+      }
+    },
+    "aiModels": {
+      "enableTextCleanup": "Enable text cleanup",
+      "enableTextCleanupDescription": "Use AI to remove filler words, fix grammar, and polish punctuation"
+    },
+    "dictionary": {
+      "autoLearnTitle": "Auto-learn from corrections",
+      "autoLearnDescription": "When you correct a transcription in the target app, the corrected word is automatically added to your dictionary."
+    },
+    "general": {
+      "appearance": {
+        "auto": "Auto",
+        "dark": "Dark",
+        "description": "Control how Whisper looks",
+        "light": "Light",
+        "theme": "Theme",
+        "themeDescription": "Choose light, dark, or match your system",
+        "showMenuBarIcon": "Show in menu bar",
+        "showMenuBarIconDescription": "Show the Whisper icon in the macOS menu bar",
+        "title": "Appearance"
+      },
+      "floatingIcon": {
+        "startPosition": "Start position",
+        "startPositionDescription": "Where the recording pill appears on screen",
+        "bottomRight": "Bottom Right",
+        "center": "Bottom Center",
+        "bottomLeft": "Bottom Left",
+        "description": "Choose where the recording pill appears during dictation",
+        "title": "Recording pill"
+      },
+      "hotkey": {
+        "activationMode": "Activation Mode",
+        "activationModeHoldDescription": "Hold the hotkey while you speak and release it to finish.",
+        "activationModeTapDescription": "Double-tap the hotkey to start hands-free dictation, then press it once to finish. Key combinations start and stop with a single press.",
+        "description": "The key combination that starts and stops voice dictation",
+        "resetToDefault": "Reset to {{hotkey}}",
+        "title": "Dictation Hotkey"
+      },
+      "microphone": {
+        "description": "Select which input device to use for dictation",
+        "title": "Microphone"
+      },
+      "soundEffects": {
+        "dictationSounds": "Dictation sounds",
+        "dictationSoundsDescription": "Play a tone when recording starts and stops",
+        "pauseMedia": "Pause media",
+        "pauseMediaDescription": "Automatically pause music when dictation starts",
+        "title": "Sound Effects"
+      },
+      "clipboard": {
+        "title": "Clipboard",
+        "autoPaste": "Automatic pasting",
+        "autoPasteDescription": "Automatically paste transcribed text into the active app when dictation finishes",
+        "keepInClipboard": "Keep transcription in clipboard",
+        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed"
+      },
+      "startup": {
+        "launchAtLogin": "Launch at login",
+        "launchAtLoginDescription": "Start Whisper in the background when you log in",
+        "title": "Startup",
+        "description": "Control how Whisper behaves when it launches",
+        "startMinimized": "Start minimized",
+        "startMinimizedDescription": "Launch without showing the control panel window",
+        "needsApproval": {
+          "title": "Approval needed in System Settings",
+          "description": "macOS registered Whisper as a login item but is waiting for you to allow it under Login Items.",
+          "action": "Open Login Items"
+        }
+      }
+    },
+    "permissions": {
+      "accessibilityDescription": "Required for auto-paste to work after transcription",
+      "accessibilityTitle": "Accessibility",
+      "description": "Test and manage system permissions required for Whisper to function correctly",
+      "microphoneDescription": "Captures your voice for dictation and transcription",
+      "microphoneTitle": "Microphone",
+      "resetAccessibility": {
+        "description": "This will remove Whisper from accessibility permissions. You'll need to re-grant access in System Settings > Privacy & Security > Accessibility.",
+        "label": "Reset accessibility permissions",
+        "rowDescription": "Fix issues after reinstalling or rebuilding the app by removing and re-adding Whisper in System Settings",
+        "title": "Reset Accessibility Permissions"
+      },
+      "grantAccess": "Grant Access",
+      "title": "Permissions",
+      "troubleshoot": "Troubleshoot",
+      "troubleshootingTitle": "Troubleshooting"
+    },
+    "privacy": {
+      "audioRetention": "Audio Retention",
+      "audioRetentionDescription": "Store dictation audio on this device so you can re-transcribe it. Files are automatically deleted after the retention period.",
+      "audioRetentionDisabled": "Disabled",
+      "retentionDays_one": "{{count}} day",
+      "retentionDays_other": "{{count}} days",
+      "audioStorageUsage": "Storage Usage",
+      "audioStorageFiles": "{{count}} files, {{size}}",
+      "audioStorageEmpty": "No audio files stored",
+      "clearAllAudio": "Clear All Audio",
+      "dataRetention": "Data Retention",
+      "dataRetentionDescription": "Store transcriptions and audio locally in your history. When disabled, transcriptions are pasted but not saved.",
+      "transcriptRetention": "Transcript Retention",
+      "transcriptRetentionDescription": "Automatically delete saved transcriptions, their audio, and their Insights counters after this period.",
+      "transcriptRetentionForever": "Forever",
+      "saveDiscarded": "Save discarded dictations",
+      "saveDiscardedDescription": "When you cancel a dictation with Escape, keep its audio in history so you can recover it. Requires data and audio retention to be on."
+    },
+    "prompts": {
+      "title": "Prompt Studio"
+    },
+    "speechToText": {
+      "title": "Speech-to-Text",
+      "sharedDescription": "Dictation and file transcription share these settings.",
+      "serverUrlHelp": "Base URL of an OpenAI-compatible speech-to-text server, such as vLLM or speaches. It usually ends in /v1; a full endpoint URL is trimmed to its base."
+    },
+    "llms": {
+      "title": "Text cleanup",
+      "server": {
+        "title": "Server",
+        "description": "OpenAI-compatible server that cleans up dictated text"
+      }
+    },
+    "transcription": {
+      "modes": {
+        "selfHosted": "Self-Hosted"
+      }
+    },
+    "selfHosted": {
+      "serverUrl": "Server URL"
+    },
+    "endpointHint": {
+      "willCall": "Will call",
+      "invalid": "Not a valid http:// or https:// URL.",
+      "needsHttps": "Public hosts need HTTPS. Plain HTTP only works on this Mac, your local network, or Tailscale.",
+      "noV1": "No /v1 at the end. Most servers serve the API under /v1."
+    }
+  },
+  "tray": {
+    "openControlPanel": "Open Control Panel",
+    "hideControlPanel": "Hide Control Panel",
+    "quit": "Quit Whisper",
+    "tooltip": "Whisper - Voice Dictation"
+  },
+  "menu": {
+    "appLabel": "Whisper",
+    "quit": "Quit Whisper",
+    "settings": "Settings...",
+    "help": "Help",
+    "learnMore": "Learn More"
+  },
+  "hotkey": {
+    "errors": {
+      "fnCombinationUnsupported": "The Globe/Fn key can only be used by itself.",
+      "alreadyRegistered": "\"{{hotkey}}\" is already registered by another application.",
+      "holdNeedsReleaseKey": "Hold-to-talk needs a key macOS can see you release: Globe, a right-side key like Right Option, or a shortcut with a modifier. Tap works with any key.",
+      "registrationFailed": "Could not register \"{{hotkey}}\". It may be in use by another application.",
+      "trySuggestions": "Try: {{suggestions}}",
+      "slotConflict": "This hotkey is already used for {{slot}}.",
+      "holdUnavailable": "Hold-to-talk isn't available for this hotkey."
+    },
+    "validation": {
+      "empty": "Please enter a valid shortcut.",
+      "mouseButtonCombination": "Mouse button hotkeys cannot be combined with other keys.",
+      "tooManyKeys": "Shortcuts are limited to three keys.",
+      "leftRightMix": "Do not mix left and right versions of the same modifier in one shortcut.",
+      "noModifierOrSpecial": "Shortcuts must include a modifier or a non-alphanumeric key (like arrows, space, or function keys).",
+      "modifierOnlyUnsupported": "Two-modifier shortcuts are not supported on macOS. Use a right-side modifier on its own (e.g. RightOption), or add a regular key.",
+      "leftModifierOnly": "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space).",
+      "duplicate": "That shortcut is already in use.",
+      "reserved": "That shortcut is reserved by your system.",
+      "reservedNamed": "{{label}} is reserved by the system"
+    }
+  },
+  "common": {
+    "retry": "Retry",
+    "refresh": "Refresh",
+    "cancel": "Cancel",
+    "active": "Active",
+    "model": "Model",
+    "loading": "Loading...",
+    "hold": "Hold",
+    "tap": "Double-tap",
+    "close": "Close",
+    "save": "Save"
+  },
+  "controlPanel": {
+    "history": {
+      "couldNotLoadTitle": "Couldn't load your history",
+      "couldNotLoadDescription": "Something went wrong loading your transcriptions. Try closing and reopening the app.",
+      "copiedTitle": "Copied!",
+      "copiedDescription": "Text copied to your clipboard",
+      "deleteTitle": "Delete Transcription",
+      "deleteDescription": "This transcription will be permanently removed.",
+      "couldNotDeleteTitle": "Couldn't delete",
+      "couldNotDeleteDescription": "This transcription may have already been removed.",
+      "couldNotDeleteDescriptionGeneric": "Something went wrong. Please try again.",
+      "empty": "No transcriptions yet",
+      "emptyDescription": "Press your hotkey in any app and start talking. Every transcription is saved privately here on your device.",
+      "sectionTitle": "Transcriptions",
+      "dataRetentionDisabled": "Data retention is off. Transcriptions and audio are not saved to history.",
+      "press": "Press",
+      "toStart": "to start",
+      "dateGroups": {
+        "today": "Today",
+        "yesterday": "Yesterday"
+      },
+      "copyText": "Copy text",
+      "deleteItem": "Delete",
+      "viewRawTranscript": "View raw transcript",
+      "showInFolder": "Reveal in Finder",
+      "retryTranscription": "Re-transcribe",
+      "retrySuccess": "Transcription updated",
+      "retryError": "Failed to re-transcribe",
+      "audioNotFound": "Audio file not found or expired",
+      "noAiProcessing": "No AI processing was applied to this transcription",
+      "transcriptionFailed": "Transcription failed",
+      "failedCtaSettings": "Set up your transcription server",
+      "failedCtaAndRetry": "then click retry",
+      "failedCtaSettingsOnly": "Set up your transcription server in Settings",
+      "rawTranscript": "Raw Transcript",
+      "clearAll": "Clear all",
+      "clearAllTitle": "Clear All Transcriptions",
+      "clearAllDescriptionDevice": "All transcriptions, audio files, and Insights counters will be permanently removed from this device.",
+      "clearAllSuccess": "History cleared",
+      "clearAllErrorTitle": "Couldn't clear history",
+      "clearAllErrorDescription": "Something went wrong. Please try again.",
+      "discarded": {
+        "show": "Show failed and discarded",
+        "hide": "Hide failed and discarded",
+        "badge": "Discarded",
+        "recording": "Discarded recording",
+        "recordingWithDuration": "Discarded recording · {{duration}}",
+        "recover": "Recover",
+        "recovered": "Recovered"
+      },
+      "retryTranslationMode": "Translation Mode"
+    },
+    "loading": "Loading..."
+  },
+  "reasoning": {
+    "custom": {
+      "endpointWithProtocol": "Enter a full base URL including protocol (for example, https://server/v1).",
+      "httpsRequired": "HTTPS required (HTTP allowed for local network only).",
+      "endpointUnauthorized": "Endpoint rejected the request (401/403). Add an API key or adjust server auth settings.",
+      "endpointTitle": "Endpoint URL",
+      "apiKeyOptional": "API Key (Optional)",
+      "apiKeyHelp": "Optional. Sent as a Bearer token to your text cleanup server.",
+      "applyAndRefresh": "Apply & Refresh",
+      "queryPrefix": "We'll query",
+      "querySuffix": "for available models.",
+      "modelsReloadHint": "Models will reload when you click away from the URL field or click \"Apply & Refresh\".",
+      "enterEndpoint": "Enter an endpoint URL above to load models.",
+      "fetchingModels": "Fetching model list from endpoint...",
+      "noModels": "No models returned. Check your endpoint URL.",
+      "unableToLoadModels": "Unable to load models from endpoint.",
+      "selectModelHint": "No model selected yet — choose one from the list below.",
+      "columnTag": "Tag",
+      "columnOwner": "Owner"
+    },
+    "disableThinking": {
+      "label": "Disable thinking output",
+      "help": "Skips reasoning tokens for cleaner output. Recommended for cleanup. Some servers ignore this hint."
+    },
+    "selfHosted": {
+      "endpointHelp": "Any server that speaks OpenAI Chat Completions. Pick one to fill in its default address, then change the host if it runs on another machine."
+    }
+  },
+  "dictation": {
+    "errorTitles": {
+      "microphoneUnavailable": "Microphone unavailable",
+      "transcriptionTimeout": "Transcription timed out",
+      "transcriptionConnectionFailed": "Transcription server unavailable",
+      "providerRateLimited": "Too many requests"
+    },
+    "errorActions": {
+      "viewTranscript": "View Transcript"
+    },
+    "noAudio": {
+      "title": "We didn’t catch that",
+      "description": "Check your microphone and try again."
+    },
+    "errorDescriptions": {
+      "transcriptionConnectionFailed": "Could not reach the transcription server within 3 seconds. Check that the server is running and reachable, then try again.",
+      "transcriptionTimeout": "The transcription server did not finish responding within 30 seconds. Check that the server is running and reachable, then try again.",
+      "microphoneUnavailable": "The selected microphone could not capture audio. Reconnect it, check microphone access in System Settings, or choose another microphone in Settings before trying again.",
+      "providerRateLimited": "The transcription server rate-limited the request. Wait a moment and try again.",
+      "customEndpointInvalid": "Your custom transcription endpoint is not configured or its URL is invalid. Update it in Settings → Speech to Text.",
+      "cleanupTruncated": "The AI model ran out of room before it finished cleaning up your dictation.",
+      "cleanupEmptyReply": "The AI model returned an empty reply instead of the cleaned-up dictation."
+    },
+    "pushForceStopped": {
+      "title": "Transcription not pasted",
+      "description": "Dictation stopped while the hotkey was still held, so the text was not pasted. Your transcription is on the clipboard.",
+      "descriptionClipboardFailed": "Dictation stopped while the hotkey was still held, so the text was not pasted, and it could not be copied to the clipboard either."
+    }
+  },
+  "hotkeyInput": {
+    "clickToChangeLower": "click to change",
+    "clickToSet": "Click to set hotkey",
+    "fnCaptureHint": "Press a key to combine, or release for Globe",
+    "globe": "Globe",
+    "hotkeyLabel": "Hotkey",
+    "keyHint": "+ key",
+    "recording": "Recording",
+    "tryShortcut": "Try ⌘⇧K",
+    "addAnother": "Add another hotkey",
+    "duplicate": "Already added",
+    "singleModifierNeedsRightSide": "{{key}} on its own can't be a shortcut. Press {{alternative}} instead, or add a second key."
+  },
+  "languageSelector": {
+    "noLanguagesFound": "No languages found",
+    "searchPlaceholder": "Search languages"
+  },
+  "microphoneSettings": {
+    "helpText": "A selected device stays selected when the lid changes.",
+    "inputDevice": "Input Device",
+    "selectPlaceholder": "Select a microphone",
+    "systemDefault": "System Default",
+    "unknownDevice": "Unknown Device",
+    "using": "Using: {{device}}",
+    "auto": {
+      "label": "Auto",
+      "description": "Auto uses the built-in microphone with the lid open. When closed, it prefers iPhone, then another external microphone. If none is available, it uses the system default.",
+      "preferredDevice": "Preferred: {{device}}"
+    },
+    "builtInDevice": "Built-in Microphone",
+    "unavailableDevice": "{{device}} (Unavailable)"
+  },
+  "promptStudio": {
+    "common": {
+      "copied": "Copied",
+      "copy": "Copy",
+      "reset": "Reset",
+      "save": "Save"
+    },
+    "defaultTestInput": "um please send the report by thursday no wait friday",
+    "dialogs": {
+      "reset": {
+        "description": "Prompt has been reset to the default value.",
+        "title": "Reset Complete"
+      },
+      "saved": {
+        "description": "Your custom prompt will be used for text cleanup.",
+        "title": "Prompt Saved"
+      }
+    },
+    "edit": {
+      "cautionLabel": "Caution",
+      "cautionTextPrefix": "Changes affect how transcripts are cleaned.",
+      "placeholder": "Enter your custom system prompt..."
+    },
+    "tabs": {
+      "customize": "Customize",
+      "test": "Test",
+      "view": "View"
+    },
+    "test": {
+      "disabledReasoning": "Enable text cleanup in Settings to test this prompt.",
+      "failed": "Test failed: {{error}}",
+      "inputLabel": "Input",
+      "inputPlaceholder": "Enter text to test...",
+      "modelLabel": "Model",
+      "noModelSelected": "No model selected",
+      "none": "None",
+      "outputLabel": "Output",
+      "processing": "Processing...",
+      "run": "Run Test",
+      "noEndpoint": "Set the text cleanup server URL in Settings."
+    },
+    "view": {
+      "customPrompt": "Custom prompt",
+      "defaultPrompt": "Default prompt",
+      "modified": "Modified"
+    }
+  },
+  "models": {
+    "noneAvailable": "No models available"
+  },
+  "sidebar": {
+    "home": "Home",
+    "insights": "Insights",
+    "upload": "Upload",
+    "dictionary": "Dictionary",
+    "settings": "Settings"
+  },
+  "insights": {
+    "yourUsage": "Your Usage",
+    "wordsSpoken": "Words spoken",
+    "currentStreak": "Current streak",
+    "wordsPerMinute": "Words per minute",
+    "dictations": "Dictations",
+    "allTime": "All time",
+    "days_one": "{{count}} day",
+    "days_other": "{{count}} days",
+    "longestStreak_one": "Longest: {{count}} day",
+    "longestStreak_other": "Longest: {{count}} days",
+    "wpmCoverage": "Based on {{count}}% of measured words",
+    "activity": "Speaking activity",
+    "activityLess": "Less",
+    "activityMore": "More",
+    "dayTooltip_one": "{{date}}: {{count}} word",
+    "dayTooltip_other": "{{date}}: {{count}} words",
+    "dataRetentionDisabled": "Data retention is off. New dictations do not count toward Insights.",
+    "onDevice": "On this device",
+    "onDevicePrivacy": "These insights are calculated on this device to protect your privacy.",
+    "emptyTitle": "No dictations yet",
+    "emptyBody": "Start dictating and your words, streaks, and daily activity will show up here.",
+    "loadError": "Insights couldn't be read from this device."
+  },
+  "upload": {
+    "title": "Upload Audio",
+    "changeModel": "Change",
+    "dropOrBrowse": "Drop an audio or video file, or click to browse",
+    "supportedFormats": "MP3, WAV, M4A, MP4, MOV and most other audio or video formats",
+    "unsupportedFiles": "Skipped {{names}}: not a supported audio or video format.",
+    "transcribe": "Transcribe",
+    "cancel": "Cancel",
+    "cancelTranscription": "Cancel transcription",
+    "transcriptionComplete": "Transcription complete",
+    "uploadAnother": "Upload Another",
+    "retry": "Retry",
+    "startOver": "Start Over",
+    "transcriptionFailed": "Transcription failed",
+    "errorOccurred": "An error occurred",
+    "noProviderTitle": "No transcription server set up",
+    "noProviderAction": "Open Transcription Settings",
+    "queueProgress": "{{completed}}/{{total}} completed",
+    "cancelAll": "Cancel all",
+    "clearQueue": "Clear",
+    "batchCancelled": "Cancelled",
+    "batchTranscriptionFailed": "Transcription failed",
+    "queueFailed": "{{n}} failed",
+    "customEndpointInvalid": "Custom transcription endpoint is not configured or invalid. Update it in Settings.",
+    "transcribing": "Transcribing",
+    "completionHint": "When it finishes, you can read and copy the full transcript.",
+    "savedToHistory": "Saved to history",
+    "copyFullText": "Copy full text",
+    "viewInHistory": "View in history"
+  },
+  "dictionary": {
+    "clearTitle": "Clear dictionary?",
+    "clearDescription": "This will remove all words from your custom dictionary. This action cannot be undone.",
+    "addPlaceholder": "Add words separated by commas — Whisper, Supabase, John Snow, ARR",
+    "clearAll": "Clear all",
+    "add": "Add",
+    "importPlaceholder": "Paste words separated by commas or new lines...",
+    "separateWithCommas": "One word per line, or comma-separated",
+    "wordsReady_one": "{{count}} word ready",
+    "wordsReady_other": "{{count}} words ready",
+    "import": "Import",
+    "yourDictionary": "Your dictionary",
+    "promptLimitNotice": "Your dictionary is {{chars}} characters. Whisper models read only the last few hundred characters of it, so your manually added and recently used words go last. Rarely used words may be left out. Other models get the full list.",
+    "exportFailed": "Export failed",
+    "noMatches": "No matches — press Enter to add \"{{word}}\"",
+    "tabDictionary": "Dictionary",
+    "tabSnippets": "Snippets",
+    "snippets": {
+      "title": "Snippets",
+      "editTitle": "Edit snippet",
+      "dialogDescription": "When you speak the trigger, it's replaced with your saved text.",
+      "triggerLabel": "Trigger",
+      "triggerPlaceholder": "e.g. cal link",
+      "replacementLabel": "Replacement",
+      "replacementPlaceholder": "Text to insert when you say the trigger…",
+      "create": "Create snippet",
+      "duplicate": "A snippet with this trigger already exists",
+      "emptyTitle": "The stuff you shouldn't have to say",
+      "emptyTitleAccent": "twice",
+      "emptyDescription": "Speak a trigger word and Whisper replaces it with whatever you saved — URLs, intros, sign-offs, prompts.",
+      "new": "New snippet",
+      "examples": {
+        "linkedinTrigger": "My LinkedIn",
+        "linkedinText": "linkedin.com/in/you",
+        "rewriteTrigger": "Rewrite prompt",
+        "rewriteText": "Rewrite this to be more concise and professional",
+        "introTrigger": "Intro email",
+        "introText": "Hey, would love to find some time to chat later this week…",
+        "signoffTrigger": "Sign off",
+        "signoffText": "Best, Alex · alex@example.com"
+      },
+      "addPlaceholder": "Add a trigger phrase — \"investor ask\", \"cal link\""
+    },
+    "emptyTitle": "Your dictionary is empty",
+    "emptyDescription": "Add words for {{agentName}} to always get right: names, tools, acronyms.",
+    "addFirstWord": "Add your first word",
+    "importList": "Import a list"
+  },
+  "apiKeyInput": {
+    "placeholder": "Paste your API key",
+    "editButton": "edit",
+    "addButton": "add"
+  },
+  "app": {
+    "toasts": {
+      "hotkeyUnavailable": {
+        "title": "Hotkey unavailable"
+      },
+      "hotkeyHint": {
+        "tap": {
+          "title": "Double-tap to dictate",
+          "description": "Double-tap the shortcut to start, then press it once to finish."
+        },
+        "push": {
+          "title": "Hold to dictate",
+          "description": "Keep holding the shortcut while you speak, then release it to finish."
+        }
+      },
+      "addedToDict": "Added {{words}} to your dictionary",
+      "undo": "Undo",
+      "cleanupFailed": {
+        "title": "Cleanup failed",
+        "description": "Original dictation pasted without AI cleanup."
+      }
+    },
+    "mic": {
+      "recording": "Recording...",
+      "processing": "Processing..."
+    },
+    "commandMenu": {
+      "stopListening": "Stop listening",
+      "startListening": "Start listening",
+      "hideForNow": "Hide for now"
+    }
+  },
+  "commandSearch": {
+    "sections": {
+      "transcripts": "Transcripts"
+    },
+    "noResults": "No results",
+    "emptyState": "Start typing to search",
+    "footer": {
+      "navigate": "Navigate",
+      "open": "Open",
+      "dismiss": "Dismiss"
+    },
+    "relativeTime": {
+      "now": "now",
+      "minutesAgo": "{{count}}m",
+      "hoursAgo": "{{count}}h",
+      "daysAgo": "{{count}}d"
+    }
+  },
+  "transcriptionPreview": {
+    "recovery": {
+      "title": "Transcription ready",
+      "pasteFailed": "Could not paste automatically. Copy the text below.",
+      "pasteFailedCopied": "Could not paste automatically. Text copied to clipboard.",
+      "copyFailed": "Copy failed. Try again or select the text to copy it.",
+      "copy": "Copy text",
+      "copied": "Copied",
+      "pasteHint": "⌘V to paste"
+    }
+  }
+}

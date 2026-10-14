@@ -1,0 +1,588 @@
+{
+  "settings": {
+    "language": {
+      "sectionTitle": "语言",
+      "sectionDescription": "分别设置界面语言和转录语言",
+      "uiLabel": "界面语言",
+      "uiDescription": "选择 Whisper 界面使用的语言",
+      "transcriptionLabel": "转录语言",
+      "transcriptionDescription": "选择你说话的语言，以提高转录准确率",
+      "chineseScriptLabel": "中文书写（听写）",
+      "chineseScriptDescription": "检测到中文时，将听写的转录结果转换为简体或繁体。口语听起来一样；Whisper 只会输出一种字形。",
+      "chineseScriptAsTranscribed": "保持转录原样",
+      "chineseScriptSimplified": "简体",
+      "chineseScriptTraditional": "繁体"
+    },
+    "groups": {
+      "app": "应用",
+      "aiModels": "AI 模型",
+      "system": "系统"
+    },
+    "sections": {
+      "general": {
+        "label": "偏好设置"
+      },
+      "hotkeys": {
+        "label": "快捷键"
+      },
+      "speechToText": {
+        "label": "语音转文字"
+      },
+      "llms": {
+        "label": "文本整理"
+      },
+      "privacyData": {
+        "label": "隐私与数据"
+      }
+    },
+    "aiModels": {
+      "enableTextCleanup": "启用文本整理",
+      "enableTextCleanupDescription": "AI 去除语气词，修正语法和标点"
+    },
+    "dictionary": {
+      "autoLearnTitle": "从纠正中自动学习",
+      "autoLearnDescription": "当你在目标应用中纠正转录时，纠正后的词语会自动添加到你的词典中。"
+    },
+    "general": {
+      "appearance": {
+        "auto": "自动",
+        "dark": "深色",
+        "description": "控制 Whisper 的外观",
+        "light": "浅色",
+        "theme": "主题",
+        "themeDescription": "选择浅色、深色或跟随系统",
+        "showMenuBarIcon": "在菜单栏显示",
+        "showMenuBarIconDescription": "在 macOS 菜单栏显示 Whisper 图标",
+        "title": "外观"
+      },
+      "floatingIcon": {
+        "description": "选择听写时录音胶囊的显示位置",
+        "title": "录音胶囊",
+        "startPosition": "起始位置",
+        "startPositionDescription": "录音胶囊在屏幕上的显示位置",
+        "bottomRight": "右下角",
+        "center": "底部居中",
+        "bottomLeft": "左下角"
+      },
+      "hotkey": {
+        "activationMode": "激活模式",
+        "activationModeHoldDescription": "按住快捷键说话，松开即结束。",
+        "activationModeTapDescription": "双击快捷键开始免提听写，再按一下结束。组合键按一下即可开始或结束。",
+        "description": "用于开始和停止语音听写的组合键",
+        "resetToDefault": "重置为 {{hotkey}}",
+        "title": "听写快捷键"
+      },
+      "microphone": {
+        "description": "选择用于听写的输入设备",
+        "title": "麦克风"
+      },
+      "soundEffects": {
+        "dictationSounds": "听写音效",
+        "dictationSoundsDescription": "在录音开始和停止时播放提示音",
+        "pauseMedia": "暂停媒体",
+        "pauseMediaDescription": "开始听写时自动暂停音乐",
+        "title": "音效"
+      },
+      "clipboard": {
+        "title": "剪贴板",
+        "autoPaste": "自动粘贴",
+        "autoPasteDescription": "听写结束后自动将转录文本粘贴到当前活动的应用中",
+        "keepInClipboard": "将转录内容保留在剪贴板",
+        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴"
+      },
+      "startup": {
+        "launchAtLogin": "登录时启动",
+        "launchAtLoginDescription": "登录时在后台启动 Whisper",
+        "title": "启动",
+        "description": "控制 Whisper 启动时的行为",
+        "startMinimized": "启动时最小化",
+        "startMinimizedDescription": "启动时不显示控制面板窗口",
+        "needsApproval": {
+          "title": "需要在系统设置中批准",
+          "description": "macOS 已将 Whisper 注册为登录项，但仍在等待你在“登录项”中允许它。",
+          "action": "打开登录项"
+        }
+      }
+    },
+    "permissions": {
+      "accessibilityDescription": "转录后自动粘贴需要此权限",
+      "accessibilityTitle": "辅助功能",
+      "description": "测试和管理 Whisper 正常运行所需的系统权限",
+      "microphoneDescription": "录制您的声音用于听写和转录",
+      "microphoneTitle": "麦克风",
+      "resetAccessibility": {
+        "description": "这将从辅助功能权限中移除 Whisper。你需要在系统设置 > 隐私与安全 > 辅助功能中重新授权。",
+        "label": "重置辅助功能权限",
+        "rowDescription": "重新安装或重新构建应用后，通过在系统设置中移除并重新添加 Whisper 来解决问题",
+        "title": "重置辅助功能权限"
+      },
+      "grantAccess": "授予访问权限",
+      "title": "权限",
+      "troubleshoot": "排查问题",
+      "troubleshootingTitle": "问题排查"
+    },
+    "privacy": {
+      "dataRetention": "数据保留",
+      "dataRetentionDescription": "将转录和音频本地保存到历史记录中。禁用后，转录内容会被粘贴但不会被保存。",
+      "transcriptRetention": "转录保留",
+      "transcriptRetentionDescription": "在此期限后自动删除已保存的转录、其音频及其 Insights 计数。",
+      "transcriptRetentionForever": "永久",
+      "audioRetention": "音频保留",
+      "audioRetentionDescription": "在本设备上保存听写音频，以便重新转录。保留期限到期后自动删除。",
+      "audioRetentionDisabled": "已禁用",
+      "retentionDays_one": "{{count}} 天",
+      "retentionDays_other": "{{count}} 天",
+      "audioStorageUsage": "存储用量",
+      "audioStorageFiles": "{{count}} 个文件，{{size}}",
+      "audioStorageEmpty": "没有存储的音频文件",
+      "clearAllAudio": "清除所有音频",
+      "saveDiscarded": "保存已放弃的听写",
+      "saveDiscardedDescription": "用 Escape 取消听写时，将其音频保留在历史记录中以便恢复。需开启数据和音频保留。"
+    },
+    "prompts": {
+      "title": "提示词工作室"
+    },
+    "speechToText": {
+      "title": "语音转文字",
+      "sharedDescription": "听写与文件转录共用此配置。",
+      "serverUrlHelp": "OpenAI 兼容的语音转文字服务（如 vLLM、speaches）的基础地址，通常以 /v1 结尾；填完整的接口地址也会自动截成基础地址。"
+    },
+    "llms": {
+      "title": "文本整理",
+      "server": {
+        "title": "服务器",
+        "description": "用于整理听写文本的 OpenAI 兼容服务"
+      }
+    },
+    "transcription": {
+      "modes": {
+        "selfHosted": "自托管"
+      }
+    },
+    "selfHosted": {
+      "serverUrl": "服务器 URL"
+    },
+    "endpointHint": {
+      "willCall": "将请求",
+      "invalid": "不是有效的 http:// 或 https:// 地址。",
+      "needsHttps": "公网地址需要 HTTPS。HTTP 只能用于本机、局域网或 Tailscale。",
+      "noV1": "结尾没有 /v1，大多数服务的 API 都在 /v1 下。"
+    }
+  },
+  "tray": {
+    "openControlPanel": "打开控制面板",
+    "hideControlPanel": "隐藏控制面板",
+    "quit": "退出 Whisper",
+    "tooltip": "Whisper - 语音听写"
+  },
+  "menu": {
+    "appLabel": "Whisper",
+    "quit": "退出 Whisper",
+    "settings": "设置...",
+    "help": "帮助",
+    "learnMore": "了解更多"
+  },
+  "hotkey": {
+    "errors": {
+      "fnCombinationUnsupported": "Globe/Fn 键只能单独使用。",
+      "alreadyRegistered": "\"{{hotkey}}\" 已被其他应用注册。",
+      "holdNeedsReleaseKey": "按住说话需要 macOS 能检测到松开的按键：Globe、右侧 Option 之类的右侧按键，或带修饰键的快捷键。点按可用于任何按键。",
+      "registrationFailed": "无法注册 \"{{hotkey}}\"，该快捷键可能已被其他应用占用。",
+      "trySuggestions": "建议尝试：{{suggestions}}",
+      "slotConflict": "此快捷键已用于{{slot}}。",
+      "holdUnavailable": "此快捷键不支持按住说话。"
+    },
+    "validation": {
+      "empty": "请输入有效的快捷键。",
+      "mouseButtonCombination": "鼠标按键快捷键不能与其他按键组合。",
+      "tooManyKeys": "快捷键最多只能包含三个按键。",
+      "leftRightMix": "同一个快捷键中不要混用同一修饰键的左右两侧版本。",
+      "noModifierOrSpecial": "快捷键必须包含修饰键或非字母数字键（如方向键、空格键或功能键）。",
+      "modifierOnlyUnsupported": "macOS 不支持由两个修饰键组成的快捷键。请单独使用右侧修饰键（例如 RightOption），或再加一个普通按键。",
+      "leftModifierOnly": "单个修饰键作为快捷键时必须使用右侧按键（例如 RightOption），或再加一个普通按键（例如 Control+Space）。",
+      "duplicate": "该快捷键已在使用中。",
+      "reserved": "该快捷键已被系统保留。",
+      "reservedNamed": "{{label}} 已被系统保留"
+    }
+  },
+  "common": {
+    "retry": "重试",
+    "refresh": "刷新",
+    "cancel": "取消",
+    "active": "已激活",
+    "model": "模型",
+    "loading": "加载中...",
+    "hold": "按住",
+    "tap": "双击",
+    "close": "关闭",
+    "save": "保存"
+  },
+  "controlPanel": {
+    "history": {
+      "couldNotLoadTitle": "无法加载历史记录",
+      "couldNotLoadDescription": "加载转录记录时出错，请尝试关闭并重新打开应用。",
+      "copiedTitle": "已复制！",
+      "copiedDescription": "文本已复制到剪贴板",
+      "deleteTitle": "删除转录记录",
+      "deleteDescription": "此转录记录将被永久删除。",
+      "couldNotDeleteTitle": "无法删除",
+      "couldNotDeleteDescription": "此转录记录可能已被删除。",
+      "couldNotDeleteDescriptionGeneric": "出了点问题，请重试。",
+      "empty": "暂无转录记录",
+      "emptyDescription": "在任意应用中按下快捷键开始说话。每条转写都会私密地保存在你的设备上。",
+      "sectionTitle": "转写记录",
+      "dataRetentionDisabled": "数据保留已关闭。转录和音频不会保存到历史记录。",
+      "press": "按下",
+      "toStart": "开始",
+      "dateGroups": {
+        "today": "今天",
+        "yesterday": "昨天"
+      },
+      "transcriptionFailed": "转录失败",
+      "failedCtaSettings": "设置转录服务器",
+      "failedCtaAndRetry": "然后点击重试",
+      "failedCtaSettingsOnly": "在设置中配置转录服务器",
+      "clearAll": "全部清除",
+      "clearAllTitle": "清除所有转录",
+      "clearAllDescriptionDevice": "此设备上的所有转录、音频文件和统计数据都将被永久删除。",
+      "clearAllSuccess": "历史记录已清除",
+      "clearAllErrorTitle": "无法清除历史记录",
+      "clearAllErrorDescription": "出了点问题，请重试。",
+      "copyText": "复制文本",
+      "deleteItem": "删除",
+      "viewRawTranscript": "查看原始转录",
+      "showInFolder": "在访达中显示",
+      "retryTranscription": "重新转录",
+      "retrySuccess": "转录已更新",
+      "retryError": "重新转录失败",
+      "audioNotFound": "音频文件未找到或已过期",
+      "noAiProcessing": "此转录未应用 AI 处理",
+      "rawTranscript": "原始转录",
+      "discarded": {
+        "show": "显示失败和已放弃的记录",
+        "hide": "隐藏失败和已放弃的记录",
+        "badge": "已放弃",
+        "recording": "已放弃的录音",
+        "recordingWithDuration": "已放弃的录音 · {{duration}}",
+        "recover": "恢复",
+        "recovered": "已恢复"
+      },
+      "retryTranslationMode": "翻译模式"
+    },
+    "loading": "加载中..."
+  },
+  "reasoning": {
+    "custom": {
+      "endpointWithProtocol": "请输入包含协议的完整 URL（例如 https://server/v1）。",
+      "httpsRequired": "需要 HTTPS（仅本地网络允许 HTTP）。",
+      "endpointUnauthorized": "端点拒绝了请求（401/403）。请添加 API Key 或调整服务器认证设置。",
+      "endpointTitle": "端点 URL",
+      "apiKeyOptional": "API Key（可选）",
+      "apiKeyHelp": "可选，将作为 Bearer token 发送给文本整理服务器。",
+      "applyAndRefresh": "应用并刷新",
+      "queryPrefix": "我们将查询",
+      "querySuffix": "获取可用模型。",
+      "modelsReloadHint": "当你离开 URL 输入框或点击“应用并刷新”时，模型列表将重新加载。",
+      "enterEndpoint": "请在上方输入端点 URL 以加载模型。",
+      "fetchingModels": "正在从端点获取模型列表...",
+      "noModels": "未返回任何模型，请检查端点 URL。",
+      "unableToLoadModels": "无法从端点加载模型。",
+      "selectModelHint": "尚未选择模型 — 请从下方列表中选择一个。",
+      "columnTag": "标签",
+      "columnOwner": "所有者"
+    },
+    "disableThinking": {
+      "label": "禁用思考输出",
+      "help": "跳过推理令牌以获得更清晰的输出。推荐用于清理。某些服务器会忽略此提示。"
+    },
+    "selfHosted": {
+      "endpointHelp": "任何支持 OpenAI Chat Completions 的服务都可以。点下面的服务填入默认地址，服务跑在别的机器上时再改主机名。"
+    }
+  },
+  "dictation": {
+    "errorTitles": {
+      "microphoneUnavailable": "麦克风不可用",
+      "transcriptionTimeout": "转写超时",
+      "transcriptionConnectionFailed": "无法连接转写服务器",
+      "providerRateLimited": "请求过于频繁"
+    },
+    "errorActions": {
+      "viewTranscript": "查看转录"
+    },
+    "noAudio": {
+      "title": "我们没听清",
+      "description": "请检查麦克风后重试。"
+    },
+    "errorDescriptions": {
+      "transcriptionConnectionFailed": "3 秒内未能连接转写服务器。请确认服务器已启动且网络可达，然后重试。",
+      "transcriptionTimeout": "转写服务器未在 30 秒内完成响应。请确认服务器已启动且网络可达，然后重试。",
+      "microphoneUnavailable": "所选麦克风无法采集音频。请重新连接，在系统设置中检查麦克风权限，或在设置中选择其他麦克风后重试。",
+      "providerRateLimited": "转录服务器限制了请求频率。请稍候再试。",
+      "customEndpointInvalid": "自定义转写端点未配置或其 URL 无效。请在“设置 → 语音转文字”中更新。",
+      "cleanupTruncated": "AI 模型的输出长度达到上限，未能完成听写清理。",
+      "cleanupEmptyReply": "AI 模型返回了空响应，没有生成清理后的文本。"
+    },
+    "pushForceStopped": {
+      "title": "转录内容未粘贴",
+      "description": "听写停止时快捷键仍处于按下状态，因此未粘贴文本。转录内容已复制到剪贴板。",
+      "descriptionClipboardFailed": "听写停止时快捷键仍处于按下状态，因此未粘贴文本，也无法复制到剪贴板。"
+    }
+  },
+  "hotkeyInput": {
+    "clickToChangeLower": "点击更改",
+    "clickToSet": "点击设置快捷键",
+    "fnCaptureHint": "按下一个键进行组合，或松开以使用 Globe",
+    "globe": "Globe",
+    "hotkeyLabel": "快捷键",
+    "keyHint": "+ 按键",
+    "recording": "录制中",
+    "tryShortcut": "试试 ⌘⇧K",
+    "addAnother": "添加其他快捷键",
+    "duplicate": "已添加",
+    "singleModifierNeedsRightSide": "{{key}} 单独不能作为快捷键。请按 {{alternative}}，或再加一个按键。"
+  },
+  "languageSelector": {
+    "noLanguagesFound": "未找到匹配的语言",
+    "searchPlaceholder": "搜索语言"
+  },
+  "microphoneSettings": {
+    "helpText": "手动选择设备后，开合盖不会改变所选麦克风。",
+    "inputDevice": "输入设备",
+    "selectPlaceholder": "选择麦克风",
+    "systemDefault": "系统默认",
+    "unknownDevice": "未知设备",
+    "using": "当前使用：{{device}}",
+    "auto": {
+      "label": "自动",
+      "description": "自动模式下，开盖使用内置麦克风；合盖优先使用 iPhone，其次使用其他外接麦克风。没有可用设备时，使用系统默认麦克风。",
+      "preferredDevice": "优先设备：{{device}}"
+    },
+    "builtInDevice": "内置麦克风",
+    "unavailableDevice": "{{device}}（不可用）"
+  },
+  "promptStudio": {
+    "common": {
+      "copied": "已复制",
+      "copy": "复制",
+      "reset": "重置",
+      "save": "保存"
+    },
+    "defaultTestInput": "嗯请在周四不对周五之前把报告发给我",
+    "dialogs": {
+      "reset": {
+        "description": "提示词已重置为默认值。",
+        "title": "重置完成"
+      },
+      "saved": {
+        "description": "自定义提示词将用于文本整理。",
+        "title": "提示词已保存"
+      }
+    },
+    "edit": {
+      "cautionLabel": "注意",
+      "cautionTextPrefix": "修改提示词会影响转录文本的整理结果。",
+      "placeholder": "输入你的自定义系统提示词..."
+    },
+    "tabs": {
+      "customize": "自定义",
+      "test": "测试",
+      "view": "查看"
+    },
+    "test": {
+      "disabledReasoning": "请在设置中启用文本整理，然后测试提示词。",
+      "failed": "测试失败：{{error}}",
+      "inputLabel": "输入",
+      "inputPlaceholder": "输入要测试的文本...",
+      "modelLabel": "模型",
+      "noModelSelected": "未选择模型",
+      "none": "无",
+      "outputLabel": "输出",
+      "processing": "处理中...",
+      "run": "运行测试",
+      "noEndpoint": "请在设置中填写文本整理服务地址。"
+    },
+    "view": {
+      "customPrompt": "自定义提示词",
+      "defaultPrompt": "默认提示词",
+      "modified": "已修改"
+    }
+  },
+  "models": {
+    "noneAvailable": "没有可用的模型"
+  },
+  "upload": {
+    "title": "上传音频",
+    "changeModel": "更改",
+    "dropOrBrowse": "拖放音频或视频文件，或点击浏览",
+    "supportedFormats": "MP3、WAV、M4A、MP4、MOV 及大多数其他音频或视频格式",
+    "unsupportedFiles": "已跳过 {{names}}：不支持的音频或视频格式。",
+    "transcribe": "转录",
+    "cancel": "取消",
+    "cancelTranscription": "取消转录",
+    "transcriptionComplete": "转录完成",
+    "uploadAnother": "上传另一个",
+    "retry": "重试",
+    "startOver": "重新开始",
+    "transcriptionFailed": "转录失败",
+    "errorOccurred": "发生错误",
+    "noProviderTitle": "尚未设置转录服务器",
+    "noProviderAction": "打开转录设置",
+    "queueProgress": "{{completed}}/{{total}} 已完成",
+    "cancelAll": "取消全部",
+    "clearQueue": "清除",
+    "batchCancelled": "已取消",
+    "batchTranscriptionFailed": "转录失败",
+    "queueFailed": "{{n}} 个失败",
+    "customEndpointInvalid": "自定义转写端点未配置或无效。请在设置中更新。",
+    "transcribing": "正在转录",
+    "completionHint": "完成后可查看并复制全文",
+    "savedToHistory": "已保存到历史记录",
+    "copyFullText": "复制全文",
+    "viewInHistory": "在历史记录中查看"
+  },
+  "dictionary": {
+    "clearAll": "全部清除",
+    "clearTitle": "清空词典？",
+    "clearDescription": "这将删除自定义词典中的所有词汇，此操作无法撤销。",
+    "addPlaceholder": "用逗号分隔添加多个词——Whisper、Supabase、ARR",
+    "add": "添加",
+    "importPlaceholder": "粘贴以逗号或换行分隔的词语...",
+    "separateWithCommas": "每行一个词，或用逗号分隔",
+    "wordsReady_other": "{{count}} 个词语就绪",
+    "import": "导入",
+    "yourDictionary": "你的词典",
+    "promptLimitNotice": "词典当前共 {{chars}} 个字符。Whisper 模型只会读取其中最后几百个字符，因此手动添加和最近使用的词会放在最后，很少使用的词可能被忽略；其他模型会收到完整列表。",
+    "exportFailed": "导出失败",
+    "wordsReady_one": "{{count}} 个词语就绪",
+    "noMatches": "无匹配项 — 按 Enter 添加“{{word}}”",
+    "tabDictionary": "词典",
+    "tabSnippets": "片段",
+    "snippets": {
+      "title": "片段",
+      "editTitle": "编辑片段",
+      "dialogDescription": "当你说出触发词时，它会被替换为你保存的文本。",
+      "triggerLabel": "触发词",
+      "triggerPlaceholder": "例如：我的日程链接",
+      "replacementLabel": "替换文本",
+      "replacementPlaceholder": "说出触发词时插入的文本…",
+      "create": "创建片段",
+      "duplicate": "已存在使用此触发词的片段",
+      "emptyTitle": "同样的话，只说",
+      "emptyTitleAccent": "一遍",
+      "emptyDescription": "说出触发词，Whisper 会把它替换为你保存的内容：链接、开场白、签名、提示词。",
+      "new": "新建片段",
+      "examples": {
+        "linkedinTrigger": "我的 LinkedIn",
+        "linkedinText": "linkedin.com/in/you",
+        "rewriteTrigger": "改写提示词",
+        "rewriteText": "把这段话改写得更简洁、更专业",
+        "introTrigger": "开场邮件",
+        "introText": "你好，希望本周能找个时间聊聊…",
+        "signoffTrigger": "签名",
+        "signoffText": "祝好，Alex · alex@example.com"
+      },
+      "addPlaceholder": "添加触发词——“我的日程链接”“签名”"
+    },
+    "emptyTitle": "你的词典是空的",
+    "emptyDescription": "添加希望{{agentName}}始终识别正确的词：名字、工具、缩写。",
+    "addFirstWord": "添加第一个词",
+    "importList": "导入列表"
+  },
+  "insights": {
+    "yourUsage": "你的使用情况",
+    "wordsSpoken": "已听写字数",
+    "currentStreak": "当前连续天数",
+    "wordsPerMinute": "每分钟字数",
+    "dictations": "听写次数",
+    "allTime": "全部时间",
+    "days_one": "{{count}} 天",
+    "days_other": "{{count}} 天",
+    "longestStreak_one": "最长：{{count}} 天",
+    "longestStreak_other": "最长：{{count}} 天",
+    "wpmCoverage": "基于 {{count}}% 已测量的字数",
+    "activity": "听写活跃度",
+    "activityLess": "较少",
+    "activityMore": "较多",
+    "dayTooltip_one": "{{date}}：{{count}} 字",
+    "dayTooltip_other": "{{date}}：{{count}} 字",
+    "dataRetentionDisabled": "数据保留已关闭。新的听写不会计入使用统计。",
+    "onDevice": "仅在本设备",
+    "onDevicePrivacy": "这些分析数据会在此设备上计算，以保护你的隐私。",
+    "emptyTitle": "还没有听写记录",
+    "emptyBody": "开始听写后，你的字数、连续记录和每日活动会显示在这里。",
+    "loadError": "无法从本设备读取 Insights。"
+  },
+  "sidebar": {
+    "insights": "统计",
+    "home": "首页",
+    "upload": "上传",
+    "dictionary": "词典",
+    "settings": "设置"
+  },
+  "apiKeyInput": {
+    "placeholder": "输入你的 API Key",
+    "editButton": "编辑密钥",
+    "addButton": "添加密钥"
+  },
+  "app": {
+    "toasts": {
+      "hotkeyUnavailable": {
+        "title": "快捷键不可用"
+      },
+      "hotkeyHint": {
+        "tap": {
+          "title": "双击开始听写",
+          "description": "双击快捷键开始，说完再按一次结束。"
+        },
+        "push": {
+          "title": "按住听写",
+          "description": "说话时一直按住快捷键，松开即结束。"
+        }
+      },
+      "addedToDict": "已将 {{words}} 添加到你的词典",
+      "undo": "撤消",
+      "cleanupFailed": {
+        "title": "清理失败",
+        "description": "你的听写已直接粘贴，未经 AI 清理。"
+      }
+    },
+    "mic": {
+      "recording": "录音中...",
+      "processing": "处理中..."
+    },
+    "commandMenu": {
+      "stopListening": "停止录音",
+      "startListening": "开始录音",
+      "hideForNow": "暂时隐藏"
+    }
+  },
+  "commandSearch": {
+    "sections": {
+      "transcripts": "转录"
+    },
+    "noResults": "无结果",
+    "emptyState": "输入内容开始搜索",
+    "footer": {
+      "navigate": "导航",
+      "open": "打开",
+      "dismiss": "关闭"
+    },
+    "relativeTime": {
+      "now": "刚刚",
+      "minutesAgo": "{{count}} 分钟前",
+      "hoursAgo": "{{count}} 小时前",
+      "daysAgo": "{{count}} 天前"
+    }
+  },
+  "transcriptionPreview": {
+    "recovery": {
+      "title": "转写已完成",
+      "pasteFailed": "未能自动粘贴，请复制下方文字。",
+      "pasteFailedCopied": "未能自动粘贴，文字已复制到剪贴板。",
+      "copyFailed": "复制失败，请重试或选中文字后复制。",
+      "copy": "复制文字",
+      "copied": "已复制",
+      "pasteHint": "按 ⌘V 粘贴"
+    }
+  }
+}
