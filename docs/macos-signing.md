@@ -56,15 +56,18 @@ scripts/sign-macos-release.sh verify dist/Whisper.app
 
 ## Configure GitHub releases
 
-Store the original identity as secrets of the `release` Actions environment, named `WHISPER_SIGNING_CERTIFICATE` and `WHISPER_SIGNING_PASSWORD`. Store the Homebrew tap token there too, as `TAP_GITHUB_TOKEN`. The environment only accepts deployments from `v*` tags, so workflows on branches and pull requests cannot read these secrets. Do not keep copies as repository secrets. With GitHub CLI authenticated for this repository, upload the local files without printing their contents:
+Store the original identity as secrets of the `release` Actions environment, named `WHISPER_SIGNING_CERTIFICATE` and `WHISPER_SIGNING_PASSWORD`. The environment only accepts deployments from `v*` tags, so workflows on branches and pull requests cannot read these secrets. Do not keep copies as repository secrets. With GitHub CLI authenticated for this repository, upload the local files without printing their contents:
 
 ```sh
 base64 -i "$HOME/.config/whisper/signing/identity.p12" | gh secret set WHISPER_SIGNING_CERTIFICATE --env release
 gh secret set WHISPER_SIGNING_PASSWORD --env release < "$HOME/.config/whisper/signing/password"
-gh secret set TAP_GITHUB_TOKEN --env release
 ```
 
-Scope `TAP_GITHUB_TOKEN` to the Homebrew tap repository with contents write access only, and give it an expiration date.
+Store the Homebrew tap token as `HOMEBREW_TAP_TOKEN` in a separate `homebrew-tap` environment that only accepts `v*.*.*` tags, so the signing jobs never see it. Scope it to the Homebrew tap repository with contents write access only, and give it an expiration date:
+
+```sh
+gh secret set HOMEBREW_TAP_TOKEN --env homebrew-tap
+```
 
 The Release workflow requires the tag to point at a commit on `main`. Its Build call uses the `release` environment for tagged releases. Pull requests and pushes to `main` run checks without packaging or signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. A release cannot proceed with a different certificate or an ad-hoc signature.
 

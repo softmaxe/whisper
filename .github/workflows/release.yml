@@ -29,24 +29,35 @@ jobs:
             exit 1
           fi
 
-      - name: Require publishing and signing credentials
+      - name: Require signing credentials
         env:
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
           WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
           WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
         run: |
-          if [[ -z "${TAP_GITHUB_TOKEN:-}" ]]; then
-            echo "::error::TAP_GITHUB_TOKEN is required to update softmaxe/homebrew-tap."
-            exit 1
-          fi
           if [[ -z "$WHISPER_SIGNING_CERTIFICATE" || -z "$WHISPER_SIGNING_PASSWORD" ]]; then
             echo "::error::WHISPER_SIGNING_CERTIFICATE and WHISPER_SIGNING_PASSWORD are required."
             exit 1
           fi
 
+  # The tap token lives in its own environment, so a separate job checks it.
+  validate-tap:
+    name: Validate tap credentials
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: homebrew-tap
+    steps:
+      - name: Require the tap token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [[ -z "${HOMEBREW_TAP_TOKEN:-}" ]]; then
+            echo "::error::HOMEBREW_TAP_TOKEN is required to update softmaxe/homebrew-tap."
+            exit 1
+          fi
+
   build:
     name: Build release package
-    needs: validate
+    needs: [validate, validate-tap]
     uses: ./.github/workflows/build.yml
     # A called workflow only resolves the release environment's secrets when
     # the caller forwards them; the repository itself holds no secrets.
@@ -125,7 +136,7 @@ jobs:
     needs: [build, release]
     runs-on: macos-15
     timeout-minutes: 20
-    environment: release
+    environment: homebrew-tap
     concurrency:
       group: homebrew-tap-whisper
       cancel-in-progress: false
@@ -225,7 +236,7 @@ jobs:
       - name: Commit and push cask
         working-directory: homebrew-tap
         env:
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           set -euo pipefail
           status_paths="$(git status --porcelain=v1 --untracked-files=all | awk '{ print $2 }' | LC_ALL=C sort -u)"
@@ -247,7 +258,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: update whisper to $VERSION"
 
-          remote="https://x-access-token:${TAP_GITHUB_TOKEN}@github.com/softmaxe/homebrew-tap.git"
+          remote="https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/softmaxe/homebrew-tap.git"
           for attempt in 1 2 3; do
             if git push "$remote" HEAD:main; then
               exit 0
