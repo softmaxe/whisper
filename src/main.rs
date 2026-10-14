@@ -236,6 +236,7 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         ui::assets::load_fonts(cx);
+        macos::track_reduce_motion(cx);
         AppState::init(settings, db, cx);
         ui::overlays::Overlays::init(cx);
         Dictation::init(cx);

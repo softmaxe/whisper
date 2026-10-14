@@ -8733,6 +8733,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tray-icon",
+ "ttf-parser",
  "unicode-normalization",
  "url",
  "uuid",

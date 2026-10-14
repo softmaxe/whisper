@@ -15,7 +15,7 @@ use crate::app_state::AppState;
 
 use super::components::icon;
 use super::overlays::close_custom;
-use super::theme::{PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL};
+use super::theme::{FONT_VOICE, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL};
 
 pub enum CommandSearchEvent {
     Selected(i64),
@@ -221,7 +221,8 @@ impl Render for CommandSearch {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_size(px(TEXT_SMALL))
+                                .font_family(FONT_VOICE)
+                                .text_size(px(TEXT_BODY))
                                 .text_color(p.foreground.opacity(0.75))
                                 .child(item.text.clone()),
                         )

@@ -1,7 +1,7 @@
 //! Home: the local History grouped by day.
 
 use std::collections::HashSet;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
 use gpui_kit::prelude::FluentBuilder;
@@ -13,12 +13,24 @@ use whisper::i18n::{self, Language, t, t_with};
 use crate::app_state::{AppEvent, AppState};
 use crate::backend;
 
-use super::components::{f32_tx, icon, kbd, spinner};
+use super::components::{f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner};
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
-    LINE_READING, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_READING,
-    TEXT_SMALL, TEXT_TITLE, ease_css,
+    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
+    PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap,
+    progress,
 };
+
+/// How long a new or picked row stays tinted.
+const FLASH: Duration = Duration::from_millis(1600);
+
+/// The placeholder row shown while a Dictation is transcribing.
+struct PendingRow {
+    /// The top row when transcription started; a new top row replaces the placeholder.
+    base_top: Option<i64>,
+    since: Instant,
+    arrived: bool,
+}
 
 pub enum HistoryEvent {
     OpenSettings(&'static str),
@@ -26,11 +38,15 @@ pub enum HistoryEvent {
 
 pub struct HistoryView {
     /// A row picked in the search palette flashes briefly so it is easy to find.
-    highlighted: Option<(i64, std::time::Instant)>,
+    highlighted: Option<(i64, Instant)>,
     expanded: HashSet<i64>,
     retrying: HashSet<i64>,
     open_menu: Option<i64>,
     hovering_list: bool,
+    hovered_row: Option<i64>,
+    pending: Option<PendingRow>,
+    /// A row that just landed from Dictation; it reveals and tints briefly.
+    arrived: Option<(i64, Instant)>,
 }
 
 impl EventEmitter<HistoryEvent> for HistoryView {}
@@ -82,6 +98,18 @@ fn format_mm_ss(total_seconds: i64) -> String {
 impl HistoryView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let state = AppState::global(cx);
+        // Dictation phase changes drive the transcribing placeholder. Tracked
+        // here rather than in render so it starts before the transcript is
+        // saved even while Home is not showing.
+        cx.observe(&state, |this, state, cx| {
+            let s = state.read(cx);
+            let busy = s.settings.data_retention_enabled
+                && (s.dictation.is_processing || s.dictation.is_stopping);
+            let top = s.history.first().map(|item| item.id);
+            this.sync_pending(busy, top);
+            cx.notify();
+        })
+        .detach();
         cx.subscribe(&state, |_, _, event: &AppEvent, cx| {
             if matches!(event, AppEvent::HistoryChanged | AppEvent::SettingsChanged) {
                 cx.notify();
@@ -97,11 +125,14 @@ impl HistoryView {
             retrying: HashSet::new(),
             open_menu: None,
             hovering_list: false,
+            hovered_row: None,
+            pending: None,
+            arrived: None,
         }
     }
 
     pub fn highlight(&mut self, id: i64, cx: &mut Context<Self>) {
-        self.highlighted = Some((id, std::time::Instant::now()));
+        self.highlighted = Some((id, Instant::now()));
         cx.notify();
     }
 
@@ -261,14 +292,17 @@ impl HistoryView {
         let expanded = self.expanded.contains(&id);
         let retrying = self.retrying.contains(&id);
         let menu_open = self.open_menu == Some(id);
-        let group: SharedString = format!("row-{id}").into();
+        let arrived = self
+            .arrived
+            .filter(|(aid, at)| *aid == id && at.elapsed() < FLASH && !cx.reduce_motion())
+            .map(|(_, at)| at.elapsed());
 
         // Raw transcript panel: grid-rows 0fr→1fr over 200 ms.
         let raw_progress = f32_tx(
             ("raw-expand", id as usize),
             if expanded { 1. } else { 0. },
-            200,
-            ease_css,
+            DUR_BASE,
+            ease_snap,
             window,
             cx,
         );
@@ -380,7 +414,13 @@ impl HistoryView {
                 )
                 .into_any_element()
         } else {
+            // A new transcript eases up 3 px into place.
+            let reveal = arrived.map_or(1., |e| ease_out(progress(e, DUR_BASE)));
             div()
+                .relative()
+                .top(px(3. * (1. - reveal)))
+                .opacity(reveal)
+                .font_family(FONT_VOICE)
                 .text_size(px(TEXT_READING))
                 .line_height(px(LINE_READING))
                 .text_color(p.foreground)
@@ -399,6 +439,8 @@ impl HistoryView {
                     .max_h(px(400. * raw_progress))
                     .child(
                         div()
+                            .relative()
+                            .top(px(3. * (1. - raw_progress)))
                             .mt(px(8.))
                             .pt(px(8.))
                             .border_t_1()
@@ -437,8 +479,9 @@ impl HistoryView {
                             .child(
                                 div()
                                     .mt(px(4.))
-                                    .text_size(px(TEXT_SMALL))
-                                    .line_height(px(LINE_SMALL))
+                                    .font_family(FONT_VOICE)
+                                    .text_size(px(TEXT_BODY))
+                                    .line_height(px(20.))
                                     .text_color(p.muted_foreground.opacity(0.8))
                                     .child(raw),
                             )
@@ -468,17 +511,27 @@ impl HistoryView {
                 .child(icon(name, 13., p.muted_foreground.opacity(0.7)))
         };
 
+        // Row actions surface on hover in 120 ms and leave in 60 ms.
+        let actions_shown = !is_transcribed || menu_open || self.hovered_row == Some(id);
+        let actions_t = f32_tx(
+            ("row-actions", id as usize),
+            if actions_shown { 1. } else { 0. },
+            if actions_shown { DUR_SNAP } else { DUR_FAST },
+            ease_snap,
+            window,
+            cx,
+        );
         let copy_text = item.text.clone();
         let actions = div()
             .flex_none()
             .flex()
             .items_start()
             .gap(px(4.))
+            .relative()
+            .top(px(2. * (1. - actions_t)))
             .mt(px(-2.))
             .mr(px(-6.))
-            .when(is_transcribed && !menu_open, |d| {
-                d.opacity(0.).group_hover(group.clone(), |s| s.opacity(1.))
-            })
+            .opacity(actions_t)
             .when(is_transcribed, |d| {
                 d.child(
                     action_btn("copy-row", "copy")
@@ -516,18 +569,27 @@ impl HistoryView {
             );
 
         let route_translation = item.route_kind.as_deref() == Some("translation");
-        let flash = self
+        let picked = self
             .highlighted
-            .filter(|(hid, at)| *hid == id && at.elapsed() < Duration::from_millis(1600))
-            .map(|(_, at)| {
-                window.request_animation_frame();
-                let t = at.elapsed().as_secs_f32() / 1.6;
-                (1. - t).clamp(0., 1.)
-            });
+            .filter(|(hid, at)| *hid == id && at.elapsed() < FLASH)
+            .map(|(_, at)| 0.12 * (1. - progress(at.elapsed(), 1600)));
+        // A new transcript tints in and eases out over the flash.
+        let landed = arrived.map(|e| 0.09 * (1. - ease_out(progress(e, 1600))));
+        let flash = picked.or(landed);
+        if flash.is_some() {
+            window.request_animation_frame();
+        }
         div()
             .id(("history-row", id as usize))
-            .when_some(flash, |d, f| d.bg(p.primary.opacity(0.12 * f)))
-            .group(group)
+            .when_some(flash, |d, f| d.bg(p.primary.opacity(f)))
+            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                if *hovered {
+                    this.hovered_row = Some(id);
+                } else if this.hovered_row == Some(id) {
+                    this.hovered_row = None;
+                }
+                cx.notify();
+            }))
             .flex()
             .gap(px(16.))
             .rounded(px(12.))
@@ -559,6 +621,95 @@ impl HistoryView {
             .child(div().flex_1().min_w_0().child(body).children(raw_section))
             .child(actions)
             .into_any_element()
+    }
+
+    /// The row a Dictation lands in: a shimmering label over two skeleton
+    /// lines, opening over 300 ms.
+    fn render_pending(
+        &self,
+        since: Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let p = cx.palette();
+        let time = match i18n::language() {
+            Language::ZhCn => Local::now().format("%H:%M").to_string(),
+            Language::En => Local::now().format("%I:%M %p").to_string(),
+        };
+        div()
+            .flex()
+            .gap(px(16.))
+            .rounded(px(12.))
+            .px(px(12.))
+            .py(px(10.))
+            .overflow_hidden()
+            .child(
+                div()
+                    .w(px(64.))
+                    .flex_none()
+                    .pt(px(4.))
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(p.muted_foreground.opacity(0.7))
+                    .child(time),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .pt(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_BODY))
+                            .text_color(p.muted_foreground)
+                            .child(shimmer_text(
+                                t("controlPanel.history.transcribing"),
+                                since,
+                                &p,
+                                window,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .mt(px(8.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(7.))
+                            .child(skeleton_line(0.94, 0, since, &p, cx))
+                            .child(skeleton_line(0.71, 1, since, &p, cx)),
+                    ),
+            )
+            .with_animation(
+                "pending-in",
+                Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_snap),
+                |d, t| d.opacity(t).max_h(px(96. * t)),
+            )
+            .into_any_element()
+    }
+
+    /// Tracks the transcribing placeholder. Once the new transcript tops the
+    /// list it takes over.
+    fn sync_pending(&mut self, busy: bool, top: Option<i64>) {
+        // Checked before `busy`: without auto-paste the row lands in the same
+        // update that ends the Dictation.
+        if let Some(pending) = self.pending.as_mut()
+            && !pending.arrived
+            && top != pending.base_top
+        {
+            pending.arrived = true;
+            if let Some(id) = top {
+                self.arrived = Some((id, Instant::now()));
+            }
+        }
+        if !busy {
+            self.pending = None;
+        } else if self.pending.is_none() {
+            self.pending = Some(PendingRow {
+                base_top: top,
+                since: Instant::now(),
+                arrived: false,
+            });
+        }
     }
 
     fn render_menu(&self, item: &TranscriptionItem, cx: &mut Context<Self>) -> AnyElement {
@@ -694,6 +845,11 @@ impl Render for HistoryView {
                 s.settings.effective_dictation_key(),
             )
         };
+        let pending = self
+            .pending
+            .as_ref()
+            .filter(|p| !p.arrived)
+            .map(|p| p.since);
 
         let mut content = div().min_w_0().flex_1();
         if !retention {
@@ -741,7 +897,7 @@ impl Render for HistoryView {
                             .child(t("controlPanel.loading")),
                     ),
             );
-        } else if history.is_empty() {
+        } else if history.is_empty() && pending.is_none() {
             content = content.child(render_empty_with_hotkey(self, include, &hotkey, &p));
         } else {
             // Group consecutive rows by local day.
@@ -754,6 +910,11 @@ impl Render for HistoryView {
                     Some((last, items)) if *last == label => items.push(item),
                     _ => groups.push((label, vec![item])),
                 }
+            }
+            // The placeholder belongs to today, which may not have a group yet.
+            let today = format_date_group(Local::now().date_naive());
+            if pending.is_some() && groups.first().is_none_or(|(label, _)| *label != today) {
+                groups.insert(0, (today, Vec::new()));
             }
             let mut list =
                 div()
@@ -819,6 +980,11 @@ impl Render for HistoryView {
                     );
                 }
                 let mut rows = div().flex().flex_col().gap(px(2.)).mx(px(-12.));
+                if index == 0
+                    && let Some(since) = pending
+                {
+                    rows = rows.child(self.render_pending(since, window, cx));
+                }
                 for item in &items {
                     rows = rows.child(self.render_item(item, window, cx));
                 }

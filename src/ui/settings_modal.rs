@@ -25,7 +25,8 @@ use super::overlays::{DialogRequest, Toast, show_dialog, show_toast};
 use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
 use super::text_input::{FieldKind, text_field, textarea_field};
 use super::theme::{
-    FONT_MONO, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, ease_out,
+    DUR_BASE, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION,
+    TEXT_SMALL, ease_out, ease_snap,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -571,7 +572,7 @@ impl SettingsModal {
         cx.notify();
         cx.spawn(async move |this, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(150))
+                .timer(Duration::from_millis(DUR_SNAP))
                 .await;
             let _ = this.update(cx, |_, cx| cx.emit(SettingsModalEvent::Close));
         })
@@ -2851,8 +2852,12 @@ impl Render for SettingsModal {
             )
             .with_animation(
                 ("settings-panel-anim", closing as usize),
-                Animation::new(Duration::from_millis(if closing { 150 } else { 200 }))
-                    .with_easing(ease_out),
+                Animation::new(Duration::from_millis(if closing {
+                    DUR_SNAP
+                } else {
+                    DUR_BASE
+                }))
+                .with_easing(if closing { ease_snap } else { ease_out }),
                 move |d, t| {
                     let v = if closing { 1. - t } else { t };
                     // zoom-in-98: approximate the scale with a small lift.
@@ -2875,8 +2880,12 @@ impl Render for SettingsModal {
             .child(panel)
             .with_animation(
                 ("settings-backdrop-anim", closing as usize),
-                Animation::new(Duration::from_millis(if closing { 150 } else { 200 }))
-                    .with_easing(ease_out),
+                Animation::new(Duration::from_millis(if closing {
+                    DUR_SNAP
+                } else {
+                    DUR_BASE
+                }))
+                .with_easing(if closing { ease_snap } else { ease_out }),
                 move |d, t| d.opacity(if closing { 1. - t } else { t }),
             )
     }

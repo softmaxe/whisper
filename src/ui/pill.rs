@@ -22,7 +22,10 @@ use crate::dictation::{Dictation, DictationNotice};
 use crate::macos;
 
 use super::components::{f32_tx, icon};
-use super::theme::{FONT_UI, PaletteExt, ease_grow, ease_out};
+use super::theme::{
+    DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, PaletteExt,
+    TEXT_READING, ease_out, ease_overshoot, ease_snap, progress,
+};
 
 pub const WINDOW_SIZE: Size<Pixels> = Size {
     width: px(466.),
@@ -34,7 +37,10 @@ const PILL_W: f32 = 84.;
 const PILL_H: f32 = 30.;
 const CANCEL_SIZE: f32 = 28.;
 const CANCEL_GAP: f32 = 8.;
-const FINISH: Duration = Duration::from_millis(180);
+const FINISH: Duration = Duration::from_millis(DUR_BASE);
+/// How long the pill stays for the delivered check: pop, hold, then exit.
+const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
+const RESOLVE_EXIT_AT: u64 = 620;
 const RECOVERY_HIDE: Duration = Duration::from_millis(5000);
 
 // Waveform constants.
@@ -77,6 +83,83 @@ fn sweep_opacity(index: usize, now_ms: f32) -> f32 {
 
 fn wave_phase(index: usize, now_ms: f32) -> f32 {
     0.5 + 0.5 * (((now_ms - index as f32 * 69.) / 700.) * TAU).sin()
+}
+
+/// The pill's one-shot motion at an instant, layered over the waveform.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PillMotion {
+    scale: f32,
+    alpha: f32,
+    bars: f32,
+    /// Scale and opacity of the delivered check, once it shows.
+    check: Option<(f32, f32)>,
+    running: bool,
+}
+
+/// Samples the enter pop (scale .8 → 1 with overshoot), the dip when
+/// recording hands over to processing (1 → .94 → 1), and the delivered
+/// sequence: the bars fade, a check pops in, the pill swells to 1.06, holds,
+/// then shrinks to .9 as it fades. Each input is the time since that event.
+fn pill_motion(
+    entered: Option<Duration>,
+    dipped: Option<Duration>,
+    resolved: Option<Duration>,
+    reduce: bool,
+) -> PillMotion {
+    let ms = |d: Duration| d.as_secs_f32() * 1000.;
+    let mut m = PillMotion {
+        scale: 1.,
+        alpha: 1.,
+        bars: 1.,
+        check: None,
+        running: false,
+    };
+    if reduce {
+        if let Some(r) = resolved {
+            m.bars = 0.;
+            m.check = Some((1., 1.));
+            if ms(r) >= RESOLVE_EXIT_AT as f32 {
+                m.alpha = 0.;
+            }
+            // Still draws the frame where the check goes.
+            m.running = r < RESOLVE;
+        }
+        return m;
+    }
+    if let Some(e) = entered.filter(|e| ms(*e) < DUR_BASE as f32) {
+        m.scale *= 0.8 + 0.2 * ease_overshoot(progress(e, DUR_BASE));
+        m.running = true;
+    }
+    if let Some(d) = dipped.map(ms).filter(|d| *d < 160.) {
+        m.scale *= if d < 80. {
+            1. - 0.06 * ease_out(d / 80.)
+        } else {
+            0.94 + 0.06 * ease_overshoot((d - 80.) / 80.)
+        };
+        m.running = true;
+    }
+    if let Some(r) = resolved {
+        let r_ms = ms(r);
+        m.bars = 1. - ease_snap(progress(r, DUR_SNAP));
+        if r_ms > 60. {
+            let k = ((r_ms - 60.) / 260.).clamp(0., 1.);
+            m.check = Some((0.6 + 0.4 * ease_overshoot(k), ease_out(k)));
+        }
+        m.scale *= if r_ms < 80. {
+            1. + 0.06 * ease_out(r_ms / 80.)
+        } else if r_ms < 200. {
+            1.06 - 0.06 * ease_overshoot((r_ms - 80.) / 120.)
+        } else {
+            1.
+        };
+        if r_ms >= RESOLVE_EXIT_AT as f32 {
+            let x = ease_snap(((r_ms - RESOLVE_EXIT_AT as f32) / DUR_SNAP as f32).min(1.));
+            m.scale *= 1. - 0.1 * x;
+            m.alpha = 1. - x;
+        }
+        m.running = r < RESOLVE;
+    }
+    m
 }
 
 struct ErrorCard {
@@ -135,11 +218,19 @@ pub struct PillView {
     drag_origin: Option<Point<Pixels>>,
     /// Whether the pointer poll is running; it only runs while the pill is shown.
     polling: bool,
+    /// Start of the enter pop, the processing dip and the delivered check.
+    entered_at: Option<Instant>,
+    /// The enter pop waits for the first frame drawn after the window is
+    /// ordered in, so it plays on screen rather than before the window shows.
+    enter_pending: bool,
+    dipped_at: Option<Instant>,
+    resolved_at: Option<Instant>,
+    was_processing: bool,
 }
 
 impl PillView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        macos::make_borderless(window);
+        macos::make_borderless(window, cx);
         let state = AppState::global(cx);
         cx.observe_in(&state, window, |this, _, window, cx| this.sync(window, cx))
             .detach();
@@ -168,6 +259,11 @@ impl PillView {
             regions: Rc::new(RefCell::new(Vec::new())),
             drag_origin: None,
             polling: false,
+            entered_at: None,
+            enter_pending: false,
+            dipped_at: None,
+            resolved_at: None,
+            was_processing: false,
         }
     }
 
@@ -197,32 +293,51 @@ impl PillView {
             PanelStartPosition::BottomRight => area.origin.x + area.size.width - w - margin,
         };
         let y = area.origin.y + area.size.height - h - margin;
-        macos::set_origin(window, point(x, y), h);
+        macos::set_origin(window, cx, point(x, y), h);
     }
 
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = Self::snapshot(cx);
         let active = snapshot.is_active();
+        let processing = snapshot.is_processing || snapshot.is_stopping;
         if active && !self.was_active {
             self.finishing_until = None;
             self.lanes = [0.; BARS];
             self.error = None;
+            self.entered_at = None;
+            self.enter_pending = true;
+            self.dipped_at = None;
+            self.resolved_at = None;
         }
+        if active && processing && !self.was_processing && self.was_active {
+            self.dipped_at = Some(Instant::now());
+        }
+        self.was_processing = active && processing;
         if !active && self.was_active {
-            // Keep the window for the finish fade (VOICE_PILL_FINISH_MS).
-            self.finishing_until = Some(Instant::now() + FINISH);
             self.menu_open = false;
-            cx.spawn_in(window, async move |this, cx| {
-                cx.background_executor()
-                    .timer(FINISH + Duration::from_millis(20))
-                    .await;
-                let _ = this.update_in(cx, |this, window, cx| this.update_visibility(window, cx));
-            })
-            .detach();
+            // Keep the window for the finish fade, or for the delivered check.
+            let hold = if self.resolved_at.is_some() {
+                RESOLVE
+            } else {
+                FINISH
+            };
+            self.finish_after(hold, window, cx);
         }
         self.was_active = active;
         self.update_visibility(window, cx);
         cx.notify();
+    }
+
+    /// Keeps the window up for `hold` after Dictation ends, then hides it.
+    fn finish_after(&mut self, hold: Duration, window: &mut Window, cx: &mut Context<Self>) {
+        self.finishing_until = Some(Instant::now() + hold);
+        cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(hold + Duration::from_millis(20))
+                .await;
+            let _ = this.update_in(cx, |this, window, cx| this.update_visibility(window, cx));
+        })
+        .detach();
     }
 
     fn update_visibility(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -230,11 +345,11 @@ impl PillView {
         if want && !self.shown {
             self.position_window(window, cx);
             macos::set_ignores_mouse_events(window, true);
-            macos::order_front(window);
+            macos::order_front(window, cx);
             self.shown = true;
             self.start_poll(window, cx);
         } else if !want && self.shown {
-            macos::order_out(window);
+            macos::order_out(window, cx);
             self.shown = false;
             self.hovered = false;
         }
@@ -401,6 +516,18 @@ impl PillView {
                     hint: false,
                 });
             }
+            DictationNotice::Delivered => {
+                self.resolved_at = Some(Instant::now());
+                // The phase is already idle in the shared state when this
+                // arrives, though the pill may not have run its finish yet.
+                // Start (or stretch) the finish here so the visibility check
+                // below keeps the window up for the check.
+                if !Self::snapshot(cx).is_active()
+                    && (self.was_active || self.finishing_until.is_some_and(|t| Instant::now() < t))
+                {
+                    self.finish_after(RESOLVE, window, cx);
+                }
+            }
             DictationNotice::HotkeyHint { hold } => {
                 // Each hint replaces the last, so repeated presses do not stack.
                 self.toasts.retain(|t| !t.hint);
@@ -474,6 +601,7 @@ impl PillView {
     fn render_pill(
         &mut self,
         snapshot: &DictationSnapshot,
+        motion_fx: PillMotion,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -505,14 +633,31 @@ impl PillView {
                     .w(px(BAR_W))
                     .h(px(BAR_MIN + self.lanes[i] * (BAR_MAX - BAR_MIN)))
                     .rounded_full()
-                    .bg(hsla(0., 0., 1., opacity[i])),
+                    .bg(hsla(0., 0., 1., opacity[i] * motion_fx.bars)),
             );
         }
         let processing = snapshot.is_processing || snapshot.is_stopping;
-        div()
+        let check = motion_fx.check.map(|(scale, alpha)| {
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    icon("check", 15., hsla(0., 0., 1., 0.92 * alpha))
+                        .with_transformation(Transformation::scale(size(scale, scale))),
+                )
+        });
+        let scale = motion_fx.scale;
+        // GPUI has no paint transforms on divs, so the pill scales by size
+        // inside a fixed slot, which keeps it centered and the row still.
+        let pill = div()
             .id("voice-pill")
-            .w(px(PILL_W))
-            .h(px(PILL_H))
+            .relative()
+            .flex_none()
+            .w(px(PILL_W * scale))
+            .h(px(PILL_H * scale))
             .flex()
             .items_center()
             .justify_center()
@@ -527,8 +672,9 @@ impl PillView {
                 spread_radius: px(0.),
                 inset: false,
             }])
-            .when(!processing, |d| d.cursor_pointer())
+            .when(!processing && !finishing, |d| d.cursor_pointer())
             .child(bars)
+            .children(check)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, e: &MouseDownEvent, _, cx| {
@@ -552,7 +698,8 @@ impl PillView {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.drag_origin.take().is_some() {
+                    // A click on the finish or the delivered check starts nothing.
+                    if this.drag_origin.take().is_some() && Self::snapshot(cx).is_active() {
                         Dictation::global(cx).update(cx, |d, cx| d.toggle_listening(cx));
                     }
                 }),
@@ -563,28 +710,39 @@ impl PillView {
                     this.menu_open = !this.menu_open;
                     cx.notify();
                 }),
-            )
+            );
+        div()
+            .w(px(PILL_W))
+            .h(px(PILL_H))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(pill)
             .into_any_element()
     }
 
+    /// The cancel control and how far it has emerged: it pops in from .8
+    /// over 200 ms and leaves in 60 ms.
     fn render_cancel(
         &mut self,
         visible: bool,
         recording: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> (AnyElement, f32) {
         let t_in = f32_tx(
             "cancel-emerge",
             if visible { 1. } else { 0. },
-            300,
-            ease_grow,
+            if visible { DUR_BASE } else { DUR_FAST },
+            if visible { ease_out } else { ease_snap },
             window,
             cx,
         );
-        div()
+        let scale = 0.8 + 0.2 * t_in;
+        let button = div()
             .id("pill-cancel")
-            .size(px(CANCEL_SIZE))
+            .flex_none()
+            .size(px(CANCEL_SIZE * scale))
             .flex()
             .items_center()
             .justify_center()
@@ -595,17 +753,29 @@ impl PillView {
             .opacity(t_in)
             .cursor_pointer()
             .hover(|s| s.bg(rgb(0x1f1f22)))
-            .child(icon("x", 12., hsla(0., 0., 1., 0.85)))
-            .on_click(cx.listener(move |_, _, _, cx| {
-                Dictation::global(cx).update(cx, |d, cx| {
-                    if recording {
-                        d.cancel_recording(cx)
-                    } else {
-                        d.cancel_processing(cx)
-                    }
-                });
-            }))
-            .into_any_element()
+            .child(
+                icon("x", 12., hsla(0., 0., 1., 0.85))
+                    .with_transformation(Transformation::scale(size(scale, scale))),
+            )
+            .when(visible, |d| {
+                d.on_click(cx.listener(move |_, _, _, cx| {
+                    Dictation::global(cx).update(cx, |d, cx| {
+                        if recording {
+                            d.cancel_recording(cx)
+                        } else {
+                            d.cancel_processing(cx)
+                        }
+                    });
+                }))
+            });
+        let slot = div()
+            .size(px(CANCEL_SIZE))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(button)
+            .into_any_element();
+        (slot, t_in)
     }
 
     fn render_menu(&mut self, recording: bool, cx: &mut Context<Self>) -> AnyElement {
@@ -651,7 +821,7 @@ impl PillView {
                     |this, _, window, cx| {
                         this.menu_open = false;
                         this.finishing_until = None;
-                        macos::order_out(window);
+                        macos::order_out(window, cx);
                         this.shown = false;
                         cx.notify();
                     },
@@ -790,7 +960,7 @@ impl PillView {
                 )
                 .with_animation(
                     "error-in",
-                    Animation::new(Duration::from_millis(200)).with_easing(ease_out),
+                    Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
                     |d, t| d.opacity(t).mt(px(4. * (1. - t))),
                 )
                 .into_any_element(),
@@ -896,8 +1066,9 @@ impl PillView {
                         .overflow_y_scroll()
                         .px(px(16.))
                         .py(px(12.))
-                        .text_size(px(15.))
-                        .line_height(px(24.))
+                        .font_family(FONT_VOICE)
+                        .text_size(px(TEXT_READING))
+                        .line_height(px(LINE_READING))
                         .text_color(p.foreground)
                         .child(text.clone()),
                 )
@@ -964,7 +1135,7 @@ impl PillView {
                 )
                 .with_animation(
                     "recovery-in",
-                    Animation::new(Duration::from_millis(420)).with_easing(ease_out),
+                    Animation::new(Duration::from_millis(DUR_SLOW)).with_easing(ease_out),
                     |d, t| d.opacity((t * 2.).min(1.)).mt(px(6. * (1. - t))),
                 )
                 .into_any_element(),
@@ -1072,15 +1243,36 @@ impl Render for PillView {
         let active = snapshot.is_active();
         let finishing = self.finishing_until.is_some_and(|t| Instant::now() < t);
         let error_or_recovery = self.error.is_some() || self.recovery.is_some();
-        // The pill fades out for the finish and while an error/recovery card owns the window.
+        let now = Instant::now();
+        if self.enter_pending && self.shown {
+            self.enter_pending = false;
+            self.entered_at = Some(now);
+        }
+        let resolving = self.resolved_at.is_some_and(|t| now - t < RESOLVE);
+        let motion_fx = pill_motion(
+            if self.enter_pending {
+                Some(Duration::ZERO)
+            } else {
+                self.entered_at.map(|t| now - t)
+            },
+            self.dipped_at.map(|t| now - t),
+            self.resolved_at.map(|t| now - t),
+            cx.reduce_motion(),
+        );
+        if motion_fx.running {
+            window.request_animation_frame();
+        }
+        // The pill fades out for the finish and while an error/recovery card
+        // owns the window; the delivered check runs its own exit.
+        let pill_shown = (active || resolving) && !error_or_recovery;
         let pill_alpha = f32_tx(
             "pill-alpha",
-            if active && !error_or_recovery { 1. } else { 0. },
-            150,
-            ease_out,
+            if pill_shown { 1. } else { 0. },
+            if pill_shown { DUR_BASE } else { DUR_SNAP },
+            if pill_shown { ease_out } else { ease_snap },
             window,
             cx,
-        );
+        ) * motion_fx.alpha;
         let show_pill = (active || finishing) && pill_alpha > 0.001;
         let cancel_visible = self.hovered && (snapshot.is_recording || snapshot.is_processing);
         let recording = snapshot.is_recording;
@@ -1088,19 +1280,18 @@ impl Render for PillView {
         let mut root = div().size_full().relative().font_family(FONT_UI);
 
         if show_pill || cancel_visible {
-            let pill = self.render_pill(&snapshot, window, cx);
-            let cancel = self.render_cancel(cancel_visible, recording, window, cx);
+            let pill = self.render_pill(&snapshot, motion_fx, window, cx);
+            let (cancel, cancel_t) = self.render_cancel(cancel_visible, recording, window, cx);
+            let cancel = div()
+                .when(cancel_t < 0.001, |d| d.invisible())
+                .child(cancel);
             let left_dock = dock == PanelStartPosition::BottomLeft;
             let mut row = div().flex().items_center().gap(px(CANCEL_GAP));
             // The cancel control emerges on the side away from the screen edge.
             if left_dock {
-                row = row
-                    .child(pill)
-                    .child(div().when(!cancel_visible, |d| d.invisible()).child(cancel));
+                row = row.child(pill).child(cancel);
             } else {
-                row = row
-                    .child(div().when(!cancel_visible, |d| d.invisible()).child(cancel))
-                    .child(pill);
+                row = row.child(cancel).child(pill);
             }
             let tracked = self.tracked(row).opacity(pill_alpha);
             let positioned = div().absolute().bottom(px(DOCK_INSET)).map(|d| match dock {
@@ -1139,7 +1330,7 @@ impl Render for PillView {
                         .child(label)
                         .with_animation(
                             "pill-tooltip",
-                            Animation::new(Duration::from_millis(150)),
+                            Animation::new(Duration::from_millis(DUR_SNAP)),
                             |d, t| d.opacity(t),
                         ),
                 );
@@ -1191,5 +1382,55 @@ impl Render for PillView {
             window.request_animation_frame();
         }
         root
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{DUR_BASE, RESOLVE, pill_motion};
+
+    fn at(ms: u64) -> Option<Duration> {
+        Some(Duration::from_millis(ms))
+    }
+
+    #[test]
+    fn enter_pops_from_point_eight_past_one() {
+        let start = pill_motion(at(0), None, None, false);
+        assert!((start.scale - 0.8).abs() < 1e-3 && start.running);
+        let peak = (1..20)
+            .map(|i| pill_motion(at(i * 10), None, None, false).scale)
+            .fold(0., f32::max);
+        assert!(peak > 1.0, "{peak}");
+        assert_eq!(pill_motion(at(DUR_BASE), None, None, false).scale, 1.);
+    }
+
+    #[test]
+    fn processing_dips_then_recovers() {
+        let low = pill_motion(None, at(80), None, false).scale;
+        assert!((low - 0.94).abs() < 1e-3, "{low}");
+        let done = pill_motion(None, at(160), None, false);
+        assert_eq!(done.scale, 1.);
+        assert!(!done.running);
+    }
+
+    #[test]
+    fn delivered_swaps_bars_for_a_check_then_exits() {
+        let early = pill_motion(None, None, at(80), false);
+        assert!(early.scale > 1.05 && early.check.is_some() && early.bars < 0.5);
+        let hold = pill_motion(None, None, at(400), false);
+        assert_eq!((hold.scale, hold.alpha, hold.bars), (1., 1., 0.));
+        assert_eq!(hold.check.map(|c| c.1), Some(1.));
+        let gone = pill_motion(None, None, Some(RESOLVE), false);
+        assert!(gone.alpha < 1e-3 && (gone.scale - 0.9).abs() < 1e-3 && !gone.running);
+    }
+
+    #[test]
+    fn reduced_motion_keeps_scale_and_shows_the_check_still() {
+        let m = pill_motion(at(10), at(10), at(100), true);
+        assert_eq!((m.scale, m.alpha, m.bars), (1., 1., 0.));
+        assert_eq!(m.check, Some((1., 1.)));
+        assert_eq!(pill_motion(None, None, Some(RESOLVE), true).alpha, 0.);
     }
 }

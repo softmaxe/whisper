@@ -11,7 +11,7 @@ use crate::app_state::{AppEvent, AppState};
 
 use super::components::{icon, spinner};
 use super::theme::{
-    FONT_MONO, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE,
+    Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE,
 };
 
 pub struct InsightsView {
@@ -124,7 +124,6 @@ impl InsightsView {
             .child(
                 div()
                     .mt(px(12.))
-                    .font_family(FONT_MONO)
                     .text_size(px(TEXT_FIGURE))
                     .font_weight(FontWeight::MEDIUM)
                     .line_height(px(40.))

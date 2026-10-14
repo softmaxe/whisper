@@ -6,7 +6,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::components::color_tx;
-use super::theme::{FONT_MONO, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_SMALL};
+use super::theme::{DUR_BASE, FONT_MONO, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_SMALL};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FieldKind {
@@ -96,7 +96,7 @@ fn field_frame(
     } else {
         p.border.opacity(0.7)
     };
-    let border = color_tx(("field-border", id), border, 200, window, cx);
+    let border = color_tx(("field-border", id), border, DUR_BASE, window, cx);
     let bg = if p.dark { p.surface_1 } else { p.input };
     let ring = if focused {
         Some(if p.dark {

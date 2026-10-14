@@ -1,14 +1,14 @@
 //! Small presentational building blocks shared by the windows.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui_kit::base::{Transition, transition};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::theme::{
-    FONT_MONO, LINE_SMALL, LINE_TITLE, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL,
-    TEXT_TITLE, ease_css,
+    DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, Palette, PaletteExt,
+    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -53,7 +53,7 @@ pub fn f32_tx(
     )
 }
 
-/// Pill switch: 34×20 track, 14 px knob, 150 ms slide.
+/// Pill switch: 34×20 track, 14 px knob, 120 ms slide.
 #[derive(IntoElement)]
 pub struct Toggle {
     id: ElementId,
@@ -100,11 +100,11 @@ impl RenderOnce for Toggle {
         } else {
             p.muted_foreground.opacity(0.3)
         };
-        let track = color_tx((id.clone(), "track"), track, 150, window, cx);
+        let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
             (id.clone(), "knob"),
             if self.checked { 17.0 } else { 3.0 },
-            150,
+            DUR_SNAP,
             ease_css,
             window,
             cx,
@@ -238,8 +238,33 @@ impl Button {
     }
 }
 
+/// How far a pressed button has sunk: in over 60 ms, back out on the
+/// 450 ms spring, which overshoots a little past rest.
+fn press_depth(id: &ElementId, window: &mut Window, cx: &mut App) -> (Entity<bool>, f32) {
+    let pressed = window.use_keyed_state((id.clone(), "pressed"), cx, |_, _| false);
+    let down = *pressed.read(cx);
+    let depth = f32_tx(
+        (id.clone(), "press"),
+        if down { 1. } else { 0. },
+        if down { DUR_FAST } else { DUR_SLOW },
+        if down { ease_out } else { spring },
+        window,
+        cx,
+    );
+    (pressed, depth)
+}
+
+fn set_pressed(pressed: &Entity<bool>, down: bool, cx: &mut App) {
+    pressed.update(cx, |p, cx| {
+        if *p != down {
+            *p = down;
+            cx.notify();
+        }
+    });
+}
+
 impl RenderOnce for Button {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.palette();
         let (height, pad_x, text) = match self.size {
             ButtonSize::Default => (36., 16., TEXT_BODY),
@@ -250,6 +275,19 @@ impl RenderOnce for Button {
         let text = self.text_size.unwrap_or(text);
         let (bg, hover_bg, fg, border, weight) = variant_colors(&p, self.variant);
         let disabled = self.disabled;
+        let (pressed, depth) = press_depth(&self.id, window, cx);
+        // A press reads as scale(.975). GPUI cannot scale a div, so the face
+        // insets inside its own footprint: margins give back what the size
+        // loses, and the layout around it does not move.
+        let inset_y = height * 0.0125 * depth;
+        // A full-width face only sinks vertically; side margins would overflow.
+        let inset_x = if self.full_width {
+            0.
+        } else if self.size == ButtonSize::Icon {
+            inset_y
+        } else {
+            inset_y * 2.5
+        };
         let mut el = div()
             .id(self.id)
             .flex()
@@ -257,12 +295,14 @@ impl RenderOnce for Button {
             .items_center()
             .justify_center()
             .gap(px(if self.size == ButtonSize::Sm { 6. } else { 8. }))
-            .h(px(height))
+            .h(px(height - 2. * inset_y))
+            .my(px(inset_y))
+            .mx(px(inset_x))
             .when(self.size == ButtonSize::Icon, |d| {
-                d.w(px(height)).rounded(px(4.))
+                d.w(px(height - 2. * inset_x)).rounded(px(4.))
             })
             .when(self.size != ButtonSize::Icon, |d| {
-                d.px(px(pad_x)).rounded_full()
+                d.px(px(pad_x - inset_x)).rounded_full()
             })
             .when(self.full_width, |d| d.w_full().flex_1())
             .text_size(px(text))
@@ -292,6 +332,17 @@ impl RenderOnce for Button {
             if let Some(f) = self.on_click {
                 el = el.on_click(f);
             }
+            let (down, up, up_out) = (pressed.clone(), pressed.clone(), pressed);
+            el = el
+                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                    set_pressed(&down, true, cx)
+                })
+                .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                    set_pressed(&up, false, cx)
+                })
+                .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
+                    set_pressed(&up_out, false, cx)
+                });
         }
         el.when_some(self.icon, |d, (name, size)| d.child(icon(name, size, fg)))
             .when_some(self.label, |d, label| d.child(label))
@@ -594,4 +645,110 @@ pub fn spinner(id: impl Into<ElementId>, size: f32, color: Hsla) -> impl IntoEle
         Animation::new(Duration::from_millis(800)).repeat(),
         |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
     )
+}
+
+/// Brightness of the shimmer band at `x` (0..1 across the text), `ms` into
+/// its loop: the band crosses in the middle 70% of each 1.6 s loop and
+/// rests off the edges for the rest.
+pub fn shimmer_level(x: f32, ms: f32) -> f32 {
+    let cycle = (ms % 1600.) / 1600.;
+    let u = ((cycle - 0.15) / 0.7).clamp(0., 1.);
+    let center = -1. / 6. + u * (4. / 3.);
+    (1. - (x - center).abs() / 0.5).max(0.)
+}
+
+/// Muted text with a brighter band sweeping across it, for work in flight.
+pub fn shimmer_text(
+    text: impl Into<SharedString>,
+    since: Instant,
+    p: &Palette,
+    window: &mut Window,
+    cx: &App,
+) -> StyledText {
+    let text: SharedString = text.into();
+    if cx.reduce_motion() {
+        return StyledText::new(text);
+    }
+    window.request_animation_frame();
+    let ms = since.elapsed().as_secs_f32() * 1000.;
+    let count = text.chars().count().max(1) as f32;
+    let highlights: Vec<_> = text
+        .char_indices()
+        .enumerate()
+        .map(|(i, (at, ch))| {
+            let level = shimmer_level((i as f32 + 0.5) / count, ms);
+            let color = p.muted_foreground.blend(p.foreground.opacity(level));
+            (
+                at..at + ch.len_utf8(),
+                HighlightStyle {
+                    color: Some(color),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    StyledText::new(text).with_highlights(highlights)
+}
+
+/// A placeholder text line with a soft highlight sweeping across it every
+/// 2 s; `index` staggers stacked lines by 90 ms.
+pub fn skeleton_line(width: f32, index: usize, since: Instant, p: &Palette, cx: &App) -> Div {
+    let wash = p.hover_wash(0.06);
+    let line = div()
+        .relative()
+        .h(px(10.))
+        .w(relative(width))
+        .rounded(px(4.))
+        .bg(wash)
+        .overflow_hidden();
+    if cx.reduce_motion() {
+        return line;
+    }
+    let delay = 150. + index as f32 * 90.;
+    let ms = since.elapsed().as_secs_f32() * 1000. - delay;
+    if ms < 0. {
+        return line;
+    }
+    let u = (ms % 2000.) / 2000.;
+    let glow = p.hover_wash(0.07);
+    let half = |left: f32, from: Hsla, to: Hsla| {
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .left(relative(left))
+            .w(relative(0.15))
+            .bg(linear_gradient(
+                90.,
+                linear_color_stop(from, 0.),
+                linear_color_stop(to, 1.),
+            ))
+    };
+    line.child(
+        div()
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w_full()
+            .left(relative(-1. + 2. * u))
+            .child(half(0.35, glow.opacity(0.), glow))
+            .child(half(0.5, glow, glow.opacity(0.))),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shimmer_level;
+
+    #[test]
+    fn shimmer_rests_off_the_edges_and_crosses_the_text() {
+        // Resting before the sweep: the band sits left of the text.
+        assert_eq!(shimmer_level(0.5, 100.), 0.);
+        // Mid-sweep the middle of the text is brightest.
+        assert!((shimmer_level(0.5, 800.) - 1.).abs() < 1e-3);
+        assert!(shimmer_level(0.1, 800.) < shimmer_level(0.5, 800.));
+        // Resting after the sweep: right of the text.
+        assert_eq!(shimmer_level(0.5, 1500.), 0.);
+        assert!(shimmer_level(1., 1500.) > 0.);
+    }
 }
