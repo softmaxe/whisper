@@ -180,17 +180,23 @@ impl PaletteExt for App {
     }
 }
 
-/// Font families, both the bundled JetBrains Mono. `FONT_MONO` marks code-like
-/// values (URLs, API keys, model ids, prompts, key chips, error details) so
-/// they can take a different face later; today code is set apart by size,
-/// color and a chip background. CJK text falls back to the system face
-/// (PingFang).
-pub const FONT_UI: &str = "JetBrains Mono";
+/// Font families. Sans is the chrome, serif is the user's voice, mono is code.
+///
+/// - `FONT_UI`: navigation, labels, buttons, inputs, figures
+/// - `FONT_VOICE`: what the user said: transcripts, raw transcripts and the
+///   upload hero
+/// - `FONT_MONO`: code-like values (URLs, API keys, model ids, prompts, key
+///   chips, error details)
+///
+/// Anthropic Sans and Serif are static Text-size cuts made by
+/// `scripts/instance-anthropic-fonts.py`; JetBrains Mono is bundled as-is. CJK
+/// text falls back to the system face (PingFang) in every family.
+pub const FONT_UI: &str = "Anthropic Sans";
+pub const FONT_VOICE: &str = "Anthropic Serif";
 pub const FONT_MONO: &str = "JetBrains Mono";
 
-/// Type scale shared by every window, in px. Monospaced Latin runs wide, so the
-/// scale sits a step below a typical sans UI and leans on weight and color for
-/// hierarchy.
+/// Type scale shared by every window, in px. Reading text runs larger than
+/// body text: transcripts are a reading surface, the rest is controls.
 ///
 /// - `CAPTION`: group labels, badges, key chips, timestamps, fine print
 /// - `SMALL`: descriptions, helper text, metadata, small controls
@@ -200,16 +206,16 @@ pub const FONT_MONO: &str = "JetBrains Mono";
 /// - `DISPLAY`: hero titles
 /// - `FIGURE`: large numbers
 pub const TEXT_CAPTION: f32 = 11.;
-pub const TEXT_SMALL: f32 = 12.;
-pub const TEXT_BODY: f32 = 13.;
-pub const TEXT_READING: f32 = 14.;
+pub const TEXT_SMALL: f32 = 12.5;
+pub const TEXT_BODY: f32 = 13.5;
+pub const TEXT_READING: f32 = 15.5;
 pub const TEXT_TITLE: f32 = 15.;
-pub const TEXT_DISPLAY: f32 = 20.;
-pub const TEXT_FIGURE: f32 = 32.;
+pub const TEXT_DISPLAY: f32 = 23.;
+pub const TEXT_FIGURE: f32 = 34.;
 
 /// Line heights paired with the scale.
-pub const LINE_SMALL: f32 = 18.;
-pub const LINE_READING: f32 = 24.;
+pub const LINE_SMALL: f32 = 19.;
+pub const LINE_READING: f32 = 25.;
 pub const LINE_TITLE: f32 = 22.;
 
 /// Strong ease-out shared by enter/exit motion.

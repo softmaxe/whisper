@@ -22,7 +22,9 @@ use crate::dictation::{Dictation, DictationNotice};
 use crate::macos;
 
 use super::components::{f32_tx, icon};
-use super::theme::{FONT_UI, PaletteExt, ease_grow, ease_out};
+use super::theme::{
+    FONT_UI, FONT_VOICE, LINE_READING, PaletteExt, TEXT_READING, ease_grow, ease_out,
+};
 
 pub const WINDOW_SIZE: Size<Pixels> = Size {
     width: px(466.),
@@ -896,8 +898,9 @@ impl PillView {
                         .overflow_y_scroll()
                         .px(px(16.))
                         .py(px(12.))
-                        .text_size(px(15.))
-                        .line_height(px(24.))
+                        .font_family(FONT_VOICE)
+                        .text_size(px(TEXT_READING))
+                        .line_height(px(LINE_READING))
                         .text_color(p.foreground)
                         .child(text.clone()),
                 )

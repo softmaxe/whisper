@@ -21,8 +21,8 @@ use crate::app_state::AppState;
 use super::components::{Button, ButtonSize, ButtonVariant, f32_tx, icon, spinner};
 use super::history_view::copy_with_toast;
 use super::theme::{
-    LINE_READING, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_DISPLAY, TEXT_READING,
-    TEXT_SMALL, ease_out,
+    FONT_VOICE, LINE_READING, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_DISPLAY,
+    TEXT_READING, TEXT_SMALL, ease_out,
 };
 
 pub enum UploadEvent {
@@ -485,9 +485,10 @@ impl UploadView {
                     )
                     .child(
                         div()
+                            .font_family(FONT_VOICE)
                             .text_size(px(TEXT_DISPLAY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .line_height(px(28.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .line_height(px(30.))
                             .text_color(p.foreground)
                             .child(t("upload.title")),
                     )
@@ -897,6 +898,7 @@ impl UploadView {
                             .max_h(px(320.))
                             .overflow_y_scroll()
                             .p(px(16.))
+                            .font_family(FONT_VOICE)
                             .text_size(px(TEXT_READING))
                             .line_height(px(LINE_READING))
                             .text_color(p.foreground)

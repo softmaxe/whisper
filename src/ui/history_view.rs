@@ -16,8 +16,8 @@ use crate::backend;
 use super::components::{f32_tx, icon, kbd, spinner};
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
-    LINE_READING, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_READING,
-    TEXT_SMALL, TEXT_TITLE, ease_css,
+    FONT_VOICE, LINE_READING, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION,
+    TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_css,
 };
 
 pub enum HistoryEvent {
@@ -381,6 +381,7 @@ impl HistoryView {
                 .into_any_element()
         } else {
             div()
+                .font_family(FONT_VOICE)
                 .text_size(px(TEXT_READING))
                 .line_height(px(LINE_READING))
                 .text_color(p.foreground)
@@ -437,8 +438,9 @@ impl HistoryView {
                             .child(
                                 div()
                                     .mt(px(4.))
-                                    .text_size(px(TEXT_SMALL))
-                                    .line_height(px(LINE_SMALL))
+                                    .font_family(FONT_VOICE)
+                                    .text_size(px(TEXT_BODY))
+                                    .line_height(px(20.))
                                     .text_color(p.muted_foreground.opacity(0.8))
                                     .child(raw),
                             )
