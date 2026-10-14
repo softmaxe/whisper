@@ -1,7 +1,7 @@
 //! AppKit calls GPUI does not expose: click-through, ordering and moving
 //! the borderless recording-pill window.
 
-use gpui_kit::{Bounds, Pixels, Point, Window, point, px};
+use gpui_kit::{App, Bounds, Pixels, Point, Window, point, px};
 use objc2::rc::Retained;
 use objc2_app_kit::{NSApplication, NSEvent, NSScreen, NSView, NSWindow, NSWindowStyleMask};
 use objc2_foundation::{MainThreadMarker, NSPoint};
@@ -17,6 +17,19 @@ fn ns_window(window: &Window) -> Option<Retained<NSWindow>> {
     view.window()
 }
 
+/// Runs an AppKit window change once the current GPUI update returns. Style
+/// and frame changes make AppKit call GPUI's resize and move handlers
+/// synchronously, and those need the app GPUI is still holding, so made
+/// inside an update they fail with "RefCell already borrowed" and GPUI misses
+/// the new bounds. Changes queued here run in order.
+fn after_update(window: &Window, cx: &App, change: impl FnOnce(&NSWindow) + 'static) {
+    if let Some(w) = ns_window(window) {
+        cx.foreground_executor()
+            .spawn(async move { change(&w) })
+            .detach();
+    }
+}
+
 /// Lets clicks fall through to the app underneath while the pointer is not
 /// over the pill or one of its panels.
 pub fn set_ignores_mouse_events(window: &Window, ignore: bool) {
@@ -29,25 +42,21 @@ pub fn set_ignores_mouse_events(window: &Window, ignore: bool) {
 
 /// Drops the titled frame GPUI gives every window, so the transparent pill
 /// window has no hairline border, rounded frame or shadow of its own.
-pub fn make_borderless(window: &Window) {
-    if let Some(w) = ns_window(window) {
+pub fn make_borderless(window: &Window, cx: &App) {
+    after_update(window, cx, |w| {
         let keep = w.styleMask() & NSWindowStyleMask::NonactivatingPanel;
         w.setStyleMask(NSWindowStyleMask::Borderless | keep);
         w.setHasShadow(false);
-    }
+    });
 }
 
 /// Shows the window without activating the app.
-pub fn order_front(window: &Window) {
-    if let Some(w) = ns_window(window) {
-        w.orderFrontRegardless();
-    }
+pub fn order_front(window: &Window, cx: &App) {
+    after_update(window, cx, |w| w.orderFrontRegardless());
 }
 
-pub fn order_out(window: &Window) {
-    if let Some(w) = ns_window(window) {
-        w.orderOut(None);
-    }
+pub fn order_out(window: &Window, cx: &App) {
+    after_update(window, cx, |w| w.orderOut(None));
 }
 
 /// The standard About panel.
@@ -69,11 +78,11 @@ fn main_screen_height() -> f64 {
 
 /// Moves the window so its top-left corner sits at `origin` in GPUI screen
 /// coordinates (top-left origin, y down).
-pub fn set_origin(window: &Window, origin: Point<Pixels>, height: Pixels) {
-    if let Some(w) = ns_window(window) {
+pub fn set_origin(window: &Window, cx: &App, origin: Point<Pixels>, height: Pixels) {
+    after_update(window, cx, move |w| {
         let flipped_y = main_screen_height() - f64::from(origin.y) - f64::from(height);
         w.setFrameOrigin(NSPoint::new(f64::from(origin.x), flipped_y));
-    }
+    });
 }
 
 /// The pointer in GPUI screen coordinates (top-left origin, y down).

@@ -141,7 +141,7 @@ pub struct PillView {
 
 impl PillView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        macos::make_borderless(window);
+        macos::make_borderless(window, cx);
         let state = AppState::global(cx);
         cx.observe_in(&state, window, |this, _, window, cx| this.sync(window, cx))
             .detach();
@@ -199,7 +199,7 @@ impl PillView {
             PanelStartPosition::BottomRight => area.origin.x + area.size.width - w - margin,
         };
         let y = area.origin.y + area.size.height - h - margin;
-        macos::set_origin(window, point(x, y), h);
+        macos::set_origin(window, cx, point(x, y), h);
     }
 
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -232,11 +232,11 @@ impl PillView {
         if want && !self.shown {
             self.position_window(window, cx);
             macos::set_ignores_mouse_events(window, true);
-            macos::order_front(window);
+            macos::order_front(window, cx);
             self.shown = true;
             self.start_poll(window, cx);
         } else if !want && self.shown {
-            macos::order_out(window);
+            macos::order_out(window, cx);
             self.shown = false;
             self.hovered = false;
         }
@@ -653,7 +653,7 @@ impl PillView {
                     |this, _, window, cx| {
                         this.menu_open = false;
                         this.finishing_until = None;
-                        macos::order_out(window);
+                        macos::order_out(window, cx);
                         this.shown = false;
                         cx.notify();
                     },
