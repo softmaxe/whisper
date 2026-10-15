@@ -27,16 +27,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Cache Cargo downloads and build output
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Caches downloaded crates and compiled dependencies, not Whisper's own
+      # artifacts. Only main saves, so pull requests reuse its cache without
+      # filling the repository's cache quota.
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: ci-${{ runner.os }}-
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Validate architecture, toolchain and package version
@@ -44,3 +41,4 @@ jobs:
 
       - name: Check Whisper
         run: scripts/check.sh
+
