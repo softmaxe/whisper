@@ -1,9 +1,9 @@
-//! Byte sizes, durations and history date grouping.
+//! Byte sizes, database timestamps and relative ages.
 //!
-//! Labels such as "Today" stay with the UI; these helpers return which label
-//! applies.
+//! Labels such as "5 minutes ago" stay with the UI; these helpers return which
+//! label applies.
 
-use chrono::{DateTime, Datelike, Days, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, TimeZone, Utc};
 
 const BYTE_UNITS: [&str; 9] = ["Bytes", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB"];
 
@@ -19,16 +19,6 @@ pub fn format_bytes(bytes: f64, decimals: i32) -> String {
     let fixed = format!("{:.*}", dm, bytes / k.powi(i as i32));
     let value: f64 = fixed.parse().unwrap_or(0.0);
     format!("{value} {}", BYTE_UNITS[i])
-}
-
-/// "MM:SS" with minutes allowed past 59 ("60:05"); invalid or non-positive
-/// input gives "00:00".
-pub fn format_mm_ss(total_seconds: f64) -> String {
-    if !total_seconds.is_finite() || total_seconds <= 0.0 {
-        return "00:00".into();
-    }
-    let whole = total_seconds.floor() as u64;
-    format!("{:02}:{:02}", whole / 60, whole % 60)
 }
 
 /// Parse a database timestamp. SQLite `CURRENT_TIMESTAMP` values carry no
@@ -63,26 +53,6 @@ pub fn normalize_db_date(value: &str) -> Option<DateTime<Utc>> {
         .map(|n| n.and_utc())
 }
 
-/// History group for a timestamp, by calendar day in `now`'s time zone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DateGroup {
-    Today,
-    Yesterday,
-    Other(NaiveDate),
-}
-
-pub fn date_group<Tz: TimeZone>(ts: DateTime<Utc>, now: &DateTime<Tz>) -> DateGroup {
-    let today = now.date_naive();
-    let target = ts.with_timezone(&now.timezone()).date_naive();
-    if target == today {
-        DateGroup::Today
-    } else if today.checked_sub_days(Days::new(1)) == Some(target) {
-        DateGroup::Yesterday
-    } else {
-        DateGroup::Other(target)
-    }
-}
-
 /// Relative age of a timestamp; the UI maps each case to its i18n string
 /// (`commandSearch.relativeTime.now`, `minutesAgo`, `hoursAgo`, `daysAgo`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,53 +85,9 @@ pub fn relative_time<Tz: TimeZone>(ts: DateTime<Utc>, now: &DateTime<Tz>) -> Rel
     }
 }
 
-const SHORT_MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-fn is_chinese(ui_language: &str) -> bool {
-    ui_language.starts_with("zh")
-}
-
-/// Month and day, as `toLocaleDateString(locale, {month: "short", day: "numeric"})`
-/// renders it for the two UI languages: "Jan 10" / "1月10日".
-pub fn format_short_date(date: NaiveDate, ui_language: &str) -> String {
-    if is_chinese(ui_language) {
-        format!("{}月{}日", date.month(), date.day())
-    } else {
-        format!("{} {}", SHORT_MONTHS[date.month0() as usize], date.day())
-    }
-}
-
-/// Month, day and year: "Jan 10, 2024" / "2024年1月10日".
-pub fn format_group_date(date: NaiveDate, ui_language: &str) -> String {
-    if is_chinese(ui_language) {
-        format!("{}年{}月{}日", date.year(), date.month(), date.day())
-    } else {
-        format!(
-            "{} {}, {}",
-            SHORT_MONTHS[date.month0() as usize],
-            date.day(),
-            date.year()
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn mm_ss() {
-        assert_eq!(format_mm_ss(0.0), "00:00");
-        assert_eq!(format_mm_ss(5.0), "00:05");
-        assert_eq!(format_mm_ss(65.0), "01:05");
-        assert_eq!(format_mm_ss(3605.0), "60:05");
-        assert_eq!(format_mm_ss(-5.0), "00:00");
-        assert_eq!(format_mm_ss(f64::NAN), "00:00");
-        assert_eq!(format_mm_ss(f64::INFINITY), "00:00");
-        assert_eq!(format_mm_ss(f64::NEG_INFINITY), "00:00");
-    }
 
     #[test]
     fn bytes() {
@@ -198,48 +124,6 @@ mod tests {
         for s in ["", "   ", "not-a-date", "123"] {
             assert_eq!(normalize_db_date(s), None, "{s:?}");
         }
-    }
-
-    #[test]
-    fn groups_by_calendar_day() {
-        let tz = FixedOffset::east_opt(2 * 3600).unwrap();
-        let now = tz.with_ymd_and_hms(2024, 6, 15, 12, 0, 0).unwrap();
-        let local = |d, h| {
-            tz.with_ymd_and_hms(2024, 6, d, h, 0, 0)
-                .unwrap()
-                .with_timezone(&Utc)
-        };
-        assert_eq!(date_group(local(15, 8), &now), DateGroup::Today);
-        assert_eq!(date_group(local(14, 20), &now), DateGroup::Yesterday);
-        let old = tz
-            .with_ymd_and_hms(2024, 1, 10, 12, 0, 0)
-            .unwrap()
-            .with_timezone(&Utc);
-        assert_eq!(
-            date_group(old, &now),
-            DateGroup::Other(NaiveDate::from_ymd_opt(2024, 1, 10).unwrap())
-        );
-    }
-
-    #[test]
-    fn zoneless_utc_near_local_day_boundary() {
-        // 00:30 UTC is 17:30 on June 14 in Los Angeles (UTC-7), half an hour before now.
-        let la = FixedOffset::west_opt(7 * 3600).unwrap();
-        let now = Utc
-            .with_ymd_and_hms(2024, 6, 15, 1, 0, 0)
-            .unwrap()
-            .with_timezone(&la);
-        let ts = normalize_db_date("2024-06-15 00:30:00").unwrap();
-        assert_eq!(date_group(ts, &now), DateGroup::Today);
-    }
-
-    #[test]
-    fn group_date_labels() {
-        let d = NaiveDate::from_ymd_opt(2024, 1, 10).unwrap();
-        assert_eq!(format_group_date(d, "zh-CN"), "2024年1月10日");
-        assert_eq!(format_group_date(d, "en"), "Jan 10, 2024");
-        assert_eq!(format_short_date(d, "en"), "Jan 10");
-        assert_eq!(format_short_date(d, "zh-CN"), "1月10日");
     }
 
     #[test]

@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::i18n::{t, t_with};
-use whisper::settings::DEFAULT_HOTKEY;
+use crate::i18n::{t, t_with};
+use crate::settings::DEFAULT_HOTKEY;
 
 use crate::app_state::AppState;
 use crate::backend::{self, RawKey};

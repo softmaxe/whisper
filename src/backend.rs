@@ -1,8 +1,10 @@
 //! The UI's view of the platform and services. Each function wraps one call
-//! into the library (`whisper::native`, `whisper::services`, ...) so the views
+//! into the library (`crate::native`, `crate::services`, ...) so the views
 //! stay free of platform details.
 
 use std::path::PathBuf;
+
+use crate::native::permissions::SettingsPane;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct MicDeviceInfo {
@@ -26,7 +28,7 @@ pub struct AutoStartState {
 }
 
 pub fn auto_start_state() -> AutoStartState {
-    let state = whisper::native::autostart::auto_start_state();
+    let state = crate::native::autostart::auto_start_state();
     AutoStartState {
         enabled: state.enabled,
         requires_approval: state.requires_approval,
@@ -34,19 +36,19 @@ pub fn auto_start_state() -> AutoStartState {
 }
 
 pub fn set_auto_start(enabled: bool) -> anyhow::Result<()> {
-    whisper::native::autostart::set_auto_start_enabled(enabled).map_err(anyhow::Error::msg)
+    crate::native::autostart::set_auto_start_enabled(enabled).map_err(anyhow::Error::msg)
 }
 
 pub fn open_login_items_settings() {
-    open_url("x-apple.systempreferences:com.apple.LoginItems-Settings.extension");
+    open_url(SettingsPane::LoginItems.url());
 }
 
 pub fn open_microphone_privacy_settings() {
-    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone");
+    open_url(SettingsPane::Microphone.url());
 }
 
 pub fn open_accessibility_settings() {
-    open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+    open_url(SettingsPane::Accessibility.url());
 }
 
 pub fn open_url(url: &str) {
@@ -61,7 +63,7 @@ pub fn reveal_in_finder(path: &PathBuf) {
 }
 
 pub fn list_microphones() -> Vec<MicDeviceInfo> {
-    whisper::native::mic::list_input_devices()
+    crate::native::mic::list_input_devices()
         .into_iter()
         .map(|d| MicDeviceInfo {
             id: d.id,
@@ -72,23 +74,23 @@ pub fn list_microphones() -> Vec<MicDeviceInfo> {
 }
 
 pub fn system_default_microphone() -> Option<String> {
-    whisper::native::mic::system_default_microphone().map(|d| d.name)
+    crate::native::mic::system_default_microphone().map(|d| d.name)
 }
 
 pub fn lid_closed() -> Option<bool> {
-    whisper::native::mic::LaptopLidMonitor::shared().state()
+    crate::native::mic::LaptopLidMonitor::shared().state()
 }
 
 pub fn microphone_permission_granted() -> bool {
-    whisper::native::permissions::microphone_access()
-        == whisper::native::permissions::MicrophoneAccess::Granted
+    crate::native::permissions::microphone_access()
+        == crate::native::permissions::MicrophoneAccess::Granted
 }
 
 pub fn request_microphone_permission() {
-    use whisper::native::permissions::{MicrophoneAccess, microphone_access};
+    use crate::native::permissions::{MicrophoneAccess, microphone_access};
     match microphone_access() {
         MicrophoneAccess::NotDetermined => {
-            std::thread::spawn(whisper::native::permissions::request_microphone_access);
+            std::thread::spawn(crate::native::permissions::request_microphone_access);
         }
         MicrophoneAccess::Granted => {}
         _ => open_microphone_privacy_settings(),
@@ -96,60 +98,60 @@ pub fn request_microphone_permission() {
 }
 
 pub fn accessibility_granted() -> bool {
-    whisper::native::permissions::is_accessibility_trusted(false)
+    crate::native::permissions::is_accessibility_trusted(false)
 }
 
 pub fn request_accessibility_permission() {
-    if !whisper::native::permissions::is_accessibility_trusted(true) {
+    if !crate::native::permissions::is_accessibility_trusted(true) {
         open_accessibility_settings();
     }
 }
 
 pub fn audio_storage_usage() -> (usize, u64) {
-    let usage = whisper::audio_storage::AudioStorage::default().storage_usage();
+    let usage = crate::audio_storage::AudioStorage::default().storage_usage();
     (usage.file_count, usage.total_bytes)
 }
 
 /// Deletes every stored recording and clears the History rows' audio flags.
-pub fn delete_all_audio(db: &whisper::db::Database) {
-    whisper::audio_storage::AudioStorage::default().delete_all_audio_and_flags(db);
+pub fn delete_all_audio(db: &crate::db::Database) {
+    crate::audio_storage::AudioStorage::default().delete_all_audio_and_flags(db);
 }
 
 pub fn cleanup_api_key() -> String {
-    whisper::secrets::get_cleanup_api_key()
+    crate::secrets::get_cleanup_api_key()
         .ok()
         .flatten()
         .unwrap_or_default()
 }
 
 pub fn set_cleanup_api_key(key: &str) {
-    if let Err(err) = whisper::secrets::set_cleanup_api_key(key) {
+    if let Err(err) = crate::secrets::set_cleanup_api_key(key) {
         log::warn!("failed to save the cleanup API key: {err}");
     }
 }
 
 /// Transcription languages as (code, label, flag) for the language selector.
 pub fn languages() -> Vec<(String, String, String)> {
-    whisper::text::language::languages()
+    crate::text::language::languages()
         .iter()
         .map(|l| (l.code.to_string(), l.label.to_string(), l.flag.to_string()))
         .collect()
 }
 
 pub fn default_cleanup_prompt(ui_language: &str) -> String {
-    whisper::text::prompts::default_cleanup_prompt(ui_language).to_string()
+    crate::text::prompts::default_cleanup_prompt(ui_language).to_string()
 }
 
 pub fn normalize_base_url(value: &str) -> String {
-    whisper::text::url::normalize_base_url(value)
+    crate::text::url::normalize_base_url(value)
 }
 
 pub fn build_api_url(base: &str, path: &str) -> Option<String> {
-    whisper::text::url::build_api_url(base, path)
+    crate::text::url::build_api_url(base, path)
 }
 
 pub fn format_bytes(bytes: u64) -> String {
-    whisper::text::format::format_bytes(bytes as f64, 2)
+    crate::text::format::format_bytes(bytes as f64, 2)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -165,8 +167,8 @@ pub fn hotkey_mode_info(hotkeys_list: &str) -> HotkeyModeInfo {
     HotkeyModeInfo {
         push_disabled_reason: (!info.supports_push_to_talk).then(|| {
             info.push_to_talk_unavailable_reason
-                .map(|key| whisper::i18n::t(&key))
-                .unwrap_or_else(|| whisper::i18n::t("hotkey.errors.holdUnavailable"))
+                .map(|key| crate::i18n::t(&key))
+                .unwrap_or_else(|| crate::i18n::t("hotkey.errors.holdUnavailable"))
         }),
     }
 }
@@ -175,9 +177,9 @@ pub fn list_models(
     base: String,
     api_key: String,
 ) -> impl std::future::Future<Output = Result<(String, Vec<ModelOption>), String>> + 'static {
-    let handle = whisper::services::runtime::spawn(async move {
+    let handle = crate::services::runtime::spawn(async move {
         let key = (!api_key.is_empty()).then_some(api_key.as_str());
-        whisper::services::cleanup::list_models(&base, key).await
+        crate::services::cleanup::list_models(&base, key).await
     });
     async move {
         match handle.await {
@@ -193,7 +195,7 @@ pub fn list_models(
                     })
                     .collect(),
             )),
-            Ok(Err(err)) => Err(err.message_key.map(whisper::i18n::t).unwrap_or(err.message)),
+            Ok(Err(err)) => Err(err.message_key.map(crate::i18n::t).unwrap_or(err.message)),
             Err(err) => Err(err.to_string()),
         }
     }
@@ -201,21 +203,21 @@ pub fn list_models(
 
 /// Runs Prompt Studio's test: the edited prompt against the saved server.
 pub fn run_cleanup_test(
-    settings: whisper::settings::Settings,
+    settings: crate::settings::Settings,
     api_key: String,
     template: String,
     input: String,
     dictionary_hints: Vec<String>,
 ) -> impl std::future::Future<Output = Result<String, String>> + 'static {
-    use whisper::text::{chinese_script, prompts};
+    use crate::text::{chinese_script, prompts};
     let system_prompt = prompts::resolve_prompt_template(
         &template,
-        Some(whisper::text::DEFAULT_AGENT_NAME),
+        Some(crate::text::DEFAULT_AGENT_NAME),
         &chinese_script::resolve_cleanup_language(&settings.preferred_language),
         &dictionary_hints,
         &settings.ui_language,
     );
-    let config = whisper::services::cleanup::CleanupRequestConfig {
+    let config = crate::services::cleanup::CleanupRequestConfig {
         base_url: settings.cleanup_remote_url.trim().to_string(),
         api_key: (!api_key.trim().is_empty()).then(|| api_key.trim().to_string()),
         model: settings.cleanup_model.trim().to_string(),
@@ -227,8 +229,8 @@ pub fn run_cleanup_test(
         max_tokens: None,
     };
     let text = prompts::wrap_cleanup_transcript(&input);
-    let handle = whisper::services::runtime::spawn(async move {
-        whisper::services::cleanup::process_text(&text, &config).await
+    let handle = crate::services::runtime::spawn(async move {
+        crate::services::cleanup::process_text(&text, &config).await
     });
     async move {
         match handle.await {
@@ -254,7 +256,7 @@ pub fn raw_key_events() -> Option<async_channel::Receiver<RawKey>> {
     let raw = manager.subscribe_raw_keys();
     let (tx, rx) = async_channel::unbounded();
     std::thread::spawn(move || {
-        use whisper::native::hotkeys::RawKeyEvent as E;
+        use crate::native::hotkeys::RawKeyEvent as E;
         while let Ok(event) = raw.recv_blocking() {
             let mapped = match event {
                 E::GlobeDown => RawKey::FnDown,
@@ -279,34 +281,34 @@ pub fn set_hotkey_listening_mode(enabled: bool) {
 }
 
 pub fn parse_hotkey_list(value: &str) -> Vec<String> {
-    whisper::text::hotkeys::parse_hotkey_list(value)
+    crate::text::hotkeys::parse_hotkey_list(value)
 }
 
 pub fn serialize_hotkey_list(list: &[String]) -> String {
-    whisper::text::hotkeys::serialize_hotkey_list(list)
+    crate::text::hotkeys::serialize_hotkey_list(list)
 }
 
 pub fn normalize_hotkey(hotkey: &str) -> String {
-    whisper::text::hotkeys::normalize_hotkey(hotkey)
+    crate::text::hotkeys::normalize_hotkey(hotkey)
 }
 
 /// The user-facing reason a captured hotkey is rejected, if any.
 pub fn validate_hotkey(hotkey: &str) -> Option<String> {
-    let message = whisper::text::hotkeys::get_validation_message::<&str>(hotkey, &[])?;
+    let message = crate::text::hotkeys::get_validation_message::<&str>(hotkey, &[])?;
     let params: Vec<(&str, &str)> = message
         .params
         .iter()
         .map(|(k, v)| (*k, v.as_str()))
         .collect();
     Some(
-        whisper::i18n::try_t(message.key)
-            .map(|_| whisper::i18n::t_with(message.key, &params))
+        crate::i18n::try_t(message.key)
+            .map(|_| crate::i18n::t_with(message.key, &params))
             .unwrap_or(message.default_text),
     )
 }
 
 pub fn format_hotkey_label(hotkey: &str) -> String {
-    whisper::text::hotkeys::format_hotkey_label(Some(hotkey))
+    crate::text::hotkeys::format_hotkey_label(Some(hotkey))
 }
 
 /// Registers the global Dictation hotkeys; returns the list actually active.
@@ -316,7 +318,7 @@ pub fn register_hotkeys(list: &str, cx: &mut gpui_kit::App) -> Result<String, St
     };
     let mode = crate::app_state::AppState::settings(cx).activation_mode;
     manager.register(list, mode).map_err(|err| {
-        let message = whisper::i18n::t_with(
+        let message = crate::i18n::t_with(
             err.message_key(),
             &[("hotkey", &format_hotkey_label(&err.hotkey))],
         );
@@ -325,7 +327,7 @@ pub fn register_hotkeys(list: &str, cx: &mut gpui_kit::App) -> Result<String, St
         } else {
             format!(
                 "{message} {}",
-                whisper::i18n::t_with(
+                crate::i18n::t_with(
                     "hotkey.errors.trySuggestions",
                     &[("suggestions", &err.suggestions.join(", "))]
                 )
@@ -335,15 +337,15 @@ pub fn register_hotkeys(list: &str, cx: &mut gpui_kit::App) -> Result<String, St
 }
 // ---- Hotkeys ------------------------------------------------------------------------------
 
-static HOTKEYS: once_cell::sync::OnceCell<whisper::native::hotkeys::HotkeyManager> =
+static HOTKEYS: once_cell::sync::OnceCell<crate::native::hotkeys::HotkeyManager> =
     once_cell::sync::OnceCell::new();
 
 /// Installs the hotkey manager; call once on the main thread at startup.
-pub fn install_hotkeys(manager: whisper::native::hotkeys::HotkeyManager) {
+pub fn install_hotkeys(manager: crate::native::hotkeys::HotkeyManager) {
     let _ = HOTKEYS.set(manager);
 }
 
-pub fn hotkeys() -> Option<&'static whisper::native::hotkeys::HotkeyManager> {
+pub fn hotkeys() -> Option<&'static crate::native::hotkeys::HotkeyManager> {
     HOTKEYS.get()
 }
 
@@ -361,7 +363,7 @@ pub fn unregister_cancel_hotkey() {
 
 /// Shares Escape with the recording while the copy-recovery panel is open.
 pub fn set_recovery_cancel_hotkey(active: bool) {
-    use whisper::native::hotkeys::CancelHotkeyOwner;
+    use crate::native::hotkeys::CancelHotkeyOwner;
     let Some(manager) = hotkeys() else { return };
     if active {
         if let Err(error) = manager.register_cancel_hotkey_for(CancelHotkeyOwner::CopyRecovery) {
@@ -381,27 +383,27 @@ pub fn clear_hotkey_start_request() {
 // ---- Dictation side effects ----------------------------------------------------------------
 
 pub fn pause_media() {
-    std::thread::spawn(whisper::native::media::pause_media);
+    std::thread::spawn(crate::native::media::pause_media);
 }
 
 pub fn resume_media() {
-    std::thread::spawn(whisper::native::media::resume_media);
+    std::thread::spawn(crate::native::media::resume_media);
 }
 
 /// The cpal device name for the configured microphone, `None` for the system default.
-pub fn preferred_input_device(settings: &whisper::settings::Settings) -> Option<String> {
-    whisper::native::mic::resolve_preferred_microphone(settings)
+pub fn preferred_input_device(settings: &crate::settings::Settings) -> Option<String> {
+    crate::native::mic::resolve_preferred_microphone(settings)
         .device
         .map(|d| d.label)
 }
 
 /// The Target app at the hotkey press.
 pub fn capture_target_pid() -> Option<i32> {
-    whisper::native::paste::capture_frontmost_pid()
+    crate::native::paste::capture_frontmost_pid()
 }
 
 pub fn write_clipboard(text: &str) -> bool {
-    whisper::native::paste::write_clipboard(text)
+    crate::native::paste::write_clipboard(text)
 }
 
 /// Pastes into the Target app off the main thread; resolves to whether it pasted.
@@ -412,9 +414,9 @@ pub fn paste_text(
 ) -> impl std::future::Future<Output = bool> + 'static {
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
-        let outcome = whisper::native::paste::paste_text(
+        let outcome = crate::native::paste::paste_text(
             &text,
-            whisper::native::paste::PasteOptions {
+            crate::native::paste::PasteOptions {
                 target_pid,
                 restore_clipboard,
                 allow_clipboard_fallback: false,
@@ -435,7 +437,7 @@ pub fn monitor_corrections(
     target_pid: Option<i32>,
     cx: &mut gpui_kit::App,
 ) -> gpui_kit::Task<Vec<String>> {
-    let monitor = whisper::native::text_monitor::TextEditMonitor::shared();
+    let monitor = crate::native::text_monitor::TextEditMonitor::shared();
     let edits = monitor.subscribe();
     monitor.start_monitoring_after_paste(&text, target_pid);
     cx.spawn(async move |cx| {
@@ -448,7 +450,7 @@ pub fn monitor_corrections(
                 let s = state.read(cx);
                 (s.db.clone(), s.dictionary.clone())
             };
-            let learned = whisper::text::correction_learner::extract_corrections(
+            let learned = crate::text::correction_learner::extract_corrections(
                 &edit.original_text,
                 &edit.edited_text,
                 &dictionary,
@@ -458,7 +460,7 @@ pub fn monitor_corrections(
             }
             let empty: [&str; 0] = [];
             if db
-                .apply_dictionary_changes(&learned, &empty, whisper::db::DictionarySource::Learned)
+                .apply_dictionary_changes(&learned, &empty, crate::db::DictionarySource::Learned)
                 .is_err()
             {
                 return Vec::new();
@@ -474,6 +476,6 @@ pub fn undo_learned_words(words: &[String], cx: &mut gpui_kit::App) {
     let state = crate::app_state::AppState::global(cx);
     let db = state.read(cx).db.clone();
     let empty: [&str; 0] = [];
-    let _ = db.apply_dictionary_changes(&empty, words, whisper::db::DictionarySource::Learned);
+    let _ = db.apply_dictionary_changes(&empty, words, crate::db::DictionarySource::Learned);
     state.update(cx, |s, cx| s.reload_dictionary(cx));
 }

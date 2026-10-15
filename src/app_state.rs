@@ -8,34 +8,23 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 
-use whisper::audio_storage::AudioStorage;
-use whisper::db::{Database, Snippet, TranscriptionItem, TranscriptionStatus};
-use whisper::i18n::{self, Language};
-use whisper::settings::Settings;
+use crate::audio_storage::AudioStorage;
+use crate::db::{Database, Snippet, TranscriptionItem, TranscriptionStatus};
+use crate::i18n::{self, Language};
+use crate::settings::Settings;
 
 use crate::ui::theme;
-
-/// What the Recording pill and the tray reflect.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MicCaptureStatus {
-    #[default]
-    Inactive,
-    Active,
-}
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DictationSnapshot {
     pub is_recording: bool,
     pub is_processing: bool,
     pub is_preparing: bool,
-    pub is_stopping: bool,
-    pub mic_capture_status: MicCaptureStatus,
-    pub transcript: String,
 }
 
 impl DictationSnapshot {
     pub fn is_active(&self) -> bool {
-        self.is_recording || self.is_processing || self.is_preparing || self.is_stopping
+        self.is_recording || self.is_processing || self.is_preparing
     }
 }
 

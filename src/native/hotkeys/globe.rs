@@ -236,6 +236,7 @@ impl GlobeListener {
         }
     }
 
+    #[cfg(test)]
     pub fn is_running(&self) -> bool {
         lock(&self.inner.state).child.is_some()
     }

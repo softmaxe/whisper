@@ -270,11 +270,6 @@ pub fn is_truncated_finish_reason(reason: Option<&str>) -> bool {
     matches!(reason, Some("length" | "max_tokens"))
 }
 
-/// i18n key for a reply cut off at the token cap.
-pub const TRUNCATED_OUTPUT_MESSAGE_KEY: &str = "dictation.errorDescriptions.cleanupTruncated";
-/// i18n key for a reply with no text.
-pub const EMPTY_OUTPUT_MESSAGE_KEY: &str = "dictation.errorDescriptions.cleanupEmptyReply";
-
 /// Shaped params a backend may reject by name with a 400/422. Only params the
 /// shaping layer added are strippable, never `messages` or `model`.
 pub const STRIPPABLE_SHAPED_PARAMS: &[&str] = &[
@@ -284,16 +279,6 @@ pub const STRIPPABLE_SHAPED_PARAMS: &[&str] = &[
     "think",
     "temperature",
 ];
-
-/// The strippable params present in `body` that a rejection's error text
-/// names (rung 2 of the retry ladder; rung 1 drops `reasoning`).
-pub fn named_strippable_params(body: &Map<String, Value>, error_text: &str) -> Vec<&'static str> {
-    STRIPPABLE_SHAPED_PARAMS
-        .iter()
-        .copied()
-        .filter(|p| body.contains_key(*p) && error_text.contains(p))
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -440,18 +425,5 @@ mod tests {
         assert!(is_truncated_finish_reason(Some("max_tokens")));
         assert!(!is_truncated_finish_reason(Some("stop")));
         assert!(!is_truncated_finish_reason(None));
-
-        let mut body = Map::new();
-        apply_chat_completions_params(
-            &mut body,
-            "qwen3",
-            &ChatParamsConfig {
-                disable_thinking: Some(true),
-                ..Default::default()
-            },
-            100,
-        );
-        let named = named_strippable_params(&body, "Extra inputs: chat_template_kwargs, thinking");
-        assert_eq!(named, ["chat_template_kwargs"]);
     }
 }

@@ -258,7 +258,6 @@ pub fn system_default_microphone() -> Option<SystemDefaultMicrophone> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MicSelectionMode {
     Auto,
-    System,
     BuiltIn,
     Specific,
 }
@@ -289,25 +288,6 @@ pub enum MicStatus {
     Default,
 }
 
-impl MicStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AutoBuiltIn => "auto-built-in",
-            Self::AutoExternal => "auto-external",
-            Self::NativeExact => "native-exact",
-            Self::NativeCompatible => "native-compatible",
-            Self::NativeUnmatched => "native-unmatched",
-            Self::Unavailable => "unavailable",
-            Self::BuiltIn => "built-in",
-            Self::Exact => "exact",
-            Self::Remapped => "remapped",
-            Self::Missing => "missing",
-            Self::Ambiguous => "ambiguous",
-            Self::Default => "default",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MicResolution {
     pub mode: MicSelectionMode,
@@ -315,22 +295,6 @@ pub struct MicResolution {
     pub device: Option<MicDevice>,
     pub status: MicStatus,
     pub lid_closed: Option<bool>,
-}
-
-impl MicResolution {
-    /// A resolved physical device can be cached by the capture side.
-    pub fn is_cacheable(&self) -> bool {
-        self.device.as_ref().is_some_and(|d| !d.id.is_empty())
-    }
-
-    /// (id, label) the caller should save as the selected device: a stale id
-    /// was remapped by label, or no label had been saved yet.
-    pub fn selection_to_persist(&self, saved_label: &str) -> Option<(String, String)> {
-        let device = self.device.as_ref()?;
-        (self.mode == MicSelectionMode::Specific
-            && (self.status == MicStatus::Remapped || saved_label.is_empty()))
-        .then(|| (device.id.clone(), device.label.clone()))
-    }
 }
 
 /// Lowercased, NFKC, without "Default - " / "(Built-in)" decorations.
@@ -550,9 +514,6 @@ pub fn resolve_microphone_selection(
                 ..resolution(resolve_system_default_device(devices, system_default_name))
             }
         }
-        MicSelectionMode::System => {
-            resolution(resolve_system_default_device(devices, system_default_name))
-        }
         MicSelectionMode::BuiltIn => {
             let device = devices
                 .iter()
@@ -575,37 +536,22 @@ pub fn resolve_microphone_selection(
 
 /// Lists devices, reads lid state (Auto) and the system default, and applies
 /// the policy. Blocks up to ~1.5 s on the first lid read; call off the main
-/// thread. With `force_system_default`, ignores the preference.
-pub fn resolve_preferred_microphone_with(
-    settings: &Settings,
-    force_system_default: bool,
-) -> MicResolution {
-    let mut preference = MicPreference::from_settings(settings);
-    if force_system_default {
-        preference.mode = MicSelectionMode::System;
-    }
+/// thread.
+pub fn resolve_preferred_microphone(settings: &Settings) -> MicResolution {
+    let preference = MicPreference::from_settings(settings);
     let devices = list_input_devices();
     let lid_closed = (preference.mode == MicSelectionMode::Auto)
         .then(|| LaptopLidMonitor::shared().state())
         .flatten();
-    let system_default = matches!(
-        preference.mode,
-        MicSelectionMode::Auto | MicSelectionMode::System
-    )
-    .then(system_default_microphone)
-    .flatten();
+    let system_default = (preference.mode == MicSelectionMode::Auto)
+        .then(system_default_microphone)
+        .flatten();
     resolve_microphone_selection(
         &devices,
         &preference,
         system_default.as_ref().map(|d| d.name.as_str()),
         lid_closed,
     )
-}
-
-/// The preferred microphone for `settings` (see
-/// [`resolve_preferred_microphone_with`]).
-pub fn resolve_preferred_microphone(settings: &Settings) -> MicResolution {
-    resolve_preferred_microphone_with(settings, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -616,11 +562,6 @@ const LID_STALE_STATE_MS: u64 = 5000;
 const LID_RESTART_DELAY_MS: u64 = 2000;
 const LID_MAX_BUFFER: usize = 4096;
 const MIC_LISTENER_BINARY: &str = "macos-mic-listener";
-
-fn lid_subscribers() -> &'static Mutex<Vec<async_channel::Sender<Option<bool>>>> {
-    static SUBSCRIBERS: OnceLock<Mutex<Vec<async_channel::Sender<Option<bool>>>>> = OnceLock::new();
-    SUBSCRIBERS.get_or_init(|| Mutex::new(Vec::new()))
-}
 
 /// `{"lidClosed":true|false|null}` -> Some(state); anything else -> None.
 pub fn parse_lid_state(line: &str) -> Option<Option<bool>> {
@@ -694,23 +635,13 @@ impl LaptopLidMonitor {
                     spawner: Arc::new(ProcessSpawner),
                     resolve_binary: Arc::new(|| resolve_helper(MIC_LISTENER_BINARY)),
                     timers: RealTimers::shared(),
-                    on_change: Arc::new(|state| {
-                        lock(lid_subscribers()).retain(|tx| tx.try_send(state).is_ok());
-                    }),
+                    on_change: Arc::new(|_| {}),
                 })
             })
             .clone()
     }
 
-    /// Lid changes of the shared monitor (`Some(true)` closed, `None`
-    /// unknown).
-    pub fn subscribe_shared() -> async_channel::Receiver<Option<bool>> {
-        let (tx, rx) = async_channel::unbounded();
-        lock(lid_subscribers()).push(tx);
-        Self::shared().start();
-        rx
-    }
-
+    #[cfg(test)]
     pub fn start(&self) {
         let mut state = lock(&self.inner.state);
         if state.running {
@@ -778,6 +709,7 @@ impl LaptopLidMonitor {
             .flatten()
     }
 
+    #[cfg(test)]
     pub fn stop(&self) {
         let inner = &self.inner;
         let mut state = lock(&inner.state);
@@ -1061,65 +993,53 @@ mod tests {
     }
 
     #[test]
-    fn system_mode_mapping() {
+    fn system_default_mapping() {
         let expected = mic("macbook", "MacBook Pro Microphone (Built-in)");
-        let result = resolve_microphone_selection(
+        let (device, status) = resolve_system_default_device(
             &[mic("usb", "USB Microphone"), expected.clone()],
-            &pref(MicSelectionMode::System),
             Some("MacBook Pro Microphone"),
-            None,
         );
-        assert_eq!(result.device, Some(expected));
-        assert_eq!(result.status, MicStatus::NativeExact);
+        assert_eq!(device, Some(expected));
+        assert_eq!(status, MicStatus::NativeExact);
 
-        let result = resolve_microphone_selection(
+        let (device, _) = resolve_system_default_device(
             &[
                 mic("continuity", "Joshua P Microphone"),
                 mic("usb", "USB Microphone"),
             ],
-            &pref(MicSelectionMode::System),
             Some("USB Microphone"),
-            None,
         );
-        assert!(result.is_cacheable());
+        assert!(device.is_some_and(|d| !d.id.is_empty()));
 
-        let result = resolve_microphone_selection(
+        let (device, status) = resolve_system_default_device(
             &[
                 mic("continuity", "Joshua P Microphone"),
                 mic("usb", "USB Microphone"),
             ],
-            &pref(MicSelectionMode::System),
             Some("Missing System Microphone"),
-            None,
         );
-        assert_eq!(result.device, None);
-        assert_eq!(result.status, MicStatus::NativeUnmatched);
+        assert_eq!(device, None);
+        assert_eq!(status, MicStatus::NativeUnmatched);
 
         let expected = mic("7a1b", "Jabra Evolve2 65 Microphone");
-        let result = resolve_microphone_selection(
+        let (device, status) = resolve_system_default_device(
             &[
                 mic("macbook", "MacBook Pro Microphone (Built-in)"),
                 expected.clone(),
             ],
-            &pref(MicSelectionMode::System),
             Some("Jabra Evolve2 65"),
-            None,
         );
-        assert_eq!(result.device, Some(expected));
-        assert_eq!(result.status, MicStatus::NativeCompatible);
+        assert_eq!(device, Some(expected));
+        assert_eq!(status, MicStatus::NativeCompatible);
     }
 
     #[test]
     fn coreaudio_default_flag_is_used() {
         let mut default = mic("uid-1", "Desk Microphone");
         default.is_default = true;
-        let result = resolve_microphone_selection(
-            &[mic("uid-2", "Other"), default.clone()],
-            &pref(MicSelectionMode::System),
-            None,
-            None,
-        );
-        assert_eq!(result.device, Some(default));
+        let (device, _) =
+            resolve_system_default_device(&[mic("uid-2", "Other"), default.clone()], None);
+        assert_eq!(device, Some(default));
     }
 
     #[test]
@@ -1185,7 +1105,7 @@ mod tests {
     }
 
     #[test]
-    fn remapped_selection_is_persisted() {
+    fn stale_id_is_remapped_by_label() {
         let result = resolve_microphone_selection(
             &[mic("new-id", "Studio Mic")],
             &MicPreference {
@@ -1196,10 +1116,8 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(
-            result.selection_to_persist("Studio Mic"),
-            Some(("new-id".into(), "Studio Mic".into()))
-        );
+        assert_eq!(result.status, MicStatus::Remapped);
+        assert_eq!(result.device.map(|d| d.id).as_deref(), Some("new-id"));
     }
 
     #[test]

@@ -80,6 +80,7 @@ pub struct ClipboardSnapshot {
 }
 
 impl ClipboardSnapshot {
+    #[cfg(test)]
     pub fn text(&self) -> Option<String> {
         self.items
             .iter()
@@ -167,11 +168,6 @@ impl Pasteboard for SystemPasteboard {
     }
 }
 
-/// Reads plain text from the clipboard.
-pub fn read_clipboard() -> Option<String> {
-    SystemPasteboard.read_text()
-}
-
 /// Replaces the clipboard with `text`.
 pub fn write_clipboard(text: &str) -> bool {
     SystemPasteboard.write_text(text)
@@ -223,17 +219,6 @@ impl PasteOutcome {
             pasted: false,
             failure: None,
         }
-    }
-
-    /// The user-facing message for a failed paste.
-    pub fn message(&self) -> Option<String> {
-        let failure = self.failure.as_ref()?;
-        Some(match failure {
-            PasteFailure::AccessibilityRequired => "Accessibility permissions required for automatic pasting. Text has been copied to clipboard - please paste manually with Cmd+V.".to_string(),
-            PasteFailure::KeyboardLayoutUnresolved => "Paste could not resolve the active keyboard layout. Text is copied to clipboard - please paste manually with Cmd+V.".to_string(),
-            PasteFailure::TimedOut => "Paste operation timed out. Text is copied to clipboard - please paste manually with Cmd+V.".to_string(),
-            PasteFailure::CommandFailed(detail) => format!("Paste failed ({detail}). Text is copied to clipboard - please paste manually with Cmd+V."),
-        })
     }
 }
 
@@ -366,6 +351,7 @@ impl Paster {
     }
 
     /// Runs `operation` inside the paste queue (after pending restores).
+    #[cfg(test)]
     pub fn run_clipboard_operation<T>(&self, operation: impl FnOnce() -> T) -> T {
         let _ticket = self.queue.acquire();
         operation()
@@ -792,11 +778,6 @@ mod tests {
         assert_eq!(
             outcome.failure,
             Some(PasteFailure::KeyboardLayoutUnresolved)
-        );
-        assert!(
-            outcome
-                .message()
-                .is_some_and(|m| m.contains("keyboard layout"))
         );
         assert_eq!(lock(&f.runs).len(), 1, "no osascript fallback");
         settle(&f);

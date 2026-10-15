@@ -33,13 +33,6 @@ impl Language {
         }
     }
 
-    pub fn code(self) -> &'static str {
-        match self {
-            Self::En => "en",
-            Self::ZhCn => "zh-CN",
-        }
-    }
-
     fn bundle(self) -> &'static Value {
         match self {
             Self::En => &EN,
@@ -55,29 +48,6 @@ pub fn language() -> Language {
 
 pub fn set_language(language: Language) {
     *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = language;
-}
-
-/// The default UI language: the system's preferred language when supported.
-pub fn system_language() -> Language {
-    let locale = std::env::var("LANG").unwrap_or_default();
-    if locale.to_ascii_lowercase().starts_with("zh") {
-        return Language::ZhCn;
-    }
-    preferred_system_language()
-        .map(|code| Language::from_code(&code))
-        .unwrap_or(Language::En)
-}
-
-fn preferred_system_language() -> Option<String> {
-    let output = std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLanguages"])
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.split(['"', '(', ')', ',', '\n'])
-        .map(str::trim)
-        .find(|part| !part.is_empty())
-        .map(str::to_string)
 }
 
 fn lookup<'a>(bundle: &'a Value, key: &str) -> Option<&'a str> {

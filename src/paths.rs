@@ -1,6 +1,6 @@
 //! Filesystem locations shared by every subsystem.
 //!
-//! App data (settings, the database, audio and logs) lives under
+//! App data (settings, the database and audio) lives under
 //! `~/Library/Application Support/com.softmaxe.whisper/`. `WHISPER_USER_DATA_DIR`
 //! overrides the root, which tests and e2e runs use to stay away from real user
 //! data.
@@ -29,12 +29,6 @@ pub fn data_dir() -> &'static Path {
     })
 }
 
-/// Overrides the data directory; only valid before the first `data_dir()` call.
-pub fn set_data_dir(dir: PathBuf) -> bool {
-    let _ = std::fs::create_dir_all(&dir);
-    DATA_DIR.set(dir).is_ok()
-}
-
 pub fn database_path() -> PathBuf {
     data_dir().join("transcriptions.db")
 }
@@ -45,10 +39,6 @@ pub fn settings_path() -> PathBuf {
 
 pub fn audio_dir() -> PathBuf {
     data_dir().join("audio")
-}
-
-pub fn logs_dir() -> PathBuf {
-    data_dir().join("logs")
 }
 
 /// Directory holding bundled helper binaries (`macos-globe-listener`, ffmpeg, ...).

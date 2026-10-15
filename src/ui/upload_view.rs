@@ -9,9 +9,9 @@ use std::time::Duration;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::db::SaveTranscriptionOptions;
-use whisper::i18n::{t, t_with};
-use whisper::services::upload::{
+use crate::db::SaveTranscriptionOptions;
+use crate::i18n::{t, t_with};
+use crate::services::upload::{
     FileTranscriptionRequest, UploadError, cancel_upload_transcription, is_supported_upload_file,
     transcribe_audio_file,
 };
@@ -104,7 +104,7 @@ fn error_text(err: &UploadError) -> String {
         return t("upload.customEndpointInvalid");
     }
     if let Some(key) = &err.message_key
-        && let Some(text) = whisper::i18n::try_t(key)
+        && let Some(text) = crate::i18n::try_t(key)
     {
         return text;
     }
@@ -119,7 +119,7 @@ fn build_request(path: PathBuf, request_id: String, cx: &App) -> FileTranscripti
     let s = AppState::settings(cx);
     FileTranscriptionRequest {
         file_path: path,
-        language: whisper::text::language::get_base_language_code(&s.preferred_language)
+        language: crate::text::language::get_base_language_code(&s.preferred_language)
             .unwrap_or_default()
             .to_string(),
         remote_transcription_url: s.remote_transcription_url.clone(),
@@ -153,7 +153,7 @@ fn save_upload(text: &str, cx: &mut App) -> Result<Option<i64>, String> {
 fn run_transcription(
     request: FileTranscriptionRequest,
 ) -> impl std::future::Future<Output = Result<String, UploadError>> {
-    let handle = whisper::services::runtime::spawn(transcribe_audio_file(request));
+    let handle = crate::services::runtime::spawn(transcribe_audio_file(request));
     async move {
         handle.await.unwrap_or_else(|err| {
             Err(UploadError {
@@ -256,7 +256,7 @@ impl UploadView {
     fn browse(&mut self, cx: &mut Context<Self>) {
         // An async panel keeps GPUI's run loop free while the dialog is open.
         cx.spawn(async move |this, cx| {
-            if let Some(paths) = whisper::services::upload::select_audio_files(true).await {
+            if let Some(paths) = crate::services::upload::select_audio_files(true).await {
                 let _ = this.update(cx, |this, cx| this.accept_paths(paths, false, cx));
             }
         })

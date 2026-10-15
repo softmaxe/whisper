@@ -5,11 +5,11 @@
 use std::collections::BTreeMap;
 
 use super::keys::{
-    is_globe_like_hotkey, is_modifier_only_hotkey, is_mouse_button_hotkey, is_right_side_modifier,
-    is_unsupported_fn_combination, normalize_to_accelerator,
+    is_modifier_only_hotkey, is_right_side_modifier, is_unsupported_fn_combination,
+    normalize_to_accelerator,
 };
-use super::list::parse_hotkey_list;
 use super::{HotkeyError, HotkeyFailureReason};
+use crate::text::hotkeys::{is_globe_like_hotkey, is_mouse_button_hotkey, parse_hotkey_list};
 
 pub const DICTATION_SLOT: &str = "dictation";
 pub const CANCEL_SLOT: &str = "cancel";
@@ -106,6 +106,7 @@ impl SlotRegistry {
             .unwrap_or_default()
     }
 
+    #[cfg(test)]
     pub fn slot_has_hotkey(&self, slot: &str, key: &str) -> bool {
         !key.is_empty()
             && self

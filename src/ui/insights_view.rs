@@ -4,8 +4,8 @@ use chrono::{Datelike, Local, NaiveDate};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::analytics::{AnalyticsSummary, build_activity_days};
-use whisper::i18n::{self, Language, t, t_with};
+use crate::analytics::{AnalyticsSummary, build_activity_days};
+use crate::i18n::{self, Language, t, t_with};
 
 use crate::app_state::{AppEvent, AppState};
 

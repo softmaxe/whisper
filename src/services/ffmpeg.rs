@@ -32,8 +32,6 @@ pub enum FfmpegError {
     NoOutput,
     #[error("FFmpeg conversion produced empty output file")]
     EmptyOutput,
-    #[error("FFmpeg split produced no output files")]
-    NoSegments,
 }
 
 fn stderr_suffix(stderr: &str) -> String {
@@ -84,11 +82,6 @@ pub fn ffmpeg_path() -> Option<PathBuf> {
     found
 }
 
-/// Forgets the cached path (e.g. after the user installs FFmpeg).
-pub fn clear_cache() {
-    *CACHED_PATH.lock() = None;
-}
-
 /// Last 500 characters of stderr, trimmed.
 fn stderr_tail(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
@@ -97,8 +90,8 @@ fn stderr_tail(stderr: &[u8]) -> String {
     chars[start..].iter().collect::<String>().trim().to_string()
 }
 
-/// Runs FFmpeg with `args`; returns stderr on a clean exit.
-async fn run(args: Vec<OsString>, cancel: &CancellationToken) -> Result<String, FfmpegError> {
+/// Runs FFmpeg with `args`; fails on a non-zero exit.
+async fn run(args: Vec<OsString>, cancel: &CancellationToken) -> Result<(), FfmpegError> {
     if cancel.is_cancelled() {
         return Err(FfmpegError::Cancelled);
     }
@@ -125,7 +118,7 @@ async fn run(args: Vec<OsString>, cancel: &CancellationToken) -> Result<String, 
             stderr,
         });
     }
-    Ok(String::from_utf8_lossy(&output.stderr).into_owned())
+    Ok(())
 }
 
 /// One-shot conversion that must leave a non-empty `output`.
@@ -146,26 +139,6 @@ async fn run_conversion(
 
 fn os_args(args: &[&str]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
-}
-
-/// PCM16 WAV at `sample_rate` with `channels` channels.
-pub async fn convert_to_wav(
-    input: &Path,
-    output: &Path,
-    sample_rate: u32,
-    channels: u16,
-    cancel: &CancellationToken,
-) -> Result<(), FfmpegError> {
-    let mut args = vec![OsString::from("-i"), input.as_os_str().to_owned()];
-    args.extend(os_args(&[
-        "-ar",
-        &sample_rate.to_string(),
-        "-ac",
-        &channels.to_string(),
-        "-c:a",
-        "pcm_s16le",
-    ]));
-    run_conversion(args, output, cancel).await
 }
 
 /// Mono 16 kHz MP3 with any video stream dropped (default bitrate "64k").
@@ -190,94 +163,10 @@ pub async fn convert_to_mp3(
     run_conversion(args, output, cancel).await
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SplitResult {
-    pub chunk_paths: Vec<PathBuf>,
-    pub duration_seconds: Option<f64>,
-}
-
-/// Splits into `chunk-NNN.mp3` segments of `segment_seconds` (mono 16 kHz).
-pub async fn split_audio_file(
-    input: &Path,
-    output_dir: &Path,
-    segment_seconds: u32,
-    audio_bitrate: &str,
-    cancel: &CancellationToken,
-) -> Result<SplitResult, FfmpegError> {
-    let mut args = vec![OsString::from("-i"), input.as_os_str().to_owned()];
-    args.extend(os_args(&[
-        "-f",
-        "segment",
-        "-segment_time",
-        &segment_seconds.to_string(),
-        "-c:a",
-        "libmp3lame",
-        "-b:a",
-        audio_bitrate,
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        "-y",
-    ]));
-    args.push(output_dir.join("chunk-%03d.mp3").into_os_string());
-    let stderr = run(args, cancel).await?;
-    let mut chunk_paths: Vec<PathBuf> = std::fs::read_dir(output_dir)
-        .map_err(|e| FfmpegError::Process(e.to_string()))?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("chunk-") && n.ends_with(".mp3"))
-        })
-        .collect();
-    chunk_paths.sort();
-    if chunk_paths.is_empty() {
-        return Err(FfmpegError::NoSegments);
-    }
-    Ok(SplitResult {
-        chunk_paths,
-        duration_seconds: parse_ffmpeg_duration(&stderr),
-    })
-}
-
-/// Reads `Duration: HH:MM:SS.ss` from FFmpeg's stderr.
-pub fn parse_ffmpeg_duration(stderr: &str) -> Option<f64> {
-    let start = stderr.find("Duration:")? + "Duration:".len();
-    let rest = stderr[start..].trim_start();
-    let token: String = rest
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == ':' || *c == '.')
-        .collect();
-    let mut parts = token.split(':');
-    let hours: f64 = parts.next()?.parse().ok()?;
-    let minutes_str = parts.next()?;
-    let seconds_str = parts.next()?;
-    if parts.next().is_some() || minutes_str.len() != 2 {
-        return None;
-    }
-    let minutes: f64 = minutes_str.parse().ok()?;
-    let seconds: f64 = seconds_str.parse().ok()?;
-    let whole_seconds = seconds_str.split('.').next().unwrap_or_default();
-    if minutes >= 60.0 || whole_seconds.len() != 2 || seconds >= 60.0 {
-        return None;
-    }
-    Some(hours * 3600.0 + minutes * 60.0 + seconds)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::services::test_server::run as block;
-
-    #[test]
-    fn parses_duration() {
-        let stderr =
-            "Input #0, mp3, from 'recording.mp3':\n  Duration: 01:13:00.25, start: 0.000000";
-        assert_eq!(parse_ffmpeg_duration(stderr), Some(4380.25));
-        assert_eq!(parse_ffmpeg_duration("Duration: N/A"), None);
-        assert_eq!(parse_ffmpeg_duration(""), None);
-    }
 
     #[test]
     fn converts_and_cancels() {
@@ -301,11 +190,10 @@ mod tests {
         assert!(std::fs::metadata(&mp3).unwrap().len() > 0);
 
         let missing = dir.path().join("missing.wav");
-        let err = block(convert_to_wav(
+        let err = block(convert_to_mp3(
             &missing,
-            &dir.path().join("o.wav"),
-            16000,
-            1,
+            &dir.path().join("o.mp3"),
+            "64k",
             &CancellationToken::new(),
         ))
         .unwrap_err();
@@ -315,22 +203,5 @@ mod tests {
         cancel.cancel();
         let err = block(convert_to_mp3(&wav, &mp3, "64k", &cancel)).unwrap_err();
         assert_eq!(err, FfmpegError::Cancelled);
-
-        let split_dir = dir.path().join("split");
-        std::fs::create_dir(&split_dir).unwrap();
-        let split = block(split_audio_file(
-            &wav,
-            &split_dir,
-            600,
-            "64k",
-            &CancellationToken::new(),
-        ))
-        .unwrap();
-        assert_eq!(split.chunk_paths.len(), 1);
-        assert!(
-            split
-                .duration_seconds
-                .is_some_and(|d| (d - 0.5).abs() < 0.1)
-        );
     }
 }

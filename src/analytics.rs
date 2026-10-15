@@ -319,7 +319,6 @@ mod tests {
             ],
             NaiveDate::from_ymd_opt(2026, 9, 15).unwrap(),
         );
-        assert_eq!(ANALYTICS_ACTIVITY_MONTH_COUNT, 6);
         assert_eq!(
             days[0],
             ActivityDay {

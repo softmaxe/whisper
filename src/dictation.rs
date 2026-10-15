@@ -14,17 +14,19 @@ use chrono::{DateTime, Utc};
 use gpui_kit::*;
 use tokio_util::sync::CancellationToken;
 
-use whisper::analytics::AnalyticsEventInput;
-use whisper::audio::capture::{CaptureEvent, RecordedAudio, Recorder};
-use whisper::audio::cues;
-use whisper::db::{
+use crate::analytics::AnalyticsEventInput;
+use crate::audio::capture::{CaptureEvent, RecordedAudio, Recorder};
+use crate::audio::cues;
+use crate::db::{
     SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionItem, TranscriptionStatus,
 };
-use whisper::i18n::t;
-use whisper::pipeline::{self, PipelineInput, PipelineOutcome};
-use whisper::settings::Settings;
+use crate::i18n::t;
+use crate::pipeline::{self, PipelineInput, PipelineOutcome};
+use crate::services::transcription;
+use crate::settings::Settings;
+use crate::text::echo_filter::DICTIONARY_ECHO_CODE;
 
-use crate::app_state::{AppEvent, AppState, DictationSnapshot, MicCaptureStatus};
+use crate::app_state::{AppEvent, AppState, DictationSnapshot};
 use crate::backend;
 
 /// Recordings shorter than this are not kept as discarded. See #907.
@@ -179,13 +181,6 @@ impl Dictation {
             is_recording: self.phase == Phase::Recording,
             is_processing: self.phase == Phase::Processing,
             is_preparing: self.phase == Phase::Preparing,
-            is_stopping: false,
-            mic_capture_status: if self.phase == Phase::Recording {
-                MicCaptureStatus::Active
-            } else {
-                MicCaptureStatus::Inactive
-            },
-            transcript: String::new(),
         };
         AppState::global(cx).update(cx, |s, cx| {
             if s.dictation != snapshot {
@@ -294,7 +289,7 @@ impl Dictation {
                         this.set_phase(Phase::Idle, cx);
                         if err.is_no_audio() {
                             cx.emit(DictationNotice::NoAudio);
-                        } else if !matches!(err, whisper::audio::AudioError::Cancelled) {
+                        } else if !matches!(err, crate::audio::AudioError::Cancelled) {
                             cx.emit(DictationNotice::Error {
                                 title: t("dictation.errorTitles.microphoneUnavailable"),
                                 description: t("dictation.errorDescriptions.microphoneUnavailable"),
@@ -361,7 +356,7 @@ impl Dictation {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        whisper::services::cleanup::cancel_all();
+        crate::services::cleanup::cancel_all();
         self.set_phase(Phase::Idle, cx);
     }
 
@@ -388,7 +383,7 @@ impl Dictation {
             dictionary_priority: state.db.get_dictionary_by_priority().unwrap_or_default(),
             snippets: state.snippets.clone(),
             cleanup_api_key: Some(backend::cleanup_api_key()).filter(|k| !k.is_empty()),
-            agent_name: whisper::text::DEFAULT_AGENT_NAME.to_string(),
+            agent_name: crate::text::DEFAULT_AGENT_NAME.to_string(),
         }
     }
 
@@ -414,7 +409,7 @@ impl Dictation {
         let input = Self::pipeline_input(wav.clone(), "audio/wav", cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
-        let handle = whisper::services::runtime::spawn(pipeline::run(input, cancel));
+        let handle = crate::services::runtime::spawn(pipeline::run(input, cancel));
         cx.spawn(async move |this, cx| {
             let outcome = handle.await.unwrap_or(PipelineOutcome::Failed {
                 message: "pipeline task failed".into(),
@@ -452,7 +447,7 @@ impl Dictation {
                         duration,
                         occurred_at,
                         "No audio detected",
-                        Some(pipeline::ECHO_CODE),
+                        Some(DICTIONARY_ECHO_CODE),
                         cx,
                     );
                 }
@@ -467,17 +462,19 @@ impl Dictation {
                 save_failed(wav, duration, occurred_at, &message, code.as_deref(), cx);
                 self.set_phase(Phase::Idle, cx);
                 let title = match code.as_deref() {
-                    Some("TRANSCRIPTION_CONNECTION_FAILED") => {
+                    Some(transcription::CONNECTION_FAILED_CODE) => {
                         t("dictation.errorTitles.transcriptionConnectionFailed")
                     }
-                    Some("TRANSCRIPTION_REQUEST_TIMEOUT") => {
+                    Some(transcription::REQUEST_TIMEOUT_CODE) => {
                         t("dictation.errorTitles.transcriptionTimeout")
                     }
-                    Some("PROVIDER_RATE_LIMITED") => t("dictation.errorTitles.providerRateLimited"),
+                    Some(transcription::RATE_LIMITED_CODE) => {
+                        t("dictation.errorTitles.providerRateLimited")
+                    }
                     _ => "Transcription Error".to_string(),
                 };
                 let description = message_key
-                    .and_then(|key| whisper::i18n::try_t(&key))
+                    .and_then(|key| crate::i18n::try_t(&key))
                     .unwrap_or_else(|| format!("Transcription failed: {message}"));
                 cx.emit(DictationNotice::Error { title, description });
             }
@@ -529,7 +526,7 @@ impl Dictation {
         };
         // Counted before snippet expansion so saved text is not mistaken for speech.
         let _ = db.record_dictionary_usage(&text);
-        let text = whisper::text::snippets::expand_snippets(&text, &snippets);
+        let text = crate::text::snippets::expand_snippets(&text, &snippets);
 
         save_transcription(
             &text,
@@ -564,7 +561,7 @@ impl Dictation {
                         if let Some(failure) = cleanup_failure {
                             let title = failure
                                 .message_key
-                                .and_then(|key| whisper::i18n::try_t(&key))
+                                .and_then(|key| crate::i18n::try_t(&key))
                                 .unwrap_or_else(|| {
                                     if failure.message.is_empty() {
                                         t("app.toasts.cleanupFailed.title")
@@ -805,7 +802,7 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
     };
     // Saved recordings are always WAV.
     let input = Dictation::pipeline_input(audio, "audio/wav", cx);
-    let handle = whisper::services::runtime::spawn(pipeline::run(input, CancellationToken::new()));
+    let handle = crate::services::runtime::spawn(pipeline::run(input, CancellationToken::new()));
     cx.spawn(async move |cx| {
         let outcome = handle.await.map_err(|e| e.to_string())?;
         match outcome {
@@ -829,7 +826,7 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
                                 .description(
                                     failure
                                         .message_key
-                                        .and_then(|k| whisper::i18n::try_t(&k))
+                                        .and_then(|k| crate::i18n::try_t(&k))
                                         .unwrap_or(failure.message),
                                 )
                                 .variant(crate::ui::overlays::ToastVariant::Destructive),
@@ -845,7 +842,7 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
                 message_key,
                 ..
             } => Err(message_key
-                .and_then(|k| whisper::i18n::try_t(&k))
+                .and_then(|k| crate::i18n::try_t(&k))
                 .unwrap_or(message)),
             PipelineOutcome::Cancelled => Err("Cancelled".into()),
         }

@@ -3,10 +3,10 @@
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::*;
 
-use whisper::i18n::t;
+use crate::i18n::t;
 
+use crate::app::{Quit, ShowSettings};
 use crate::app_state::{AppEvent, AppState};
-use crate::{Quit, ShowSettings};
 
 const LEARN_MORE_URL: &str = "https://github.com/softmaxe/whisper";
 
@@ -84,7 +84,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &Minimize, cx| with_active_window(cx, |window, _| window.minimize_window()));
-    cx.on_action(|_: &CloseWindow, cx| crate::close_control_panel(cx));
+    cx.on_action(|_: &CloseWindow, cx| crate::app::close_control_panel(cx));
     cx.on_action(|_: &BringAllToFront, cx| cx.activate(true));
     cx.on_action(|_: &LearnMore, cx| cx.open_url(LEARN_MORE_URL));
     cx.set_menus(menus());

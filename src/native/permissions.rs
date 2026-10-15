@@ -50,18 +50,6 @@ pub enum MicrophoneAccess {
     Granted,
 }
 
-impl MicrophoneAccess {
-    /// Kebab-case name of the access status.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::NotDetermined => "not-determined",
-            Self::Restricted => "restricted",
-            Self::Denied => "denied",
-            Self::Granted => "granted",
-        }
-    }
-}
-
 fn capture_device_class() -> Option<&'static AnyClass> {
     AnyClass::get(c"AVCaptureDevice")
 }
@@ -117,7 +105,6 @@ pub fn request_microphone_access() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsPane {
     Microphone,
-    SoundInput,
     Accessibility,
     LoginItems,
 }
@@ -128,7 +115,6 @@ impl SettingsPane {
             Self::Microphone => {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
             }
-            Self::SoundInput => "x-apple.systempreferences:com.apple.preference.sound?input",
             Self::Accessibility => {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
             }
@@ -162,28 +148,4 @@ pub fn open_settings(pane: SettingsPane) -> Result<(), String> {
         }
     }
     Err(format!("Failed to open {}", pane.url()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn settings_urls_open_the_expected_panes() {
-        assert_eq!(
-            SettingsPane::Microphone.url(),
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
-        );
-        assert_eq!(
-            SettingsPane::LoginItems.url(),
-            "x-apple.systempreferences:com.apple.LoginItems-Settings.extension"
-        );
-    }
-
-    #[test]
-    fn status_queries_do_not_prompt() {
-        // Neither call shows UI; they only read TCC state.
-        let _ = is_accessibility_trusted(false);
-        let _ = microphone_access().as_str();
-    }
 }

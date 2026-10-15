@@ -155,10 +155,6 @@ impl CleanupError {
         (self.kind == CleanupErrorKind::Timeout).then_some(LLM_REQUEST_TIMEOUT_CODE)
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.kind == CleanupErrorKind::Cancelled
-    }
-
     fn should_retry(&self) -> bool {
         api_should_retry(self.status, self.code())
     }
@@ -324,10 +320,6 @@ pub fn cancel_all() {
 }
 
 impl CleanupService {
-    pub fn global() -> &'static CleanupService {
-        &GLOBAL
-    }
-
     pub fn cancel_all(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         let mut token = self.token.lock();
@@ -821,7 +813,6 @@ mod tests {
         assert_eq!(err.to_string(), "Request timed out after 30s");
         assert_eq!(err.code(), Some(LLM_REQUEST_TIMEOUT_CODE));
         assert!(!err.should_retry());
-        assert_eq!(LLM_REQUEST_TIMEOUT_SECONDS, 30);
     }
 
     fn fast_tuning() -> CleanupTuning {
@@ -1062,7 +1053,7 @@ mod tests {
                 .await
         })
         .unwrap_err();
-        assert!(err.is_cancelled());
+        assert_eq!(err.kind, CleanupErrorKind::Cancelled);
         assert!(started.elapsed() < Duration::from_secs(2));
         // A later request is unaffected by the earlier cancel.
         let server = MockServer::start(|_| Reply::json(200, &completion("fresh", "stop")));

@@ -9,7 +9,7 @@ use anyhow::Result;
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
@@ -276,8 +276,6 @@ impl Database {
     }
 
     /// Adds and/or removes specific words, leaving every other row untouched.
-    /// Prefer this over [`Database::set_dictionary`], which deletes whatever
-    /// the caller omitted and so lets a stale snapshot destroy the rest.
     /// `source` tags additions. A word on both sides is kept.
     pub fn apply_dictionary_changes<A: AsRef<str>, R: AsRef<str>>(
         &self,
@@ -314,9 +312,9 @@ impl Database {
     }
 
     /// Replaces the entire dictionary: anything absent from `words` is
-    /// deleted. Only for deliberate replace-everything callers (restore, clear
-    /// all, first write into an empty database). Diff-based, so unchanged rows
-    /// keep their source, usage and `created_at`.
+    /// deleted. Diff-based, so unchanged rows keep their source, usage and
+    /// `created_at`.
+    #[cfg(test)]
     pub fn set_dictionary<S: AsRef<str>>(
         &self,
         words: &[S],
@@ -346,7 +344,9 @@ impl Database {
     }
 
     /// The stored source of a word, if present.
+    #[cfg(test)]
     pub fn dictionary_word_source(&self, word: &str) -> Result<Option<String>> {
+        use rusqlite::OptionalExtension;
         let conn = self.lock();
         Ok(conn
             .query_row(
