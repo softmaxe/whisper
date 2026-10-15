@@ -43,6 +43,16 @@ pub const STALL_TIMEOUT: Duration = Duration::from_millis(1_500);
 const TICK: Duration = Duration::from_millis(50);
 const LEVEL_WINDOW: usize = ANALYSER_WINDOW;
 
+/// RMS of the last [`LEVEL_WINDOW`] float samples for the waveform. Unlike
+/// the gate's byte-quantized metrics, quiet input keeps its resolution.
+fn level_rms(samples: &[f32]) -> f32 {
+    let tail = &samples[samples.len().saturating_sub(LEVEL_WINDOW)..];
+    if tail.is_empty() {
+        return 0.0;
+    }
+    (tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32).sqrt()
+}
+
 /// Events from a live capture, delivered on the capture thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureEvent {
@@ -213,9 +223,8 @@ impl Core {
                 gate.record_window(rms, peak);
             }
         }
-        let (rms, _) = window_metrics(&st.samples, LEVEL_WINDOW);
         self.level_bits
-            .store((rms as f32).to_bits(), Ordering::Relaxed);
+            .store(level_rms(&st.samples).to_bits(), Ordering::Relaxed);
     }
 
     /// Switches to recording. `Ok(None)` when audio has already arrived.
@@ -735,6 +744,18 @@ mod tests {
 
     fn tone(n: usize, amp: f32) -> Vec<f32> {
         (0..n).map(|i| amp * ((i as f32) * 0.05).sin()).collect()
+    }
+
+    #[test]
+    fn level_keeps_quiet_input_below_byte_resolution() {
+        assert_eq!(level_rms(&[]), 0.0);
+        // A constant 0.003 is under one byte step (1/128) and quantizes away.
+        let quiet = vec![0.003; LEVEL_WINDOW];
+        assert!((level_rms(&quiet) - 0.003).abs() < 1e-6);
+        // Only the trailing window counts.
+        let mut tail = vec![1.0; LEVEL_WINDOW];
+        tail.extend(vec![0.5; LEVEL_WINDOW]);
+        assert!((level_rms(&tail) - 0.5).abs() < 1e-6);
     }
 
     #[test]
