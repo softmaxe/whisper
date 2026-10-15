@@ -1,6 +1,21 @@
 name: Build
 
 on:
+  # Pull requests that touch packaging build an unsigned package; the CI
+  # workflow already runs the checks for every pull request.
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/build.yml
+      - assets/**
+      - build.rs
+      - packaging/**
+      - resources/**
+      - scripts/build-mediaremote-adapter.sh
+      - scripts/bundle-macos.sh
+      - scripts/check-version.sh
+      - scripts/download-ffmpeg.sh
+      - scripts/sign-macos-release.sh
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -20,7 +35,7 @@ permissions:
 
 concurrency:
   group: build-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -62,7 +77,7 @@ jobs:
       - name: Download pinned ffmpeg
         run: scripts/download-ffmpeg.sh
 
-      # Manual builds do not receive the release signing identity and are signed ad hoc.
+      # Pull request and manual builds do not receive the release signing identity and are signed ad hoc.
       - name: Package development application
         if: inputs.release-tag == ''
         run: scripts/bundle-macos.sh
