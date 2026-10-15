@@ -27,13 +27,19 @@ jobs:
         with:
           persist-credentials: false
 
-      # Caches downloaded crates and compiled dependencies, not Whisper's own
-      # artifacts. Only main saves, so pull requests reuse its cache without
-      # filling the repository's cache quota.
-      - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Only main saves the cache, so pull requests reuse it without filling
+      # the repository's cache quota with a copy per pull request.
+      - name: Restore Cargo downloads and build output
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: ci-${{ runner.os }}-
 
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Validate architecture, toolchain and package version
@@ -41,6 +47,17 @@ jobs:
 
       - name: Check Whisper
         run: scripts/check.sh
+
+      - name: Save Cargo downloads and build output
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   lint:
     name: Lint workflows and scripts
