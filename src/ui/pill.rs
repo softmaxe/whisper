@@ -50,6 +50,12 @@ const BAR_GAP: f32 = 3.;
 const BAR_MIN: f32 = 3.;
 const BAR_MAX: f32 = 18.;
 const ENVELOPE: [f32; BARS] = [0.35, 0.55, 0.75, 0.92, 1., 1., 0.92, 0.75, 0.55, 0.35];
+/// Input levels mapped onto the bars: the quiet end of a laptop mic's
+/// speech range shows, and close speech fills them.
+const LEVEL_FLOOR_DB: f32 = -55.;
+const LEVEL_CEIL_DB: f32 = -20.;
+/// Peak height of the idle breath while no speech is heard.
+const BREATH: f32 = 0.05;
 const RISE: f32 = 0.45;
 const FALL: f32 = 0.16;
 
@@ -60,8 +66,14 @@ enum Motion {
     Wave,
 }
 
+/// Maps an RMS level to 0..1 linearly in decibels between
+/// [`LEVEL_FLOOR_DB`] and [`LEVEL_CEIL_DB`].
 fn bar_level(rms: f32) -> f32 {
-    ((rms.max(0.) * 8.).powf(0.75)).min(1.)
+    if rms <= 0. {
+        return 0.;
+    }
+    let db = 20. * rms.log10();
+    ((db - LEVEL_FLOOR_DB) / (LEVEL_CEIL_DB - LEVEL_FLOOR_DB)).clamp(0., 1.)
 }
 
 fn live_target(rms: f32, index: usize, now_ms: f32) -> f32 {
@@ -69,7 +81,7 @@ fn live_target(rms: f32, index: usize, now_ms: f32) -> f32 {
     let drift = 0.5 + 0.5 * phase.sin();
     let level = bar_level(rms);
     let speech = level * ENVELOPE[index] * (0.55 + 0.45 * drift);
-    let breath = 0.12 * (0.5 + 0.5 * ((now_ms / 2400.) * TAU).sin());
+    let breath = BREATH * (0.5 + 0.5 * ((now_ms / 2400.) * TAU).sin());
     speech + (1. - level) * breath
 }
 
@@ -1389,10 +1401,37 @@ impl Render for PillView {
 mod tests {
     use std::time::Duration;
 
-    use super::{DUR_BASE, RESOLVE, pill_motion};
+    use super::{BREATH, DUR_BASE, RESOLVE, bar_level, live_target, pill_motion};
 
     fn at(ms: u64) -> Option<Duration> {
         Some(Duration::from_millis(ms))
+    }
+
+    fn db(level: f32) -> f32 {
+        10f32.powf(level / 20.)
+    }
+
+    #[test]
+    fn bar_level_maps_decibels_onto_the_bars() {
+        assert_eq!(bar_level(0.), 0.);
+        assert_eq!(bar_level(db(-70.)), 0.);
+        assert!((bar_level(db(-55.))).abs() < 1e-4);
+        assert!((bar_level(db(-37.5)) - 0.5).abs() < 1e-4);
+        assert!((bar_level(db(-20.)) - 1.).abs() < 1e-4);
+        assert_eq!(bar_level(1.), 1.);
+        // Close speech into a laptop mic (about -30 dBFS) clears 70%.
+        assert!(bar_level(db(-30.)) > 0.7);
+    }
+
+    #[test]
+    fn silence_only_breathes_and_speech_stands_out() {
+        let peak = |rms: f32| {
+            (0..240)
+                .map(|t| live_target(rms, 4, t as f32 * 10.))
+                .fold(0., f32::max)
+        };
+        assert!(peak(0.) <= BREATH + 1e-4, "{}", peak(0.));
+        assert!(peak(db(-30.)) > 0.6, "{}", peak(db(-30.)));
     }
 
     #[test]
