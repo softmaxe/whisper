@@ -13,10 +13,13 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate publishing credentials
+    name: Validate commit and publishing credentials
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 30
     environment: release
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Require the tag to point at main
         env:
@@ -26,6 +29,25 @@ jobs:
           status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)"
           if [[ "$status" != "identical" && "$status" != "behind" ]]; then
             echo "::error::$GITHUB_REF_NAME must point at a commit on main (compare status: $status)."
+            exit 1
+          fi
+
+      # Build only packages, so the tagged commit must have passed CI on main.
+      # A run still in progress, e.g. when the tag follows the merge, is awaited.
+      - name: Require CI to pass on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
+            --branch main --event push --commit "$GITHUB_SHA" \
+            --json databaseId --jq '.[0].databaseId // empty')"
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No CI run on main found for $GITHUB_SHA."
+            exit 1
+          fi
+          if ! gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status --interval 30 >/dev/null; then
+            echo "::error::CI run $run_id did not succeed for $GITHUB_SHA."
             exit 1
           fi
 
@@ -160,9 +182,6 @@ jobs:
           # The tap is public, so it is checked out without credentials; the tap
           # token is exposed only to the final push step, never to Homebrew.
           persist-credentials: false
-
-      - name: Update Homebrew
-        run: brew update
 
       - name: Generate cask from the published checksum
         run: |

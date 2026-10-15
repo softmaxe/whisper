@@ -69,7 +69,7 @@ Store the Homebrew tap token as `HOMEBREW_TAP_TOKEN` in a separate `homebrew-tap
 gh secret set HOMEBREW_TAP_TOKEN --env homebrew-tap
 ```
 
-The Release workflow requires the tag to point at a commit on `main`. Its Build call uses the `release` environment for tagged releases. Pull requests and pushes to `main` run checks without packaging or signing credentials. Manual Build runs produce ad-hoc signed packages without release credentials. A release cannot proceed with a different certificate or an ad-hoc signature.
+The Release workflow requires the tag to point at a commit on `main` that passed CI. Its Build call uses the `release` environment for tagged releases. Pull requests and pushes to `main` run checks without signing credentials. Manual Build runs, and pull requests that change packaging files, produce ad-hoc signed packages without release credentials. A release cannot proceed with a different certificate or an ad-hoc signature.
 
 Restore these same secret values when moving the release workflow to another repository. Do not generate a fresh certificate on each runner or release. The private key is needed only to build releases; users do not need the signing files.
 

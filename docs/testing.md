@@ -8,13 +8,13 @@ Tests follow the supported features in the root [README](../README.md). Remove t
 scripts/check.sh
 ```
 
-The script runs `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and `cargo test --locked`. It is the same command the CI and Build workflows run. Use the Rust version pinned in [`rust-toolchain.toml`](../rust-toolchain.toml); rustup selects it automatically.
+The script runs `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and `cargo test --locked`. It is the same command the CI workflow runs. Use the Rust version pinned in [`rust-toolchain.toml`](../rust-toolchain.toml); rustup selects it automatically.
 
 Unit tests live next to the code in `src/`. Tests marked `#[ignore]` need hardware or a live server; run them by name with `cargo test -- --ignored <name>`.
 
 ## Workflows
 
-The CI workflow runs the checks for pull requests targeting `main` and pushes to `main`, without packaging the app. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag on `main`. It runs the same checks, downloads the pinned ffmpeg, packages the macOS arm64 app, and verifies its bundle name, identifier, version, architecture, signature, archive, and checksum. Manual builds are signed ad hoc without release credentials and keep the package as an Actions artifact for seven days. Release builds require signatures matching `packaging/signing-certificate.pem`; a missing identity, a different certificate, or an ad-hoc signature fails the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
+The CI workflow runs the checks for pull requests targeting `main` and pushes to `main`, without packaging the app, and lints the workflows with actionlint and the scripts with shellcheck. The Build workflow runs on manual dispatch, on pull requests that change packaging files, or when called by Release for a `v*` tag on `main`. It does not repeat the checks: it downloads the pinned ffmpeg, packages the macOS arm64 app, and verifies its bundle name, identifier, version, architecture, signature, archive, and checksum. Pull request and manual builds are signed ad hoc without release credentials and keep the package as an Actions artifact for seven days. Release requires a successful CI run on `main` for the tagged commit, waiting for one still in progress. Release builds require signatures matching `packaging/signing-certificate.pem`; a missing identity, a different certificate, or an ad-hoc signature fails the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Pull request and manual builds do neither.
 
 ## Release smoke check
 
