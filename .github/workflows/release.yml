@@ -183,9 +183,6 @@ jobs:
           # token is exposed only to the final push step, never to Homebrew.
           persist-credentials: false
 
-      - name: Update Homebrew
-        run: brew update
-
       - name: Generate cask from the published checksum
         run: |
           set -euo pipefail
