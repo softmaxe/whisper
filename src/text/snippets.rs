@@ -15,9 +15,6 @@ pub struct Snippet {
     pub replacement: String,
 }
 
-/// Mirrors the cap the database enforces when it stores snippets.
-pub const MAX_SNIPPET_TRIGGER_LENGTH: usize = 100;
-
 static BARE_STRIP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[\s\p{P}\p{S}]").expect("static regex"));
 

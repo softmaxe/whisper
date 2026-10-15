@@ -38,17 +38,6 @@ pub enum GateReason {
     SpeechDetected,
 }
 
-impl GateReason {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Unavailable => "unavailable",
-            Self::Silence => "silence",
-            Self::InsufficientSpeech => "insufficient_speech",
-            Self::SpeechDetected => "speech_detected",
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct GateMetrics {
     pub peak_rms: f64,

@@ -7,9 +7,9 @@ use gpui_kit::component::{Sizable, Size};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::db::TranscriptionItem;
-use whisper::i18n::{self, Language, t, t_with};
-use whisper::text::format::{RelativeTime, normalize_db_date, relative_time};
+use crate::db::TranscriptionItem;
+use crate::i18n::{self, Language, t, t_with};
+use crate::text::format::{RelativeTime, normalize_db_date, relative_time};
 
 use crate::app_state::AppState;
 

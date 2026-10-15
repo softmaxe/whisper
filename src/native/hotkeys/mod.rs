@@ -22,11 +22,9 @@ pub mod cancel;
 pub mod gesture;
 pub mod globe;
 pub mod keys;
-pub mod list;
 pub mod push;
 pub mod repeat_gate;
 pub mod slots;
-pub mod validate;
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -35,7 +33,8 @@ use std::thread::JoinHandle;
 use global_hotkey::HotKeyState;
 
 use crate::paths;
-use crate::settings::ActivationMode;
+use crate::settings::{ActivationMode, DEFAULT_HOTKEY};
+use crate::text::hotkeys::{is_globe_like_hotkey, is_mouse_button_hotkey, parse_hotkey_list};
 
 use super::timer::{RealTimers, Timers, lock};
 use backend::CarbonBackend;
@@ -43,16 +42,11 @@ use cancel::CancelBinding;
 pub use cancel::CancelHotkeyOwner;
 use gesture::{GestureEnv, HotkeyGesture};
 use globe::{GlobeEvent, GlobeListener, GlobeOptions};
-pub use list::{parse_hotkey_list, serialize_hotkey_list};
 use push::CompoundPush;
 use repeat_gate::RepeatGate;
 use slots::{
     CANCEL_SLOT, DICTATION_SLOT, ListenerConfig, ShortcutBackend, ShortcutTarget, SlotRegistry,
 };
-pub use validate::{ValidationError, ValidationErrorCode, normalize_hotkey, validate_hotkey};
-
-/// The hotkey used when none is saved.
-pub const DEFAULT_HOTKEY: &str = "GLOBE";
 const CANCEL_KEY: &str = "Escape";
 
 /// Why a Dictation was stopped without a physical release of its hotkey.
@@ -64,21 +58,6 @@ pub enum ForceStopReason {
     ListenerLost,
     /// The five-minute Hold mode safety ceiling.
     Timeout,
-    /// A settings change ended the hold.
-    Reset,
-    /// The integrator asked ([`HotkeyManager::force_stop_push`]).
-    Manual,
-}
-
-impl ForceStopReason {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ListenerLost => "listener-lost",
-            Self::Timeout => "timeout",
-            Self::Reset => "reset",
-            Self::Manual => "manual",
-        }
-    }
 }
 
 /// What the integrator should do with the Dictation and the hotkey UI.
@@ -517,10 +496,6 @@ impl HotkeyManager {
         true
     }
 
-    pub fn activation_mode(&self) -> ActivationMode {
-        self.inner.activation_mode()
-    }
-
     /// Suspends every hotkey while the settings UI captures a new one.
     /// Shortcuts are unregistered so they reach the capture field; the
     /// listener keeps reporting raw keys and keeps macOS's Globe action down.
@@ -557,10 +532,6 @@ impl HotkeyManager {
             }
             self.inner.sync_listener_config();
         }
-    }
-
-    pub fn is_listening(&self) -> bool {
-        self.inner.listening.load(Ordering::SeqCst)
     }
 
     /// Binds Escape to cancel a recording (owner: recording).
@@ -617,11 +588,6 @@ impl HotkeyManager {
 
     fn primary_hotkey(&self) -> Option<String> {
         self.active_hotkeys().into_iter().next()
-    }
-
-    /// Ends a Hold mode key chord without a release.
-    pub fn force_stop_push(&self, reason: ForceStopReason) {
-        self.inner.push.force_stop(reason);
     }
 
     /// Listener events for the hotkey capture UI. Each call adds a subscriber.
@@ -783,8 +749,7 @@ impl Inner {
             }
             GlobeEvent::MouseButtonDown(button) => {
                 self.broadcast_raw(RawKeyEvent::MouseButtonDown(button.clone()));
-                if keys::is_mouse_button_hotkey(&button) && self.dictation_has_listener_key(&button)
-                {
+                if is_mouse_button_hotkey(&button) && self.dictation_has_listener_key(&button) {
                     self.press_native(&button);
                 }
             }
@@ -813,7 +778,7 @@ impl Inner {
         }
         let hotkey = target.hotkey;
         if self.activation_mode() == ActivationMode::Push
-            && !keys::is_globe_like_hotkey(&hotkey)
+            && !is_globe_like_hotkey(&hotkey)
             && hotkey.contains('+')
         {
             self.push.start(&hotkey);

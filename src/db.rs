@@ -14,8 +14,8 @@ use parking_lot::{Mutex, MutexGuard};
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 
-pub use dictionary::{DictionaryChangeCounts, DictionarySource, count_dictionary_word_uses};
-pub use snippets::{MAX_SNIPPET_TRIGGER_LENGTH, Snippet};
+pub use dictionary::DictionarySource;
+pub use snippets::Snippet;
 
 /// Shared handle to the database; cheap to share behind an `Arc`.
 pub struct Database {

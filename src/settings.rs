@@ -64,15 +64,6 @@ pub enum ActivationMode {
     Push,
 }
 
-impl ActivationMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Tap => "tap",
-            Self::Push => "push",
-        }
-    }
-}
-
 /// When the transcription language is Auto, force a Chinese output script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -207,10 +198,6 @@ impl Settings {
         } else {
             self.dictation_key.clone()
         }
-    }
-
-    pub fn is_chinese_ui(&self) -> bool {
-        self.ui_language == "zh-CN"
     }
 }
 

@@ -52,14 +52,6 @@ pub struct TextEdit {
     pub edited_text: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowBounds {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
 /// How to invoke the helper; overridable for tests.
 #[derive(Debug, Clone)]
 pub struct HelperCommand {
@@ -125,7 +117,6 @@ struct Inner {
     hooks: MonitorHooks,
     timers: Arc<dyn Timers>,
     capture: Mutex<Capture>,
-    window_bounds: Mutex<Option<(i32, Option<WindowBounds>, Instant)>>,
     monitoring: Mutex<Monitoring>,
     // Bumped by every start/stop; a run whose generation is stale gives up.
     generation: AtomicU64,
@@ -161,7 +152,6 @@ impl TextEditMonitor {
                 hooks,
                 timers,
                 capture: Mutex::new(Capture::default()),
-                window_bounds: Mutex::new(None),
                 monitoring: Mutex::new(Monitoring::default()),
                 generation: AtomicU64::new(0),
                 unsupported_pids: Mutex::new(HashSet::new()),
@@ -229,6 +219,7 @@ impl TextEditMonitor {
     }
 
     /// The pid captured most recently, if any.
+    #[cfg(test)]
     pub fn last_target_pid(&self) -> Option<i32> {
         lock(&self.inner.capture).last_pid
     }
@@ -277,27 +268,6 @@ impl TextEditMonitor {
             "NOT_PASTEABLE" => Some(false),
             _ => None,
         }
-    }
-
-    /// The target app's largest on-screen window (to pick a display), cached
-    /// per pid for the press-time burst.
-    pub fn target_window_bounds(&self, pid: Option<i32>) -> Option<WindowBounds> {
-        let pid = pid.filter(|p| *p > 0)?;
-        if let Some((cached_pid, bounds, at)) = *lock(&self.inner.window_bounds)
-            && cached_pid == pid
-            && at.elapsed() < TARGET_CAPTURE_FRESHNESS
-        {
-            return bounds;
-        }
-        let helper = (self.inner.hooks.resolve_helper)()?;
-        let mut args: Vec<String> = helper.args.clone();
-        args.push("--window-bounds".into());
-        args.push(pid.to_string());
-        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-        let output = run_with_timeout(&helper.program, &refs, None, TARGET_PROBE_TIMEOUT);
-        let bounds = output.stdout.lines().find_map(parse_bounds);
-        *lock(&self.inner.window_bounds) = Some((pid, bounds, Instant::now()));
-        bounds
     }
 
     /// Waits [`MONITOR_START_DELAY`] (on a background thread) and then
@@ -353,6 +323,7 @@ impl TextEditMonitor {
     }
 
     /// True while a monitoring run is in progress.
+    #[cfg(test)]
     pub fn is_monitoring(&self) -> bool {
         lock(&self.inner.monitoring).original_text.is_some()
     }
@@ -611,24 +582,6 @@ fn is_persistent_ax_no_value_failure(stderr: &str) -> bool {
     !codes.is_empty() && codes.iter().all(|code| code == "-25212")
 }
 
-fn parse_bounds(line: &str) -> Option<WindowBounds> {
-    let values: Vec<i32> = line
-        .strip_prefix("BOUNDS:")?
-        .split(',')
-        .map(|v| v.trim().parse::<i32>())
-        .collect::<Result<_, _>>()
-        .ok()?;
-    match values.as_slice() {
-        [x, y, width, height] if *width >= 0 && *height >= 0 => Some(WindowBounds {
-            x: *x,
-            y: *y,
-            width: *width,
-            height: *height,
-        }),
-        _ => None,
-    }
-}
-
 /// Reads the focused field of `pid` through System Events. `None` on error.
 fn query_focused_value(pid: i32) -> Option<String> {
     let script = format!(
@@ -700,7 +653,7 @@ pub(crate) mod appkit {
 
 #[cfg(test)]
 mod tests {
-    //! Capture target, monitor target and window bounds.
+    //! Capture target and monitor target.
     use super::*;
     use crate::native::timer::FakeTimers;
     use std::sync::atomic::AtomicUsize;
@@ -968,43 +921,5 @@ mod tests {
             "only the latest edit is reported"
         );
         monitor.stop_monitoring();
-    }
-
-    #[test]
-    fn window_bounds_are_parsed_and_cached_per_pid() {
-        let dir = tempfile::tempdir().unwrap();
-        let counter = dir.path().join("count");
-        let script = format!(
-            "printf x >> '{}'; echo 'BOUNDS:-451,-1440,2560,1440'",
-            counter.display()
-        );
-        let monitor = TextEditMonitor::with_hooks(hooks(sh(&script), Arc::new(|| None)));
-        let count = || std::fs::read_to_string(&counter).unwrap_or_default().len();
-        assert_eq!(
-            monitor.target_window_bounds(Some(42)),
-            Some(WindowBounds {
-                x: -451,
-                y: -1440,
-                width: 2560,
-                height: 1440
-            })
-        );
-        monitor.target_window_bounds(Some(42));
-        assert_eq!(count(), 1);
-        monitor.target_window_bounds(Some(43));
-        assert_eq!(count(), 2);
-        if let Some(entry) = lock(&monitor.inner.window_bounds).as_mut() {
-            entry.2 = Instant::now() - Duration::from_secs(1);
-        }
-        monitor.target_window_bounds(Some(43));
-        assert_eq!(count(), 3);
-        assert_eq!(monitor.target_window_bounds(None), None);
-        assert_eq!(monitor.target_window_bounds(Some(0)), None);
-
-        let none =
-            TextEditMonitor::with_hooks(hooks(sh("echo NO_WINDOW; exit 1"), Arc::new(|| None)));
-        assert_eq!(none.target_window_bounds(Some(42)), None);
-        let failing = TextEditMonitor::with_hooks(hooks(sh("exit 3"), Arc::new(|| None)));
-        assert_eq!(failing.target_window_bounds(Some(42)), None);
     }
 }

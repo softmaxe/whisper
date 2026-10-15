@@ -7,11 +7,12 @@ use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::db::{TranscriptionItem, TranscriptionStatus};
-use whisper::i18n::{self, Language, t, t_with};
+use crate::db::{TranscriptionItem, TranscriptionStatus};
+use crate::i18n::{self, Language, t, t_with};
 
 use crate::app_state::{AppEvent, AppState};
 use crate::backend;
+use crate::services::transcription::{CUSTOM_ENDPOINT_INVALID_CODE, INVALID_KEY_CODE};
 
 use super::components::{f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner};
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
@@ -103,8 +104,7 @@ impl HistoryView {
         // saved even while Home is not showing.
         cx.observe(&state, |this, state, cx| {
             let s = state.read(cx);
-            let busy = s.settings.data_retention_enabled
-                && (s.dictation.is_processing || s.dictation.is_stopping);
+            let busy = s.settings.data_retention_enabled && s.dictation.is_processing;
             let top = s.history.first().map(|item| item.id);
             this.sync_pending(busy, top);
             cx.notify();
@@ -312,9 +312,9 @@ impl HistoryView {
             let is_config = matches!(
                 code.as_str(),
                 "API_KEY_MISSING"
-                    | "INVALID_KEY"
+                    | INVALID_KEY_CODE
                     | "MODEL_NOT_AVAILABLE"
-                    | "CUSTOM_ENDPOINT_INVALID"
+                    | CUSTOM_ENDPOINT_INVALID_CODE
             );
             div()
                 .flex()

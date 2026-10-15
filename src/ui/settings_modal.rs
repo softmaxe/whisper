@@ -6,12 +6,12 @@ use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::i18n::{t, t_with};
-use whisper::settings::{
+use crate::i18n::{t, t_with};
+use crate::settings::{
     ActivationMode, ChineseScriptPreference, MicrophoneSelectionMode, PanelStartPosition, Settings,
     ThemePreference,
 };
-use whisper::text::url::{EndpointIssue, endpoint_check};
+use crate::text::url::{EndpointIssue, endpoint_check};
 
 use crate::app_state::AppState;
 use crate::backend::{self, AutoStartState, MicDeviceInfo, ModelOption};
@@ -902,7 +902,7 @@ impl SettingsModal {
         cx.notify();
         let hints = {
             let state = AppState::global(cx).read(cx);
-            whisper::text::snippets::get_dictionary_hint_words(&state.dictionary, &state.snippets)
+            crate::text::snippets::get_dictionary_hint_words(&state.dictionary, &state.snippets)
         };
         let request = backend::run_cleanup_test(s, self.api_key.clone(), template, input, hints);
         cx.spawn(async move |this, cx| {
@@ -2253,7 +2253,7 @@ impl SettingsModal {
                 "settings.privacy.audioStorageFiles",
                 &[
                     ("count", &files.to_string()),
-                    ("size", &whisper_format_bytes(bytes)),
+                    ("size", &backend::format_bytes(bytes)),
                 ],
             )
         } else {
@@ -2423,10 +2423,6 @@ impl SettingsModal {
             ))
             .into_any_element()
     }
-}
-
-fn whisper_format_bytes(bytes: u64) -> String {
-    backend::format_bytes(bytes)
 }
 
 /// Two side-by-side cards, one per activation mode, each explaining itself.

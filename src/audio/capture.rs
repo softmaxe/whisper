@@ -25,7 +25,8 @@ use parking_lot::Mutex;
 use super::AudioError;
 use super::devices::{describe, find_input_device};
 use super::gate::{
-    ANALYSER_WINDOW, SpeechGateDecision, SpeechGateState, gate_decision, window_metrics,
+    ANALYSER_WINDOW, GATE_INTERVAL_MS, SpeechGateDecision, SpeechGateState, gate_decision,
+    window_metrics,
 };
 use super::validation::{RecordingCheck, evaluate_finished_recording};
 use super::wav::encode_wav_16k;
@@ -64,15 +65,13 @@ pub struct RecordedAudio {
     pub duration: Duration,
     /// Whether any audio frame was captured.
     pub received_audio_data: bool,
-    pub pre_roll_adopted: bool,
     /// Speech-gate decision; `Unavailable` (fail open) when pre-roll was adopted.
     pub speech_gate: SpeechGateDecision,
-    /// The device failed during the recording.
-    pub device_lost: bool,
 }
 
 impl RecordedAudio {
     /// Length of the captured audio itself.
+    #[cfg(test)]
     pub fn audio_duration(&self) -> Duration {
         if self.sample_rate == 0 {
             return Duration::ZERO;
@@ -113,7 +112,6 @@ struct CoreState {
     last_frames_at: Option<Instant>,
     waiter: Option<(Waiter, Instant)>,
     recording_started_at: Option<Instant>,
-    pre_roll_adopted: bool,
     open_error: Option<AudioError>,
     device_error: Option<String>,
     device_error_reported: bool,
@@ -155,7 +153,6 @@ impl Core {
                 last_frames_at: None,
                 waiter: None,
                 recording_started_at: None,
-                pre_roll_adopted: false,
                 open_error: None,
                 device_error: None,
                 device_error_reported: false,
@@ -208,7 +205,7 @@ impl Core {
         // Source delivery, silence included, establishes readiness.
         resolve(st.waiter.take(), Ok(()));
         if let Some(gate) = st.gate.as_mut() {
-            let window_frames = (st.sample_rate / 10).max(1) as usize;
+            let window_frames = (st.sample_rate * GATE_INTERVAL_MS / 1000).max(1) as usize;
             st.frames_since_window += frames;
             while st.frames_since_window >= window_frames {
                 st.frames_since_window -= window_frames;
@@ -248,7 +245,6 @@ impl Core {
         if adopt {
             // The gate never measured the pre-roll; fail it open rather than
             // discard an utterance spoken entirely before start.
-            st.pre_roll_adopted = true;
             st.gate = None;
             st.recording_started_at = Some(st.opened_at);
         } else {
@@ -355,9 +351,7 @@ impl Core {
             samples,
             sample_rate: st.sample_rate,
             duration,
-            pre_roll_adopted: st.pre_roll_adopted,
             speech_gate: gate_decision(st.gate.as_ref()),
-            device_lost: st.device_error.is_some(),
         }
     }
 
@@ -373,18 +367,6 @@ impl Core {
         self.recording
             .load(Ordering::Relaxed)
             .then(|| f32::from_bits(self.level_bits.load(Ordering::Relaxed)))
-    }
-}
-
-/// Lock-free handle to a recording's live level (RMS of the latest 2048
-/// byte-quantized samples, 0..~1). Poll it from the waveform.
-#[derive(Clone)]
-pub struct LevelMeter(Arc<Core>);
-
-impl LevelMeter {
-    /// `None` once the recording is no longer live.
-    pub fn level(&self) -> Option<f32> {
-        self.0.level()
     }
 }
 
@@ -454,17 +436,9 @@ impl CaptureSession {
         self.core.level()
     }
 
-    pub fn level_meter(&self) -> LevelMeter {
-        LevelMeter(self.core.clone())
-    }
-
     /// The prepared stream outlived [`PREPARED_MAX_AGE`] and was closed.
     pub fn is_expired(&self) -> bool {
         self.core.state.lock().expired
-    }
-
-    pub fn is_recording(&self) -> bool {
-        self.core.recording.load(Ordering::Relaxed)
     }
 
     /// Stops and returns the recording; the stream closes on its thread.
@@ -725,16 +699,12 @@ impl Recorder {
         had_active || had_prepared
     }
 
-    /// Live input level while recording (briefly locks; prefer [`Self::level_meter`]).
+    /// Live input level while recording.
     pub fn level(&self) -> Option<f32> {
         self.inner.lock().active.as_ref()?.session.level()
     }
 
-    /// Lock-free level handle for the current recording.
-    pub fn level_meter(&self) -> Option<LevelMeter> {
-        Some(self.inner.lock().active.as_ref()?.session.level_meter())
-    }
-
+    #[cfg(test)]
     pub fn is_recording(&self) -> bool {
         self.inner
             .lock()
@@ -744,6 +714,7 @@ impl Recorder {
     }
 
     /// The microphone is open (prepared, starting or recording).
+    #[cfg(test)]
     pub fn is_capture_active(&self) -> bool {
         let inner = self.inner.lock();
         inner.active.is_some() || inner.prepared.as_ref().is_some_and(|p| !p.is_expired())
@@ -777,7 +748,6 @@ mod tests {
         assert!(rx.is_none(), "first audio already arrived");
         core.push(tone(4800, 0.3).into_iter(), t0 + Duration::from_millis(600));
         let audio = core.finish(t0 + Duration::from_millis(1500));
-        assert!(audio.pre_roll_adopted);
         assert_eq!(audio.samples.len(), 9600);
         assert_eq!(audio.speech_gate.reason, GateReason::Unavailable);
         assert!(!audio.speech_gate.skip);
@@ -805,7 +775,6 @@ mod tests {
             t0 + Duration::from_millis(3200),
         );
         let audio = core.finish(t0 + Duration::from_millis(3200));
-        assert!(!audio.pre_roll_adopted);
         assert_eq!(audio.samples.len(), 48_000);
         assert_eq!(audio.duration, Duration::from_millis(1000));
         // Ten 100 ms windows of digital silence.
@@ -845,7 +814,6 @@ mod tests {
         core.tick(t0 + Duration::from_millis(400));
         let err = block_on(rx).unwrap().unwrap_err();
         assert!(err.is_no_audio());
-        assert_eq!(err.code(), None);
     }
 
     #[test]
@@ -865,10 +833,6 @@ mod tests {
             late.begin(false, FIRST_AUDIO_TIMEOUT, t0).unwrap_err(),
             AudioError::PermissionDenied
         );
-        assert_eq!(
-            AudioError::PermissionDenied.code(),
-            Some("MIC_CAPTURE_FAILED")
-        );
     }
 
     #[test]
@@ -884,7 +848,6 @@ mod tests {
             Some("Microphone stopped delivering audio")
         );
         assert_eq!(core.tick(t0 + Duration::from_millis(1700)).report, None);
-        assert!(core.finish(t0 + Duration::from_secs(2)).device_lost);
     }
 
     #[test]
@@ -935,9 +898,7 @@ mod tests {
             sample_rate: 48_000,
             duration: Duration::from_secs(1),
             received_audio_data: true,
-            pre_roll_adopted: false,
             speech_gate: SpeechGateDecision::unavailable(),
-            device_lost: false,
         };
         assert_eq!(audio.audio_duration(), Duration::from_secs(1));
         let wav = audio.to_wav_16k();
@@ -971,7 +932,6 @@ mod tests {
         assert!(recorder.level().is_some());
         let audio = recorder.stop().expect("recording");
         assert!(audio.received_audio_data);
-        assert!(audio.pre_roll_adopted);
         assert!(audio.audio_duration() > Duration::from_millis(1000));
         eprintln!(
             "captured {:?} at {} Hz, gate {:?}",
@@ -979,8 +939,5 @@ mod tests {
             audio.sample_rate,
             audio.speech_gate.reason
         );
-        for device in crate::audio::list_input_devices().unwrap() {
-            eprintln!("input: {} default={}", device.name, device.is_default);
-        }
     }
 }

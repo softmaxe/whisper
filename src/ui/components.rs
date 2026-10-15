@@ -151,14 +151,12 @@ pub enum ButtonVariant {
     OutlineFlat,
     Ghost,
     Destructive,
-    Link,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonSize {
     Default,
     Sm,
-    Icon,
 }
 
 /// Rounded-full buttons in several variants.
@@ -269,7 +267,6 @@ impl RenderOnce for Button {
         let (height, pad_x, text) = match self.size {
             ButtonSize::Default => (36., 16., TEXT_BODY),
             ButtonSize::Sm => (30., 12., TEXT_SMALL),
-            ButtonSize::Icon => (36., 0., TEXT_BODY),
         };
         let height = self.height.unwrap_or(height);
         let text = self.text_size.unwrap_or(text);
@@ -281,13 +278,7 @@ impl RenderOnce for Button {
         // loses, and the layout around it does not move.
         let inset_y = height * 0.0125 * depth;
         // A full-width face only sinks vertically; side margins would overflow.
-        let inset_x = if self.full_width {
-            0.
-        } else if self.size == ButtonSize::Icon {
-            inset_y
-        } else {
-            inset_y * 2.5
-        };
+        let inset_x = if self.full_width { 0. } else { inset_y * 2.5 };
         let mut el = div()
             .id(self.id)
             .flex()
@@ -298,12 +289,8 @@ impl RenderOnce for Button {
             .h(px(height - 2. * inset_y))
             .my(px(inset_y))
             .mx(px(inset_x))
-            .when(self.size == ButtonSize::Icon, |d| {
-                d.w(px(height - 2. * inset_x)).rounded(px(4.))
-            })
-            .when(self.size != ButtonSize::Icon, |d| {
-                d.px(px(pad_x - inset_x)).rounded_full()
-            })
+            .px(px(pad_x - inset_x))
+            .rounded_full()
             .when(self.full_width, |d| d.w_full().flex_1())
             .text_size(px(text))
             .font_weight(weight)
@@ -325,9 +312,6 @@ impl RenderOnce for Button {
             el = el.cursor_pointer();
             if let Some(hover_bg) = hover_bg {
                 el = el.hover(move |s| s.bg(hover_bg));
-            }
-            if self.variant == ButtonVariant::Link {
-                el = el.hover(|s| s.underline());
             }
             if let Some(f) = self.on_click {
                 el = el.on_click(f);
@@ -419,7 +403,6 @@ fn variant_colors(
             Some(p.destructive.opacity(0.7)),
             FontWeight::SEMIBOLD,
         ),
-        ButtonVariant::Link => (None, None, p.primary, None, FontWeight::MEDIUM),
     }
 }
 

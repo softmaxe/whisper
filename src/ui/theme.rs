@@ -2,7 +2,7 @@
 
 use gpui_kit::{App, Global, Hsla, WindowAppearance, rgb};
 
-use whisper::settings::ThemePreference;
+use crate::settings::ThemePreference;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {

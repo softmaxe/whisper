@@ -16,7 +16,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::services::ffmpeg::{FfmpegError, convert_to_mp3};
 use crate::services::runtime::http_client;
-use crate::services::transcription::resolve_route;
+use crate::services::transcription::{SERVER_ERROR_CODE, resolve_route};
+use crate::text::api_error::extract_api_error_message;
 
 /// Extensions the upload picker admits.
 pub const UPLOAD_AUDIO_EXTENSIONS: &[&str] = &[
@@ -121,7 +122,7 @@ pub struct UploadCancelRegistry {
     entries: Mutex<HashMap<String, OperationSet>>,
 }
 
-/// One registered operation. Dropping it (or calling `release`) unregisters.
+/// One registered operation. Dropping it unregisters.
 pub struct UploadRegistration<'a> {
     registry: &'a UploadCancelRegistry,
     request_id: Option<String>,
@@ -132,10 +133,6 @@ pub struct UploadRegistration<'a> {
 }
 
 impl UploadRegistration<'_> {
-    pub fn release(mut self) {
-        self.release_inner();
-    }
-
     fn release_inner(&mut self) {
         let (Some(request_id), Some(set)) = (self.request_id.take(), self.set.take()) else {
             return;
@@ -236,10 +233,6 @@ impl UploadError {
             message_key: None,
         }
     }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.code.as_deref() == Some(UPLOAD_CANCELLED_CODE)
-    }
 }
 
 /// Transcribes an audio or video file on the self-hosted server and returns
@@ -334,22 +327,12 @@ async fn transcribe_file_inner(
         let excerpt: String = text.chars().take(120).collect();
         return Err(UploadError {
             message: format!("Server error {status}: {excerpt}"),
-            code: Some("SERVER_ERROR".into()),
+            code: Some(SERVER_ERROR_CODE.into()),
             message_key: None,
         });
     };
     if status != 200 {
-        let message = data
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .filter(|m| !m.is_empty())
-            .or_else(|| {
-                data.get("error")
-                    .and_then(Value::as_str)
-                    .filter(|m| !m.is_empty())
-            })
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("Self-hosted API Error: {status}"));
+        let message = extract_api_error_message(&data, &format!("Self-hosted API Error: {status}"));
         return Err(UploadError::plain(message));
     }
     Ok(data
@@ -384,19 +367,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
-    fn extension_list_and_matching() {
-        let lower: Vec<String> = UPLOAD_AUDIO_EXTENSIONS
-            .iter()
-            .map(|e| e.to_lowercase())
-            .collect();
-        assert_eq!(lower, UPLOAD_AUDIO_EXTENSIONS);
-        let unique: std::collections::HashSet<_> = UPLOAD_AUDIO_EXTENSIONS.iter().collect();
-        assert_eq!(unique.len(), UPLOAD_AUDIO_EXTENSIONS.len());
-        for ext in [
-            "mp3", "wav", "m4a", "webm", "ogg", "oga", "flac", "aac", "opus",
-        ] {
-            assert!(UPLOAD_AUDIO_EXTENSIONS.contains(&ext));
-        }
+    fn matches_supported_extensions() {
         assert!(is_supported_upload_file("standup.mp3"));
         assert!(is_supported_upload_file("Screen Recording.MOV"));
         assert!(is_supported_upload_file("lecture.mpeg"));
@@ -431,7 +402,7 @@ mod tests {
         let first = registry.register(Some("req-1"));
         let second = registry.register(Some("req-1"));
         let first_token = first.token.clone().unwrap();
-        first.release();
+        drop(first);
         assert_eq!(registry.cancel("req-1"), 1);
         assert!(!first_token.is_cancelled());
         assert!(second.token.as_ref().unwrap().is_cancelled());
@@ -450,7 +421,7 @@ mod tests {
         for id in [None, Some("")] {
             let reg = registry.register(id);
             assert!(reg.token.is_none());
-            reg.release();
+            drop(reg);
         }
     }
 
@@ -462,7 +433,7 @@ mod tests {
         let second = registry.register(Some("req-1"));
         assert!(!second.token.as_ref().unwrap().is_cancelled());
         // The pre-cancel registration's release must not disturb the successor set.
-        first.release();
+        drop(first);
         assert_eq!(registry.cancel("req-1"), 1);
         assert!(second.token.as_ref().unwrap().is_cancelled());
     }
@@ -515,6 +486,12 @@ mod tests {
         for (status, body, expected, code) in [
             (500, r#"{"error":{"message":"boom"}}"#, "boom", None),
             (400, r#"{"error":"bad file"}"#, "bad file", None),
+            (
+                404,
+                r#"{"detail":"Model 'x' is not installed"}"#,
+                "Model 'x' is not installed",
+                None,
+            ),
             (404, r#"{}"#, "Self-hosted API Error: 404", None),
             (
                 413,
@@ -555,7 +532,7 @@ mod tests {
             transcribe_audio_file(request).await
         })
         .unwrap_err();
-        assert!(err.is_cancelled());
+        assert_eq!(err.code.as_deref(), Some(UPLOAD_CANCELLED_CODE));
         assert_eq!(err.message, "Cancelled");
         assert!(
             !cancel_upload_transcription("cancel-me"),

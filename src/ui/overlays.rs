@@ -49,7 +49,7 @@ impl DialogRequest {
             title: title.into(),
             description,
             confirm_label: "Confirm".into(),
-            cancel_label: Some(whisper::i18n::t("common.cancel").into()),
+            cancel_label: Some(crate::i18n::t("common.cancel").into()),
             destructive,
             on_confirm: Some(Rc::new(on_confirm)),
         }
@@ -64,19 +64,12 @@ pub enum ToastVariant {
 }
 
 #[derive(Clone)]
-pub struct ToastAction {
-    pub label: SharedString,
-    pub on_click: Callback,
-}
-
-#[derive(Clone)]
 pub struct Toast {
     pub title: SharedString,
     pub description: Option<SharedString>,
     pub variant: ToastVariant,
     /// `None` uses the defaults: 6 s for destructive, else 3.5 s.
     pub duration: Option<Duration>,
-    pub action: Option<ToastAction>,
 }
 
 impl Toast {
@@ -86,7 +79,6 @@ impl Toast {
             description: None,
             variant: ToastVariant::Default,
             duration: None,
-            action: None,
         }
     }
 
@@ -464,8 +456,6 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         };
         let destructive = toast.variant == ToastVariant::Destructive;
         let overlays_close = overlays.clone();
-        let action = toast.action.clone();
-        let overlays_action = overlays.clone();
         let group: SharedString = format!("toast-{id}").into();
         let card = div()
             .id(("toast", id as usize))
@@ -529,29 +519,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                                     )
                                 }
                             }),
-                    )
-                    .when_some(action, |d, action| {
-                        d.child(
-                            div()
-                                .id("toast-action")
-                                .flex_none()
-                                .self_center()
-                                .px(px(8.))
-                                .py(px(4.))
-                                .rounded(px(4.))
-                                .bg(hsla(0., 0., 1., 0.1))
-                                .text_size(px(TEXT_SMALL))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(hsla(0., 0., 1., 0.9))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(hsla(0., 0., 1., 0.16)))
-                                .child(action.label.clone())
-                                .on_click(move |_, window, cx| {
-                                    (action.on_click)(window, cx);
-                                    overlays_action.update(cx, |o, cx| o.dismiss_toast(id, cx));
-                                }),
-                        )
-                    }),
+                    ),
             )
             .child(
                 div()

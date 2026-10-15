@@ -8,7 +8,7 @@ use std::process::Command;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::audio::wav::{decode_wav, downmix_to_mono, encode_wav_16k, is_pcm16_mono_16k_wav};
+use crate::audio::wav::{encode_wav_16k, is_pcm16_mono_16k_wav, read_wav_mono};
 use crate::services::cleanup::{CleanupRequestConfig, list_models, process_text};
 use crate::services::ffmpeg::ffmpeg_path;
 use crate::services::test_server::run;
@@ -77,19 +77,15 @@ fn words(text: &str) -> String {
 fn live_transcribe_and_clean_up() {
     let dir = tempfile::tempdir().unwrap();
     let wav = synthesize(dir.path(), "hello world, this is a dictation test");
-    let decoded = decode_wav(&std::fs::read(&wav).unwrap()).unwrap();
-    let mono = downmix_to_mono(&decoded.samples, usize::from(decoded.channels));
-    let upload = encode_wav_16k(&mono, decoded.sample_rate);
+    let (spec, mono) = read_wav_mono(&std::fs::read(&wav).unwrap());
+    let upload = encode_wav_16k(&mono, spec.sample_rate);
     assert!(is_pcm16_mono_16k_wav(&upload));
 
     let (asr_url, asr_model) = asr();
     let route = resolve_route(&asr_url, &asr_model, "en", None).unwrap();
     let request = TranscriptionRequest::new(&route, upload, "audio/wav", Some("Whisper".into()));
     let response = run(transcribe(request, CancellationToken::new())).unwrap();
-    eprintln!(
-        "transcript: {:?} in {:?}",
-        response.text, response.processing
-    );
+    eprintln!("transcript: {:?}", response.text);
     let heard = words(&response.text);
     assert!(
         heard.contains("hello") && heard.contains("world"),

@@ -13,7 +13,7 @@ use crate::text::chinese_script::{
     apply_chinese_script, merge_whisper_prompt, resolve_chinese_script_target,
     resolve_cleanup_language,
 };
-use crate::text::echo_filter::{DICTIONARY_ECHO_CODE, matches_dictionary_prompt};
+use crate::text::echo_filter::matches_dictionary_prompt;
 use crate::text::prompt_cap::{WHISPER_PROMPT_CHARS, fit_dictionary_prompt};
 use crate::text::snippets::{
     Snippet, get_dictionary_hint_words, get_prioritized_dictionary_hint_words,
@@ -215,10 +215,6 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         cleanup_failure,
     }
 }
-
-/// The error code stored with a History row whose transcript was a
-/// dictionary echo.
-pub const ECHO_CODE: &str = DICTIONARY_ECHO_CODE;
 
 #[cfg(test)]
 mod tests {

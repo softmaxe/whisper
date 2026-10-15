@@ -6,11 +6,11 @@ use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::db::{DictionarySource, Snippet};
-use whisper::i18n::{t, t_with};
-use whisper::text::dictionary_import::{format_dictionary_export, parse_dictionary_import_text};
-use whisper::text::prompt_cap::WHISPER_DECODER_PROMPT_CHARS;
-use whisper::text::snippets::get_dictionary_hint_words;
+use crate::db::{DictionarySource, Snippet};
+use crate::i18n::{t, t_with};
+use crate::text::dictionary_import::{format_dictionary_export, parse_dictionary_import_text};
+use crate::text::prompt_cap::WHISPER_DECODER_PROMPT_CHARS;
+use crate::text::snippets::get_dictionary_hint_words;
 
 use crate::app_state::{AppEvent, AppState};
 
@@ -72,7 +72,7 @@ fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
 }
 
 fn agent_name() -> String {
-    whisper::text::DEFAULT_AGENT_NAME.to_string()
+    crate::text::DEFAULT_AGENT_NAME.to_string()
 }
 
 impl DictionaryView {
@@ -204,7 +204,7 @@ impl DictionaryView {
     fn export(cx: &mut App) {
         let words = AppState::global(cx).read(cx).dictionary.clone();
         let dialog = rfd::AsyncFileDialog::new()
-            .set_file_name(whisper::text::dictionary_import::DICTIONARY_EXPORT_FILE_NAME)
+            .set_file_name(crate::text::dictionary_import::DICTIONARY_EXPORT_FILE_NAME)
             .add_filter("Text", &["txt"]);
         cx.spawn(async move |cx| {
             let Some(file) = dialog.save_file().await else {

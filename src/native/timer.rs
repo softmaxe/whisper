@@ -147,7 +147,6 @@ struct FakeState {
     now: u64,
     next_id: u64,
     pending: BTreeMap<(u64, u64), TimerCallback>,
-    delays: Vec<(u64, Duration)>,
 }
 
 #[cfg(test)]
@@ -162,7 +161,6 @@ impl FakeTimers {
                 now,
                 next_id: 1,
                 pending: BTreeMap::new(),
-                delays: Vec::new(),
             }),
         })
     }
@@ -199,18 +197,8 @@ impl FakeTimers {
         lock(&self.state).now = target;
     }
 
-    /// Runs every pending callback whose deadline has passed at the current time.
-    pub fn run_due(&self) {
-        self.advance(0);
-    }
-
     pub fn pending(&self) -> usize {
         lock(&self.state).pending.len()
-    }
-
-    /// Delays of every timer scheduled so far, as (id, delay).
-    pub fn scheduled_delays(&self) -> Vec<Duration> {
-        lock(&self.state).delays.iter().map(|(_, d)| *d).collect()
     }
 }
 
@@ -226,7 +214,6 @@ impl Timers for FakeTimers {
         state.next_id += 1;
         let at = state.now + delay.as_millis() as u64;
         state.pending.insert((at, id), callback);
-        state.delays.push((id, delay));
         TimerId(id)
     }
 
