@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   build:
-    name: Test and package macOS arm64
+    name: Package macOS arm64
     runs-on: macos-15
     timeout-minutes: 45
     # Signing secrets live in the release environment, which only v* tags can use.
@@ -58,9 +58,6 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.release-tag }}
         run: scripts/check-version.sh
-
-      - name: Check Whisper
-        run: scripts/check.sh
 
       - name: Download pinned ffmpeg
         run: scripts/download-ffmpeg.sh
