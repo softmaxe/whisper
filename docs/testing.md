@@ -14,7 +14,7 @@ Unit tests live next to the code in `src/`. Tests marked `#[ignore]` need hardwa
 
 ## Workflows
 
-The CI workflow runs the checks for pull requests targeting `main` and pushes to `main`, without packaging the app. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag on `main`. It runs the same checks, downloads the pinned ffmpeg, packages the macOS arm64 app, and verifies its bundle name, identifier, version, architecture, signature, archive, and checksum. Manual builds are signed ad hoc without release credentials and keep the package as an Actions artifact for seven days. Release builds require signatures matching `packaging/signing-certificate.pem`; a missing identity, a different certificate, or an ad-hoc signature fails the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
+The CI workflow runs the checks for pull requests targeting `main` and pushes to `main`, without packaging the app, and lints the workflows with actionlint and the scripts with shellcheck. The Build workflow runs on manual dispatch or when called by Release for a `v*` tag on `main`. It runs the same checks, downloads the pinned ffmpeg, packages the macOS arm64 app, and verifies its bundle name, identifier, version, architecture, signature, archive, and checksum. Manual builds are signed ad hoc without release credentials and keep the package as an Actions artifact for seven days. Release builds require signatures matching `packaging/signing-certificate.pem`; a missing identity, a different certificate, or an ad-hoc signature fails the build. Release publishes the verified package to GitHub and updates the Homebrew tap. Manual builds do neither.
 
 ## Release smoke check
 
