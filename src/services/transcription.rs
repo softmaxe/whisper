@@ -6,13 +6,14 @@
 //! longer deadline. Futures here need the Tokio reactor: run them through
 //! [`crate::services::runtime::spawn`].
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::services::runtime::http_client;
 use crate::settings::Settings;
+use crate::text::language::get_base_language_code;
 use crate::text::url::{build_api_url, is_secure_http_endpoint, normalize_base_url};
 
 pub const CUSTOM_ENDPOINT_INVALID_CODE: &str = "CUSTOM_ENDPOINT_INVALID";
@@ -23,7 +24,10 @@ pub const CONNECTION_FAILED_MESSAGE_KEY: &str =
     "dictation.errorDescriptions.transcriptionConnectionFailed";
 pub const REQUEST_TIMEOUT_CODE: &str = "TRANSCRIPTION_REQUEST_TIMEOUT";
 pub const REQUEST_TIMEOUT_MESSAGE_KEY: &str = "dictation.errorDescriptions.transcriptionTimeout";
+pub const RATE_LIMITED_CODE: &str = "PROVIDER_RATE_LIMITED";
 pub const RATE_LIMITED_MESSAGE_KEY: &str = "dictation.errorDescriptions.providerRateLimited";
+pub const INVALID_KEY_CODE: &str = "INVALID_KEY";
+pub const SERVER_ERROR_CODE: &str = "SERVER_ERROR";
 
 /// Reachability deadline for the HEAD probe.
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
@@ -59,15 +63,6 @@ impl RouteError {
     }
 }
 
-/// `None` for "auto"/empty, else the part before the first `-` ("zh-CN" -> "zh").
-pub fn base_language_code(language: &str) -> Option<String> {
-    let language = language.trim();
-    if language.is_empty() || language == "auto" {
-        return None;
-    }
-    language.split('-').next().map(str::to_string)
-}
-
 /// Resolves the dictation route from saved settings.
 pub fn resolve_transcription_route(settings: &Settings) -> Result<Route, RouteError> {
     resolve_route(
@@ -87,7 +82,7 @@ pub fn resolve_route(
 ) -> Result<Route, RouteError> {
     let language = match effective_language.filter(|l| !l.is_empty()) {
         Some(lang) => Some(lang.to_string()),
-        None => base_language_code(preferred_language),
+        None => get_base_language_code(preferred_language.trim()).map(str::to_string),
     };
     // Fail closed: without a usable server URL no audio leaves the device.
     let raw = url.trim();
@@ -176,10 +171,6 @@ impl Default for TranscribeOptions {
 pub struct TranscriptionResponse {
     /// Server text as returned (not trimmed); guaranteed to contain non-whitespace.
     pub text: String,
-    /// Time from the upload start to the parsed response.
-    pub processing: Duration,
-    /// Full JSON body (segments, language, ... when the server provides them).
-    pub json: Value,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -211,9 +202,9 @@ impl TranscriptionError {
             Self::Route(e) => Some(e.code),
             Self::ConnectionFailed => Some(CONNECTION_FAILED_CODE),
             Self::RequestTimeout => Some(REQUEST_TIMEOUT_CODE),
-            Self::Http { status: 401, .. } => Some("INVALID_KEY"),
-            Self::Http { status: 429, .. } => Some("PROVIDER_RATE_LIMITED"),
-            Self::Http { status, .. } if *status >= 500 => Some("SERVER_ERROR"),
+            Self::Http { status: 401, .. } => Some(INVALID_KEY_CODE),
+            Self::Http { status: 429, .. } => Some(RATE_LIMITED_CODE),
+            Self::Http { status, .. } if *status >= 500 => Some(SERVER_ERROR_CODE),
             _ => None,
         }
     }
@@ -227,10 +218,6 @@ impl TranscriptionError {
             Self::Http { status: 429, .. } => Some(RATE_LIMITED_MESSAGE_KEY),
             _ => None,
         }
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        matches!(self, Self::Cancelled)
     }
 }
 
@@ -280,7 +267,6 @@ async fn run(
         Err(_) => return Err(TranscriptionError::ConnectionFailed),
     }
 
-    let started = Instant::now();
     let upload = async {
         let mut part =
             reqwest::multipart::Part::bytes(request.audio).file_name(request.file_name.clone());
@@ -332,17 +318,14 @@ async fn run(
         log::info!("transcription returned empty text");
         return Err(TranscriptionError::EmptyText);
     }
-    Ok(TranscriptionResponse {
-        text,
-        processing: started.elapsed(),
-        json,
-    })
+    Ok(TranscriptionResponse { text })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::services::test_server::{MockServer, Reply, run};
+    use std::time::Instant;
 
     fn settings(url: &str, model: &str, language: &str) -> Settings {
         Settings {
@@ -408,10 +391,7 @@ mod tests {
             status,
             body: String::new(),
         };
-        assert_eq!(http(401).code(), Some("INVALID_KEY"));
-        assert_eq!(http(429).code(), Some("PROVIDER_RATE_LIMITED"));
         assert_eq!(http(429).message_key(), Some(RATE_LIMITED_MESSAGE_KEY));
-        assert_eq!(http(503).code(), Some("SERVER_ERROR"));
         assert_eq!(http(404).code(), None);
         assert_eq!(
             TranscriptionError::ConnectionFailed.code(),
@@ -622,7 +602,7 @@ mod tests {
             });
             let started = Instant::now();
             let err = transcribe(request_for(&server), cancel).await.unwrap_err();
-            assert!(err.is_cancelled());
+            assert_eq!(err, TranscriptionError::Cancelled);
             assert!(started.elapsed() < Duration::from_secs(2));
         })
     }

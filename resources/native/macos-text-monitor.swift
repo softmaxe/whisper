@@ -354,7 +354,6 @@ func observerCallback(
 //        macos-text-monitor --selected-text <pid>
 //        macos-text-monitor --editable-target <pid>
 //        macos-text-monitor --paste-target <pid>
-//        macos-text-monitor --window-bounds <pid>
 //        macos-text-monitor --focused-app
 let selectionReadMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--selected-text"
@@ -362,8 +361,6 @@ let editableTargetMode = CommandLine.arguments.count >= 3 &&
     CommandLine.arguments[1] == "--editable-target"
 let pasteTargetMode = CommandLine.arguments.count >= 2 &&
     CommandLine.arguments[1] == "--paste-target"
-let windowBoundsMode = CommandLine.arguments.count >= 3 &&
-    CommandLine.arguments[1] == "--window-bounds"
 // System-wide AX queries fail with kAXErrorCannotComplete until the process
 // connects to the window server, which would silently reduce keyboardFocusPid()
 // to the frontmost app. Connect before any mode can query keyboard focus.
@@ -380,12 +377,12 @@ if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--focused-ap
     exit(0)
 }
 
-let pidArgumentIndex = selectionReadMode || editableTargetMode || pasteTargetMode || windowBoundsMode ? 2 : 1
+let pidArgumentIndex = selectionReadMode || editableTargetMode || pasteTargetMode ? 2 : 1
 
 guard CommandLine.arguments.count > pidArgumentIndex,
       let targetPid = Int32(CommandLine.arguments[pidArgumentIndex]),
       targetPid > 0 else {
-    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--paste-target|--window-bounds] <pid> | --focused-app")
+    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--paste-target] <pid> | --focused-app")
     writeOutput(pasteTargetMode ? "UNKNOWN" : "NO_ELEMENT")
     exit(1)
 }
@@ -395,39 +392,6 @@ monitoredPid = targetPid
 // Dictation probing reads no stdin and does not use the monitor's retry ladder.
 if pasteTargetMode {
     writeOutput(pasteTargetStatus(for: targetPid).rawValue)
-    exit(0)
-}
-
-// Reports the target's window rect so the caller can tell which display the user
-// is working on. Asks the window server rather than accessibility on purpose:
-// AXFocusedWindow is unavailable in exactly the apps whose accessibility tree
-// stays dormant (Chromium), and window bounds need no Screen Recording
-// permission — only window *titles* do.
-if windowBoundsMode {
-    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-    let windows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
-    // Largest window rather than frontmost: layer 0 still includes the full-width
-    // toolbar strips Arc-family browsers float above their content, and one of
-    // those spanning another display would name the wrong screen.
-    var best: (x: Int, y: Int, width: Int, height: Int, area: Double)?
-    for window in windows {
-        guard let ownerPid = window[kCGWindowOwnerPID as String] as? pid_t, ownerPid == targetPid,
-              let layer = window[kCGWindowLayer as String] as? Int, layer == 0,
-              let bounds = window[kCGWindowBounds as String] as? [String: Any],
-              let x = bounds["X"] as? Double, let y = bounds["Y"] as? Double,
-              let width = bounds["Width"] as? Double, let height = bounds["Height"] as? Double
-        else { continue }
-        let area = width * height
-        if area > (best?.area ?? 0) {
-            best = (Int(x), Int(y), Int(width), Int(height), area)
-        }
-    }
-
-    guard let window = best else {
-        writeOutput("NO_WINDOW")
-        exit(1)
-    }
-    writeOutput("BOUNDS:\(window.x),\(window.y),\(window.width),\(window.height)")
     exit(0)
 }
 

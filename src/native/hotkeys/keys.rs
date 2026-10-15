@@ -3,6 +3,8 @@
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
+use crate::text::hotkeys::{is_globe_like_hotkey, is_mouse_button_hotkey};
+
 const RIGHT_SIDE_MODIFIERS: [&str; 10] = [
     "control", "ctrl", "alt", "option", "shift", "command", "cmd", "super", "meta", "win",
 ];
@@ -49,14 +51,6 @@ pub fn is_modifier_only_hotkey(hotkey: &str) -> bool {
         && hotkey
             .split('+')
             .all(|part| MODIFIER_NAMES.contains(&part.to_ascii_lowercase().as_str()))
-}
-
-pub fn is_globe_like_hotkey(hotkey: &str) -> bool {
-    hotkey == "GLOBE" || hotkey == "Fn"
-}
-
-pub fn is_mouse_button_hotkey(hotkey: &str) -> bool {
-    hotkey.eq_ignore_ascii_case("MouseButton4") || hotkey.eq_ignore_ascii_case("MouseButton5")
 }
 
 /// Hotkeys the native listener reports (and whose release it reports).
@@ -444,8 +438,6 @@ mod tests {
         assert!(is_modifier_only_hotkey("Control+Alt"));
         assert!(!is_modifier_only_hotkey("Control+Alt+Space"));
         assert!(!is_modifier_only_hotkey("Control"));
-        assert!(is_mouse_button_hotkey("MouseButton4"));
-        assert!(!is_mouse_button_hotkey("MouseButton3"));
         assert!(is_unsupported_fn_combination("Fn+A"));
         assert!(!is_unsupported_fn_combination("Fn"));
     }

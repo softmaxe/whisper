@@ -23,10 +23,6 @@ pub fn set_cleanup_api_key(key: &str) -> Result<()> {
     write(&cleanup_entry()?, key)
 }
 
-pub fn delete_cleanup_api_key() -> Result<()> {
-    remove(&cleanup_entry()?)
-}
-
 fn read(entry: &Entry) -> Result<Option<String>> {
     match entry.get_password() {
         Ok(key) if key.is_empty() => Ok(None),

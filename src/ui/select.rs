@@ -83,7 +83,7 @@ impl Select {
         let search = if options.len() > LIST_SEARCH_THRESHOLD {
             let input = cx.new(|cx| {
                 InputState::new(window, cx)
-                    .placeholder(whisper::i18n::t("languageSelector.searchPlaceholder"))
+                    .placeholder(crate::i18n::t("languageSelector.searchPlaceholder"))
             });
             cx.subscribe(
                 &input,
@@ -370,7 +370,7 @@ impl Select {
                     .py(px(8.))
                     .text_size(px(TEXT_SMALL))
                     .text_color(p.muted_foreground)
-                    .child(whisper::i18n::t("languageSelector.noLanguagesFound")),
+                    .child(crate::i18n::t("languageSelector.noLanguagesFound")),
             );
         }
         for (index, option) in filtered.into_iter().enumerate() {

@@ -123,9 +123,10 @@ Accessibility access for automatic paste and the Globe/modifier listeners.
 
 ## Layout
 
-- `src/` library: settings, database, audio capture, transcription and
-  cleanup services, text processing, native macOS integrations
-- `src/main.rs`, `src/ui/`, `src/dictation.rs`: the GPUI app
+- `src/`: settings, database, audio capture, transcription and cleanup
+  services, text processing, native macOS integrations
+- `src/app.rs`, `src/ui/`, `src/dictation.rs`: the GPUI app; `src/main.rs`
+  only calls `whisper::run()`
 - `resources/native/`: Swift helper sources; `resources/mediaremote-adapter/`:
   vendored MediaRemoteAdapter
 - `locales/`: UI strings and cleanup prompts

@@ -1,23 +1,10 @@
-//! PCM helpers: downmix, band-limited resampling, 16-bit WAV encode/decode
-//! and segment merging.
+//! PCM helpers: band-limited resampling and 16-bit WAV encoding.
 
 use std::f64::consts::PI;
 
 /// Sample rate the transcription server receives.
-pub const TARGET_SAMPLE_RATE: u32 = 16_000;
-pub const WAV_HEADER_BYTES: usize = 44;
-pub const WAV_MIME_TYPE: &str = "audio/wav";
-
-/// Averages interleaved channels into mono.
-pub fn downmix_to_mono(interleaved: &[f32], channels: usize) -> Vec<f32> {
-    if channels <= 1 {
-        return interleaved.to_vec();
-    }
-    interleaved
-        .chunks_exact(channels)
-        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-        .collect()
-}
+const TARGET_SAMPLE_RATE: u32 = 16_000;
+const WAV_HEADER_BYTES: usize = 44;
 
 /// Zeros of the lowpass kernel on each side of the centre.
 const KERNEL_ZERO_CROSSINGS: f64 = 24.0;
@@ -140,122 +127,34 @@ pub fn encode_wav_16k(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     )
 }
 
-/// Concatenates mono segments (each with its own rate) at `target_rate`.
-pub fn merge_segments(segments: &[(&[f32], u32)], target_rate: u32) -> Vec<f32> {
-    let mut merged = Vec::new();
-    for (samples, rate) in segments {
-        merged.extend(resample(samples, *rate, target_rate));
-    }
-    merged
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WavFormat {
-    pub audio_format: u16,
-    pub channels: u16,
-    pub sample_rate: u32,
-    pub bits_per_sample: u16,
-}
-
-pub fn is_wav_format(bytes: &[u8]) -> bool {
-    bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE"
-}
-
-fn u16_at(b: &[u8], i: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(i..i + 2)?.try_into().ok()?))
-}
-
-fn u32_at(b: &[u8], i: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?))
-}
-
-/// Walks RIFF chunks; returns `(fmt, data range)` when present.
-fn walk_chunks(bytes: &[u8]) -> (Option<WavFormat>, Option<std::ops::Range<usize>>) {
-    let mut format = None;
-    let mut data = None;
-    let mut offset = 12;
-    while offset + 8 <= bytes.len() {
-        let id = &bytes[offset..offset + 4];
-        let Some(size) = u32_at(bytes, offset + 4).map(|s| s as usize) else {
-            break;
-        };
-        let body = offset + 8;
-        if id == b"fmt " {
-            format = (|| {
-                Some(WavFormat {
-                    audio_format: u16_at(bytes, body)?,
-                    channels: u16_at(bytes, body + 2)?,
-                    sample_rate: u32_at(bytes, body + 4)?,
-                    bits_per_sample: u16_at(bytes, body + 14)?,
-                })
-            })();
-        } else if id == b"data" {
-            data = Some(body..(body + size).min(bytes.len()));
-            break;
-        }
-        offset = body + size + (size & 1);
-    }
-    (format, data)
-}
-
-pub fn parse_wav_format(bytes: &[u8]) -> Option<WavFormat> {
-    if !is_wav_format(bytes) {
-        return None;
-    }
-    walk_chunks(bytes).0
+/// Reads a 16-bit PCM WAV with `hound`, downmixed to mono floats.
+#[cfg(test)]
+pub(crate) fn read_wav_mono(bytes: &[u8]) -> (hound::WavSpec, Vec<f32>) {
+    let mut reader = hound::WavReader::new(std::io::Cursor::new(bytes)).expect("valid WAV");
+    let spec = reader.spec();
+    assert_eq!(spec.bits_per_sample, 16, "expected PCM16");
+    let interleaved: Vec<f32> = reader
+        .samples::<i16>()
+        .map(|s| f32::from(s.unwrap()) / 32768.0)
+        .collect();
+    let channels = usize::from(spec.channels.max(1));
+    let mono = interleaved
+        .chunks_exact(channels)
+        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+        .collect();
+    (spec, mono)
 }
 
 /// True for the 16 kHz mono PCM16 shape the server receives from dictation.
-pub fn is_pcm16_mono_16k_wav(bytes: &[u8]) -> bool {
-    parse_wav_format(bytes).is_some_and(|f| {
-        f.audio_format == 1 && f.channels == 1 && f.sample_rate == 16_000 && f.bits_per_sample == 16
+#[cfg(test)]
+pub(crate) fn is_pcm16_mono_16k_wav(bytes: &[u8]) -> bool {
+    hound::WavReader::new(std::io::Cursor::new(bytes)).is_ok_and(|r| {
+        let spec = r.spec();
+        spec.sample_format == hound::SampleFormat::Int
+            && spec.channels == 1
+            && spec.sample_rate == 16_000
+            && spec.bits_per_sample == 16
     })
-}
-
-/// Decoded PCM (interleaved when multi-channel).
-#[derive(Debug, Clone, PartialEq)]
-pub struct DecodedWav {
-    pub samples: Vec<f32>,
-    pub sample_rate: u32,
-    pub channels: u16,
-}
-
-/// Decodes 8- or 16-bit PCM WAV to floats.
-pub fn decode_wav(bytes: &[u8]) -> Result<DecodedWav, String> {
-    if !is_wav_format(bytes) {
-        return Err("Buffer is not a valid WAV file".into());
-    }
-    let (format, data) = walk_chunks(bytes);
-    let format = format.ok_or("WAV fmt chunk not found")?;
-    let data = data.ok_or("WAV data chunk not found")?;
-    let pcm = &bytes[data];
-    let samples = match format.bits_per_sample {
-        16 => pcm
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|c| f32::from(i16::from_le_bytes(*c)) / 32768.0)
-            .collect(),
-        8 => pcm
-            .iter()
-            .map(|&b| (f32::from(b) - 128.0) / 128.0)
-            .collect(),
-        bits => return Err(format!("Unsupported WAV bit depth: {bits}")),
-    };
-    Ok(DecodedWav {
-        samples,
-        sample_rate: format.sample_rate,
-        channels: format.channels,
-    })
-}
-
-/// Plain RMS of float samples.
-pub fn compute_rms(samples: &[f32]) -> f32 {
-    if samples.is_empty() {
-        return 0.0;
-    }
-    let sum: f64 = samples.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
-    (sum / samples.len() as f64).sqrt() as f32
 }
 
 #[cfg(test)]
@@ -269,6 +168,11 @@ mod tests {
             .collect()
     }
 
+    fn rms(samples: &[f32]) -> f32 {
+        let sum: f64 = samples.iter().map(|&s| f64::from(s) * f64::from(s)).sum();
+        (sum / samples.len() as f64).sqrt() as f32
+    }
+
     /// Amplitude of `freq` via correlation (Goertzel-like) over the middle.
     fn tone_amplitude(samples: &[f32], rate: u32, freq: f64) -> f64 {
         let mid = &samples[samples.len() / 4..samples.len() * 3 / 4];
@@ -279,12 +183,6 @@ mod tests {
             im += f64::from(s) * phase.sin();
         }
         2.0 * (re * re + im * im).sqrt() / mid.len() as f64
-    }
-
-    #[test]
-    fn downmix_averages_channels() {
-        assert_eq!(downmix_to_mono(&[1.0, 0.0, 0.5, 0.5], 2), vec![0.5, 0.5]);
-        assert_eq!(downmix_to_mono(&[0.25], 1), vec![0.25]);
     }
 
     #[test]
@@ -305,10 +203,10 @@ mod tests {
         let input = sine(12_000.0, 48_000, 0.5, 0.8);
         let out = resample(&input, 48_000, 16_000);
         assert!(tone_amplitude(&out, 16_000, 4000.0) < 0.002);
-        assert!(compute_rms(&out[1000..out.len() - 1000]) < 0.002);
+        assert!(rms(&out[1000..out.len() - 1000]) < 0.002);
         // Just above the target Nyquist is also removed.
         let out = resample(&sine(8_600.0, 44_100, 0.5, 0.8), 44_100, 16_000);
-        assert!(compute_rms(&out[1000..out.len() - 1000]) < 0.01);
+        assert!(rms(&out[1000..out.len() - 1000]) < 0.01);
     }
 
     #[test]
@@ -324,29 +222,15 @@ mod tests {
         let samples = vec![0.0, 0.5, -0.5, 1.0, -1.0, 2.0];
         let bytes = encode_wav_pcm16(&samples, 16_000);
         assert_eq!(bytes.len(), WAV_HEADER_BYTES + samples.len() * 2);
-        assert!(is_wav_format(&bytes));
         assert!(is_pcm16_mono_16k_wav(&bytes));
-        assert_eq!(
-            parse_wav_format(&bytes),
-            Some(WavFormat {
-                audio_format: 1,
-                channels: 1,
-                sample_rate: 16_000,
-                bits_per_sample: 16
-            })
-        );
-        let decoded = decode_wav(&bytes).unwrap();
-        assert_eq!(decoded.sample_rate, 16_000);
+        let (spec, decoded) = read_wav_mono(&bytes);
+        assert_eq!(spec.sample_rate, 16_000);
         let expected = [0.0, 0.5, -0.5, 1.0, -1.0, 1.0];
-        for (a, b) in decoded.samples.iter().zip(expected) {
+        assert_eq!(decoded.len(), expected.len());
+        for (a, b) in decoded.iter().zip(expected) {
             assert!((a - b).abs() < 1e-3);
         }
-        // hound agrees with the header.
-        let reader = hound::WavReader::new(std::io::Cursor::new(&bytes)).unwrap();
-        assert_eq!(reader.spec().sample_rate, 16_000);
-        assert_eq!(reader.len() as usize, samples.len());
-        assert!(!is_wav_format(b"OggS...."));
-        assert!(decode_wav(b"nope").is_err());
+        assert!(!is_pcm16_mono_16k_wav(b"OggS...."));
     }
 
     #[test]
@@ -354,16 +238,5 @@ mod tests {
         let bytes = encode_wav_16k(&sine(440.0, 48_000, 1.0, 0.3), 48_000);
         assert!(is_pcm16_mono_16k_wav(&bytes));
         assert_eq!(bytes.len(), WAV_HEADER_BYTES + 16_000 * 2);
-    }
-
-    // Two 0.25 s segments merge into one decodable ~0.5 s timeline.
-    #[test]
-    fn merges_segments_into_one_timeline() {
-        let a = sine(440.0, 48_000, 0.25, 0.3);
-        let b = sine(660.0, 44_100, 0.25, 0.3);
-        let merged = merge_segments(&[(&a, 48_000), (&b, 44_100)], 16_000);
-        let decoded = decode_wav(&encode_wav_pcm16(&merged, 16_000)).unwrap();
-        let seconds = decoded.samples.len() as f64 / 16_000.0;
-        assert!(seconds > 0.4 && seconds < 0.7, "duration was {seconds}");
     }
 }

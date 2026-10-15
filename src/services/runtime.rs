@@ -49,11 +49,6 @@ fn build_runtime() -> Runtime {
     }
 }
 
-/// The global multi-thread runtime.
-pub fn runtime() -> &'static Runtime {
-    &RUNTIME
-}
-
 /// The shared HTTP client (connection pool reused across requests).
 pub fn http_client() -> &'static reqwest::Client {
     &HTTP_CLIENT
@@ -71,6 +66,7 @@ where
 
 /// Runs a future to completion on the shared runtime, blocking the caller.
 /// Must not be called from inside the runtime's own worker threads.
+#[cfg(test)]
 pub fn block_on<F: Future>(future: F) -> F::Output {
     RUNTIME.block_on(future)
 }

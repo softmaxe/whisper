@@ -7,12 +7,6 @@ use std::sync::LazyLock;
 
 use serde::Deserialize;
 
-/// Pickers with more entries than this get a search field.
-pub const LIST_SEARCH_THRESHOLD: usize = 12;
-
-/// Flag shown when no language is selected.
-pub const DEFAULT_LANGUAGE_FLAG: &str = "\u{1F310}";
-
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Language {
     pub code: String,
@@ -55,20 +49,6 @@ pub fn languages() -> &'static [Language] {
     &REGISTRY.languages
 }
 
-pub fn find_language(code: &str) -> Option<&'static Language> {
-    REGISTRY.languages.iter().find(|l| l.code == code)
-}
-
-/// Selector search: label or code contains the query, case-insensitively.
-pub fn filter_languages(query: &str) -> Vec<&'static Language> {
-    let q = query.to_lowercase();
-    REGISTRY
-        .languages
-        .iter()
-        .filter(|l| l.label.to_lowercase().contains(&q) || l.code.to_lowercase().contains(&q))
-        .collect()
-}
-
 /// "zh-CN" -> "zh"; `None` for empty or "auto".
 pub fn get_base_language_code(language: &str) -> Option<&str> {
     if language.is_empty() || language == "auto" {
@@ -95,10 +75,8 @@ mod tests {
     #[test]
     fn registry_loads_with_auto_first() {
         let langs = languages();
-        assert!(langs.len() > LIST_SEARCH_THRESHOLD);
         assert_eq!(langs[0].code, "auto");
-        assert_eq!(langs[0].flag, DEFAULT_LANGUAGE_FLAG);
-        assert!(find_language("zh-CN").is_some());
+        assert!(langs.iter().any(|l| l.code == "zh-CN"));
     }
 
     #[test]
@@ -118,16 +96,5 @@ mod tests {
         assert!(generic.contains("\"af\""), "{generic}");
         assert!(!generic.contains("{{code}}"));
         assert!(get_language_instruction("xx-YY").contains("\"xx-YY\""));
-    }
-
-    #[test]
-    fn search() {
-        assert!(filter_languages("arab").iter().any(|l| l.code == "ar"));
-        assert!(
-            filter_languages("ZH")
-                .iter()
-                .any(|l| l.code.starts_with("zh"))
-        );
-        assert_eq!(filter_languages("").len(), languages().len());
     }
 }

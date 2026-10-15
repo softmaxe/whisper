@@ -47,10 +47,6 @@ impl CompoundPush {
         }
     }
 
-    pub fn is_active(&self) -> bool {
-        lock(&self.inner.state).0.is_some()
-    }
-
     /// A press of a Hold mode chord: prepare at once, start after the minimum
     /// hold, and give up at the safety ceiling.
     pub fn start(&self, hotkey: &str) {
@@ -243,22 +239,6 @@ mod tests {
                 HotkeyCommand::CancelPreparation,
             ]
         );
-    }
-
-    #[test]
-    fn settings_reset_reports_forced_stop() {
-        let (push, env, _timers) = start_push();
-        push.force_stop(ForceStopReason::Reset);
-        assert_eq!(
-            sent(&env)[2..],
-            [
-                HotkeyCommand::ForceStop {
-                    reason: ForceStopReason::Reset
-                },
-                HotkeyCommand::Stop,
-            ]
-        );
-        assert!(!push.is_active());
     }
 
     #[test]

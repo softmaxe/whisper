@@ -6,7 +6,7 @@ use std::time::Duration;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::i18n::t;
+use crate::i18n::t;
 
 use crate::app_state::AppState;
 

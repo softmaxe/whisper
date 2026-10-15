@@ -63,6 +63,7 @@ impl AudioStorage {
         Self { dir }
     }
 
+    #[cfg(test)]
     pub fn dir(&self) -> &Path {
         &self.dir
     }
@@ -139,6 +140,7 @@ impl AudioStorage {
         })
     }
 
+    #[cfg(test)]
     pub fn read_audio(&self, transcription_id: i64) -> Option<Vec<u8>> {
         let path = self.audio_path(transcription_id)?;
         fs::read(&path)
@@ -271,18 +273,6 @@ pub struct RetentionSettings {
     pub audio_retention_days: u32,
     /// Days to keep transcripts; 0 keeps them forever.
     pub transcript_retention_days: u32,
-    /// The "keep local history" switch.
-    pub data_retention_enabled: bool,
-}
-
-impl Default for RetentionSettings {
-    fn default() -> Self {
-        Self {
-            audio_retention_days: 30,
-            transcript_retention_days: 0,
-            data_retention_enabled: true,
-        }
-    }
 }
 
 impl From<&Settings> for RetentionSettings {
@@ -290,42 +280,8 @@ impl From<&Settings> for RetentionSettings {
         Self {
             audio_retention_days: settings.audio_retention_days,
             transcript_retention_days: settings.transcript_retention_days,
-            data_retention_enabled: settings.data_retention_enabled,
         }
     }
-}
-
-/// A possibly partial or invalid retention update (e.g. from a settings form).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct RetentionUpdate {
-    pub audio_retention_days: Option<i64>,
-    pub transcript_retention_days: Option<i64>,
-    pub data_retention_enabled: Option<bool>,
-}
-
-fn to_days(value: Option<i64>, fallback: u32) -> u32 {
-    value
-        .and_then(|days| u32::try_from(days).ok())
-        .unwrap_or(fallback)
-}
-
-/// Merges an update, keeping current values for missing or negative ones.
-/// Returns whether anything changed, so callers only sweep on real changes.
-pub fn apply_retention_settings(
-    current: RetentionSettings,
-    incoming: RetentionUpdate,
-) -> (bool, RetentionSettings) {
-    let settings = RetentionSettings {
-        audio_retention_days: to_days(incoming.audio_retention_days, current.audio_retention_days),
-        transcript_retention_days: to_days(
-            incoming.transcript_retention_days,
-            current.transcript_retention_days,
-        ),
-        data_retention_enabled: incoming
-            .data_retention_enabled
-            .unwrap_or(current.data_retention_enabled),
-    };
-    (settings != current, settings)
 }
 
 /// What a retention sweep removed, so the caller can refresh views.
@@ -514,7 +470,6 @@ mod tests {
             RetentionSettings {
                 audio_retention_days: 0,
                 transcript_retention_days: 0,
-                data_retention_enabled: true,
             },
         );
         assert_eq!(disabled, RetentionCleanupReport::default());
@@ -526,7 +481,6 @@ mod tests {
             RetentionSettings {
                 audio_retention_days: 30,
                 transcript_retention_days: 1,
-                data_retention_enabled: true,
             },
         );
         assert_eq!(report.deleted_transcription_ids, [old.id]);
@@ -564,78 +518,5 @@ mod tests {
                 .unwrap()
                 .has_audio
         );
-    }
-
-    // Retention settings
-
-    #[test]
-    fn reports_a_change_when_a_period_is_shortened() {
-        let (changed, settings) = apply_retention_settings(
-            RetentionSettings::default(),
-            RetentionUpdate {
-                audio_retention_days: Some(1),
-                transcript_retention_days: Some(1),
-                data_retention_enabled: None,
-            },
-        );
-        assert!(changed);
-        assert_eq!(
-            settings,
-            RetentionSettings {
-                audio_retention_days: 1,
-                transcript_retention_days: 1,
-                data_retention_enabled: true
-            }
-        );
-    }
-
-    #[test]
-    fn is_idempotent_when_values_are_unchanged() {
-        let (changed, _) = apply_retention_settings(
-            RetentionSettings::default(),
-            RetentionUpdate {
-                audio_retention_days: Some(30),
-                transcript_retention_days: Some(0),
-                data_retention_enabled: None,
-            },
-        );
-        assert!(!changed);
-    }
-
-    #[test]
-    fn keeps_current_values_for_missing_or_unusable_input() {
-        let current = RetentionSettings {
-            audio_retention_days: 7,
-            transcript_retention_days: 1,
-            data_retention_enabled: true,
-        };
-        for incoming in [
-            RetentionUpdate::default(),
-            RetentionUpdate {
-                audio_retention_days: None,
-                transcript_retention_days: Some(-5),
-                ..Default::default()
-            },
-        ] {
-            assert_eq!(
-                apply_retention_settings(current, incoming),
-                (false, current)
-            );
-        }
-    }
-
-    #[test]
-    fn carries_the_history_switch() {
-        let (changed, settings) = apply_retention_settings(
-            RetentionSettings::default(),
-            RetentionUpdate {
-                data_retention_enabled: Some(false),
-                ..Default::default()
-            },
-        );
-        assert!(changed);
-        assert!(!settings.data_retention_enabled);
-        let from_settings = RetentionSettings::from(&Settings::default());
-        assert_eq!(from_settings, RetentionSettings::default());
     }
 }

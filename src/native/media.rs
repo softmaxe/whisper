@@ -119,12 +119,6 @@ impl MediaPlayer {
         self.resume_locked(&mut state)
     }
 
-    /// Posts a play/pause media key.
-    pub fn toggle_media(&self) -> bool {
-        let _state = lock(&self.state);
-        self.send_media_key()
-    }
-
     fn run_adapter(&self, args: &[&str]) -> Option<RunOutput> {
         let paths = (self.hooks.adapter)()?;
         let script = paths.script.display().to_string();

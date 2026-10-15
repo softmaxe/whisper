@@ -7,7 +7,7 @@ use gpui_kit::*;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-use whisper::i18n::t;
+use crate::i18n::t;
 
 use crate::app_state::{AppEvent, AppState};
 use crate::dictation::Dictation;
@@ -99,13 +99,13 @@ pub fn init(cx: &mut App) {
                 TOGGLE => Dictation::global(cx).update(cx, |d, cx| d.toggle_listening(cx)),
                 PANEL => {
                     if control_panel_visible(cx) {
-                        crate::close_control_panel(cx);
+                        crate::app::close_control_panel(cx);
                     } else {
-                        crate::show_control_panel(cx);
+                        crate::app::show_control_panel(cx);
                     }
                     sync(cx);
                 }
-                QUIT => cx.dispatch_action(&crate::Quit),
+                QUIT => cx.dispatch_action(&crate::app::Quit),
                 _ => {}
             });
         }

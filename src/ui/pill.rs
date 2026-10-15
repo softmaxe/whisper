@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use whisper::i18n::t;
-use whisper::settings::PanelStartPosition;
+use crate::i18n::t;
+use crate::settings::PanelStartPosition;
 
 use crate::app_state::{AppState, DictationSnapshot};
 use crate::backend;
@@ -299,7 +299,7 @@ impl PillView {
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = Self::snapshot(cx);
         let active = snapshot.is_active();
-        let processing = snapshot.is_processing || snapshot.is_stopping;
+        let processing = snapshot.is_processing;
         if active && !self.was_active {
             self.finishing_until = None;
             self.lanes = [0.; BARS];
@@ -506,7 +506,7 @@ impl PillView {
                     .collect::<Vec<_>>()
                     .join(", ");
                 self.toasts.push(PillToast {
-                    title: whisper::i18n::t_with("app.toasts.addedToDict", &[("words", &list)]),
+                    title: crate::i18n::t_with("app.toasts.addedToDict", &[("words", &list)]),
                     description: None,
                     destructive: false,
                     success: true,
@@ -608,7 +608,7 @@ impl PillView {
         let finishing = !snapshot.is_active();
         let motion = if finishing {
             None
-        } else if snapshot.is_processing || snapshot.is_stopping {
+        } else if snapshot.is_processing {
             Some(Motion::Wave)
         } else if snapshot.is_recording {
             Some(Motion::Live)
@@ -636,7 +636,7 @@ impl PillView {
                     .bg(hsla(0., 0., 1., opacity[i] * motion_fx.bars)),
             );
         }
-        let processing = snapshot.is_processing || snapshot.is_stopping;
+        let processing = snapshot.is_processing;
         let check = motion_fx.check.map(|(scale, alpha)| {
             div()
                 .absolute()

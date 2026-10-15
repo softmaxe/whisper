@@ -8,14 +8,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-pub use crate::settings::DEFAULT_HOTKEY;
+use crate::settings::DEFAULT_HOTKEY;
 
 const HOTKEY_LIST_SEPARATOR: char = ',';
-
-/// The default hotkey: the Globe key (Fn on modern Macs).
-pub fn get_default_hotkey() -> &'static str {
-    DEFAULT_HOTKEY
-}
 
 pub fn is_globe_like_hotkey(hotkey: &str) -> bool {
     hotkey == "GLOBE" || hotkey == "Fn"
@@ -80,21 +75,6 @@ fn format_side_modifier_part(part: &str) -> Option<String> {
     Some(format!("{} {}", &caps[1], format_modifier_part(key)))
 }
 
-/// Side-qualified token for a modifier `KeyboardEvent.code`-style name
-/// ("AltRight" → "RightOption"); `None` for codes without a side.
-pub fn sided_modifier_token(code: &str) -> Option<String> {
-    let (key, side) = ["Control", "Alt", "Shift", "Meta"].iter().find_map(|key| {
-        let rest = code.strip_prefix(key)?;
-        matches!(rest, "Left" | "Right").then_some((*key, rest))
-    })?;
-    Some(match key {
-        "Control" => format!("{side}Control"),
-        "Shift" => format!("{side}Shift"),
-        "Alt" => format!("{side}Option"),
-        _ => format!("{side}Command"),
-    })
-}
-
 fn format_modifier_part(part: &str) -> &str {
     match part {
         "CommandOrControl" | "Command" | "Cmd" | "Super" | "Meta" => "Cmd",
@@ -111,22 +91,9 @@ fn format_modifier_part(part: &str) -> &str {
 pub fn format_hotkey_label(hotkey: Option<&str>) -> String {
     let resolved = match hotkey {
         Some(h) if !h.trim().is_empty() => h,
-        _ => get_default_hotkey(),
+        _ => DEFAULT_HOTKEY,
     };
     format_hotkey_display(resolved)
-}
-
-/// Label for a comma-separated hotkey list: entries joined with " / ";
-/// empty lists fall back like [`format_hotkey_label`].
-pub fn format_hotkey_list_label(value: Option<&str>) -> String {
-    let list = parse_hotkey_list(value.unwrap_or(""));
-    if list.is_empty() {
-        return format_hotkey_label(value);
-    }
-    list.iter()
-        .map(|h| format_hotkey_label(Some(h)))
-        .collect::<Vec<_>>()
-        .join(" / ")
 }
 
 /// Like [`format_hotkey_label`], but an empty hotkey formats as "".
@@ -155,48 +122,10 @@ pub fn format_hotkey_display(hotkey: &str) -> String {
         .join("+")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct ParsedHotkey {
-    pub modifiers: Vec<String>,
-    pub base_key: String,
-}
-
-/// Split "CommandOrControl+Shift+K" into modifiers and the base key.
-pub fn parse_hotkey(hotkey: &str) -> ParsedHotkey {
-    if !hotkey.contains('+') {
-        return ParsedHotkey {
-            modifiers: Vec::new(),
-            base_key: hotkey.to_string(),
-        };
-    }
-    let mut parts: Vec<String> = hotkey.split('+').map(str::to_string).collect();
-    let base_key = parts.pop().unwrap_or_default();
-    ParsedHotkey {
-        modifiers: parts,
-        base_key,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Capture policy
-
-/// Modifier-only captures other than a right-side key must be held this long,
-/// so a modifier pressed on the way to a chord isn't captured on its own.
-pub const MODIFIER_ONLY_HOLD_THRESHOLD_MS: u64 = 200;
-
-pub fn has_met_modifier_only_hold_threshold(hold_duration_ms: u64) -> bool {
-    hold_duration_ms >= MODIFIER_ONLY_HOLD_THRESHOLD_MS
-}
-
-pub fn should_accept_modifier_only_capture(hotkey: &str, hold_duration_ms: u64) -> bool {
-    hotkey.starts_with("Right") || has_met_modifier_only_hold_threshold(hold_duration_ms)
-}
-
 // ---------------------------------------------------------------------------
 // Validation
 
-/// Why a hotkey was rejected. `code()` returns the error code (two cases
-/// have none); `message_key()` is an i18n key for the UI and
+/// Why a hotkey was rejected. `message_key()` is an i18n key for the UI and
 /// `default_message()` the English text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyValidationError {
@@ -213,20 +142,6 @@ pub enum HotkeyValidationError {
 }
 
 impl HotkeyValidationError {
-    pub fn code(self) -> Option<&'static str> {
-        Some(match self {
-            Self::Empty | Self::MouseButtonCombination => return None,
-            Self::FnCombinationUnsupported => "FN_COMBINATION_UNSUPPORTED",
-            Self::TooManyKeys => "TOO_MANY_KEYS",
-            Self::LeftRightMix => "LEFT_RIGHT_MIX",
-            Self::NoModifierOrSpecial => "NO_MODIFIER_OR_SPECIAL",
-            Self::ModifierOnlyUnsupported => "MODIFIER_ONLY_UNSUPPORTED",
-            Self::LeftModifierOnly => "LEFT_MODIFIER_ONLY",
-            Self::Duplicate => "DUPLICATE",
-            Self::Reserved => "RESERVED",
-        })
-    }
-
     pub fn message_key(self) -> &'static str {
         match self {
             Self::Empty => "hotkey.validation.empty",
@@ -755,59 +670,6 @@ mod tests {
     fn labels_fall_back_to_default() {
         assert_eq!(format_hotkey_label(None), "Globe/Fn");
         assert_eq!(format_hotkey_label(Some(" ")), "Globe/Fn");
-        assert_eq!(
-            format_hotkey_list_label(Some("GLOBE,Alt+R")),
-            "Globe/Fn / Option+R"
-        );
-        assert_eq!(format_hotkey_list_label(Some("")), "Globe/Fn");
-    }
-
-    #[test]
-    fn sided_modifier_tokens() {
-        assert_eq!(
-            sided_modifier_token("AltRight").as_deref(),
-            Some("RightOption")
-        );
-        assert_eq!(
-            sided_modifier_token("AltLeft").as_deref(),
-            Some("LeftOption")
-        );
-        assert_eq!(
-            sided_modifier_token("MetaLeft").as_deref(),
-            Some("LeftCommand")
-        );
-        assert_eq!(
-            sided_modifier_token("ShiftRight").as_deref(),
-            Some("RightShift")
-        );
-        assert_eq!(
-            sided_modifier_token("ControlLeft").as_deref(),
-            Some("LeftControl")
-        );
-        assert_eq!(sided_modifier_token("CapsLock"), None);
-        assert_eq!(sided_modifier_token("KeyK"), None);
-    }
-
-    #[test]
-    fn parse_hotkey_splits_modifiers() {
-        let p = parse_hotkey("CommandOrControl+Shift+K");
-        assert_eq!(p.modifiers, list(&["CommandOrControl", "Shift"]));
-        assert_eq!(p.base_key, "K");
-        assert_eq!(
-            parse_hotkey("Alt+R"),
-            ParsedHotkey {
-                modifiers: list(&["Alt"]),
-                base_key: "R".into()
-            }
-        );
-        assert_eq!(
-            parse_hotkey("F8"),
-            ParsedHotkey {
-                modifiers: vec![],
-                base_key: "F8".into()
-            }
-        );
-        assert_eq!(parse_hotkey(""), ParsedHotkey::default());
     }
 
     // List parsing
@@ -908,22 +770,6 @@ mod tests {
         );
     }
 
-    // Capture policy
-
-    #[test]
-    fn capture_policy() {
-        assert!(should_accept_modifier_only_capture("RightOption", 0));
-        assert!(should_accept_modifier_only_capture("RightControl", 50));
-        assert!(!should_accept_modifier_only_capture(
-            "Control+Alt",
-            MODIFIER_ONLY_HOLD_THRESHOLD_MS - 1
-        ));
-        assert!(should_accept_modifier_only_capture(
-            "Control+Alt",
-            MODIFIER_ONLY_HOLD_THRESHOLD_MS
-        ));
-    }
-
     // Validation
 
     #[test]
@@ -955,12 +801,6 @@ mod tests {
         assert_eq!(v("F8,Fn+A"), Err(E::FnCombinationUnsupported));
         assert_eq!(v("Command+,"), Err(E::Reserved));
         assert_eq!(v("F25"), Err(E::NoModifierOrSpecial));
-    }
-
-    #[test]
-    fn error_codes() {
-        assert_eq!(E::TooManyKeys.code(), Some("TOO_MANY_KEYS"));
-        assert_eq!(E::Empty.code(), None);
     }
 
     #[test]
