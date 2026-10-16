@@ -1,10 +1,14 @@
 # Whisper
 
+English | [简体中文](README.zh-CN.md)
+
 A native macOS dictation app built with Rust and [GPUI](https://www.gpui.rs).
 Press a shortcut, speak, and Whisper transcribes your voice with your own
 OpenAI-compatible speech server, optionally cleans up the text with a
 chat-completions model, and pastes the result into whatever app you are
 typing in.
+
+![Press the shortcut, speak, and the cleaned-up text is pasted where you type](docs/images/en/flow.png)
 
 ## Features
 
@@ -30,6 +34,16 @@ typing in.
   dark or automatic themes.
 
 Data lives in `~/Library/Application Support/com.softmaxe.whisper`.
+
+## Screenshots
+
+The screenshots use sample data.
+
+| History | Insights |
+| --- | --- |
+| ![History grouped by day, with search](docs/images/en/home.png) | ![Words spoken, words per minute, streaks and a six-month activity heatmap](docs/images/en/insights.png) |
+| **Dictionary** | **Speech-to-text settings** |
+| ![Dictionary words used as spelling hints](docs/images/en/dictionary.png) | ![Self-hosted speech server URL and model](docs/images/en/settings.png) |
 
 ## Install
 
