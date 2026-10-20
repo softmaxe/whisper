@@ -12,6 +12,7 @@ mod audio_storage;
 mod backend;
 mod db;
 mod dictation;
+mod history;
 mod i18n;
 mod macos;
 mod menu;

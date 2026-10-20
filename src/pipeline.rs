@@ -1,4 +1,6 @@
-//! The processing half of a Dictation: one recording in, final text out.
+//! The processing half of a Dictation: one recording in, the text to deliver
+//! out. Live dictation and History retry both go through [`run`], so they
+//! produce the same text.
 //!
 //! Recording, delivery and persistence stay with the caller; this module only
 //! talks to the servers, so it can run on the Tokio runtime and be tested end
@@ -16,7 +18,7 @@ use crate::text::chinese_script::{
 use crate::text::echo_filter::matches_dictionary_prompt;
 use crate::text::prompt_cap::{WHISPER_PROMPT_CHARS, fit_dictionary_prompt};
 use crate::text::snippets::{
-    Snippet, get_dictionary_hint_words, get_prioritized_dictionary_hint_words,
+    Snippet, expand_snippets, get_dictionary_hint_words, get_prioritized_dictionary_hint_words,
 };
 
 pub const SELF_HOSTED_SOURCE: &str = "self-hosted";
@@ -44,20 +46,30 @@ pub struct CleanupFailure {
     pub message_key: Option<String>,
 }
 
+/// The text a Dictation delivers, and what it was made from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Transcript {
+    /// Cleaned, script-converted and with Snippets expanded: what is pasted
+    /// and saved.
+    pub text: String,
+    /// `text` before Snippet expansion: the words actually spoken, so saved
+    /// Snippet text is not counted as Dictionary usage.
+    pub spoken_text: String,
+    /// The server's transcript before cleanup.
+    pub raw_text: String,
+    /// "self-hosted" or "self-hosted-reasoned", as stored with the row.
+    pub source: String,
+    pub model: Option<String>,
+    pub cleanup_failure: Option<CleanupFailure>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipelineOutcome {
     /// The server heard nothing usable, or echoed the dictionary prompt.
     NoAudio {
         dictionary_echo: bool,
     },
-    Transcribed {
-        text: String,
-        raw_text: String,
-        /// "self-hosted" or "self-hosted-reasoned", as stored with the row.
-        source: String,
-        model: Option<String>,
-        cleanup_failure: Option<CleanupFailure>,
-    },
+    Transcribed(Transcript),
     Failed {
         message: String,
         code: Option<String>,
@@ -161,7 +173,9 @@ pub fn finalize_script(text: &str, settings: &Settings) -> String {
     apply_chinese_script(text, target)
 }
 
-/// Transcribes `input.audio`, filters dictionary echoes, then cleans up.
+/// Transcribes `input.audio`, filters dictionary echoes, cleans up, converts
+/// the Chinese script and expands Snippets. Cancelling `cancel` aborts only
+/// this run.
 pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOutcome {
     let route = match transcription::resolve_transcription_route(&input.settings) {
         Ok(route) => route,
@@ -206,9 +220,15 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let text = finalize_script(&cleaned, &input.settings);
-    PipelineOutcome::Transcribed {
-        text,
+    let spoken_text = finalize_script(&cleaned, &input.settings);
+    if spoken_text.trim().is_empty() {
+        return PipelineOutcome::NoAudio {
+            dictionary_echo: false,
+        };
+    }
+    PipelineOutcome::Transcribed(Transcript {
+        text: expand_snippets(&spoken_text, &input.snippets),
+        spoken_text,
         raw_text: raw,
         source: if reasoned {
             format!("{SELF_HOSTED_SOURCE}-reasoned")
@@ -217,12 +237,15 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         },
         model: route.model.clone(),
         cleanup_failure,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::test_server::{MockServer, Reply, run as run_test};
+    use serde_json::json;
+    use std::time::Duration;
 
     fn input(dictionary: &[&str]) -> PipelineInput {
         PipelineInput {
@@ -270,6 +293,116 @@ mod tests {
         assert_eq!(finalize_script("軟體", &s), "軟體");
         s.preferred_language = "zh-CN".into();
         assert_eq!(finalize_script("軟體", &s), "软件");
+    }
+
+    fn asr(text: &'static str) -> MockServer {
+        MockServer::start(move |req| {
+            if req.method == "HEAD" {
+                Reply::status(405)
+            } else {
+                Reply::json(200, &json!({ "text": text }).to_string())
+            }
+        })
+    }
+
+    fn llm(reply: Reply) -> MockServer {
+        MockServer::start(move |_| reply.clone())
+    }
+
+    fn completion(content: &str) -> Reply {
+        Reply::json(
+            200,
+            &json!({"choices": [{"message": {"content": content}, "finish_reason": "stop"}]})
+                .to_string(),
+        )
+    }
+
+    fn served(asr: &MockServer, llm: Option<&MockServer>) -> PipelineInput {
+        let mut i = input(&[]);
+        i.settings.remote_transcription_url = asr.url("/v1");
+        if let Some(llm) = llm {
+            i.settings.cleanup_remote_url = llm.url("/v1");
+            i.settings.cleanup_model = "m".into();
+        }
+        i
+    }
+
+    fn transcribed(outcome: PipelineOutcome) -> Transcript {
+        match outcome {
+            PipelineOutcome::Transcribed(t) => t,
+            other => panic!("unexpected outcome {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delivers_cleaned_script_converted_text_with_snippets_expanded() {
+        let asr = asr("um the 軟體 sig");
+        let llm = llm(completion("The 軟體 sig."));
+        let mut i = served(&asr, Some(&llm));
+        i.settings.preferred_language = "zh-CN".into();
+        i.snippets = vec![Snippet {
+            trigger: "sig".into(),
+            replacement: "Best regards".into(),
+        }];
+        let t = transcribed(run_test(run(i, CancellationToken::new())));
+        assert_eq!(t.raw_text, "um the 軟體 sig");
+        assert_eq!(t.spoken_text, "The 软件 sig.");
+        assert_eq!(t.text, "The 软件 Best regards.");
+        assert_eq!(t.source, "self-hosted-reasoned");
+        assert_eq!(t.cleanup_failure, None);
+    }
+
+    #[test]
+    fn cleanup_failure_still_delivers_the_raw_transcript() {
+        let asr = asr("hello there");
+        let llm = llm(Reply::json(401, r#"{"error":"bad key"}"#));
+        let t = transcribed(run_test(run(
+            served(&asr, Some(&llm)),
+            CancellationToken::new(),
+        )));
+        assert_eq!(t.text, "hello there");
+        assert_eq!(t.cleanup_failure.unwrap().message, "bad key");
+        assert_eq!(t.source, "self-hosted-reasoned");
+    }
+
+    #[test]
+    fn without_cleanup_the_source_is_plain_self_hosted() {
+        let asr = asr("hello there");
+        let t = transcribed(run_test(run(served(&asr, None), CancellationToken::new())));
+        assert_eq!(t.text, "hello there");
+        assert_eq!(t.source, SELF_HOSTED_SOURCE);
+    }
+
+    #[test]
+    fn dictionary_echo_is_no_audio() {
+        let asr = asr("Supabase, Tauri");
+        let mut i = served(&asr, None);
+        i.dictionary = vec!["Supabase".into(), "Tauri".into()];
+        assert_eq!(
+            run_test(run(i, CancellationToken::new())),
+            PipelineOutcome::NoAudio {
+                dictionary_echo: true
+            }
+        );
+    }
+
+    #[test]
+    fn cancelling_during_cleanup_stops_the_run() {
+        let asr = asr("hello there");
+        let llm = llm(completion("late").delayed(Duration::from_secs(3)));
+        let input = served(&asr, Some(&llm));
+        let started = std::time::Instant::now();
+        let outcome = run_test(async move {
+            let cancel = CancellationToken::new();
+            let canceller = cancel.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                canceller.cancel();
+            });
+            run(input, cancel).await
+        });
+        assert_eq!(outcome, PipelineOutcome::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     /// Live check against real servers (`WHISPER_LIVE_{ASR,LLM}_{URL,MODEL}`):
@@ -321,17 +454,11 @@ mod tests {
         i.settings.cleanup_model = env("WHISPER_LIVE_LLM_MODEL");
         let outcome = crate::services::runtime::block_on(run(i, CancellationToken::new()));
         match outcome {
-            PipelineOutcome::Transcribed {
-                text,
-                raw_text,
-                source,
-                cleanup_failure,
-                ..
-            } => {
-                println!("raw: {raw_text}\nclean: {text}");
-                assert!(cleanup_failure.is_none(), "{cleanup_failure:?}");
-                assert_eq!(source, "self-hosted-reasoned");
-                assert!(text.to_lowercase().contains("friday"));
+            PipelineOutcome::Transcribed(t) => {
+                println!("raw: {}\nclean: {}", t.raw_text, t.text);
+                assert!(t.cleanup_failure.is_none(), "{:?}", t.cleanup_failure);
+                assert_eq!(t.source, "self-hosted-reasoned");
+                assert!(t.text.to_lowercase().contains("friday"));
             }
             other => panic!("unexpected outcome {other:?}"),
         }

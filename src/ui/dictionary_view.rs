@@ -63,12 +63,11 @@ pub struct DictionaryView {
 }
 
 fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
-    let state = AppState::global(cx);
-    let db = state.read(cx).db.clone();
-    if let Err(err) = db.apply_dictionary_changes(&add, &remove, DictionarySource::Manual) {
-        log::warn!("failed to update the dictionary: {err}");
-    }
-    state.update(cx, |s, cx| s.reload_dictionary(cx));
+    AppState::global(cx).update(cx, |s, cx| {
+        if let Err(err) = s.change_dictionary(&add, &remove, DictionarySource::Manual, cx) {
+            log::warn!("failed to update the dictionary: {err}");
+        }
+    });
 }
 
 fn agent_name() -> String {

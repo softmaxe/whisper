@@ -2297,9 +2297,7 @@ impl SettingsModal {
                                     .h(28.)
                                     .disabled(files == 0)
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        let db = AppState::global(cx).read(cx).db.clone();
-                                        backend::delete_all_audio(&db);
-                                        let _ = AppState::global(cx).update(cx, |s, cx| s.load_history(s.include_discarded, cx));
+                                        AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
                                         this.storage_usage = (0, 0);
                                         show_toast(Toast::new(t("settings.privacy.clearAllAudio")), cx);
                                         cx.notify();

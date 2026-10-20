@@ -112,11 +112,6 @@ pub fn audio_storage_usage() -> (usize, u64) {
     (usage.file_count, usage.total_bytes)
 }
 
-/// Deletes every stored recording and clears the History rows' audio flags.
-pub fn delete_all_audio(db: &crate::db::Database) {
-    crate::audio_storage::AudioStorage::default().delete_all_audio_and_flags(db);
-}
-
 pub fn cleanup_api_key() -> String {
     crate::secrets::get_cleanup_api_key()
         .ok()
@@ -432,7 +427,8 @@ pub fn paste_text(
 }
 
 /// Watches the target field after an automatic paste and adds learned
-/// corrections to the Dictionary (auto-learn). Resolves to the words added.
+/// corrections to the Dictionary (auto-learn). Resolves to the words added,
+/// or nothing when a later paste replaces this one.
 pub fn monitor_corrections(
     text: String,
     target_pid: Option<i32>,
@@ -446,37 +442,21 @@ pub fn monitor_corrections(
             return Vec::new();
         };
         cx.update(|cx| {
-            let state = crate::app_state::AppState::global(cx);
-            let (db, dictionary) = {
-                let s = state.read(cx);
-                (s.db.clone(), s.dictionary.clone())
-            };
-            let learned = crate::text::correction_learner::extract_corrections(
-                &edit.original_text,
-                &edit.edited_text,
-                &dictionary,
-            );
-            if learned.is_empty() {
-                return Vec::new();
-            }
-            let empty: [&str; 0] = [];
-            if db
-                .apply_dictionary_changes(&learned, &empty, crate::db::DictionarySource::Learned)
-                .is_err()
-            {
-                return Vec::new();
-            }
-            state.update(cx, |s, cx| s.reload_dictionary(cx));
-            learned
+            crate::app_state::AppState::global(cx).update(cx, |s, cx| {
+                s.learn_corrections(&edit.original_text, &edit.edited_text, cx)
+            })
         })
     })
 }
 
 /// Removes words auto-learn just added (the toast's Undo).
 pub fn undo_learned_words(words: &[String], cx: &mut gpui_kit::App) {
-    let state = crate::app_state::AppState::global(cx);
-    let db = state.read(cx).db.clone();
-    let empty: [&str; 0] = [];
-    let _ = db.apply_dictionary_changes(&empty, words, crate::db::DictionarySource::Learned);
-    state.update(cx, |s, cx| s.reload_dictionary(cx));
+    let none: [&str; 0] = [];
+    crate::app_state::AppState::global(cx).update(cx, |s, cx| {
+        if let Err(err) =
+            s.change_dictionary(&none, words, crate::db::DictionarySource::Learned, cx)
+        {
+            log::warn!("failed to undo learned words: {err}");
+        }
+    });
 }
