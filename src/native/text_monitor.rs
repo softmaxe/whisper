@@ -163,10 +163,14 @@ impl TextEditMonitor {
         }
     }
 
-    /// Debounced `(original, edited)` pairs from monitoring runs.
+    /// Debounced `(original, edited)` pairs from monitoring runs. Each paste
+    /// supersedes the last, so a new subscriber replaces the previous one,
+    /// whose receiver closes.
     pub fn subscribe(&self) -> async_channel::Receiver<TextEdit> {
         let (tx, rx) = async_channel::unbounded();
-        lock(&self.inner.subscribers).push(tx);
+        let mut subscribers = lock(&self.inner.subscribers);
+        subscribers.clear();
+        subscribers.push(tx);
         rx
     }
 
@@ -921,5 +925,17 @@ mod tests {
             "only the latest edit is reported"
         );
         monitor.stop_monitoring();
+    }
+
+    #[test]
+    fn a_new_subscriber_closes_the_previous_one() {
+        let monitor = TextEditMonitor::build(
+            hooks(sh("sleep 1"), Arc::new(|| None)),
+            FakeTimers::new(),
+            Duration::from_millis(1500),
+        );
+        let first = monitor.subscribe();
+        let _second = monitor.subscribe();
+        assert!(first.is_closed());
     }
 }
