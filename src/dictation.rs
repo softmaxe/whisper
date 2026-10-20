@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
+use futures::future::Shared;
 use gpui_kit::*;
 use tokio_util::sync::CancellationToken;
 
@@ -31,6 +33,10 @@ use crate::backend;
 
 /// Recordings shorter than this are not kept as discarded. See #907.
 const MIN_DISCARDED_DURATION: Duration = Duration::from_secs(1);
+
+/// The Target app's pid, looked up off the main thread: the lookup can wait
+/// on a helper process.
+type TargetPid = Shared<Task<Option<i32>>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -98,7 +104,7 @@ pub struct Dictation {
     generation: u64,
     start_lock: bool,
     cancel: Option<CancellationToken>,
-    target_pid: Option<i32>,
+    target_pid: Option<TargetPid>,
     started_at: Option<(Instant, DateTime<Utc>)>,
     effects_held: bool,
     /// Whether this recording paused media, so the matching resume does not
@@ -218,6 +224,12 @@ impl Dictation {
         }
     }
 
+    /// Starts looking up the Target app: the frontmost app at the hotkey press.
+    fn capture_target(&mut self, cx: &mut Context<Self>) {
+        let lookup = cx.background_spawn(async { backend::capture_target_pid() });
+        self.target_pid = Some(lookup.shared());
+    }
+
     // ---- Commands ----------------------------------------------------------------------------
 
     /// Opens the microphone ahead of a likely start (Hold mode key-down).
@@ -227,7 +239,7 @@ impl Dictation {
         }
         let device = backend::preferred_input_device(&AppState::settings(cx));
         self.recorder.prepare(device.as_deref());
-        self.target_pid = backend::capture_target_pid();
+        self.capture_target(cx);
         self.set_phase(Phase::Preparing, cx);
         cx.emit(DictationNotice::DismissError);
     }
@@ -271,7 +283,7 @@ impl Dictation {
         // The pill window never takes focus, so the frontmost app is still the
         // user's editing target. A hotkey press already captured it.
         if self.phase != Phase::Preparing || self.target_pid.is_none() {
-            self.target_pid = backend::capture_target_pid();
+            self.capture_target(cx);
         }
         self.set_phase(Phase::Preparing, cx);
         cx.emit(DictationNotice::DismissError);
@@ -554,9 +566,13 @@ impl Dictation {
             });
         } else if settings.auto_paste_enabled {
             let generation = self.generation;
-            let paste = backend::paste_text(text.clone(), self.target_pid, restore_clipboard);
+            let target = self.target_pid.clone();
             cx.spawn(async move |this, cx| {
-                let pasted = paste.await;
+                let target_pid = match target {
+                    Some(target) => target.await,
+                    None => None,
+                };
+                let pasted = backend::paste_text(text.clone(), target_pid, restore_clipboard).await;
                 let _ = this.update(cx, |this, cx| {
                     if generation != this.generation {
                         return;
@@ -582,7 +598,7 @@ impl Dictation {
                         let s = AppState::settings(cx);
                         if s.auto_learn_corrections {
                             let learned =
-                                backend::monitor_corrections(text.clone(), this.target_pid, cx);
+                                backend::monitor_corrections(text.clone(), target_pid, cx);
                             cx.spawn(async move |this, cx| {
                                 let words = learned.await;
                                 if !words.is_empty() {
