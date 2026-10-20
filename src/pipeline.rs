@@ -117,7 +117,11 @@ pub fn cleanup_system_prompt(input: &PipelineInput) -> String {
 
 /// Cleans a transcript. A failure or blank reply keeps the transcript and
 /// reports why.
-pub async fn clean_up(text: &str, input: &PipelineInput) -> (String, Option<CleanupFailure>) {
+pub async fn clean_up(
+    text: &str,
+    input: &PipelineInput,
+    cancel: &CancellationToken,
+) -> (String, Option<CleanupFailure>) {
     let normalized = text.trim();
     if normalized.is_empty() || !cleanup_enabled(&input.settings) {
         return (normalized.to_string(), None);
@@ -133,7 +137,7 @@ pub async fn clean_up(text: &str, input: &PipelineInput) -> (String, Option<Clea
         &cleanup_system_prompt(input),
         s.cleanup_disable_thinking,
     );
-    match cleanup::process_text(normalized, &config).await {
+    match cleanup::process_text(normalized, &config, cancel).await {
         Ok(result) if !result.trim().is_empty() => (result, None),
         Ok(_) => (normalized.to_string(), None),
         Err(err) => (normalized.to_string(), Some(cleanup_failure(&err))),
@@ -198,7 +202,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         return PipelineOutcome::Cancelled;
     }
     let reasoned = cleanup_enabled(&input.settings);
-    let (cleaned, cleanup_failure) = clean_up(&raw, &input).await;
+    let (cleaned, cleanup_failure) = clean_up(&raw, &input, &cancel).await;
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }

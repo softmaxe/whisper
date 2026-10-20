@@ -373,7 +373,6 @@ impl Dictation {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        crate::services::cleanup::cancel_all();
         self.set_phase(Phase::Idle, cx);
     }
 

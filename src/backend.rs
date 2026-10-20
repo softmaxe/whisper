@@ -230,7 +230,8 @@ pub fn run_cleanup_test(
     };
     let text = prompts::wrap_cleanup_transcript(&input);
     let handle = crate::services::runtime::spawn(async move {
-        crate::services::cleanup::process_text(&text, &config).await
+        let cancel = tokio_util::sync::CancellationToken::new();
+        crate::services::cleanup::process_text(&text, &config, &cancel).await
     });
     async move {
         match handle.await {
