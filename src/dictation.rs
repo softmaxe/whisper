@@ -101,6 +101,9 @@ pub struct Dictation {
     target_pid: Option<i32>,
     started_at: Option<(Instant, DateTime<Utc>)>,
     effects_held: bool,
+    /// Whether this recording paused media, so the matching resume does not
+    /// depend on a setting changed mid-recording.
+    media_paused: bool,
     push_force_stopped: bool,
     status: StatusMirror,
     _device_events: Task<()>,
@@ -139,6 +142,7 @@ impl Dictation {
                 target_pid: None,
                 started_at: None,
                 effects_held: false,
+                media_paused: false,
                 push_force_stopped: false,
                 status: StatusMirror::default(),
                 _device_events: device_events,
@@ -171,7 +175,7 @@ impl Dictation {
             backend::clear_hotkey_start_request();
         }
         if previous == Phase::Recording && phase != Phase::Recording {
-            self.release_recording_effects(cx);
+            self.release_recording_effects();
         }
         self.publish(cx);
     }
@@ -193,7 +197,8 @@ impl Dictation {
 
     fn hold_recording_effects(&mut self, settings: &Settings) {
         self.effects_held = true;
-        if settings.pause_media_on_dictation {
+        self.media_paused = settings.pause_media_on_dictation;
+        if self.media_paused {
             backend::pause_media();
         }
         backend::register_cancel_hotkey();
@@ -202,13 +207,13 @@ impl Dictation {
         }
     }
 
-    fn release_recording_effects(&mut self, cx: &mut Context<Self>) {
+    fn release_recording_effects(&mut self) {
         if !self.effects_held {
             return;
         }
         self.effects_held = false;
         backend::unregister_cancel_hotkey();
-        if AppState::settings(cx).pause_media_on_dictation {
+        if std::mem::take(&mut self.media_paused) {
             backend::resume_media();
         }
     }
