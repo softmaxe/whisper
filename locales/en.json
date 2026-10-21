@@ -193,14 +193,12 @@
       "holdUnavailable": "Hold-to-talk isn't available for this hotkey."
     },
     "validation": {
-      "empty": "Please enter a valid shortcut.",
       "mouseButtonCombination": "Mouse button hotkeys cannot be combined with other keys.",
       "tooManyKeys": "Shortcuts are limited to three keys.",
       "leftRightMix": "Do not mix left and right versions of the same modifier in one shortcut.",
       "noModifierOrSpecial": "Shortcuts must include a modifier or a non-alphanumeric key (like arrows, space, or function keys).",
       "modifierOnlyUnsupported": "Two-modifier shortcuts are not supported on macOS. Use a right-side modifier on its own (e.g. RightOption), or add a regular key.",
       "leftModifierOnly": "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space).",
-      "duplicate": "That shortcut is already in use.",
       "reserved": "That shortcut is reserved by your system.",
       "reservedNamed": "{{label}} is reserved by the system"
     }
