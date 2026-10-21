@@ -229,7 +229,14 @@ impl HotkeyListInput {
                     self.capture.right_held.push(modifier);
                 }
             }
-            RawKeyEvent::KeyUp(ListenerKey::RightModifier(_)) => {}
+            RawKeyEvent::KeyUp(ListenerKey::RightModifier(modifier)) => {
+                // The listener's events can trail the window's: when every
+                // modifier is already up, this press arrived after its chord
+                // was decided and must not complete the next one.
+                if !self.capture.held.iter().any(|held| *held) {
+                    self.capture.right_held.retain(|held| *held != modifier);
+                }
+            }
             RawKeyEvent::KeyDown(key @ ListenerKey::MouseButton(_)) => {
                 self.finalize(key.into(), cx);
                 return;
