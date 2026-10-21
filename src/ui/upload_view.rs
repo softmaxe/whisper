@@ -9,7 +9,6 @@ use std::time::Duration;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::db::SaveTranscriptionOptions;
 use crate::i18n::{t, t_with};
 use crate::services::upload::{
     FileTranscriptionRequest, UploadError, cancel_upload_transcription, is_supported_upload_file,
@@ -129,25 +128,14 @@ fn build_request(path: PathBuf, request_id: String, cx: &App) -> FileTranscripti
 }
 
 /// Saves an upload's raw transcript to History when retention is on.
-/// Uploads skip cleanup, Snippets and Insights.
 fn save_upload(text: &str, cx: &mut App) -> Result<Option<i64>, String> {
-    let state = AppState::global(cx);
-    if !state.read(cx).settings.data_retention_enabled {
-        return Ok(None);
-    }
-    let db = state.read(cx).db.clone();
-    let options = SaveTranscriptionOptions {
-        route_kind: Some("upload".into()),
-        ..Default::default()
-    };
-    match db.save_transcription(text, None, options) {
-        Ok(item) => {
-            let id = item.id;
-            state.update(cx, |s, cx| s.upsert_history_item(item, cx));
-            Ok(Some(id))
-        }
-        Err(err) => Err(err.to_string()),
-    }
+    AppState::global(cx)
+        .update(cx, |s, cx| {
+            s.record_history(cx, |history, settings| {
+                history.record_upload(text, settings)
+            })
+        })
+        .map_err(|err| err.to_string())
 }
 
 fn run_transcription(

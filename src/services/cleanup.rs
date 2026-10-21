@@ -6,10 +6,8 @@
 
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{Map, Value, json};
@@ -102,7 +100,7 @@ pub enum CleanupErrorKind {
     Network,
     /// The client-side deadline expired.
     Timeout,
-    /// Cancelled via `cancel_all`.
+    /// The caller cancelled the request.
     Cancelled,
     /// The reply had no usable `choices`.
     InvalidResponse,
@@ -293,192 +291,163 @@ impl Default for CleanupTuning {
     }
 }
 
-/// Cleanup client with its own cancellation generation. The app uses the
-/// global instance through [`process_text`] and [`cancel_all`].
-#[derive(Default)]
-pub struct CleanupService {
-    generation: AtomicU64,
-    token: Mutex<CancellationToken>,
-}
-
-static GLOBAL: Lazy<CleanupService> = Lazy::new(CleanupService::default);
-
-/// Cleans `text` with the global service and default deadlines.
+/// Cleans `text` with the default deadlines. Cancelling `cancel` aborts only
+/// this request; it then fails with [`CleanupErrorKind::Cancelled`].
 pub async fn process_text(
     text: &str,
     config: &CleanupRequestConfig,
+    cancel: &CancellationToken,
 ) -> Result<String, CleanupError> {
-    GLOBAL
-        .process_text_with(text, config, &CleanupTuning::default())
-        .await
+    process_text_with(text, config, &CleanupTuning::default(), cancel).await
 }
 
-/// Cancels every in-flight global cleanup request; they fail with
-/// [`CleanupErrorKind::Cancelled`].
-pub fn cancel_all() {
-    GLOBAL.cancel_all();
-}
+pub async fn process_text_with(
+    text: &str,
+    config: &CleanupRequestConfig,
+    tuning: &CleanupTuning,
+    cancel: &CancellationToken,
+) -> Result<String, CleanupError> {
+    let base = resolve_self_hosted_openai_base(&config.base_url)?;
+    let endpoint = build_api_url(&base, "/chat/completions").ok_or_else(|| {
+        CleanupError::new(CleanupErrorKind::InvalidEndpoint, HTTPS_REQUIRED_MESSAGE)
+            .with_key(HTTPS_REQUIRED_MESSAGE_KEY)
+    })?;
+    let model = match config.model.trim() {
+        "" => "default",
+        m => m,
+    };
+    let api_key = config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
+    let user_prompt = if config.wrap_transcript {
+        wrap_cleanup_transcript(text)
+    } else {
+        text.to_string()
+    };
 
-impl CleanupService {
-    pub fn cancel_all(&self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        let mut token = self.token.lock();
-        token.cancel();
-        *token = CancellationToken::new();
-    }
+    let mut body = Map::new();
+    body.insert("model".into(), json!(model));
+    body.insert(
+        "messages".into(),
+        json!([
+            { "role": "system", "content": config.system_prompt },
+            { "role": "user", "content": user_prompt },
+        ]),
+    );
+    let params = ChatParamsConfig {
+        system_prompt_override: !config.wrap_transcript,
+        temperature: config.temperature,
+        disable_thinking: config.disable_thinking,
+        require_complete_output: config.require_complete_output,
+    };
+    apply_chat_completions_params(
+        &mut body,
+        model,
+        &params,
+        config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+    );
+    log::debug!(
+        "cleanup request: endpoint={endpoint} model={model} has_api_key={}",
+        api_key.is_some()
+    );
 
-    pub async fn process_text_with(
-        &self,
-        text: &str,
-        config: &CleanupRequestConfig,
-        tuning: &CleanupTuning,
-    ) -> Result<String, CleanupError> {
-        let generation = self.generation.load(Ordering::SeqCst);
-        let cancel = self.token.lock().child_token();
-        let base = resolve_self_hosted_openai_base(&config.base_url)?;
-        let endpoint = build_api_url(&base, "/chat/completions").ok_or_else(|| {
-            CleanupError::new(CleanupErrorKind::InvalidEndpoint, HTTPS_REQUIRED_MESSAGE)
-                .with_key(HTTPS_REQUIRED_MESSAGE_KEY)
-        })?;
-        let model = match config.model.trim() {
-            "" => "default",
-            m => m,
-        };
-        let api_key = config
-            .api_key
-            .as_deref()
-            .map(str::trim)
-            .filter(|k| !k.is_empty());
-        let user_prompt = if config.wrap_transcript {
-            wrap_cleanup_transcript(text)
-        } else {
-            text.to_string()
-        };
-
-        let mut body = Map::new();
-        body.insert("model".into(), json!(model));
-        body.insert(
-            "messages".into(),
-            json!([
-                { "role": "system", "content": config.system_prompt },
-                { "role": "user", "content": user_prompt },
-            ]),
-        );
-        let params = ChatParamsConfig {
-            system_prompt_override: !config.wrap_transcript,
-            temperature: config.temperature,
-            disable_thinking: config.disable_thinking,
-            require_complete_output: config.require_complete_output,
-        };
-        apply_chat_completions_params(
-            &mut body,
-            model,
-            &params,
-            config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
-        );
-        log::debug!(
-            "cleanup request: endpoint={endpoint} model={model} has_api_key={}",
-            api_key.is_some()
-        );
-
-        // Stripped params stay stripped across retries.
-        let shared_body = Arc::new(Mutex::new(body));
-        let attempt = || {
-            let shared_body = shared_body.clone();
-            let cancel = cancel.clone();
-            let endpoint = endpoint.clone();
-            async move {
-                if cancel.is_cancelled() || self.generation.load(Ordering::SeqCst) != generation {
-                    return Err(CleanupError::cancelled());
-                }
-                let request = async {
-                    let mut body = shared_body.lock().clone();
-                    let reply = fetch_with_param_fallback(
-                        |json| post_json(&endpoint, api_key, json),
-                        &mut body,
-                        |status, stripped| {
-                            log::warn!(
-                                "cleanup param fallback: status={status} stripped={stripped:?}"
-                            );
-                        },
-                    )
-                    .await;
-                    *shared_body.lock() = body;
-                    let reply = reply?;
-                    if !reply.is_success() {
-                        let data: Value = serde_json::from_str(&reply.body).unwrap_or_else(|_| {
-                            let text = if reply.body.is_empty() {
-                                reply.status_text.clone()
-                            } else {
-                                reply.body.clone()
-                            };
-                            json!({ "error": text })
-                        });
-                        let message = extract_api_error_message(
-                            &data,
-                            &format!("{PROVIDER_NAME} API error: {}", reply.status),
-                        );
-                        log::warn!(
-                            "cleanup API error: status={} message={message}",
-                            reply.status
-                        );
-                        return Err(CleanupError::http(message, reply.status));
-                    }
-                    // A malformed success body has no status, so it retries like
-                    // a network fault.
-                    serde_json::from_str::<Value>(&reply.body)
-                        .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))
-                };
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => Err(CleanupError::cancelled()),
-                    result = tokio::time::timeout(tuning.request_timeout, request) => match result {
-                        Ok(result) => result,
-                        Err(_) => Err(llm_request_timeout_error(tuning.request_timeout.as_secs())),
-                    },
-                }
+    // Stripped params stay stripped across retries.
+    let shared_body = Arc::new(Mutex::new(body));
+    let attempt = || {
+        let shared_body = shared_body.clone();
+        let cancel = cancel.clone();
+        let endpoint = endpoint.clone();
+        async move {
+            if cancel.is_cancelled() {
+                return Err(CleanupError::cancelled());
             }
-        };
-        let response = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => Err(CleanupError::cancelled()),
-            result = with_retry(attempt, &tuning.retry, CleanupError::should_retry) => result,
-        }?;
+            let request = async {
+                let mut body = shared_body.lock().clone();
+                let reply = fetch_with_param_fallback(
+                    |json| post_json(&endpoint, api_key, json),
+                    &mut body,
+                    |status, stripped| {
+                        log::warn!("cleanup param fallback: status={status} stripped={stripped:?}");
+                    },
+                )
+                .await;
+                *shared_body.lock() = body;
+                let reply = reply?;
+                if !reply.is_success() {
+                    let data: Value = serde_json::from_str(&reply.body).unwrap_or_else(|_| {
+                        let text = if reply.body.is_empty() {
+                            reply.status_text.clone()
+                        } else {
+                            reply.body.clone()
+                        };
+                        json!({ "error": text })
+                    });
+                    let message = extract_api_error_message(
+                        &data,
+                        &format!("{PROVIDER_NAME} API error: {}", reply.status),
+                    );
+                    log::warn!(
+                        "cleanup API error: status={} message={message}",
+                        reply.status
+                    );
+                    return Err(CleanupError::http(message, reply.status));
+                }
+                // A malformed success body has no status, so it retries like
+                // a network fault.
+                serde_json::from_str::<Value>(&reply.body)
+                    .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))
+            };
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => Err(CleanupError::cancelled()),
+                result = tokio::time::timeout(tuning.request_timeout, request) => match result {
+                    Ok(result) => result,
+                    Err(_) => Err(llm_request_timeout_error(tuning.request_timeout.as_secs())),
+                },
+            }
+        }
+    };
+    let response = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => Err(CleanupError::cancelled()),
+        result = with_retry(attempt, &tuning.retry, CleanupError::should_retry) => result,
+    }?;
 
-        let Some(choice) = response
-            .get("choices")
-            .and_then(Value::as_array)
-            .and_then(|c| c.first())
-            .filter(|c| !c.is_null())
-        else {
-            return Err(CleanupError::new(
-                CleanupErrorKind::InvalidResponse,
-                format!("Invalid response structure from {PROVIDER_NAME} API"),
-            ));
-        };
-        let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
-        let truncated = is_truncated_finish_reason(finish_reason);
-        if config.require_complete_output && truncated {
-            return Err(truncated_output_error("Model output was truncated"));
-        }
-        let raw = choice
-            .pointer("/message/content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim();
-        // Reasoning models leak <think> blocks; keep them only when the user
-        // explicitly enabled thinking.
-        let text = if config.disable_thinking != Some(false) {
-            strip_thinking_tags(raw)
-        } else {
-            raw.to_string()
-        };
-        if text.is_empty() {
-            log::info!("cleanup returned empty response: finish_reason={finish_reason:?}");
-            return Err(empty_response_error(config, truncated));
-        }
-        Ok(text)
+    let Some(choice) = response
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|c| c.first())
+        .filter(|c| !c.is_null())
+    else {
+        return Err(CleanupError::new(
+            CleanupErrorKind::InvalidResponse,
+            format!("Invalid response structure from {PROVIDER_NAME} API"),
+        ));
+    };
+    let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
+    let truncated = is_truncated_finish_reason(finish_reason);
+    if config.require_complete_output && truncated {
+        return Err(truncated_output_error("Model output was truncated"));
     }
+    let raw = choice
+        .pointer("/message/content")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    // Reasoning models leak <think> blocks; keep them only when the user
+    // explicitly enabled thinking.
+    let text = if config.disable_thinking != Some(false) {
+        strip_thinking_tags(raw)
+    } else {
+        raw.to_string()
+    };
+    if text.is_empty() {
+        log::info!("cleanup returned empty response: finish_reason={finish_reason:?}");
+        return Err(empty_response_error(config, truncated));
+    }
+    Ok(text)
 }
 
 async fn post_json(
@@ -672,7 +641,7 @@ fn model_option(item: &Value) -> Option<ModelOption> {
 mod tests {
     use super::*;
     use crate::services::test_server::{MockServer, Reply, run};
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn reply(status: u16, body: Value) -> HttpReply {
         HttpReply {
@@ -825,6 +794,14 @@ mod tests {
         }
     }
 
+    async fn process(
+        text: &str,
+        config: &CleanupRequestConfig,
+        tuning: &CleanupTuning,
+    ) -> Result<String, CleanupError> {
+        process_text_with(text, config, tuning, &CancellationToken::new()).await
+    }
+
     fn completion(content: &str, finish: &str) -> String {
         json!({"choices": [{"message": {"content": content}, "finish_reason": finish}]}).to_string()
     }
@@ -847,9 +824,11 @@ mod tests {
     fn uses_endpoint_model_key_and_prompt() {
         let server =
             MockServer::start(|_| Reply::json(200, &completion("Cleaned transcript", "stop")));
-        let service = CleanupService::default();
-        let result =
-            run(service.process_text_with("raw transcript", &config_for(&server), &fast_tuning()));
+        let result = run(process(
+            "raw transcript",
+            &config_for(&server),
+            &fast_tuning(),
+        ));
         assert_eq!(result.unwrap(), "Cleaned transcript");
         let requests = server.requests();
         assert_eq!(requests.len(), 1);
@@ -877,11 +856,7 @@ mod tests {
         });
         let config =
             CleanupRequestConfig::dictation(&server.url("/v1"), None, "qwen3.5:9b", "SYS", true);
-        let result = run(CleanupService::default().process_text_with(
-            "hello world",
-            &config,
-            &fast_tuning(),
-        ));
+        let result = run(process("hello world", &config, &fast_tuning()));
         assert_eq!(result.unwrap(), "Hello, world.");
         let request = &server.requests()[0];
         assert_eq!(request.header("authorization"), None);
@@ -898,9 +873,7 @@ mod tests {
                 base_url: url.into(),
                 ..CleanupRequestConfig::default()
             };
-            let err =
-                run(CleanupService::default().process_text_with("x", &config, &fast_tuning()))
-                    .unwrap_err();
+            let err = run(process("x", &config, &fast_tuning())).unwrap_err();
             assert_eq!(err.kind, CleanupErrorKind::InvalidEndpoint, "{url}");
             assert_eq!(err.message, HTTPS_REQUIRED_MESSAGE);
             assert_eq!(err.message_key, Some(HTTPS_REQUIRED_MESSAGE_KEY));
@@ -920,12 +893,7 @@ mod tests {
         ] {
             let body = completion(content, finish);
             let server = MockServer::start(move |_| Reply::json(200, &body));
-            let err = run(CleanupService::default().process_text_with(
-                "raw",
-                &config_for(&server),
-                &fast_tuning(),
-            ))
-            .unwrap_err();
+            let err = run(process("raw", &config_for(&server), &fast_tuning())).unwrap_err();
             assert_eq!(err.message_key, Some(key), "{content:?}");
         }
         // Without the completeness requirement an empty reply has no key.
@@ -934,8 +902,7 @@ mod tests {
             require_complete_output: false,
             ..config_for(&server)
         };
-        let err = run(CleanupService::default().process_text_with("raw", &config, &fast_tuning()))
-            .unwrap_err();
+        let err = run(process("raw", &config, &fast_tuning())).unwrap_err();
         assert_eq!(err.message, "LAN returned empty response");
         assert_eq!(err.message_key, None);
     }
@@ -948,8 +915,7 @@ mod tests {
             disable_thinking: Some(false),
             ..config_for(&server)
         };
-        let out = run(CleanupService::default().process_text_with("raw", &config, &fast_tuning()))
-            .unwrap();
+        let out = run(process("raw", &config, &fast_tuning())).unwrap();
         assert_eq!(out, "<think>a</think>B");
     }
 
@@ -962,9 +928,7 @@ mod tests {
             request_timeout: Duration::from_millis(200),
             ..fast_tuning()
         };
-        let err =
-            run(CleanupService::default().process_text_with("raw", &config_for(&server), &tuning))
-                .unwrap_err();
+        let err = run(process("raw", &config_for(&server), &tuning)).unwrap_err();
         assert_eq!(err.kind, CleanupErrorKind::Timeout);
         assert_eq!(err.message, "Request timed out after 0s");
         assert_eq!(server.requests().len(), 1);
@@ -981,33 +945,19 @@ mod tests {
                 Reply::json(200, &completion("ok", "stop"))
             }
         });
-        let out = run(CleanupService::default().process_text_with(
-            "raw",
-            &config_for(&server),
-            &fast_tuning(),
-        ));
+        let out = run(process("raw", &config_for(&server), &fast_tuning()));
         assert_eq!(out.unwrap(), "ok");
         assert_eq!(calls.load(Ordering::SeqCst), 3);
 
         let server = MockServer::start(|_| Reply::json(401, r#"{"error":{"message":"bad key"}}"#));
-        let err = run(CleanupService::default().process_text_with(
-            "raw",
-            &config_for(&server),
-            &fast_tuning(),
-        ))
-        .unwrap_err();
+        let err = run(process("raw", &config_for(&server), &fast_tuning())).unwrap_err();
         assert_eq!(err.kind, CleanupErrorKind::Http);
         assert_eq!(err.status, Some(401));
         assert_eq!(err.message, "bad key");
         assert_eq!(server.requests().len(), 1);
 
         let server = MockServer::start(|_| Reply::json(500, ""));
-        let err = run(CleanupService::default().process_text_with(
-            "raw",
-            &config_for(&server),
-            &fast_tuning(),
-        ))
-        .unwrap_err();
+        let err = run(process("raw", &config_for(&server), &fast_tuning())).unwrap_err();
         assert_eq!(err.message, "Internal Server Error");
         assert_eq!(
             server.requests().len(),
@@ -1025,51 +975,43 @@ mod tests {
                 Reply::json(200, &completion("ok", "stop"))
             }
         });
-        let out = run(CleanupService::default().process_text_with(
-            "raw",
-            &config_for(&server),
-            &fast_tuning(),
-        ));
+        let out = run(process("raw", &config_for(&server), &fast_tuning()));
         assert_eq!(out.unwrap(), "ok");
         assert_eq!(server.requests().len(), 2);
     }
 
     #[test]
-    fn cancel_all_aborts_in_flight_requests() {
-        let server = MockServer::start(|_| {
+    fn cancelling_one_request_leaves_others_running() {
+        let slow = MockServer::start(|_| {
             Reply::json(200, &completion("late", "stop")).delayed(Duration::from_secs(3))
         });
-        let service = Arc::new(CleanupService::default());
-        let config = config_for(&server);
+        let other = MockServer::start(|_| {
+            Reply::json(200, &completion("fresh", "stop")).delayed(Duration::from_millis(400))
+        });
+        let (slow_config, other_config) = (config_for(&slow), config_for(&other));
+        let tuning = fast_tuning();
         let started = std::time::Instant::now();
-        let err = run(async {
-            let canceller = service.clone();
+        let (cancelled, kept) = run(async {
+            let cancel = CancellationToken::new();
+            let canceller = cancel.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(150)).await;
-                canceller.cancel_all();
+                canceller.cancel();
             });
-            service
-                .process_text_with("raw", &config, &fast_tuning())
-                .await
-        })
-        .unwrap_err();
-        assert_eq!(err.kind, CleanupErrorKind::Cancelled);
+            tokio::join!(
+                process_text_with("raw", &slow_config, &tuning, &cancel),
+                process("raw", &other_config, &tuning),
+            )
+        });
+        assert_eq!(cancelled.unwrap_err().kind, CleanupErrorKind::Cancelled);
+        assert_eq!(kept.unwrap(), "fresh");
         assert!(started.elapsed() < Duration::from_secs(2));
-        // A later request is unaffected by the earlier cancel.
-        let server = MockServer::start(|_| Reply::json(200, &completion("fresh", "stop")));
-        let out = run(service.process_text_with("raw", &config_for(&server), &fast_tuning()));
-        assert_eq!(out.unwrap(), "fresh");
     }
 
     #[test]
     fn invalid_structure_is_reported() {
         let server = MockServer::start(|_| Reply::json(200, r#"{"choices":[]}"#));
-        let err = run(CleanupService::default().process_text_with(
-            "raw",
-            &config_for(&server),
-            &fast_tuning(),
-        ))
-        .unwrap_err();
+        let err = run(process("raw", &config_for(&server), &fast_tuning())).unwrap_err();
         assert_eq!(err.kind, CleanupErrorKind::InvalidResponse);
         assert_eq!(err.message, "Invalid response structure from LAN API");
     }

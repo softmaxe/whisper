@@ -11,26 +11,26 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
+use futures::future::Shared;
 use gpui_kit::*;
 use tokio_util::sync::CancellationToken;
 
-use crate::analytics::AnalyticsEventInput;
 use crate::audio::capture::{CaptureEvent, RecordedAudio, Recorder};
 use crate::audio::cues;
-use crate::db::{
-    SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionItem, TranscriptionStatus,
-};
+use crate::history::{HistoryStore, Recorded, Recording};
 use crate::i18n::t;
-use crate::pipeline::{self, PipelineInput, PipelineOutcome};
+use crate::pipeline::{self, PipelineInput, PipelineOutcome, Transcript};
 use crate::services::transcription;
 use crate::settings::Settings;
 use crate::text::echo_filter::DICTIONARY_ECHO_CODE;
 
-use crate::app_state::{AppEvent, AppState, DictationSnapshot};
+use crate::app_state::{AppState, DictationSnapshot};
 use crate::backend;
 
-/// Recordings shorter than this are not kept as discarded. See #907.
-const MIN_DISCARDED_DURATION: Duration = Duration::from_secs(1);
+/// The Target app's pid, looked up off the main thread: the lookup can wait
+/// on a helper process.
+type TargetPid = Shared<Task<Option<i32>>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -98,9 +98,12 @@ pub struct Dictation {
     generation: u64,
     start_lock: bool,
     cancel: Option<CancellationToken>,
-    target_pid: Option<i32>,
+    target_pid: Option<TargetPid>,
     started_at: Option<(Instant, DateTime<Utc>)>,
     effects_held: bool,
+    /// Whether this recording paused media, so the matching resume does not
+    /// depend on a setting changed mid-recording.
+    media_paused: bool,
     push_force_stopped: bool,
     status: StatusMirror,
     _device_events: Task<()>,
@@ -139,6 +142,7 @@ impl Dictation {
                 target_pid: None,
                 started_at: None,
                 effects_held: false,
+                media_paused: false,
                 push_force_stopped: false,
                 status: StatusMirror::default(),
                 _device_events: device_events,
@@ -171,7 +175,7 @@ impl Dictation {
             backend::clear_hotkey_start_request();
         }
         if previous == Phase::Recording && phase != Phase::Recording {
-            self.release_recording_effects(cx);
+            self.release_recording_effects();
         }
         self.publish(cx);
     }
@@ -193,7 +197,8 @@ impl Dictation {
 
     fn hold_recording_effects(&mut self, settings: &Settings) {
         self.effects_held = true;
-        if settings.pause_media_on_dictation {
+        self.media_paused = settings.pause_media_on_dictation;
+        if self.media_paused {
             backend::pause_media();
         }
         backend::register_cancel_hotkey();
@@ -202,15 +207,21 @@ impl Dictation {
         }
     }
 
-    fn release_recording_effects(&mut self, cx: &mut Context<Self>) {
+    fn release_recording_effects(&mut self) {
         if !self.effects_held {
             return;
         }
         self.effects_held = false;
         backend::unregister_cancel_hotkey();
-        if AppState::settings(cx).pause_media_on_dictation {
+        if std::mem::take(&mut self.media_paused) {
             backend::resume_media();
         }
+    }
+
+    /// Starts looking up the Target app: the frontmost app at the hotkey press.
+    fn capture_target(&mut self, cx: &mut Context<Self>) {
+        let lookup = cx.background_spawn(async { backend::capture_target_pid() });
+        self.target_pid = Some(lookup.shared());
     }
 
     // ---- Commands ----------------------------------------------------------------------------
@@ -222,7 +233,7 @@ impl Dictation {
         }
         let device = backend::preferred_input_device(&AppState::settings(cx));
         self.recorder.prepare(device.as_deref());
-        self.target_pid = backend::capture_target_pid();
+        self.capture_target(cx);
         self.set_phase(Phase::Preparing, cx);
         cx.emit(DictationNotice::DismissError);
     }
@@ -266,7 +277,7 @@ impl Dictation {
         // The pill window never takes focus, so the frontmost app is still the
         // user's editing target. A hotkey press already captured it.
         if self.phase != Phase::Preparing || self.target_pid.is_none() {
-            self.target_pid = backend::capture_target_pid();
+            self.capture_target(cx);
         }
         self.set_phase(Phase::Preparing, cx);
         cx.emit(DictationNotice::DismissError);
@@ -356,7 +367,6 @@ impl Dictation {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
         }
-        crate::services::cleanup::cancel_all();
         self.set_phase(Phase::Idle, cx);
     }
 
@@ -435,6 +445,11 @@ impl Dictation {
         occurred_at: DateTime<Utc>,
         cx: &mut Context<Self>,
     ) {
+        let recording = Recording {
+            wav: &wav,
+            duration,
+            occurred_at,
+        };
         match outcome {
             PipelineOutcome::Cancelled => {
                 self.set_phase(Phase::Idle, cx);
@@ -442,14 +457,14 @@ impl Dictation {
             PipelineOutcome::NoAudio { dictionary_echo } => {
                 if dictionary_echo {
                     // Keep the recording so the user can retry the dictation (#1547).
-                    save_failed(
-                        wav,
-                        duration,
-                        occurred_at,
-                        "No audio detected",
-                        Some(DICTIONARY_ECHO_CODE),
-                        cx,
-                    );
+                    record(cx, |history, settings| {
+                        history.record_failed(
+                            &recording,
+                            "No audio detected",
+                            Some(DICTIONARY_ECHO_CODE),
+                            settings,
+                        )
+                    });
                 }
                 self.set_phase(Phase::Idle, cx);
                 cx.emit(DictationNotice::NoAudio);
@@ -459,7 +474,9 @@ impl Dictation {
                 code,
                 message_key,
             } => {
-                save_failed(wav, duration, occurred_at, &message, code.as_deref(), cx);
+                record(cx, |history, settings| {
+                    history.record_failed(&recording, &message, code.as_deref(), settings)
+                });
                 self.set_phase(Phase::Idle, cx);
                 let title = match code.as_deref() {
                     Some(transcription::CONNECTION_FAILED_CODE) => {
@@ -478,66 +495,24 @@ impl Dictation {
                     .unwrap_or_else(|| format!("Transcription failed: {message}"));
                 cx.emit(DictationNotice::Error { title, description });
             }
-            PipelineOutcome::Transcribed {
-                text,
-                raw_text,
-                source,
-                model,
-                cleanup_failure,
-            } => {
-                self.deliver(
-                    text,
-                    raw_text,
-                    source,
-                    model,
-                    cleanup_failure,
-                    wav,
-                    duration,
-                    occurred_at,
-                    cx,
-                );
+            PipelineOutcome::Transcribed(transcript) => {
+                self.deliver(transcript, &recording, cx);
             }
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn deliver(
-        &mut self,
-        text: String,
-        raw_text: String,
-        source: String,
-        model: Option<String>,
-        cleanup_failure: Option<pipeline::CleanupFailure>,
-        wav: Vec<u8>,
-        duration: Duration,
-        occurred_at: DateTime<Utc>,
-        cx: &mut Context<Self>,
-    ) {
+    fn deliver(&mut self, transcript: Transcript, recording: &Recording, cx: &mut Context<Self>) {
         cx.emit(DictationNotice::DismissError);
-        if text.trim().is_empty() {
-            self.set_phase(Phase::Idle, cx);
-            cx.emit(DictationNotice::NoAudio);
-            return;
-        }
-        let state = AppState::global(cx);
-        let (db, snippets, settings) = {
-            let s = state.read(cx);
-            (s.db.clone(), s.snippets.clone(), s.settings.clone())
-        };
-        // Counted before snippet expansion so saved text is not mistaken for speech.
-        let _ = db.record_dictionary_usage(&text);
-        let text = crate::text::snippets::expand_snippets(&text, &snippets);
-
-        save_transcription(
-            &text,
-            &raw_text,
-            &source,
-            model.as_deref(),
-            &wav,
-            duration,
-            occurred_at,
-            cx,
-        );
+        record(cx, |history, settings| {
+            history.record_delivered(&transcript, recording, settings)
+        });
+        let settings = AppState::settings(cx);
+        let Transcript {
+            text,
+            raw_text,
+            cleanup_failure,
+            ..
+        } = transcript;
 
         let restore_clipboard = !settings.keep_transcription_in_clipboard;
         if self.push_force_stopped && settings.auto_paste_enabled {
@@ -549,9 +524,13 @@ impl Dictation {
             });
         } else if settings.auto_paste_enabled {
             let generation = self.generation;
-            let paste = backend::paste_text(text.clone(), self.target_pid, restore_clipboard);
+            let target = self.target_pid.clone();
             cx.spawn(async move |this, cx| {
-                let pasted = paste.await;
+                let target_pid = match target {
+                    Some(target) => target.await,
+                    None => None,
+                };
+                let pasted = backend::paste_text(text.clone(), target_pid, restore_clipboard).await;
                 let _ = this.update(cx, |this, cx| {
                     if generation != this.generation {
                         return;
@@ -577,7 +556,7 @@ impl Dictation {
                         let s = AppState::settings(cx);
                         if s.auto_learn_corrections {
                             let learned =
-                                backend::monitor_corrections(text.clone(), this.target_pid, cx);
+                                backend::monitor_corrections(text.clone(), target_pid, cx);
                             cx.spawn(async move |this, cx| {
                                 let words = learned.await;
                                 if !words.is_empty() {
@@ -614,191 +593,41 @@ impl Dictation {
         occurred_at: DateTime<Utc>,
         cx: &mut Context<Self>,
     ) {
-        let s = AppState::settings(cx);
-        let duration = audio.duration;
-        if !s.save_discarded_transcriptions
-            || !s.data_retention_enabled
-            || s.audio_retention_days == 0
-            || duration < MIN_DISCARDED_DURATION
-            || !audio.received_audio_data
+        // Checked first so a recording that will not be kept is never encoded.
+        if !audio.received_audio_data
+            || !HistoryStore::keeps_discarded(audio.duration, &AppState::settings(cx))
         {
             return;
         }
         let wav = audio.to_wav_16k();
-        let state = AppState::global(cx);
-        let (db, storage) = {
-            let s = state.read(cx);
-            (s.db.clone(), s.audio.clone())
+        let recording = Recording {
+            wav: &wav,
+            duration: audio.duration,
+            occurred_at,
         };
-        let options = SaveTranscriptionOptions {
-            status: TranscriptionStatus::Discarded,
-            occurred_at: Some(occurred_at),
-            ..Default::default()
-        };
-        let Ok(item) = db.save_transcription("", None, options) else {
-            return;
-        };
-        // A discarded row is only recoverable through its audio (#907).
-        if storage
-            .save_audio(item.id, &wav, Some(&item.timestamp), "wav")
-            .is_err()
-        {
-            let _ = db.delete_transcription(item.id);
-            return;
-        }
-        let _ = db.update_transcription_audio(
-            item.id,
-            &TranscriptionAudioUpdate {
-                has_audio: true,
-                audio_duration_ms: Some(duration.as_millis() as i64),
-                provider: None,
-                model: None,
-            },
-        );
-        if let Ok(Some(item)) = db.get_transcription_by_id(item.id) {
-            state.update(cx, |s, cx| s.upsert_history_item(item, cx));
-        }
+        record(cx, |history, settings| {
+            history.record_discarded(&recording, settings)
+        });
     }
 }
 
-fn store_audio(
-    item: &TranscriptionItem,
-    wav: &[u8],
-    duration: Duration,
-    provider: Option<&str>,
-    model: Option<&str>,
+/// Runs a History write; a failure is logged and the Dictation goes on.
+fn record(
     cx: &mut App,
+    write: impl FnOnce(&HistoryStore, &Settings) -> anyhow::Result<Option<Recorded>>,
 ) {
-    let state = AppState::global(cx);
-    let (db, storage, retention) = {
-        let s = state.read(cx);
-        (
-            s.db.clone(),
-            s.audio.clone(),
-            s.settings.audio_retention_days,
-        )
-    };
-    if retention == 0 {
-        return;
-    }
-    match storage.save_audio(item.id, wav, Some(&item.timestamp), "wav") {
-        Ok(_) => {
-            let _ = db.update_transcription_audio(
-                item.id,
-                &TranscriptionAudioUpdate {
-                    has_audio: true,
-                    audio_duration_ms: Some(duration.as_millis() as i64),
-                    provider: provider.map(str::to_string),
-                    model: model.map(str::to_string),
-                },
-            );
-        }
-        Err(err) => log::warn!("failed to save transcription audio: {err}"),
+    let result = AppState::global(cx).update(cx, |s, cx| s.record_history(cx, write));
+    if let Err(err) = result {
+        log::error!("failed to save the History row: {err:#}");
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn save_transcription(
-    text: &str,
-    raw_text: &str,
-    source: &str,
-    model: Option<&str>,
-    wav: &[u8],
-    duration: Duration,
-    occurred_at: DateTime<Utc>,
-    cx: &mut App,
-) {
-    let state = AppState::global(cx);
-    let (db, retention) = {
-        let s = state.read(cx);
-        (s.db.clone(), s.settings.data_retention_enabled)
-    };
-    if !retention {
-        return;
-    }
-    let event = AnalyticsEventInput::for_dictation(
-        text,
-        Some(raw_text),
-        occurred_at,
-        Some(duration.as_millis() as i64),
-        Some(source),
-        model,
-    );
-    if let Err(err) = db.record_analytics_event(&event) {
-        log::warn!("failed to record the analytics event: {err}");
-    }
-    let options = SaveTranscriptionOptions {
-        occurred_at: Some(occurred_at),
-        ..Default::default()
-    };
-    match db.save_transcription(text, Some(raw_text), options) {
-        Ok(item) => {
-            store_audio(&item, wav, duration, Some(source), model, cx);
-            let item = db
-                .get_transcription_by_id(item.id)
-                .ok()
-                .flatten()
-                .unwrap_or(item);
-            state.update(cx, |s, cx| {
-                s.upsert_history_item(item, cx);
-                cx.emit(AppEvent::AnalyticsChanged);
-            });
-        }
-        Err(err) => log::error!("failed to persist transcription: {err}"),
-    }
-}
-
-fn save_failed(
-    wav: Vec<u8>,
-    duration: Duration,
-    occurred_at: DateTime<Utc>,
-    message: &str,
-    code: Option<&str>,
-    cx: &mut App,
-) {
-    let state = AppState::global(cx);
-    let (db, retention) = {
-        let s = state.read(cx);
-        (s.db.clone(), s.settings.data_retention_enabled)
-    };
-    if !retention {
-        return;
-    }
-    let options = SaveTranscriptionOptions {
-        status: TranscriptionStatus::Failed,
-        error_message: Some(message.to_string()),
-        error_code: code.map(str::to_string),
-        occurred_at: Some(occurred_at),
-        ..Default::default()
-    };
-    match db.save_transcription("", None, options) {
-        Ok(item) => {
-            store_audio(&item, &wav, duration, None, None, cx);
-            let item = db
-                .get_transcription_by_id(item.id)
-                .ok()
-                .flatten()
-                .unwrap_or(item);
-            state.update(cx, |s, cx| s.upsert_history_item(item, cx));
-        }
-        Err(err) => log::error!("failed to save the failed transcription: {err}"),
-    }
-}
-
-/// Re-transcribes a History row from its saved audio (`retry-transcription`
-/// plus the control panel's cleanup and script passes).
+/// Re-transcribes a History row from its saved audio through the same
+/// pipeline as a live Dictation.
 pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
-    let state = AppState::global(cx);
-    let (db, storage) = {
-        let s = state.read(cx);
-        (s.db.clone(), s.audio.clone())
-    };
-    let Some(path) = storage.audio_path(id) else {
+    let history = AppState::global(cx).read(cx).history_store.clone();
+    let Some(audio) = history.retry_audio(id) else {
         return Task::ready(Err(t("controlPanel.history.audioNotFound")));
-    };
-    let audio = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(err) => return Task::ready(Err(err.to_string())),
     };
     // Saved recordings are always WAV.
     let input = Dictation::pipeline_input(audio, "audio/wav", cx);
@@ -806,36 +635,29 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
     cx.spawn(async move |cx| {
         let outcome = handle.await.map_err(|e| e.to_string())?;
         match outcome {
-            PipelineOutcome::Transcribed {
-                text,
-                raw_text,
-                cleanup_failure,
-                ..
-            } => {
-                db.update_transcription_text(id, &text, Some(&raw_text))
+            PipelineOutcome::Transcribed(transcript) => cx.update(|cx| {
+                AppState::global(cx)
+                    .update(cx, |s, cx| {
+                        s.record_history(cx, |history, settings| {
+                            history.apply_retry(id, &transcript, settings)
+                        })
+                    })
                     .map_err(|e| e.to_string())?;
-                let _ =
-                    db.update_transcription_status(id, TranscriptionStatus::Completed, None, None);
-                cx.update(|cx| {
-                    if let Ok(Some(item)) = db.get_transcription_by_id(id) {
-                        AppState::global(cx).update(cx, |s, cx| s.upsert_history_item(item, cx));
-                    }
-                    if let Some(failure) = cleanup_failure {
-                        crate::ui::overlays::show_toast(
-                            crate::ui::overlays::Toast::new(t("app.toasts.cleanupFailed.title"))
-                                .description(
-                                    failure
-                                        .message_key
-                                        .and_then(|k| crate::i18n::try_t(&k))
-                                        .unwrap_or(failure.message),
-                                )
-                                .variant(crate::ui::overlays::ToastVariant::Destructive),
-                            cx,
-                        );
-                    }
-                });
+                if let Some(failure) = transcript.cleanup_failure {
+                    crate::ui::overlays::show_toast(
+                        crate::ui::overlays::Toast::new(t("app.toasts.cleanupFailed.title"))
+                            .description(
+                                failure
+                                    .message_key
+                                    .and_then(|k| crate::i18n::try_t(&k))
+                                    .unwrap_or(failure.message),
+                            )
+                            .variant(crate::ui::overlays::ToastVariant::Destructive),
+                        cx,
+                    );
+                }
                 Ok(())
-            }
+            }),
             PipelineOutcome::NoAudio { .. } => Err(t("dictation.noAudio.title")),
             PipelineOutcome::Failed {
                 message,

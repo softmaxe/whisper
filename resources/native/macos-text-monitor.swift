@@ -31,19 +31,7 @@ func writeTextOutput(_ prefix: String, _ value: String) {
     writeOutput("\(prefix):\(truncated)")
 }
 
-func isEditableTextElement(_ element: AXUIElement, allowSelection: Bool = false) -> Bool {
-    // A live selection means an editable verdict would let generated text
-    // paste over the user's highlighted text (--editable-target mode probes
-    // an element whose selection state the caller could not read itself).
-    var selectedTextValue: AnyObject?
-    if !allowSelection, AXUIElementCopyAttributeValue(
-        element,
-        kAXSelectedTextAttribute as CFString,
-        &selectedTextValue
-    ) == .success, let selectedText = selectedTextValue as? String, !selectedText.isEmpty {
-        return false
-    }
-
+func isEditableTextElement(_ element: AXUIElement) -> Bool {
     var enabledValue: AnyObject?
     if AXUIElementCopyAttributeValue(
         element,
@@ -216,7 +204,7 @@ func focusedPasteTargetStatus(
         }
         explicitlyReadOnly = pasteTargetAttribute(element, "AXEditable") as? Bool == false
         if !explicitlyReadOnly {
-            if isEditableTextElement(element, allowSelection: true) { return .pasteable }
+            if isEditableTextElement(element) { return .pasteable }
             if isBrowser, isEditableBrowserPasteTarget(element) { return .pasteable }
         }
     }
@@ -351,14 +339,8 @@ func observerCallback(
 }
 
 // Usage: macos-text-monitor <pid>
-//        macos-text-monitor --selected-text <pid>
-//        macos-text-monitor --editable-target <pid>
 //        macos-text-monitor --paste-target <pid>
 //        macos-text-monitor --focused-app
-let selectionReadMode = CommandLine.arguments.count >= 3 &&
-    CommandLine.arguments[1] == "--selected-text"
-let editableTargetMode = CommandLine.arguments.count >= 3 &&
-    CommandLine.arguments[1] == "--editable-target"
 let pasteTargetMode = CommandLine.arguments.count >= 2 &&
     CommandLine.arguments[1] == "--paste-target"
 // System-wide AX queries fail with kAXErrorCannotComplete until the process
@@ -377,12 +359,12 @@ if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--focused-ap
     exit(0)
 }
 
-let pidArgumentIndex = selectionReadMode || editableTargetMode || pasteTargetMode ? 2 : 1
+let pidArgumentIndex = pasteTargetMode ? 2 : 1
 
 guard CommandLine.arguments.count > pidArgumentIndex,
       let targetPid = Int32(CommandLine.arguments[pidArgumentIndex]),
       targetPid > 0 else {
-    writeError("Usage: macos-text-monitor [--selected-text|--editable-target|--paste-target] <pid> | --focused-app")
+    writeError("Usage: macos-text-monitor [--paste-target] <pid> | --focused-app")
     writeOutput(pasteTargetMode ? "UNKNOWN" : "NO_ELEMENT")
     exit(1)
 }
@@ -395,11 +377,9 @@ if pasteTargetMode {
     exit(0)
 }
 
-// Read original text from stdin (monitoring mode only). Selection reads are
-// spawned with stdin left open but never written — blocking on readLine there
-// would hang until the caller's timeout kills the process.
+// Read the original text from stdin.
 var originalText = ""
-if !selectionReadMode && !editableTargetMode, let line = readLine(strippingNewline: true) {
+if let line = readLine(strippingNewline: true) {
     originalText = line
 }
 
@@ -408,41 +388,6 @@ if !selectionReadMode && !editableTargetMode, let line = readLine(strippingNewli
 let appElement = AXUIElementCreateApplication(monitoredPid)
 guard let resolvedElement = resolveFocusedElement(appElement, pid: monitoredPid) else {
     writeOutput("NO_ELEMENT")
-    exit(1)
-}
-
-if editableTargetMode {
-    writeOutput(isEditableTextElement(resolvedElement) ? "EDITABLE" : "NOT_EDITABLE")
-    exit(0)
-}
-
-// Selection capture is a short-lived, read-only mode used before an AI edit.
-// It deliberately uses the same AX client as the monitor so a packaged app's
-// trusted native helper does not need to rely on System Events automation.
-if selectionReadMode {
-    var selectionValue: AnyObject?
-    let selectionResult = AXUIElementCopyAttributeValue(
-        resolvedElement,
-        kAXSelectedTextAttribute as CFString,
-        &selectionValue
-    )
-
-    if selectionResult == .success, let selection = selectionValue as? String {
-        if selection.isEmpty {
-            writeOutput(isEditableTextElement(resolvedElement) ? "EDITABLE_NONE:" : "NONE:")
-        } else {
-            writeTextOutput("SELECTED", selection)
-        }
-        exit(0)
-    }
-
-    if selectionResult == .noValue || selectionResult == .attributeUnsupported {
-        writeOutput("NONE:")
-        exit(0)
-    }
-
-    writeError("Cannot read selected text for PID \(monitoredPid) (error: \(selectionResult.rawValue))")
-    writeOutput("UNAVAILABLE:")
     exit(1)
 }
 

@@ -9,7 +9,8 @@ use std::sync::Arc;
 use gpui_kit::*;
 
 use crate::audio_storage::AudioStorage;
-use crate::db::{Database, Snippet, TranscriptionItem, TranscriptionStatus};
+use crate::db::{Database, DictionarySource, Snippet, TranscriptionItem, TranscriptionStatus};
+use crate::history::{HistoryStore, Recorded};
 use crate::i18n::{self, Language};
 use crate::settings::Settings;
 
@@ -45,6 +46,7 @@ pub struct AppState {
     pub dictation: DictationSnapshot,
     pub db: Arc<Database>,
     pub audio: Arc<AudioStorage>,
+    pub history_store: Arc<HistoryStore>,
     pub history: Vec<TranscriptionItem>,
     pub history_loaded: bool,
     pub include_discarded: bool,
@@ -64,11 +66,13 @@ impl AppState {
         theme::init(settings.theme, cx);
         let dictionary = db.get_dictionary().unwrap_or_default();
         let snippets = db.get_snippets().unwrap_or_default();
+        let audio = Arc::new(AudioStorage::default());
         let state = cx.new(|_| AppState {
             settings,
             dictation: DictationSnapshot::default(),
+            history_store: Arc::new(HistoryStore::new(db.clone(), audio.clone())),
             db,
-            audio: Arc::new(AudioStorage::default()),
+            audio,
             history: Vec::new(),
             history_loaded: false,
             include_discarded: false,
@@ -133,6 +137,24 @@ impl AppState {
         }
     }
 
+    /// Runs a History write and shows the row it returns. Returns the row id,
+    /// or `None` when retention kept nothing.
+    pub fn record_history(
+        &mut self,
+        cx: &mut Context<Self>,
+        write: impl FnOnce(&HistoryStore, &Settings) -> anyhow::Result<Option<Recorded>>,
+    ) -> anyhow::Result<Option<i64>> {
+        let Some(recorded) = write(&self.history_store, &self.settings)? else {
+            return Ok(None);
+        };
+        let id = recorded.item.id;
+        self.upsert_history_item(recorded.item, cx);
+        if recorded.insights_changed {
+            cx.emit(AppEvent::AnalyticsChanged);
+        }
+        Ok(Some(id))
+    }
+
     /// Inserts or replaces a row: hidden statuses drop out unless shown,
     /// newest first, capped at the limit.
     pub fn upsert_history_item(&mut self, item: TranscriptionItem, cx: &mut Context<Self>) {
@@ -183,7 +205,54 @@ impl AppState {
         Ok(())
     }
 
-    pub fn reload_dictionary(&mut self, cx: &mut Context<Self>) {
+    /// Deletes every stored recording, keeping the transcripts.
+    pub fn delete_all_audio(&mut self, cx: &mut Context<Self>) {
+        self.audio.delete_all_audio_and_flags(&self.db);
+        if let Err(err) = self.load_history(self.include_discarded, cx) {
+            log::warn!("failed to reload History: {err}");
+        }
+    }
+
+    /// Adds and removes Dictionary words, then shows the stored list.
+    pub fn change_dictionary<A: AsRef<str>, R: AsRef<str>>(
+        &mut self,
+        add: &[A],
+        remove: &[R],
+        source: DictionarySource,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let result = self.db.apply_dictionary_changes(add, remove, source);
+        self.reload_dictionary(cx);
+        result.map(|_| ())
+    }
+
+    /// Learns corrections from an edit the user made right after a paste.
+    /// Returns the words added to the Dictionary.
+    pub fn learn_corrections(
+        &mut self,
+        original: &str,
+        edited: &str,
+        cx: &mut Context<Self>,
+    ) -> Vec<String> {
+        let learned = crate::text::correction_learner::extract_corrections(
+            original,
+            edited,
+            &self.dictionary,
+        );
+        if learned.is_empty() {
+            return learned;
+        }
+        let none: [&str; 0] = [];
+        match self.change_dictionary(&learned, &none, DictionarySource::Learned, cx) {
+            Ok(()) => learned,
+            Err(err) => {
+                log::warn!("failed to save learned words: {err}");
+                Vec::new()
+            }
+        }
+    }
+
+    fn reload_dictionary(&mut self, cx: &mut Context<Self>) {
         self.dictionary = self.db.get_dictionary().unwrap_or_default();
         cx.emit(AppEvent::DictionaryChanged);
         cx.notify();

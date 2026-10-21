@@ -193,14 +193,12 @@
       "holdUnavailable": "此快捷键不支持按住说话。"
     },
     "validation": {
-      "empty": "请输入有效的快捷键。",
       "mouseButtonCombination": "鼠标按键快捷键不能与其他按键组合。",
       "tooManyKeys": "快捷键最多只能包含三个按键。",
       "leftRightMix": "同一个快捷键中不要混用同一修饰键的左右两侧版本。",
       "noModifierOrSpecial": "快捷键必须包含修饰键或非字母数字键（如方向键、空格键或功能键）。",
       "modifierOnlyUnsupported": "macOS 不支持由两个修饰键组成的快捷键。请单独使用右侧修饰键（例如 RightOption），或再加一个普通按键。",
       "leftModifierOnly": "单个修饰键作为快捷键时必须使用右侧按键（例如 RightOption），或再加一个普通按键（例如 Control+Space）。",
-      "duplicate": "该快捷键已在使用中。",
       "reserved": "该快捷键已被系统保留。",
       "reservedNamed": "{{label}} 已被系统保留"
     }

@@ -14,16 +14,18 @@
 //! thread.
 
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
 
-use super::helper::{probe_first_line, resolve_helper, run_with_timeout, signal_pid};
+use super::helper::{probe_first_line, resolve_helper, run_with_timeout};
+use super::supervised_child::{
+    ChildOptions, Control, Down, HelperSpawner, ProcessSpawner, Protocol, Recovery, RestartPolicy,
+    SupervisedChild,
+};
 use super::timer::{RealTimers, TimerId, Timers, lock};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -44,6 +46,11 @@ pub const MONITOR_START_DELAY: Duration = Duration::from_millis(500);
 pub const EDIT_DEBOUNCE: Duration = Duration::from_millis(1500);
 
 pub const MONITOR_BINARY: &str = "macos-text-monitor";
+/// The helper caps a reported value at 10240 characters.
+const MAX_LINE_BYTES: usize = 64 * 1024;
+/// Enough for the helper's diagnostics, which only feed
+/// [`is_persistent_ax_no_value_failure`].
+const MAX_STDERR_BYTES: usize = 16 * 1024;
 
 /// The pasted transcript and the field's text after the user edited it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +79,8 @@ pub struct MonitorHooks {
     pub activate_app: Activator,
     /// Replaces the helper-then-frontmost focus lookup when set.
     pub keyboard_focus_pid: Option<PidSource>,
+    /// Starts the long-running monitoring helper.
+    pub spawner: Arc<dyn HelperSpawner>,
 }
 
 impl Default for MonitorHooks {
@@ -86,6 +95,7 @@ impl Default for MonitorHooks {
             frontmost_pid: Arc::new(appkit::frontmost_pid),
             activate_app: Arc::new(appkit::activate_regular_app),
             keyboard_focus_pid: None,
+            spawner: Arc::new(ProcessSpawner),
         }
     }
 }
@@ -103,7 +113,7 @@ struct Capture {
 #[derive(Default)]
 struct Monitoring {
     original_text: Option<String>,
-    child_pid: Option<u32>,
+    run: Option<SupervisedChild<EditWatch>>,
     timeout: Option<TimerId>,
 }
 
@@ -163,10 +173,14 @@ impl TextEditMonitor {
         }
     }
 
-    /// Debounced `(original, edited)` pairs from monitoring runs.
+    /// Debounced `(original, edited)` pairs from monitoring runs. Each paste
+    /// supersedes the last, so a new subscriber replaces the previous one,
+    /// whose receiver closes.
     pub fn subscribe(&self) -> async_channel::Receiver<TextEdit> {
         let (tx, rx) = async_channel::unbounded();
-        lock(&self.inner.subscribers).push(tx);
+        let mut subscribers = lock(&self.inner.subscribers);
+        subscribers.clear();
+        subscribers.push(tx);
         rx
     }
 
@@ -365,8 +379,8 @@ impl Inner {
         if let Some(timer) = monitoring.timeout.take() {
             self.timers.cancel(timer);
         }
-        if let Some(pid) = monitoring.child_pid.take() {
-            signal_pid(pid, libc::SIGTERM);
+        if let Some(run) = monitoring.run.take() {
+            run.stop();
         }
         monitoring.original_text = None;
     }
@@ -433,80 +447,68 @@ impl Inner {
         } else if let Some(value) = line.strip_prefix("CHANGED:") {
             self.emit_edit(generation, value.to_string());
         } else if line == "NO_ELEMENT" || line == "NO_VALUE" {
+            // The helper exits right after; its end stops monitoring.
             log::debug!("[text-monitor] no target element ({line})");
-            self.stop(Some(generation));
+        }
+    }
+
+    fn on_watch_event(&self, generation: u64, pid: i32, event: WatchEvent) {
+        match event {
+            WatchEvent::Line(line) => self.handle_line(generation, &line),
+            WatchEvent::Unavailable => self.poll(generation, pid),
+            WatchEvent::Ended { ax_unsupported } => {
+                // NO_ELEMENT after a uniform -25212 run is terminal for this app.
+                if ax_unsupported {
+                    lock(&self.unsupported_pids).insert(pid);
+                }
+                self.stop(Some(generation));
+            }
         }
     }
 
     /// Event-based monitoring through the helper's AXObserver.
     fn run_native(&self, generation: u64, original_text: &str, pid: i32, helper: HelperCommand) {
         std::thread::sleep(INITIAL_QUERY_DELAY);
+        let program = helper.program;
+        let mut args = helper.args;
+        args.push(pid.to_string());
+        let weak = self.this.clone();
+        let run = SupervisedChild::new(
+            ChildOptions {
+                label: "Text monitor",
+                resolve_binary: Arc::new(move || Some(program.clone())),
+                spawner: Arc::clone(&self.hooks.spawner),
+                timers: Arc::clone(&self.timers),
+                restart: RestartPolicy::Never,
+                heartbeat: None,
+                max_line: MAX_LINE_BYTES,
+            },
+            EditWatch {
+                original_text: original_text.to_string(),
+                args,
+                stderr: String::new(),
+                no_element: false,
+            },
+            Arc::new(move |event| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.on_watch_event(generation, pid, event);
+                }
+            }),
+        );
+        {
+            let mut monitoring = lock(&self.monitoring);
+            if self.generation.load(Ordering::SeqCst) != generation
+                || monitoring.original_text.is_none()
+            {
+                return;
+            }
+            monitoring.run = Some(run.clone());
+        }
+        run.start();
+        // A stop between storing the run and starting it had nothing to end.
         if !self.is_current(generation) {
-            return;
+            run.stop();
         }
-        let mut child = match Command::new(&helper.program)
-            .args(&helper.args)
-            .arg(pid.to_string())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(error) => {
-                log::debug!("[text-monitor] native monitor failed ({error}), polling instead");
-                self.run_polling_after_delay(generation, pid);
-                return;
-            }
-        };
-        {
-            let mut monitoring = lock(&self.monitoring);
-            if self.generation.load(Ordering::SeqCst) != generation {
-                let _ = child.kill();
-                let _ = child.wait();
-                return;
-            }
-            monitoring.child_pid = Some(child.id());
-        }
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(format!("{original_text}\n").as_bytes());
-        }
-        let stderr = child.stderr.take().map(|mut pipe| {
-            std::thread::spawn(move || {
-                let mut text = String::new();
-                let _ = pipe.read_to_string(&mut text);
-                text
-            })
-        });
-        let mut no_element = false;
-        if let Some(stdout) = child.stdout.take() {
-            for line in BufReader::new(stdout).lines() {
-                let Ok(line) = line else { break };
-                if line.is_empty() {
-                    continue;
-                }
-                if line.contains("NO_ELEMENT") {
-                    no_element = true;
-                }
-                self.handle_line(generation, &line);
-            }
-        }
-        let _ = child.wait();
-        let stderr = stderr.and_then(|h| h.join().ok()).unwrap_or_default();
-        {
-            let mut monitoring = lock(&self.monitoring);
-            if monitoring.child_pid == Some(child.id()) {
-                monitoring.child_pid = None;
-            }
-        }
-        // NO_ELEMENT after a uniform -25212 run is terminal for this app.
-        if no_element && is_persistent_ax_no_value_failure(&stderr) {
-            lock(&self.unsupported_pids).insert(pid);
-        }
-    }
-
-    fn run_polling_after_delay(&self, generation: u64, pid: i32) {
-        self.poll(generation, pid);
     }
 
     fn run_polling(&self, generation: u64, pid: i32) {
@@ -553,6 +555,64 @@ impl Inner {
                 last_value = current.clone();
                 self.emit_edit(generation, current);
             }
+        }
+    }
+}
+
+enum WatchEvent {
+    Line(String),
+    /// The helper ended; `ax_unsupported` once the target app's AX tree
+    /// proved permanently unreadable.
+    Ended {
+        ax_unsupported: bool,
+    },
+    /// The helper could not be started.
+    Unavailable,
+}
+
+/// One `macos-text-monitor <pid>` run: sends the pasted text, forwards the
+/// helper's lines and judges its diagnostics when it ends.
+struct EditWatch {
+    original_text: String,
+    args: Vec<String>,
+    stderr: String,
+    no_element: bool,
+}
+
+impl Protocol for EditWatch {
+    type Event = WatchEvent;
+
+    fn args(&self) -> Vec<String> {
+        self.args.clone()
+    }
+
+    fn on_start(&mut self, cx: &mut Control<'_, WatchEvent>) {
+        cx.write_line(&self.original_text);
+    }
+
+    fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, WatchEvent>) {
+        if line.contains("NO_ELEMENT") {
+            self.no_element = true;
+        }
+        cx.emit(WatchEvent::Line(line.to_string()));
+    }
+
+    fn on_stderr(&mut self, text: &str, _cx: &mut Control<'_, WatchEvent>) {
+        if self.stderr.len() < MAX_STDERR_BYTES {
+            self.stderr.push_str(text);
+        }
+    }
+
+    fn on_down(&mut self, down: &Down, _recovery: Recovery, cx: &mut Control<'_, WatchEvent>) {
+        match down {
+            Down::Stopped => {}
+            Down::Missing | Down::NotStarted(_) => {
+                log::debug!("[text-monitor] native monitor failed ({down:?}), polling instead");
+                cx.emit(WatchEvent::Unavailable);
+            }
+            Down::Failed(_) | Down::Exited { .. } => cx.emit(WatchEvent::Ended {
+                ax_unsupported: self.no_element && is_persistent_ax_no_value_failure(&self.stderr),
+            }),
         }
     }
 }
@@ -655,6 +715,8 @@ pub(crate) mod appkit {
 mod tests {
     //! Capture target and monitor target.
     use super::*;
+    use crate::native::supervised_child::ChildEvent;
+    use crate::native::supervised_child::tests::FakeSpawner;
     use crate::native::timer::FakeTimers;
     use std::sync::atomic::AtomicUsize;
 
@@ -674,6 +736,34 @@ mod tests {
             frontmost_pid: frontmost,
             activate_app: Arc::new(|_| false),
             keyboard_focus_pid: None,
+            spawner: Arc::new(ProcessSpawner),
+        }
+    }
+
+    /// Monitoring runs go to `spawner`; one-shot probes find no binary at
+    /// the fake path.
+    fn fake_hooks(spawner: &Arc<FakeSpawner>) -> MonitorHooks {
+        MonitorHooks {
+            resolve_helper: Arc::new(|| {
+                Some(HelperCommand {
+                    program: PathBuf::from("/fake/macos-text-monitor"),
+                    args: Vec::new(),
+                })
+            }),
+            frontmost_pid: Arc::new(|| None),
+            activate_app: Arc::new(|_| false),
+            keyboard_focus_pid: None,
+            spawner: spawner.clone(),
+        }
+    }
+
+    /// Returns once the run spawned; its first event then waits for the
+    /// spawn to finish.
+    fn wait_for_spawn(spawner: &FakeSpawner) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while spawner.count() == 0 {
+            assert!(Instant::now() < deadline, "monitor never spawned");
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
@@ -760,6 +850,7 @@ mod tests {
                 true
             }),
             keyboard_focus_pid: Some(Arc::new(|| Some(4242))),
+            spawner: Arc::new(ProcessSpawner),
         });
         assert!(monitor.activate_pid(Some(4242)));
         assert_eq!(
@@ -780,6 +871,7 @@ mod tests {
                 true
             }),
             keyboard_focus_pid: Some(Arc::new(move || Some(*lock(&read)))),
+            spawner: Arc::new(ProcessSpawner),
         });
         assert!(monitor.activate_pid(Some(4242)));
 
@@ -793,6 +885,7 @@ mod tests {
                 counter.fetch_add(1, Ordering::SeqCst);
                 Some(1111)
             })),
+            spawner: Arc::new(ProcessSpawner),
         });
         assert!(!monitor.activate_pid(Some(4242)));
         assert_eq!(lookups.load(Ordering::SeqCst), 1);
@@ -862,17 +955,26 @@ mod tests {
 
     #[test]
     fn no_element_with_uniform_no_value_teaches_the_cache() {
-        let monitor = TextEditMonitor::with_hooks(hooks(
-            sh(
-                "echo 'Attempt 5/5: Cannot get focused element for PID 4242 (error: -25212)' >&2; echo NO_ELEMENT",
-            ),
-            Arc::new(|| None),
-        ));
+        let spawner = Arc::new(FakeSpawner::default());
+        let monitor = TextEditMonitor::with_hooks(fake_hooks(&spawner));
         monitor.start_monitoring("pasted text", Duration::from_secs(4), Some(4242));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !lock(&monitor.inner.unsupported_pids).contains(&4242) && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        wait_for_spawn(&spawner);
+        assert_eq!(spawner.args(0), vec!["4242".to_string()]);
+        spawner.emit(
+            0,
+            ChildEvent::Stderr(
+                "Attempt 5/5: Cannot get focused element for PID 4242 (error: -25212)\n".into(),
+            ),
+        );
+        spawner.emit(0, ChildEvent::Stdout("NO_ELEMENT\n".into()));
+        assert!(monitor.is_monitoring(), "monitoring ends with the helper");
+        spawner.emit(
+            0,
+            ChildEvent::Exit {
+                code: Some(1),
+                signal: None,
+            },
+        );
         assert!(!monitor.is_monitoring());
         assert!(lock(&monitor.inner.unsupported_pids).contains(&4242));
     }
@@ -894,19 +996,22 @@ mod tests {
     #[test]
     fn edits_are_reported_debounced_with_the_pasted_text() {
         let timers = FakeTimers::new();
+        let spawner = Arc::new(FakeSpawner::default());
         let monitor = TextEditMonitor::build(
-            hooks(
-                sh(
-                    "read line; echo 'INITIAL_VALUE:x'; echo 'CHANGED:hello wrld'; echo \"CHANGED_B64:$(printf 'hello\\nworld' | base64)\"; sleep 1",
-                ),
-                Arc::new(|| None),
-            ),
+            fake_hooks(&spawner),
             timers.clone(),
             Duration::from_millis(1500),
         );
         let edits = monitor.subscribe();
         monitor.start_monitoring("hello world", Duration::from_secs(30), Some(42));
-        std::thread::sleep(Duration::from_millis(900));
+        wait_for_spawn(&spawner);
+        spawner.emit(
+            0,
+            ChildEvent::Stdout(
+                "INITIAL_VALUE:x\nCHANGED:hello wrld\nCHANGED_B64:aGVsbG8Kd29ybGQ=\n".into(),
+            ),
+        );
+        assert_eq!(lock(&spawner.child(0)).writes, vec!["hello world\n"]);
         timers.advance(1500);
         let edit = edits.try_recv().expect("debounced edit");
         assert_eq!(
@@ -921,5 +1026,17 @@ mod tests {
             "only the latest edit is reported"
         );
         monitor.stop_monitoring();
+    }
+
+    #[test]
+    fn a_new_subscriber_closes_the_previous_one() {
+        let monitor = TextEditMonitor::build(
+            hooks(sh("sleep 1"), Arc::new(|| None)),
+            FakeTimers::new(),
+            Duration::from_millis(1500),
+        );
+        let first = monitor.subscribe();
+        let _second = monitor.subscribe();
+        assert!(first.is_closed());
     }
 }

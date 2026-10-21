@@ -101,7 +101,12 @@ fn live_transcribe_and_clean_up() {
          and keep the meaning. Reply with the cleaned text only.",
         true,
     );
-    let cleaned = run(process_text(&response.text, &config)).unwrap();
+    let cleaned = run(process_text(
+        &response.text,
+        &config,
+        &CancellationToken::new(),
+    ))
+    .unwrap();
     eprintln!("cleaned: {cleaned:?}");
     assert!(!cleaned.contains("<think>"));
     assert!(words(&cleaned).contains("hello"), "{cleaned}");

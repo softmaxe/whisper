@@ -112,11 +112,6 @@ pub fn audio_storage_usage() -> (usize, u64) {
     (usage.file_count, usage.total_bytes)
 }
 
-/// Deletes every stored recording and clears the History rows' audio flags.
-pub fn delete_all_audio(db: &crate::db::Database) {
-    crate::audio_storage::AudioStorage::default().delete_all_audio_and_flags(db);
-}
-
 pub fn cleanup_api_key() -> String {
     crate::secrets::get_cleanup_api_key()
         .ok()
@@ -230,7 +225,8 @@ pub fn run_cleanup_test(
     };
     let text = prompts::wrap_cleanup_transcript(&input);
     let handle = crate::services::runtime::spawn(async move {
-        crate::services::cleanup::process_text(&text, &config).await
+        let cancel = tokio_util::sync::CancellationToken::new();
+        crate::services::cleanup::process_text(&text, &config, &cancel).await
     });
     async move {
         match handle.await {
@@ -241,37 +237,11 @@ pub fn run_cleanup_test(
     }
 }
 
-/// Key events from the native listener used while capturing a hotkey.
-#[derive(Clone, Debug)]
-pub enum RawKey {
-    FnDown,
-    FnUp,
-    RightModifierDown(String),
-    RightModifierUp,
-    MouseButtonDown(String),
-}
+pub use crate::native::hotkeys::RawKeyEvent;
 
-pub fn raw_key_events() -> Option<async_channel::Receiver<RawKey>> {
-    let manager = hotkeys()?;
-    let raw = manager.subscribe_raw_keys();
-    let (tx, rx) = async_channel::unbounded();
-    std::thread::spawn(move || {
-        use crate::native::hotkeys::RawKeyEvent as E;
-        while let Ok(event) = raw.recv_blocking() {
-            let mapped = match event {
-                E::GlobeDown => RawKey::FnDown,
-                E::GlobeUp => RawKey::FnUp,
-                E::RightModifierDown(name) => RawKey::RightModifierDown(name),
-                E::RightModifierUp(_) => RawKey::RightModifierUp,
-                E::MouseButtonDown(name) => RawKey::MouseButtonDown(name),
-                _ => continue,
-            };
-            if tx.send_blocking(mapped).is_err() {
-                break;
-            }
-        }
-    });
-    Some(rx)
+/// Key events from the native listener, used while capturing a hotkey.
+pub fn raw_key_events() -> Option<async_channel::Receiver<RawKeyEvent>> {
+    Some(hotkeys()?.subscribe_raw_keys())
 }
 
 pub fn set_hotkey_listening_mode(enabled: bool) {
@@ -280,21 +250,17 @@ pub fn set_hotkey_listening_mode(enabled: bool) {
     }
 }
 
+/// The hotkeys of a stored list, in their stored spelling.
 pub fn parse_hotkey_list(value: &str) -> Vec<String> {
     crate::text::hotkeys::parse_hotkey_list(value)
-}
-
-pub fn serialize_hotkey_list(list: &[String]) -> String {
-    crate::text::hotkeys::serialize_hotkey_list(list)
-}
-
-pub fn normalize_hotkey(hotkey: &str) -> String {
-    crate::text::hotkeys::normalize_hotkey(hotkey)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// The user-facing reason a captured hotkey is rejected, if any.
-pub fn validate_hotkey(hotkey: &str) -> Option<String> {
-    let message = crate::text::hotkeys::get_validation_message::<&str>(hotkey, &[])?;
+pub fn validate_hotkey(hotkey: &crate::text::hotkeys::Hotkey) -> Option<String> {
+    let message = hotkey.validation_message()?;
     let params: Vec<(&str, &str)> = message
         .params
         .iter()
@@ -307,8 +273,10 @@ pub fn validate_hotkey(hotkey: &str) -> Option<String> {
     )
 }
 
-pub fn format_hotkey_label(hotkey: &str) -> String {
-    crate::text::hotkeys::format_hotkey_label(Some(hotkey))
+/// User-facing label for a stored hotkey or hotkey list; empty shows the
+/// default hotkey.
+pub fn format_hotkey_label(hotkeys: &str) -> String {
+    crate::text::hotkeys::format_hotkey_list_label(hotkeys)
 }
 
 /// Registers the global Dictation hotkeys; returns the list actually active.
@@ -431,7 +399,8 @@ pub fn paste_text(
 }
 
 /// Watches the target field after an automatic paste and adds learned
-/// corrections to the Dictionary (auto-learn). Resolves to the words added.
+/// corrections to the Dictionary (auto-learn). Resolves to the words added,
+/// or nothing when a later paste replaces this one.
 pub fn monitor_corrections(
     text: String,
     target_pid: Option<i32>,
@@ -445,37 +414,21 @@ pub fn monitor_corrections(
             return Vec::new();
         };
         cx.update(|cx| {
-            let state = crate::app_state::AppState::global(cx);
-            let (db, dictionary) = {
-                let s = state.read(cx);
-                (s.db.clone(), s.dictionary.clone())
-            };
-            let learned = crate::text::correction_learner::extract_corrections(
-                &edit.original_text,
-                &edit.edited_text,
-                &dictionary,
-            );
-            if learned.is_empty() {
-                return Vec::new();
-            }
-            let empty: [&str; 0] = [];
-            if db
-                .apply_dictionary_changes(&learned, &empty, crate::db::DictionarySource::Learned)
-                .is_err()
-            {
-                return Vec::new();
-            }
-            state.update(cx, |s, cx| s.reload_dictionary(cx));
-            learned
+            crate::app_state::AppState::global(cx).update(cx, |s, cx| {
+                s.learn_corrections(&edit.original_text, &edit.edited_text, cx)
+            })
         })
     })
 }
 
 /// Removes words auto-learn just added (the toast's Undo).
 pub fn undo_learned_words(words: &[String], cx: &mut gpui_kit::App) {
-    let state = crate::app_state::AppState::global(cx);
-    let db = state.read(cx).db.clone();
-    let empty: [&str; 0] = [];
-    let _ = db.apply_dictionary_changes(&empty, words, crate::db::DictionarySource::Learned);
-    state.update(cx, |s, cx| s.reload_dictionary(cx));
+    let none: [&str; 0] = [];
+    crate::app_state::AppState::global(cx).update(cx, |s, cx| {
+        if let Err(err) =
+            s.change_dictionary(&none, words, crate::db::DictionarySource::Learned, cx)
+        {
+            log::warn!("failed to undo learned words: {err}");
+        }
+    });
 }

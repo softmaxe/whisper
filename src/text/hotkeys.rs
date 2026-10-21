@@ -1,125 +1,495 @@
-//! Hotkey list parsing, display labels, validation and capture policy.
+//! The [`Hotkey`] value: parsing, the canonical stored spelling, what
+//! observes a hotkey, display labels and validation.
 //!
-//! Hotkeys are accelerator strings ("Control+Shift+K", "RightOption",
-//! "GLOBE", "MouseButton4") because that is what settings store.
+//! Settings store hotkeys as strings ("Control+Shift+K", "RightOption",
+//! "GLOBE", "MouseButton4"), comma-separated for a list. [`Hotkey::parse`]
+//! reads every spelling settings, the capture field and the native listener
+//! use, and `to_string()` writes the canonical one, which parses back to the
+//! same value. Callers ask the value instead of inspecting strings.
 
-use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::LazyLock;
-
-use regex::Regex;
 
 use crate::settings::DEFAULT_HOTKEY;
 
 const HOTKEY_LIST_SEPARATOR: char = ',';
 
-pub fn is_globe_like_hotkey(hotkey: &str) -> bool {
-    hotkey == "GLOBE" || hotkey == "Fn"
+/// A modifier key. The declaration order is the order within a chord.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Modifier {
+    Control,
+    Command,
+    Option,
+    Shift,
+    Fn,
 }
 
-pub fn is_mouse_button_hotkey(hotkey: &str) -> bool {
-    hotkey.eq_ignore_ascii_case("MouseButton4") || hotkey.eq_ignore_ascii_case("MouseButton5")
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Side {
+    Left,
+    Right,
 }
 
-// The comma KEY is itself a valid hotkey ("Control+,"): no accelerator ends
-// with "+", so a segment ending in "+" followed by an empty segment (the
-// comma key consumed by the split) gets its comma restored.
-fn collect_hotkeys(raw: &[&str]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    let mut result = Vec::new();
-    for (i, segment) in raw.iter().enumerate() {
-        let mut hotkey = segment.trim().to_string();
-        if hotkey.ends_with('+') && i + 1 < raw.len() && raw[i + 1].trim().is_empty() {
-            hotkey.push(HOTKEY_LIST_SEPARATOR);
+/// Every accepted modifier spelling, lowercase without spaces, dashes or
+/// underscores. Sided ones also take a Left/Right prefix or suffix
+/// ("RightAlt", "Option-Right", "right_cmd").
+const MODIFIER_NAMES: [(&str, Modifier, bool); 16] = [
+    ("control", Modifier::Control, true),
+    ("ctrl", Modifier::Control, true),
+    ("command", Modifier::Command, true),
+    ("cmd", Modifier::Command, true),
+    ("super", Modifier::Command, true),
+    ("meta", Modifier::Command, true),
+    ("win", Modifier::Command, true),
+    ("commandorcontrol", Modifier::Command, false),
+    ("cmdorctrl", Modifier::Command, false),
+    ("commandorctrl", Modifier::Command, false),
+    ("cmdorcontrol", Modifier::Command, false),
+    ("alt", Modifier::Option, true),
+    ("option", Modifier::Option, true),
+    ("altgr", Modifier::Option, false),
+    ("shift", Modifier::Shift, true),
+    ("fn", Modifier::Fn, false),
+];
+
+impl Modifier {
+    /// The listener's name in `MODIFIER_UP:<name>` ("command", "option", ...).
+    pub fn from_listener_name(name: &str) -> Option<Self> {
+        match parse_modifier(name)? {
+            (modifier, None) => Some(modifier),
+            _ => None,
         }
-        if hotkey.is_empty() || !seen.insert(hotkey.clone()) {
-            continue;
-        }
-        result.push(hotkey);
     }
-    result
-}
 
-/// Parse a comma-separated hotkey list (a single hotkey is a one-item list):
-/// trimmed, de-duplicated, empties removed, order preserved.
-pub fn parse_hotkey_list(value: &str) -> Vec<String> {
-    let raw: Vec<&str> = value.split(HOTKEY_LIST_SEPARATOR).collect();
-    collect_hotkeys(&raw)
-}
-
-/// Like [`parse_hotkey_list`] for a list whose items may themselves hold
-/// comma-separated hotkeys.
-pub fn parse_hotkey_items<S: AsRef<str>>(items: &[S]) -> Vec<String> {
-    let raw: Vec<&str> = items
-        .iter()
-        .flat_map(|item| item.as_ref().split(HOTKEY_LIST_SEPARATOR))
-        .collect();
-    collect_hotkeys(&raw)
-}
-
-/// Serialize a hotkey list into the canonical comma-separated storage string.
-pub fn serialize_hotkey_list<S: AsRef<str>>(items: &[S]) -> String {
-    parse_hotkey_items(items).join(",")
-}
-
-static SIDE_MODIFIER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^(Right|Left)(Option|Alt|Command|Cmd|Control|Ctrl|Shift|Super|Meta|Win)$")
-        .expect("static regex")
-});
-
-/// "RightOption" → "Right Option", "LeftControl" → "Left Ctrl"; `None` when
-/// the token carries no side.
-fn format_side_modifier_part(part: &str) -> Option<String> {
-    let caps = SIDE_MODIFIER_RE.captures(part)?;
-    let key = &caps[2];
-    let key = if key == "Option" { "Alt" } else { key };
-    Some(format!("{} {}", &caps[1], format_modifier_part(key)))
-}
-
-fn format_modifier_part(part: &str) -> &str {
-    match part {
-        "CommandOrControl" | "Command" | "Cmd" | "Super" | "Meta" => "Cmd",
-        "Control" | "Ctrl" => "Ctrl",
-        "Alt" | "Option" => "Option",
-        "Shift" => "Shift",
-        "Win" => "Super",
-        "Fn" => "Fn",
-        other => other,
-    }
-}
-
-/// User-facing label; an empty or missing hotkey shows the default hotkey.
-pub fn format_hotkey_label(hotkey: Option<&str>) -> String {
-    let resolved = match hotkey {
-        Some(h) if !h.trim().is_empty() => h,
-        _ => DEFAULT_HOTKEY,
-    };
-    format_hotkey_display(resolved)
-}
-
-/// Like [`format_hotkey_label`], but an empty hotkey formats as "".
-pub fn format_hotkey_display(hotkey: &str) -> String {
-    if hotkey.trim().is_empty() {
-        return String::new();
-    }
-    if is_globe_like_hotkey(hotkey) {
-        return "Globe/Fn".into();
-    }
-    if is_mouse_button_hotkey(hotkey) {
-        // Case-insensitive, so "mousebutton4" reads as 4, not 5.
-        return if hotkey.eq_ignore_ascii_case("MouseButton4") {
-            "Mouse Button 4".into()
-        } else {
-            "Mouse Button 5".into()
+    /// Stored spelling: "Control", "Alt", "RightOption", "LeftCommand".
+    fn token(self, side: Option<Side>) -> String {
+        let Some(side) = side else {
+            return match self {
+                Self::Control => "Control",
+                Self::Command => "Command",
+                Self::Option => "Alt",
+                Self::Shift => "Shift",
+                Self::Fn => "Fn",
+            }
+            .to_string();
         };
+        let side = match side {
+            Side::Left => "Left",
+            Side::Right => "Right",
+        };
+        let name = match self {
+            Self::Control => "Control",
+            Self::Command => "Command",
+            Self::Option => "Option",
+            Self::Shift => "Shift",
+            Self::Fn => "Fn",
+        };
+        format!("{side}{name}")
     }
-    hotkey
-        .split('+')
-        .map(|part| {
-            format_side_modifier_part(part)
-                .unwrap_or_else(|| format_modifier_part(part).to_string())
+
+    /// User-facing name: "Ctrl", "Option", "Right Cmd".
+    pub fn label(self, side: Option<Side>) -> String {
+        let name = match self {
+            Self::Control => "Ctrl",
+            Self::Command => "Cmd",
+            Self::Option => "Option",
+            Self::Shift => "Shift",
+            Self::Fn => "Fn",
+        };
+        match side {
+            None => name.to_string(),
+            Some(Side::Left) => format!("Left {name}"),
+            Some(Side::Right) => format!("Right {name}"),
+        }
+    }
+}
+
+fn parse_modifier(token: &str) -> Option<(Modifier, Option<Side>)> {
+    let compact: String = token
+        .chars()
+        .filter(|c| !matches!(c, '-' | '_') && !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let lookup = |name: &str, sided: bool| {
+        MODIFIER_NAMES
+            .iter()
+            .find(|(n, _, can_side)| *n == name && (*can_side || !sided))
+            .map(|(_, modifier, _)| *modifier)
+    };
+    if let Some(modifier) = lookup(&compact, false) {
+        return Some((modifier, None));
+    }
+    [(Side::Left, "left"), (Side::Right, "right")]
+        .into_iter()
+        .find_map(|(side, word)| {
+            let base = compact
+                .strip_prefix(word)
+                .or_else(|| compact.strip_suffix(word))?;
+            lookup(base, true).map(|modifier| (modifier, Some(side)))
         })
+}
+
+/// Named keys by every accepted spelling (lowercase) and their stored name.
+const KEY_NAMES: [(&str, &str); 30] = [
+    ("space", "Space"),
+    ("tab", "Tab"),
+    ("enter", "Enter"),
+    ("return", "Enter"),
+    ("backspace", "Backspace"),
+    ("escape", "Esc"),
+    ("esc", "Esc"),
+    ("delete", "Delete"),
+    ("del", "Delete"),
+    ("insert", "Insert"),
+    ("ins", "Insert"),
+    ("home", "Home"),
+    ("end", "End"),
+    ("pageup", "PageUp"),
+    ("pgup", "PageUp"),
+    ("pagedown", "PageDown"),
+    ("pgdown", "PageDown"),
+    ("up", "Up"),
+    ("arrowup", "Up"),
+    ("down", "Down"),
+    ("arrowdown", "Down"),
+    ("left", "Left"),
+    ("arrowleft", "Left"),
+    ("right", "Right"),
+    ("arrowright", "Right"),
+    ("printscreen", "PrintScreen"),
+    ("print", "PrintScreen"),
+    ("pause", "Pause"),
+    ("scrolllock", "ScrollLock"),
+    ("numlock", "NumLock"),
+];
+
+fn normalize_key(token: &str) -> String {
+    let trimmed: String = token.chars().filter(|c| !c.is_whitespace()).collect();
+    let lowered = trimmed.to_lowercase();
+    if let Some((_, name)) = KEY_NAMES.iter().find(|(alias, _)| *alias == lowered) {
+        return name.to_string();
+    }
+    if let Some(digits) = lowered.strip_prefix('f')
+        && (1..=2).contains(&digits.len())
+        && digits.bytes().all(|b| b.is_ascii_digit())
+    {
+        return format!("F{digits}");
+    }
+    // Single-unit keys (one UTF-16 unit) are uppercased.
+    if trimmed.encode_utf16().count() == 1 {
+        return trimmed.to_uppercase();
+    }
+    trimmed
+}
+
+/// F1 to F24.
+fn is_function_key(key: &str) -> bool {
+    key.strip_prefix('F')
+        .filter(|n| !n.starts_with('0'))
+        .and_then(|n| n.parse::<u8>().ok())
+        .is_some_and(|n| (1..=24).contains(&n))
+}
+
+fn mouse_button(name: &str) -> Option<u8> {
+    if name.eq_ignore_ascii_case("MouseButton4") {
+        Some(4)
+    } else if name.eq_ignore_ascii_case("MouseButton5") {
+        Some(5)
+    } else {
+        None
+    }
+}
+
+/// A key the native listener watches. Unlike a Carbon shortcut, the listener
+/// reports its release too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ListenerKey {
+    /// Globe/Fn.
+    Globe,
+    /// A right-side modifier on its own; never [`Modifier::Fn`].
+    RightModifier(Modifier),
+    /// Side mouse button 4 or 5.
+    MouseButton(u8),
+}
+
+impl ListenerKey {
+    /// Reads a listener key name ("GLOBE", "RightOption", "MouseButton4") or
+    /// any other spelling of one.
+    pub fn parse(name: &str) -> Option<Self> {
+        Hotkey::parse(name)?.listener_key()
+    }
+
+    fn from_token(token: &str) -> Option<Self> {
+        if token.eq_ignore_ascii_case("GLOBE") || token.eq_ignore_ascii_case("Fn") {
+            return Some(Self::Globe);
+        }
+        if let Some(button) = mouse_button(token) {
+            return Some(Self::MouseButton(button));
+        }
+        match parse_modifier(token)? {
+            (modifier, Some(Side::Right)) if modifier != Modifier::Fn => {
+                Some(Self::RightModifier(modifier))
+            }
+            _ => None,
+        }
+    }
+
+    /// The modifier this key is, as Hold mode chords see its release: Globe
+    /// is Fn and a right-side modifier is its modifier.
+    pub fn modifier(self) -> Option<Modifier> {
+        match self {
+            Self::Globe => Some(Modifier::Fn),
+            Self::RightModifier(modifier) => Some(modifier),
+            Self::MouseButton(_) => None,
+        }
+    }
+}
+
+/// The listener's name for the key, also its stored spelling.
+impl fmt::Display for ListenerKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Globe => f.write_str("GLOBE"),
+            Self::RightModifier(modifier) => f.write_str(&modifier.token(Some(Side::Right))),
+            Self::MouseButton(button) => write!(f, "MouseButton{button}"),
+        }
+    }
+}
+
+/// A parsed Dictation hotkey.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Hotkey(Repr);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Repr {
+    Listener(ListenerKey),
+    /// Modifiers sorted and de-duplicated, then the other keys in order.
+    Chord {
+        modifiers: Vec<(Modifier, Option<Side>)>,
+        keys: Vec<String>,
+    },
+}
+
+impl Hotkey {
+    /// Reads one hotkey in any accepted spelling; `None` when empty. Unknown
+    /// keys are kept, so a hotkey nothing can register still round-trips.
+    pub fn parse(value: &str) -> Option<Self> {
+        let value = value.trim();
+        // The "+" key leaves "++" at the end ("Control++") or stands alone.
+        let (head, plus_key) = match value.strip_suffix("++") {
+            Some(head) => (head, true),
+            None if value == "+" => ("", true),
+            None => (value, false),
+        };
+        let tokens: Vec<&str> = head
+            .split('+')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .collect();
+        if let [token] = tokens[..]
+            && !plus_key
+            && let Some(key) = ListenerKey::from_token(token)
+        {
+            return Some(key.into());
+        }
+        let mut modifiers = Vec::new();
+        let mut keys = Vec::new();
+        for token in tokens {
+            match parse_modifier(token) {
+                Some(modifier) => modifiers.push(modifier),
+                None => keys.push(normalize_key(token)),
+            }
+        }
+        if plus_key {
+            keys.push("+".to_string());
+        }
+        (!modifiers.is_empty() || !keys.is_empty()).then(|| Self::chord(modifiers, keys))
+    }
+
+    /// A hotkey pressed in the capture field: `modifiers` held with `key`, as
+    /// the UI toolkit names it ("space", "f13", "k"), or the modifiers alone.
+    /// `None` for a key a hotkey cannot use.
+    pub fn capture(modifiers: &[Modifier], key: Option<&str>) -> Option<Self> {
+        let keys = match key {
+            Some(key) => {
+                let key = normalize_key(key);
+                let usable = KEY_NAMES.iter().any(|(_, name)| *name == key)
+                    || is_function_key(&key)
+                    || (key.len() == 1 && key.bytes().all(|b| b.is_ascii_graphic()));
+                if !usable {
+                    return None;
+                }
+                vec![key]
+            }
+            None => Vec::new(),
+        };
+        let modifiers: Vec<_> = modifiers.iter().map(|m| (*m, None)).collect();
+        (!modifiers.is_empty() || !keys.is_empty()).then(|| Self::chord(modifiers, keys))
+    }
+
+    /// This hotkey pressed with Fn held, which nothing can observe.
+    pub fn with_fn(self) -> Self {
+        let (mut modifiers, keys) = match self.0 {
+            Repr::Listener(ListenerKey::RightModifier(modifier)) => {
+                (vec![(modifier, Some(Side::Right))], Vec::new())
+            }
+            Repr::Listener(key) => return key.into(),
+            Repr::Chord { modifiers, keys } => (modifiers, keys),
+        };
+        modifiers.push((Modifier::Fn, None));
+        Self::chord(modifiers, keys)
+    }
+
+    fn chord(mut modifiers: Vec<(Modifier, Option<Side>)>, keys: Vec<String>) -> Self {
+        modifiers.sort();
+        modifiers.dedup();
+        Self(Repr::Chord { modifiers, keys })
+    }
+
+    /// The key when the native listener observes this hotkey.
+    pub fn listener_key(&self) -> Option<ListenerKey> {
+        match self.0 {
+            Repr::Listener(key) => Some(key),
+            Repr::Chord { .. } => None,
+        }
+    }
+
+    pub fn is_globe(&self) -> bool {
+        self.listener_key() == Some(ListenerKey::Globe)
+    }
+
+    fn has_fn(&self) -> bool {
+        matches!(&self.0, Repr::Chord { modifiers, .. }
+            if modifiers.iter().any(|(m, _)| *m == Modifier::Fn))
+    }
+
+    /// The accelerator to register as a Carbon global shortcut, with modifier
+    /// sides dropped ("RightCommand+K" -> "Command+K"). `None` for keys the
+    /// native listener observes and for chords with Fn, which cannot be part
+    /// of an accelerator.
+    pub fn accelerator(&self) -> Option<String> {
+        let Repr::Chord { modifiers, keys } = &self.0 else {
+            return None;
+        };
+        if self.has_fn() {
+            return None;
+        }
+        let modifiers = modifiers.iter().map(|(m, _)| (*m, None)).collect();
+        Some(Self::chord(modifiers, keys.clone()).to_string())
+    }
+
+    /// Modifiers whose release ends a Hold mode press of this chord, as the
+    /// listener reports them. Empty for listener keys, which report their
+    /// own release.
+    pub fn release_modifiers(&self) -> Vec<Modifier> {
+        let Repr::Chord { modifiers, .. } = &self.0 else {
+            return Vec::new();
+        };
+        let mut released: Vec<Modifier> = modifiers.iter().map(|(m, _)| *m).collect();
+        released.dedup();
+        released
+    }
+
+    /// Hold mode needs a key whose release macOS reports: the listener's keys
+    /// and chords with a modifier. A lone regular key autorepeats and never
+    /// reports its release.
+    pub fn supports_hold(&self) -> bool {
+        self.listener_key().is_some() || !self.release_modifiers().is_empty()
+    }
+
+    /// User-facing label: "Ctrl+Right Shift+K", "Globe/Fn".
+    pub fn label(&self) -> String {
+        self.label_parts().join("+")
+    }
+
+    /// The label's parts, one per key.
+    pub fn label_parts(&self) -> Vec<String> {
+        match &self.0 {
+            Repr::Listener(ListenerKey::Globe) => vec!["Globe/Fn".to_string()],
+            Repr::Listener(ListenerKey::RightModifier(modifier)) => {
+                vec![modifier.label(Some(Side::Right))]
+            }
+            Repr::Listener(ListenerKey::MouseButton(button)) => {
+                vec![format!("Mouse Button {button}")]
+            }
+            Repr::Chord { modifiers, keys } => modifiers
+                .iter()
+                .map(|(modifier, side)| modifier.label(*side))
+                .chain(keys.iter().cloned())
+                .collect(),
+        }
+    }
+}
+
+impl From<ListenerKey> for Hotkey {
+    fn from(key: ListenerKey) -> Self {
+        Self(Repr::Listener(key))
+    }
+}
+
+/// The canonical stored spelling.
+impl fmt::Display for Hotkey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.0 {
+            Repr::Listener(key) => key.fmt(f),
+            Repr::Chord { modifiers, keys } => {
+                let parts: Vec<String> = modifiers
+                    .iter()
+                    .map(|(modifier, side)| modifier.token(*side))
+                    .chain(keys.iter().cloned())
+                    .collect();
+                f.write_str(&parts.join("+"))
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lists
+
+/// Parses a stored hotkey list ("GLOBE,Control+Shift+R"; a single hotkey is a
+/// one-item list): empties and duplicates removed, order kept.
+pub fn parse_hotkey_list(value: &str) -> Vec<Hotkey> {
+    let raw: Vec<&str> = value.split(HOTKEY_LIST_SEPARATOR).collect();
+    let mut hotkeys = Vec::new();
+    for (i, segment) in raw.iter().enumerate() {
+        let mut item = segment.trim().to_string();
+        // The comma key is itself a key ("Control+,"): no hotkey ends with
+        // "+", so a segment ending in "+" followed by an empty segment (the
+        // comma consumed by the split) gets its comma back.
+        if item.ends_with('+') && raw.get(i + 1).is_some_and(|next| next.trim().is_empty()) {
+            item.push(HOTKEY_LIST_SEPARATOR);
+        }
+        if let Some(hotkey) = Hotkey::parse(&item)
+            && !hotkeys.contains(&hotkey)
+        {
+            hotkeys.push(hotkey);
+        }
+    }
+    hotkeys
+}
+
+/// The stored spelling of a hotkey list.
+pub fn serialize_hotkey_list(hotkeys: &[Hotkey]) -> String {
+    hotkeys
+        .iter()
+        .map(Hotkey::to_string)
         .collect::<Vec<_>>()
-        .join("+")
+        .join(",")
+}
+
+/// User-facing label for a stored hotkey list; an empty list shows the
+/// default hotkey.
+pub fn format_hotkey_list_label(value: &str) -> String {
+    let mut hotkeys = parse_hotkey_list(value);
+    if hotkeys.is_empty() {
+        hotkeys = parse_hotkey_list(DEFAULT_HOTKEY);
+    }
+    hotkeys
+        .iter()
+        .map(Hotkey::label)
+        .collect::<Vec<_>>()
+        .join(" / ")
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +499,6 @@ pub fn format_hotkey_display(hotkey: &str) -> String {
 /// `default_message()` the English text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyValidationError {
-    Empty,
     FnCombinationUnsupported,
     MouseButtonCombination,
     TooManyKeys,
@@ -137,14 +506,12 @@ pub enum HotkeyValidationError {
     NoModifierOrSpecial,
     ModifierOnlyUnsupported,
     LeftModifierOnly,
-    Duplicate,
     Reserved,
 }
 
 impl HotkeyValidationError {
     pub fn message_key(self) -> &'static str {
         match self {
-            Self::Empty => "hotkey.validation.empty",
             Self::FnCombinationUnsupported => "hotkey.errors.fnCombinationUnsupported",
             Self::MouseButtonCombination => "hotkey.validation.mouseButtonCombination",
             Self::TooManyKeys => "hotkey.validation.tooManyKeys",
@@ -152,14 +519,12 @@ impl HotkeyValidationError {
             Self::NoModifierOrSpecial => "hotkey.validation.noModifierOrSpecial",
             Self::ModifierOnlyUnsupported => "hotkey.validation.modifierOnlyUnsupported",
             Self::LeftModifierOnly => "hotkey.validation.leftModifierOnly",
-            Self::Duplicate => "hotkey.validation.duplicate",
             Self::Reserved => "hotkey.validation.reserved",
         }
     }
 
     pub fn default_message(self) -> &'static str {
         match self {
-            Self::Empty => "Please enter a valid shortcut.",
             Self::FnCombinationUnsupported => "The Globe/Fn key can only be used by itself.",
             Self::MouseButtonCombination => {
                 "Mouse button hotkeys cannot be combined with other keys."
@@ -177,7 +542,6 @@ impl HotkeyValidationError {
             Self::LeftModifierOnly => {
                 "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space)."
             }
-            Self::Duplicate => "That shortcut is already in use.",
             Self::Reserved => "That shortcut is reserved by your system.",
         }
     }
@@ -192,37 +556,7 @@ pub struct ValidationMessage {
     pub default_text: String,
 }
 
-const MODIFIER_ORDER: [&str; 6] = ["Control", "Command", "Alt", "Shift", "Super", "Fn"];
-
-const SIDED_MODIFIER_NAMES: [&str; 10] = [
-    "control", "ctrl", "alt", "option", "shift", "command", "cmd", "super", "meta", "win",
-];
-
-fn compact_side_token(part: &str) -> String {
-    part.chars()
-        .filter(|c| !matches!(c, '-' | '_' | ' '))
-        .collect::<String>()
-        .to_lowercase()
-}
-
-fn is_sided_modifier(part: &str, side: &str) -> bool {
-    let normalized = compact_side_token(part);
-    SIDED_MODIFIER_NAMES.iter().any(|name| {
-        normalized.strip_prefix(side) == Some(name) || normalized.strip_suffix(side) == Some(name)
-    })
-}
-
-fn is_right_side_modifier(part: &str) -> bool {
-    is_sided_modifier(part, "right")
-}
-
-fn is_left_side_modifier(part: &str) -> bool {
-    is_sided_modifier(part, "left")
-}
-
-const SPECIAL_KEYS: [&str; 20] = [
-    "GLOBE",
-    "Fn",
+const SPECIAL_KEYS: [&str; 18] = [
     "Esc",
     "Tab",
     "Space",
@@ -244,18 +578,10 @@ const SPECIAL_KEYS: [&str; 20] = [
 ];
 
 fn is_special_key(key: &str) -> bool {
-    SPECIAL_KEYS.contains(&key)
-        || key
-            .strip_prefix('F')
-            .and_then(|n| {
-                n.parse::<u32>()
-                    .ok()
-                    .filter(|_| !n.starts_with('0') && !n.starts_with('+'))
-            })
-            .is_some_and(|n| (1..=24).contains(&n))
+    SPECIAL_KEYS.contains(&key) || is_function_key(key)
 }
 
-const RESERVED_SHORTCUTS: [&str; 48] = [
+const RESERVED_SHORTCUTS: [&str; 46] = [
     "Command+C",
     "Command+V",
     "Command+X",
@@ -302,550 +628,433 @@ const RESERVED_SHORTCUTS: [&str; 48] = [
     "Command+-",
     "Command+Alt+F",
     "Command+Shift+F",
-    "Fn+F11",
-    "Fn+F12",
 ];
 
-static NORMALIZED_RESERVED: LazyLock<Vec<String>> = LazyLock::new(|| {
+static RESERVED: LazyLock<Vec<Hotkey>> = LazyLock::new(|| {
     RESERVED_SHORTCUTS
         .iter()
-        .map(|s| normalize_hotkey(s))
+        .filter_map(|s| Hotkey::parse(s))
         .collect()
 });
 
-fn strip_whitespace(part: &str) -> String {
-    part.chars().filter(|c| !c.is_whitespace()).collect()
-}
-
-fn normalize_modifier(part: &str) -> Option<&'static str> {
-    let lowered = strip_whitespace(part).to_lowercase();
-    match lowered.as_str() {
-        "commandorcontrol" | "cmdorctrl" | "command" | "cmd" | "super" | "win" | "meta" => {
-            return Some("Command");
+impl Hotkey {
+    /// Checks the hotkey against macOS constraints and reserved shortcuts.
+    pub fn validate(&self) -> Result<(), HotkeyValidationError> {
+        use HotkeyValidationError as E;
+        let Repr::Chord { modifiers, keys } = &self.0 else {
+            return Ok(());
+        };
+        // Only standalone Globe/Fn has a native path.
+        if self.has_fn() {
+            return Err(E::FnCombinationUnsupported);
         }
-        "control" | "ctrl" => return Some("Control"),
-        "alt" | "option" => return Some("Alt"),
-        "shift" => return Some("Shift"),
-        "fn" => return Some("Fn"),
-        _ => {}
-    }
-    // Side-qualified modifiers keep their side for single-modifier validation.
-    let sided = |side: &'static [&'static str; 5]| -> Option<&'static str> {
-        let has = |s: &str| lowered.contains(s);
-        if has("control") || has("ctrl") {
-            Some(side[0])
-        } else if has("alt") || has("option") {
-            Some(side[1])
-        } else if has("shift") {
-            Some(side[2])
-        } else if has("command") || has("cmd") {
-            Some(side[3])
-        } else if has("super") || has("meta") || has("win") {
-            Some(side[4])
-        } else {
-            None
+        // Mouse buttons come from a separate event tap and cannot be combined.
+        if keys.iter().any(|key| mouse_button(key).is_some()) {
+            return Err(E::MouseButtonCombination);
         }
-    };
-    if is_right_side_modifier(part)
-        && let Some(m) = sided(&[
-            "RightControl",
-            "RightOption",
-            "RightShift",
-            "RightCommand",
-            "RightCommand",
-        ])
-    {
-        return Some(m);
-    }
-    if is_left_side_modifier(part)
-        && let Some(m) = sided(&[
-            "LeftControl",
-            "LeftOption",
-            "LeftShift",
-            "LeftCommand",
-            "LeftCommand",
-        ])
-    {
-        return Some(m);
-    }
-    None
-}
-
-fn normalize_key_token(part: &str) -> String {
-    let trimmed = strip_whitespace(part);
-    let lowered = trimmed.to_lowercase();
-    let fixed = match lowered.as_str() {
-        "arrowleft" => "Left",
-        "arrowright" => "Right",
-        "arrowup" => "Up",
-        "arrowdown" => "Down",
-        "escape" | "esc" => "Esc",
-        "printscreen" | "print" => "PrintScreen",
-        "pageup" | "pgup" => "PageUp",
-        "pagedown" | "pgdown" => "PageDown",
-        "scrolllock" => "ScrollLock",
-        "numlock" => "NumLock",
-        "delete" | "del" => "Delete",
-        "insert" | "ins" => "Insert",
-        "space" => "Space",
-        "tab" => "Tab",
-        "home" => "Home",
-        "end" => "End",
-        "backspace" => "Backspace",
-        "globe" => "GLOBE",
-        "fn" => "Fn",
-        "mousebutton4" => "MouseButton4",
-        "mousebutton5" => "MouseButton5",
-        _ => "",
-    };
-    if !fixed.is_empty() {
-        return fixed.to_string();
-    }
-    if let Some(digits) = lowered.strip_prefix('f')
-        && (1..=2).contains(&digits.len())
-        && digits.bytes().all(|b| b.is_ascii_digit())
-    {
-        return format!("F{digits}");
-    }
-    // Single-unit keys (one UTF-16 unit) are uppercased.
-    if trimmed.encode_utf16().count() == 1 {
-        return trimmed.to_uppercase();
-    }
-    trimmed
-}
-
-static LEFT_RIGHT_PREFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)^(left|right)[-_ ]?(ctrl|control|alt|option|shift|command|cmd|super|meta|win)$",
-    )
-    .expect("static regex")
-});
-static LEFT_RIGHT_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)^(ctrl|control|alt|option|shift|command|cmd|super|meta|win)[-_ ]?(left|right)$",
-    )
-    .expect("static regex")
-});
-
-fn is_left_right_mix(parts: &[&str]) -> bool {
-    let mut sides: HashMap<&'static str, HashSet<&'static str>> = HashMap::new();
-    for raw in parts {
-        let part = strip_whitespace(raw);
-        let matches = [
-            LEFT_RIGHT_PREFIX_RE
-                .captures(&part)
-                .map(|c| (c[1].to_lowercase(), c[2].to_lowercase())),
-            LEFT_RIGHT_SUFFIX_RE
-                .captures(&part)
-                .map(|c| (c[2].to_lowercase(), c[1].to_lowercase())),
-        ];
-        for (side, modifier) in matches.into_iter().flatten() {
-            let side = if side.contains("left") {
-                "left"
-            } else {
-                "right"
-            };
-            let modifier: &'static str = match modifier.as_str() {
-                "ctrl" | "control" => "control",
-                "cmd" | "command" => "command",
-                "option" | "alt" => "alt",
-                "win" | "meta" | "super" => "super",
-                _ => "shift",
-            };
-            sides.entry(modifier).or_default().insert(side);
+        if modifiers.len() + keys.len() > 3 {
+            return Err(E::TooManyKeys);
         }
-    }
-    sides.values().any(|set| set.len() > 1)
-}
-
-fn split_parts(hotkey: &str) -> Vec<&str> {
-    hotkey
-        .split('+')
-        .map(str::trim)
-        .filter(|p| !p.is_empty())
-        .collect()
-}
-
-/// Canonical form for comparison: modifiers normalized and ordered
-/// (Control, Command, Alt, Shift, Super, Fn; sided ones first), keys after.
-pub fn normalize_hotkey(hotkey: &str) -> String {
-    let mut modifiers: Vec<&str> = Vec::new();
-    let mut keys: Vec<String> = Vec::new();
-    for part in split_parts(hotkey) {
-        match normalize_modifier(part) {
-            Some(m) => modifiers.push(m),
-            None => keys.push(normalize_key_token(part)),
-        }
-    }
-    // indexOf returns -1 for sided modifiers, sorting them first (stable).
-    let order = |m: &str| {
-        MODIFIER_ORDER
-            .iter()
-            .position(|o| *o == m)
-            .map_or(-1, |i| i as i64)
-    };
-    modifiers.sort_by_key(|m| order(m));
-    modifiers
-        .into_iter()
-        .map(str::to_string)
-        .chain(keys)
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
-/// Validate a hotkey (or a comma-separated list, each entry independently,
-/// first failure wins) against macOS constraints and `existing_hotkeys`.
-pub fn validate_hotkey<S: AsRef<str>>(
-    hotkey: &str,
-    existing_hotkeys: &[S],
-) -> Result<(), HotkeyValidationError> {
-    use HotkeyValidationError as E;
-    if hotkey.trim().is_empty() {
-        return Err(E::Empty);
-    }
-
-    // parse_hotkey_list keeps comma-key hotkeys like "Control+," intact, so a
-    // single such hotkey falls through to single-hotkey validation.
-    let single;
-    let mut hotkey = hotkey;
-    if hotkey.contains(',') {
-        let items = parse_hotkey_list(hotkey);
-        match items.len() {
-            0 => return Err(E::Empty),
-            1 => {
-                single = items.into_iter().next().unwrap_or_default();
-                hotkey = &single;
-            }
-            _ => {
-                for item in &items {
-                    validate_hotkey(item, existing_hotkeys)?;
-                }
-                return Ok(());
-            }
-        }
-    }
-
-    if is_globe_like_hotkey(hotkey) {
-        return Ok(());
-    }
-    // Fn cannot be part of an accelerator; only standalone Globe/Fn has a
-    // native path.
-    if hotkey
-        .get(..3)
-        .is_some_and(|p| p.eq_ignore_ascii_case("fn+"))
-    {
-        return Err(E::FnCombinationUnsupported);
-    }
-    if is_mouse_button_hotkey(hotkey) {
-        return Ok(());
-    }
-    // Mouse buttons come from a separate event tap and cannot be combined.
-    let lowered = hotkey.to_lowercase();
-    if lowered.contains("mousebutton4") || lowered.contains("mousebutton5") {
-        return Err(E::MouseButtonCombination);
-    }
-
-    let parts = split_parts(hotkey);
-    if parts.len() > 3 {
-        return Err(E::TooManyKeys);
-    }
-    if is_left_right_mix(&parts) {
-        return Err(E::LeftRightMix);
-    }
-
-    let mut has_modifier = false;
-    let mut has_special_key = false;
-    for part in &parts {
-        if normalize_modifier(part).is_some() {
-            has_modifier = true;
-        } else if is_special_key(&normalize_key_token(part)) {
-            has_special_key = true;
-        }
-    }
-    if !has_modifier && !has_special_key {
-        return Err(E::NoModifierOrSpecial);
-    }
-
-    let modifier_count = parts
-        .iter()
-        .filter(|p| normalize_modifier(p).is_some())
-        .count();
-    let has_base_key = parts.len() > modifier_count;
-    // The Globe listener reports Fn, right-side modifiers and mouse buttons
-    // only, and an accelerator needs a key, so modifier-only chords can't bind.
-    if !has_base_key && modifier_count >= 2 {
-        return Err(E::ModifierOnlyUnsupported);
-    }
-    if !has_base_key && modifier_count == 1 && !is_right_side_modifier(parts[0]) {
-        return Err(E::LeftModifierOnly);
-    }
-
-    let normalized = normalize_hotkey(hotkey);
-    if existing_hotkeys
-        .iter()
-        .any(|e| normalize_hotkey(e.as_ref()) == normalized)
-    {
-        return Err(E::Duplicate);
-    }
-    if NORMALIZED_RESERVED.contains(&normalized) {
-        return Err(E::Reserved);
-    }
-    Ok(())
-}
-
-/// The message to show for an invalid hotkey, or `None` when it is valid.
-/// A reserved shortcut is named in the message.
-pub fn get_validation_message<S: AsRef<str>>(
-    hotkey: &str,
-    existing_hotkeys: &[S],
-) -> Option<ValidationMessage> {
-    let err = validate_hotkey(hotkey, existing_hotkeys).err()?;
-    if err == HotkeyValidationError::Reserved {
-        let label = format_hotkey_display(hotkey);
-        return Some(ValidationMessage {
-            key: "hotkey.validation.reservedNamed",
-            default_text: format!("{label} is reserved by the system"),
-            params: vec![("label", label)],
+        let mixed = modifiers.iter().any(|(modifier, side)| {
+            *side == Some(Side::Left) && modifiers.contains(&(*modifier, Some(Side::Right)))
         });
+        if mixed {
+            return Err(E::LeftRightMix);
+        }
+        if modifiers.is_empty() && !keys.iter().any(|key| is_special_key(key)) {
+            return Err(E::NoModifierOrSpecial);
+        }
+        // The listener reports Fn, right-side modifiers and mouse buttons
+        // only, and an accelerator needs a key, so modifier-only chords can't
+        // bind.
+        if keys.is_empty() {
+            return Err(if modifiers.len() >= 2 {
+                E::ModifierOnlyUnsupported
+            } else {
+                E::LeftModifierOnly
+            });
+        }
+        if RESERVED.contains(self) {
+            return Err(E::Reserved);
+        }
+        Ok(())
     }
-    Some(ValidationMessage {
-        key: err.message_key(),
-        params: Vec::new(),
-        default_text: err.default_message().to_string(),
-    })
+
+    /// The message to show for an invalid hotkey, or `None` when it is valid.
+    /// A reserved shortcut is named in the message.
+    pub fn validation_message(&self) -> Option<ValidationMessage> {
+        let err = self.validate().err()?;
+        if err == HotkeyValidationError::Reserved {
+            let label = self.label();
+            return Some(ValidationMessage {
+                key: "hotkey.validation.reservedNamed",
+                default_text: format!("{label} is reserved by the system"),
+                params: vec![("label", label)],
+            });
+        }
+        Some(ValidationMessage {
+            key: err.message_key(),
+            params: Vec::new(),
+            default_text: err.default_message().to_string(),
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use HotkeyValidationError as E;
+    use Modifier::{Command, Control, Fn, Option as Opt, Shift};
 
-    const NONE: [&str; 0] = [];
-
-    fn v(h: &str) -> Result<(), E> {
-        validate_hotkey(h, &NONE)
+    fn hk(value: &str) -> Hotkey {
+        Hotkey::parse(value).unwrap_or_else(|| panic!("{value:?} does not parse"))
     }
 
-    fn list(items: &[&str]) -> Vec<String> {
-        items.iter().map(|s| s.to_string()).collect()
+    fn strings(hotkeys: &[Hotkey]) -> Vec<String> {
+        hotkeys.iter().map(Hotkey::to_string).collect()
     }
-
-    // Labels
 
     #[test]
-    fn globe_like() {
-        assert!(is_globe_like_hotkey("GLOBE"));
-        assert!(is_globe_like_hotkey("Fn"));
-        for h in ["F1", "globe", "fn", ""] {
-            assert!(!is_globe_like_hotkey(h));
+    fn parses_every_spelling_to_its_stored_form() {
+        let cases: &[(&str, &str)] = &[
+            // Globe/Fn
+            ("GLOBE", "GLOBE"),
+            ("globe", "GLOBE"),
+            ("Fn", "GLOBE"),
+            ("fn", "GLOBE"),
+            // Mouse buttons
+            ("MouseButton4", "MouseButton4"),
+            ("mousebutton4", "MouseButton4"),
+            ("MOUSEBUTTON5", "MouseButton5"),
+            // Right-side modifiers: prefix or suffix, any separator or case
+            ("RightOption", "RightOption"),
+            ("RightAlt", "RightOption"),
+            ("rightalt", "RightOption"),
+            ("Right_Alt", "RightOption"),
+            ("right-option", "RightOption"),
+            ("Right Option", "RightOption"),
+            ("OptionRight", "RightOption"),
+            ("Option-Right", "RightOption"),
+            ("alt_right", "RightOption"),
+            ("RightCommand", "RightCommand"),
+            ("RightCmd", "RightCommand"),
+            ("right_cmd", "RightCommand"),
+            ("CmdRight", "RightCommand"),
+            ("RightSuper", "RightCommand"),
+            ("RightMeta", "RightCommand"),
+            ("RightWin", "RightCommand"),
+            ("RightControl", "RightControl"),
+            ("RightCtrl", "RightControl"),
+            ("ControlRight", "RightControl"),
+            ("ctrl-right", "RightControl"),
+            ("RightShift", "RightShift"),
+            ("ShiftRight", "RightShift"),
+            // Not modifiers
+            ("Right", "Right"),
+            ("ArrowRight", "Right"),
+            ("RightArrow", "RightArrow"),
+            // Chords: modifier aliases and order
+            ("CommandOrControl+K", "Command+K"),
+            ("CmdOrCtrl+K", "Command+K"),
+            ("Cmd+k", "Command+K"),
+            ("Super+K", "Command+K"),
+            ("Meta+K", "Command+K"),
+            ("Win+K", "Command+K"),
+            ("Option+R", "Alt+R"),
+            ("AltGr+R", "Alt+R"),
+            ("Shift+Control+K", "Control+Shift+K"),
+            ("Shift+Alt+Control+K", "Control+Alt+Shift+K"),
+            (" Control + Shift + Space ", "Control+Shift+Space"),
+            ("Ctrl+Ctrl+K", "Control+K"),
+            // Chords: key aliases
+            ("Ctrl+ArrowLeft", "Control+Left"),
+            ("Ctrl+up", "Control+Up"),
+            ("Ctrl+Escape", "Control+Esc"),
+            ("Ctrl+pgup", "Control+PageUp"),
+            ("Ctrl+Return", "Control+Enter"),
+            ("Ctrl+f9", "Control+F9"),
+            ("Escape", "Esc"),
+            ("Command+Plus", "Command+Plus"),
+            ("Control+BAD", "Control+BAD"),
+            // Punctuation keys, including the list separator and "+"
+            ("Control+,", "Control+,"),
+            ("Control++", "Control++"),
+            ("Option+`", "Alt+`"),
+            // Sided modifiers in a chord keep their side
+            ("ControlLeft+K", "LeftControl+K"),
+            ("ShiftLeft+Space", "LeftShift+Space"),
+            ("Control+RightShift+K", "Control+RightShift+K"),
+            ("RightCommand+K", "RightCommand+K"),
+            ("LeftControl", "LeftControl"),
+            ("Control", "Control"),
+            // Fn in a chord
+            ("Fn+A", "Fn+A"),
+            ("Control+Fn+K", "Control+Fn+K"),
+        ];
+        for (input, stored) in cases {
+            let hotkey = hk(input);
+            assert_eq!(hotkey.to_string(), *stored, "{input}");
+            assert_eq!(hk(stored), hotkey, "{stored} round-trips");
+        }
+        for empty in ["", "  "] {
+            assert_eq!(Hotkey::parse(empty), None);
         }
     }
 
     #[test]
-    fn display_labels() {
-        assert_eq!(format_hotkey_display(""), "");
-        assert_eq!(format_hotkey_display("  "), "");
-        assert_eq!(format_hotkey_display("GLOBE"), "Globe/Fn");
-        assert_eq!(format_hotkey_display("MouseButton4"), "Mouse Button 4");
-        assert_eq!(format_hotkey_display("MouseButton5"), "Mouse Button 5");
-        assert_eq!(format_hotkey_display("CommandOrControl+K"), "Cmd+K");
-        assert_eq!(format_hotkey_display("Alt+R"), "Option+R");
-        assert_eq!(format_hotkey_display("Super+K"), "Cmd+K");
-        assert_eq!(format_hotkey_display("Meta+K"), "Cmd+K");
-        assert_eq!(format_hotkey_display("RightOption"), "Right Option");
-        assert_eq!(format_hotkey_display("RightCommand"), "Right Cmd");
-        assert_eq!(format_hotkey_display("LeftOption"), "Left Option");
-        assert_eq!(format_hotkey_display("LeftControl"), "Left Ctrl");
-        assert_eq!(format_hotkey_display("LeftCommand"), "Left Cmd");
-        assert_eq!(format_hotkey_display("Alt"), "Option");
-        assert_eq!(format_hotkey_display("Command"), "Cmd");
-        assert_eq!(format_hotkey_display("`"), "`");
-        assert_eq!(
-            format_hotkey_display("Control+RightShift+K"),
-            "Ctrl+Right Shift+K"
-        );
+    fn answers_how_a_hotkey_is_observed() {
+        // (hotkey, listener key, accelerator, release modifiers, holdable)
+        let cases: &[(&str, Option<&str>, Option<&str>, &[Modifier], bool)] = &[
+            ("GLOBE", Some("GLOBE"), None, &[], true),
+            ("Fn", Some("GLOBE"), None, &[], true),
+            ("mousebutton5", Some("MouseButton5"), None, &[], true),
+            ("RightAlt", Some("RightOption"), None, &[], true),
+            ("rightcmd", Some("RightCommand"), None, &[], true),
+            (
+                "Control+Shift+Space",
+                None,
+                Some("Control+Shift+Space"),
+                &[Control, Shift],
+                true,
+            ),
+            ("RightCommand+K", None, Some("Command+K"), &[Command], true),
+            (
+                "LeftControl+RightControl+K",
+                None,
+                Some("Control+K"),
+                &[Control],
+                true,
+            ),
+            (
+                "CommandOrControl+K",
+                None,
+                Some("Command+K"),
+                &[Command],
+                true,
+            ),
+            ("Win+K", None, Some("Command+K"), &[Command], true),
+            (
+                "Control+Alt",
+                None,
+                Some("Control+Alt"),
+                &[Control, Opt],
+                true,
+            ),
+            ("F8", None, Some("F8"), &[], false),
+            ("PageDown", None, Some("PageDown"), &[], false),
+            ("Escape", None, Some("Esc"), &[], false),
+            ("Fn+A", None, None, &[Fn], true),
+        ];
+        for (input, listener, accelerator, released, holdable) in cases {
+            let hotkey = hk(input);
+            assert_eq!(
+                hotkey.listener_key().map(|k| k.to_string()).as_deref(),
+                *listener,
+                "{input}"
+            );
+            assert_eq!(hotkey.accelerator().as_deref(), *accelerator, "{input}");
+            assert_eq!(hotkey.release_modifiers(), *released, "{input}");
+            assert_eq!(hotkey.supports_hold(), *holdable, "{input}");
+        }
+        assert!(hk("Fn").is_globe());
+        assert!(!hk("F1").is_globe());
     }
 
     #[test]
-    fn labels_fall_back_to_default() {
-        assert_eq!(format_hotkey_label(None), "Globe/Fn");
-        assert_eq!(format_hotkey_label(Some(" ")), "Globe/Fn");
+    fn reads_listener_names() {
+        let keys = [
+            ("GLOBE", ListenerKey::Globe, Some(Fn)),
+            ("RightOption", ListenerKey::RightModifier(Opt), Some(Opt)),
+            (
+                "RightCommand",
+                ListenerKey::RightModifier(Command),
+                Some(Command),
+            ),
+            (
+                "RightControl",
+                ListenerKey::RightModifier(Control),
+                Some(Control),
+            ),
+            ("RightShift", ListenerKey::RightModifier(Shift), Some(Shift)),
+            ("MouseButton4", ListenerKey::MouseButton(4), None),
+        ];
+        for (name, key, modifier) in keys {
+            assert_eq!(ListenerKey::parse(name), Some(key), "{name}");
+            assert_eq!(key.to_string(), name);
+            assert_eq!(key.modifier(), modifier, "{name}");
+        }
+        for name in ["MouseButton3", "LeftOption", "Control+K", ""] {
+            assert_eq!(ListenerKey::parse(name), None, "{name}");
+        }
+        let modifiers = [
+            ("command", Command),
+            ("control", Control),
+            ("option", Opt),
+            ("shift", Shift),
+            ("fn", Fn),
+        ];
+        for (name, modifier) in modifiers {
+            assert_eq!(Modifier::from_listener_name(name), Some(modifier));
+        }
+        assert_eq!(Modifier::from_listener_name("rightshift"), None);
     }
 
-    // List parsing
+    #[test]
+    fn captures_toolkit_key_presses() {
+        let cases: &[(&[Modifier], Option<&str>, Option<&str>)] = &[
+            (&[Control], Some("k"), Some("Control+K")),
+            (
+                &[Shift, Control],
+                Some("space"),
+                Some("Control+Shift+Space"),
+            ),
+            (&[], Some("escape"), Some("Esc")),
+            (&[], Some("enter"), Some("Enter")),
+            (&[], Some("up"), Some("Up")),
+            (&[], Some("pagedown"), Some("PageDown")),
+            (&[], Some("f13"), Some("F13")),
+            (&[Command, Shift], Some(","), Some("Command+Shift+,")),
+            (&[Opt], Some("`"), Some("Alt+`")),
+            (&[Control, Opt], None, Some("Control+Alt")),
+            (&[], Some("f25"), None),
+            (&[], Some("shift"), None),
+            (&[], Some("capslock"), None),
+            (&[], Some("ü"), None),
+            (&[], None, None),
+        ];
+        for (modifiers, key, expected) in cases {
+            assert_eq!(
+                Hotkey::capture(modifiers, *key).map(|h| h.to_string()),
+                expected.map(str::to_string),
+                "{modifiers:?} {key:?}"
+            );
+        }
+        assert_eq!(hk("RightOption").with_fn().to_string(), "RightOption+Fn");
+        assert_eq!(hk("Control+K").with_fn().to_string(), "Control+Fn+K");
+        assert_eq!(hk("GLOBE").with_fn(), hk("GLOBE"));
+    }
+
+    #[test]
+    fn labels() {
+        let cases = [
+            ("GLOBE", "Globe/Fn"),
+            ("Fn", "Globe/Fn"),
+            ("MouseButton4", "Mouse Button 4"),
+            ("mousebutton5", "Mouse Button 5"),
+            ("CommandOrControl+K", "Cmd+K"),
+            ("Alt+R", "Option+R"),
+            ("Super+K", "Cmd+K"),
+            ("RightOption", "Right Option"),
+            ("RightCommand", "Right Cmd"),
+            ("LeftOption", "Left Option"),
+            ("LeftControl", "Left Ctrl"),
+            ("Alt", "Option"),
+            ("`", "`"),
+            ("Control+RightShift+K", "Ctrl+Right Shift+K"),
+        ];
+        for (hotkey, label) in cases {
+            assert_eq!(hk(hotkey).label(), label, "{hotkey}");
+        }
+        assert_eq!(hk("Control++").label_parts(), ["Ctrl", "+"]);
+        assert_eq!(Control.label(Some(Side::Left)), "Left Ctrl");
+        assert_eq!(format_hotkey_list_label(""), "Globe/Fn");
+        assert_eq!(
+            format_hotkey_list_label("GLOBE,Control+Shift+R"),
+            "Globe/Fn / Ctrl+Shift+R"
+        );
+    }
 
     #[test]
     fn list_parsing() {
-        assert_eq!(
-            parse_hotkey_list("Control+Shift+R"),
-            list(&["Control+Shift+R"])
-        );
-        assert_eq!(parse_hotkey_list("GLOBE"), list(&["GLOBE"]));
-        assert_eq!(
-            parse_hotkey_list("GLOBE,Control+Shift+R"),
-            list(&["GLOBE", "Control+Shift+R"])
-        );
-        assert_eq!(
-            parse_hotkey_list(" GLOBE , Control+Shift+R "),
-            list(&["GLOBE", "Control+Shift+R"])
-        );
-        assert_eq!(parse_hotkey_list("F8,,F8,F9,"), list(&["F8", "F9"]));
-        assert!(parse_hotkey_list("").is_empty());
-    }
-
-    #[test]
-    fn list_items_parsing() {
-        assert_eq!(
-            parse_hotkey_items(&["GLOBE", "Control+Shift+R"]),
-            list(&["GLOBE", "Control+Shift+R"])
-        );
-        assert_eq!(
-            parse_hotkey_items(&["GLOBE,Control+Alt", " F8 "]),
-            list(&["GLOBE", "Control+Alt", "F8"])
-        );
-    }
-
-    #[test]
-    fn list_serialization() {
-        assert_eq!(
-            serialize_hotkey_list(&["GLOBE", "Control+Shift+R"]),
-            "GLOBE,Control+Shift+R"
-        );
-        assert_eq!(serialize_hotkey_list(&["F8, F9 ,F8"]), "F8,F9");
-        assert_eq!(serialize_hotkey_list(&NONE), "");
-        let once = serialize_hotkey_list(&[" GLOBE , Control+Shift+R , MouseButton4 "]);
-        assert_eq!(once, "GLOBE,Control+Shift+R,MouseButton4");
-        assert_eq!(
-            parse_hotkey_list(&once),
-            list(&["GLOBE", "Control+Shift+R", "MouseButton4"])
-        );
-    }
-
-    #[test]
-    fn comma_key_hotkeys() {
-        assert_eq!(parse_hotkey_list("Control+,"), list(&["Control+,"]));
-        assert_eq!(
-            parse_hotkey_list("Command+Shift+,"),
-            list(&["Command+Shift+,"])
-        );
-        assert_eq!(
-            parse_hotkey_list("GLOBE,Control+,"),
-            list(&["GLOBE", "Control+,"])
-        );
-        assert_eq!(
-            parse_hotkey_list("Control+,,F8"),
-            list(&["Control+,", "F8"])
-        );
-        assert_eq!(
-            parse_hotkey_items(&["Control+,", "F8"]),
-            list(&["Control+,", "F8"])
-        );
-        let l = ["Control+,", "F8", "GLOBE"];
-        let serialized = serialize_hotkey_list(&l);
-        assert_eq!(serialized, "Control+,,F8,GLOBE");
-        assert_eq!(parse_hotkey_list(&serialized), list(&l));
-    }
-
-    #[test]
-    fn plus_key_hotkeys() {
-        assert_eq!(
-            parse_hotkey_list("Control++,F8"),
-            list(&["Control++", "F8"])
-        );
-        assert_eq!(
-            parse_hotkey_items(&["Control++", "F8"]),
-            list(&["Control++", "F8"])
-        );
-        assert_eq!(
-            parse_hotkey_list("Control++,,F8"),
-            list(&["Control++,", "F8"])
-        );
-        assert_eq!(
-            parse_hotkey_list("Command++,Control+,,"),
-            list(&["Command++", "Control+,"])
-        );
-        assert_eq!(
-            parse_hotkey_list("Control++,Control+,"),
-            list(&["Control++", "Control+,"])
-        );
-    }
-
-    // Validation
-
-    #[test]
-    fn validation_basics() {
-        assert_eq!(v(""), Err(E::Empty));
-        assert_eq!(v("  "), Err(E::Empty));
-        assert_eq!(v("GLOBE"), Ok(()));
-        assert_eq!(v("Fn"), Ok(()));
-        assert_eq!(v("MouseButton4"), Ok(()));
-        assert_eq!(v("Control+MouseButton4"), Err(E::MouseButtonCombination));
-        assert_eq!(v("Ctrl+Alt+Shift+K"), Err(E::TooManyKeys));
-        assert_eq!(v("K"), Err(E::NoModifierOrSpecial));
-        for h in ["F8", "Space", "Esc"] {
-            assert_eq!(v(h), Ok(()), "{h}");
+        let cases: &[(&str, &[&str])] = &[
+            ("Control+Shift+R", &["Control+Shift+R"]),
+            ("GLOBE,Control+Shift+R", &["GLOBE", "Control+Shift+R"]),
+            (" GLOBE , Control+Shift+R ", &["GLOBE", "Control+Shift+R"]),
+            ("F8,,F8,F9,", &["F8", "F9"]),
+            ("GLOBE,Fn", &["GLOBE"]),
+            ("Ctrl+K,Control+K", &["Control+K"]),
+            ("", &[]),
+            // The comma key
+            ("Control+,", &["Control+,"]),
+            ("Command+Shift+,", &["Command+Shift+,"]),
+            ("GLOBE,Control+,", &["GLOBE", "Control+,"]),
+            ("Control+,,F8", &["Control+,", "F8"]),
+            // The plus key
+            ("Control++,F8", &["Control++", "F8"]),
+            ("Command++,Control+,,", &["Command++", "Control+,"]),
+            ("Control++,Control+,", &["Control++", "Control+,"]),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(strings(&parse_hotkey_list(value)), *expected, "{value:?}");
         }
-        assert_eq!(v("LeftCtrl+RightCtrl+K"), Err(E::LeftRightMix));
-        assert_eq!(v("Control"), Err(E::LeftModifierOnly));
-        assert_eq!(v("RightOption"), Ok(()));
-        assert_eq!(v("RightAlt"), Ok(()));
-        assert_eq!(v("Control+Alt"), Err(E::ModifierOnlyUnsupported));
-        assert_eq!(v("Control+Alt+Space"), Ok(()));
-        assert_eq!(v("Fn+A"), Err(E::FnCombinationUnsupported));
-        assert_eq!(validate_hotkey("Ctrl+K", &["Control+K"]), Err(E::Duplicate));
-        assert_eq!(v("Command+C"), Err(E::Reserved));
-        assert_eq!(v("Cmd+c"), Err(E::Reserved));
-        assert_eq!(v("Control+Shift+K"), Ok(()));
-        assert_eq!(v("Alt+F7"), Ok(()));
-        assert_eq!(v("F8,Control+Shift+K"), Ok(()));
-        assert_eq!(v("F8,Fn+A"), Err(E::FnCombinationUnsupported));
-        assert_eq!(v("Command+,"), Err(E::Reserved));
-        assert_eq!(v("F25"), Err(E::NoModifierOrSpecial));
     }
 
     #[test]
-    fn normalization() {
-        assert_eq!(normalize_hotkey("CommandOrControl+K"), "Command+K");
-        assert_eq!(normalize_hotkey("CmdOrCtrl+K"), "Command+K");
-        assert_eq!(normalize_hotkey("Option+R"), "Alt+R");
-        assert_eq!(normalize_hotkey("Super+K"), "Command+K");
-        assert_eq!(normalize_hotkey("Shift+Control+K"), "Control+Shift+K");
-        assert_eq!(
-            normalize_hotkey("Shift+Alt+Control+K"),
-            "Control+Alt+Shift+K"
-        );
-        assert_eq!(normalize_hotkey("Ctrl+ArrowLeft"), "Control+Left");
-        assert_eq!(normalize_hotkey("Ctrl+Escape"), "Control+Esc");
-        assert_eq!(normalize_hotkey("Ctrl+pgup"), "Control+PageUp");
-        assert_eq!(normalize_hotkey("Ctrl+k"), "Control+K");
-        assert_eq!(normalize_hotkey("Ctrl+f9"), "Control+F9");
-        assert_eq!(normalize_hotkey(""), "");
+    fn stored_lists_round_trip() {
+        let stored = [
+            "GLOBE",
+            "GLOBE,Control+Shift+R,MouseButton4",
+            "RightCommand,Control+Shift+Space",
+            "Control+,,F8,GLOBE",
+            "Control++,Alt+`",
+        ];
+        for value in stored {
+            assert_eq!(serialize_hotkey_list(&parse_hotkey_list(value)), value);
+        }
+        // Older spellings are rewritten once, then stay put.
+        let legacy = " Fn , CommandOrControl+Shift+Space , RightAlt , mousebutton5 ";
+        let once = serialize_hotkey_list(&parse_hotkey_list(legacy));
+        assert_eq!(once, "GLOBE,Command+Shift+Space,RightOption,MouseButton5");
+        assert_eq!(serialize_hotkey_list(&parse_hotkey_list(&once)), once);
+        assert_eq!(serialize_hotkey_list(&[]), "");
     }
 
     #[test]
-    fn left_side_modifiers() {
-        assert_eq!(normalize_hotkey("ControlLeft+K"), "LeftControl+K");
-        assert_eq!(normalize_hotkey("ShiftLeft+Space"), "LeftShift+Space");
-        assert_eq!(v("ControlLeft+K"), Ok(()));
-        assert_eq!(v("ShiftLeft+Space"), Ok(()));
-        assert_eq!(v("ControlLeft"), Err(E::LeftModifierOnly));
-    }
-
-    #[test]
-    fn left_right_mix_formats() {
-        assert_eq!(v("LeftControl+RightControl"), Err(E::LeftRightMix));
-        assert_eq!(v("ControlLeft+ControlRight"), Err(E::LeftRightMix));
-        assert_eq!(v("LeftControl+ControlRight"), Err(E::LeftRightMix));
+    fn validation() {
+        let cases: &[(&str, Result<(), E>)] = &[
+            ("GLOBE", Ok(())),
+            ("Fn", Ok(())),
+            ("MouseButton4", Ok(())),
+            ("RightOption", Ok(())),
+            ("RightAlt", Ok(())),
+            ("Option-Right", Ok(())),
+            ("F8", Ok(())),
+            ("Space", Ok(())),
+            ("Esc", Ok(())),
+            ("Control+Shift+K", Ok(())),
+            ("Control+Alt+Space", Ok(())),
+            ("Alt+F7", Ok(())),
+            ("ControlLeft+K", Ok(())),
+            ("ShiftLeft+Space", Ok(())),
+            ("Fn+A", Err(E::FnCombinationUnsupported)),
+            ("RightOption+Fn", Err(E::FnCombinationUnsupported)),
+            ("Control+MouseButton4", Err(E::MouseButtonCombination)),
+            ("Ctrl+Alt+Shift+K", Err(E::TooManyKeys)),
+            ("K", Err(E::NoModifierOrSpecial)),
+            ("F25", Err(E::NoModifierOrSpecial)),
+            ("LeftCtrl+RightCtrl+K", Err(E::LeftRightMix)),
+            ("LeftControl+RightControl", Err(E::LeftRightMix)),
+            ("ControlLeft+ControlRight", Err(E::LeftRightMix)),
+            ("LeftControl+ControlRight", Err(E::LeftRightMix)),
+            ("Control+Alt", Err(E::ModifierOnlyUnsupported)),
+            ("Control", Err(E::LeftModifierOnly)),
+            ("ControlLeft", Err(E::LeftModifierOnly)),
+            ("Command+C", Err(E::Reserved)),
+            ("Cmd+c", Err(E::Reserved)),
+            ("Command+,", Err(E::Reserved)),
+        ];
+        for (hotkey, expected) in cases {
+            assert_eq!(hk(hotkey).validate(), *expected, "{hotkey}");
+        }
     }
 
     #[test]
     fn validation_messages() {
-        assert_eq!(get_validation_message("F8", &NONE), None);
-        let reserved = get_validation_message("Command+C", &NONE).unwrap();
+        assert_eq!(hk("F8").validation_message(), None);
+        let reserved = hk("Command+C").validation_message().unwrap();
         assert_eq!(reserved.default_text, "Cmd+C is reserved by the system");
         assert_eq!(reserved.params, vec![("label", "Cmd+C".to_string())]);
-        let dup = get_validation_message("Ctrl+K", &["Control+K"]).unwrap();
-        assert_eq!(dup.key, "hotkey.validation.duplicate");
-        assert_eq!(dup.default_text, "That shortcut is already in use.");
+        let fn_combo = hk("Fn+A").validation_message().unwrap();
+        assert_eq!(fn_combo.key, "hotkey.errors.fnCombinationUnsupported");
     }
 }

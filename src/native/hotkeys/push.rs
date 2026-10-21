@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use super::super::timer::{TimerId, Timers, lock};
 use super::gesture::GestureEnv;
-use super::keys::required_modifiers;
 use super::{ForceStopReason, HotkeyCommand};
+use crate::text::hotkeys::{Hotkey, Modifier};
 
 pub const MIN_HOLD_DURATION_MS: u64 = 150;
 /// Safety ceiling: a push never records longer than five minutes.
@@ -18,7 +18,7 @@ pub const MAX_PUSH_DURATION_MS: u64 = 300_000;
 struct PushState {
     seq: u64,
     is_recording: bool,
-    required: Vec<&'static str>,
+    required: Vec<Modifier>,
     safety_timer: TimerId,
     hold_timer: TimerId,
 }
@@ -49,13 +49,13 @@ impl CompoundPush {
 
     /// A press of a Hold mode chord: prepare at once, start after the minimum
     /// hold, and give up at the safety ceiling.
-    pub fn start(&self, hotkey: &str) {
+    pub fn start(&self, hotkey: &Hotkey) {
         let inner = &self.inner;
         let mut guard = lock(&inner.state);
         if guard.0.is_some() || inner.env.is_processing() {
             return;
         }
-        let required = required_modifiers(hotkey);
+        let required = hotkey.release_modifiers();
         if required.is_empty() {
             return;
         }
@@ -101,9 +101,8 @@ impl CompoundPush {
         });
     }
 
-    /// The listener saw `modifier` ("command", "control", "option", "shift",
-    /// "fn") go up: a physical release ends the push.
-    pub fn handle_modifier_up(&self, modifier: &str) {
+    /// The listener saw `modifier` go up: a physical release ends the push.
+    pub fn handle_modifier_up(&self, modifier: Modifier) {
         let inner = &self.inner;
         let mut guard = lock(&inner.state);
         let releases = guard
@@ -149,6 +148,10 @@ mod tests {
     use crate::native::timer::FakeTimers;
     use crate::settings::ActivationMode;
 
+    fn hk(value: &str) -> Hotkey {
+        Hotkey::parse(value).expect("hotkey")
+    }
+
     #[derive(Default)]
     struct Env {
         sent: Mutex<Vec<HotkeyCommand>>,
@@ -181,7 +184,7 @@ mod tests {
 
     fn start_push() -> (CompoundPush, Arc<Env>, Arc<FakeTimers>) {
         let (push, env, timers) = setup();
-        push.start("Control+Space");
+        push.start(&hk("Control+Space"));
         timers.advance(MIN_HOLD_DURATION_MS);
         assert_eq!(
             sent(&env),
@@ -193,8 +196,8 @@ mod tests {
     #[test]
     fn physical_release_stops_without_forced_stop() {
         let (push, env, _timers) = start_push();
-        push.handle_modifier_up("shift");
-        push.handle_modifier_up("control");
+        push.handle_modifier_up(Modifier::Shift);
+        push.handle_modifier_up(Modifier::Control);
         assert_eq!(
             sent(&env),
             vec![
@@ -225,7 +228,7 @@ mod tests {
     #[test]
     fn forced_stop_before_recording_cancels_preparation() {
         let (push, env, timers) = setup();
-        push.start("Control+Option");
+        push.start(&hk("Control+Option"));
         timers.advance(100);
         push.force_stop(ForceStopReason::Timeout);
         timers.advance(1000);
@@ -244,11 +247,11 @@ mod tests {
     #[test]
     fn short_press_cancels_preparation_and_chord_without_modifier_is_ignored() {
         let (push, env, timers) = setup();
-        push.start("F8");
+        push.start(&hk("F8"));
         assert!(sent(&env).is_empty());
-        push.start("Control+Space");
+        push.start(&hk("Control+Space"));
         timers.advance(50);
-        push.handle_modifier_up("control");
+        push.handle_modifier_up(Modifier::Control);
         assert_eq!(
             sent(&env),
             vec![HotkeyCommand::Prepare, HotkeyCommand::CancelPreparation]

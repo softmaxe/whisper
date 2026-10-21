@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use crate::settings::ActivationMode;
+use crate::text::hotkeys::ListenerKey;
 
 use super::super::timer::{TimerId, Timers, lock};
 use super::{ForceStopReason, HotkeyCommand};
@@ -43,7 +44,7 @@ enum PressKind {
 
 #[derive(Debug, Clone)]
 struct HeldPress {
-    key: String,
+    key: ListenerKey,
     kind: PressKind,
     at: u64,
     timer: Option<TimerId>,
@@ -52,7 +53,7 @@ struct HeldPress {
 
 #[derive(Debug, Clone)]
 struct Tap {
-    key: String,
+    key: ListenerKey,
     at: u64,
     seq: u64,
 }
@@ -92,7 +93,7 @@ impl HotkeyGesture {
         }
     }
 
-    pub fn press(&self, key: &str) {
+    pub fn press(&self, key: ListenerKey) {
         let inner = &self.inner;
         let mut state = lock(&inner.state);
         if state.held.as_ref().is_some_and(|held| held.key != key) {
@@ -109,7 +110,7 @@ impl HotkeyGesture {
         state.next_seq += 1;
         let seq = state.next_seq;
         let press = |kind| HeldPress {
-            key: key.to_string(),
+            key,
             kind,
             at,
             timer: None,
@@ -150,7 +151,7 @@ impl HotkeyGesture {
         }
     }
 
-    pub fn release(&self, key: &str) {
+    pub fn release(&self, key: ListenerKey) {
         let inner = &self.inner;
         let mut state = lock(&inner.state);
         if state.held.as_ref().is_none_or(|held| held.key != key) {
@@ -169,7 +170,7 @@ impl HotkeyGesture {
                 state.next_seq += 1;
                 let seq = state.next_seq;
                 state.last_tap = Some(Tap {
-                    key: key.to_string(),
+                    key,
                     at: released_at,
                     seq,
                 });
@@ -290,6 +291,11 @@ impl Inner {
 mod tests {
     use super::*;
     use crate::native::timer::FakeTimers;
+    use crate::text::hotkeys::Modifier;
+
+    const GLOBE: ListenerKey = ListenerKey::Globe;
+    const RIGHT_COMMAND: ListenerKey = ListenerKey::RightModifier(Modifier::Command);
+    const MOUSE_BUTTON_4: ListenerKey = ListenerKey::MouseButton(4);
 
     struct Env {
         mode: Mutex<ActivationMode>,
@@ -370,13 +376,13 @@ mod tests {
         fn advance(&self, ms: u64) {
             self.timers.advance(ms);
         }
-        fn tap_key(&self, key: &str, held_ms: u64) {
+        fn tap_key(&self, key: ListenerKey, held_ms: u64) {
             self.gesture.press(key);
             self.advance(held_ms);
             self.gesture.release(key);
         }
         fn tap(&self) {
-            self.tap_key("RightCommand", 80);
+            self.tap_key(RIGHT_COMMAND, 80);
         }
         fn commands(&self) -> Vec<&'static str> {
             lock(&self.env.commands).clone()
@@ -414,16 +420,16 @@ mod tests {
         let h = Harness::tap_mode();
         h.tap();
         h.advance(200);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         assert_eq!(h.commands(), ["start"]);
     }
 
     #[test]
     fn long_first_press_does_not_count() {
         let h = Harness::tap_mode();
-        h.tap_key("RightCommand", 350);
+        h.tap_key(RIGHT_COMMAND, 350);
         h.advance(100);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         assert_eq!(h.commands(), NONE);
     }
 
@@ -432,7 +438,7 @@ mod tests {
         let h = Harness::tap_mode();
         h.tap();
         h.advance(450);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         assert_eq!(h.commands(), NONE);
     }
 
@@ -441,10 +447,10 @@ mod tests {
         let h = Harness::tap_mode();
         h.start_hands_free();
         assert_eq!(h.commands(), NONE);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(2000);
         assert_eq!(h.commands(), NONE);
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         assert_eq!(h.commands(), ["stop"]);
     }
 
@@ -463,11 +469,11 @@ mod tests {
     #[test]
     fn press_used_as_modifier_is_not_a_tap() {
         let h = Harness::tap_mode();
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(60);
         h.gesture.interrupt();
         h.advance(40);
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         h.advance(150);
         h.tap();
         h.advance(1000);
@@ -479,10 +485,10 @@ mod tests {
         let h = Harness::tap_mode();
         h.tap();
         h.advance(150);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(60);
         h.gesture.interrupt();
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         assert_eq!(h.commands(), ["start", "cancel"]);
     }
 
@@ -490,10 +496,10 @@ mod tests {
     fn shortcut_during_hands_free_does_not_end_it() {
         let h = Harness::tap_mode();
         h.start_hands_free();
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(60);
         h.gesture.interrupt();
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         assert_eq!(h.commands(), NONE);
         h.advance(500);
         h.tap();
@@ -503,36 +509,36 @@ mod tests {
     #[test]
     fn hold_starts_after_threshold_and_ends_on_release() {
         let h = Harness::push_mode();
-        h.gesture.press("GLOBE");
+        h.gesture.press(GLOBE);
         h.advance(149);
         assert_eq!(h.commands(), NONE);
         h.advance(1);
         assert_eq!(h.commands(), ["start"]);
         h.advance(3000);
-        h.gesture.release("GLOBE");
+        h.gesture.release(GLOBE);
         assert_eq!(h.commands(), ["start", "stop"]);
     }
 
     #[test]
     fn hold_short_press_or_shortcut_issues_nothing() {
         let h = Harness::push_mode();
-        h.tap_key("RightCommand", 100);
+        h.tap_key(RIGHT_COMMAND, 100);
         h.advance(500);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(100);
         h.gesture.interrupt();
         h.advance(400);
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         assert_eq!(h.commands(), NONE);
     }
 
     #[test]
     fn hold_shortcut_during_hold_cancels() {
         let h = Harness::push_mode();
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(800);
         h.gesture.interrupt();
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         assert_eq!(h.commands(), ["start", "cancel"]);
     }
 
@@ -543,10 +549,10 @@ mod tests {
             *lock(&h.env.processing) = true;
             h.tap();
             h.advance(150);
-            h.gesture.press("RightCommand");
+            h.gesture.press(RIGHT_COMMAND);
             h.advance(1000);
             *lock(&h.env.processing) = false;
-            h.gesture.release("RightCommand");
+            h.gesture.release(RIGHT_COMMAND);
             assert_eq!(h.commands(), NONE, "{mode:?}");
         }
     }
@@ -554,12 +560,12 @@ mod tests {
     #[test]
     fn another_hotkey_during_hold_voids_it() {
         let h = Harness::push_mode();
-        h.gesture.press("GLOBE");
+        h.gesture.press(GLOBE);
         h.advance(500);
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.advance(500);
-        h.gesture.release("RightCommand");
-        h.gesture.release("GLOBE");
+        h.gesture.release(RIGHT_COMMAND);
+        h.gesture.release(GLOBE);
         assert_eq!(h.commands(), ["start", "cancel"]);
     }
 
@@ -573,65 +579,65 @@ mod tests {
         assert_eq!(tap.commands(), NONE);
 
         let hold = Harness::push_mode();
-        hold.gesture.press("GLOBE");
+        hold.gesture.press(GLOBE);
         hold.gesture.reset();
         hold.advance(1000);
-        hold.gesture.release("GLOBE");
+        hold.gesture.release(GLOBE);
         assert_eq!(hold.commands(), NONE);
     }
 
     #[test]
     fn only_two_taps_of_same_hotkey_make_double_tap() {
         let different = Harness::tap_mode();
-        different.tap_key("GLOBE", 80);
+        different.tap_key(GLOBE, 80);
         different.advance(150);
-        different.gesture.press("RightCommand");
+        different.gesture.press(RIGHT_COMMAND);
         assert_eq!(different.commands(), NONE);
 
         let voided = Harness::tap_mode();
         voided.tap();
         voided.advance(100);
-        voided.gesture.press("GLOBE");
+        voided.gesture.press(GLOBE);
         voided.gesture.interrupt();
-        voided.gesture.release("GLOBE");
+        voided.gesture.release(GLOBE);
         voided.advance(100);
-        voided.gesture.press("RightCommand");
+        voided.gesture.press(RIGHT_COMMAND);
         assert_eq!(voided.commands(), NONE);
     }
 
     #[test]
     fn lost_release_does_not_block_next_press() {
         let h = Harness::push_mode();
-        h.gesture.press("MouseButton4");
+        h.gesture.press(MOUSE_BUTTON_4);
         h.advance(500);
         h.gesture.interrupt();
         h.advance(5000);
-        h.gesture.press("MouseButton4");
+        h.gesture.press(MOUSE_BUTTON_4);
         h.advance(200);
-        h.gesture.release("MouseButton4");
+        h.gesture.release(MOUSE_BUTTON_4);
         assert_eq!(h.commands(), ["start", "cancel", "start", "stop"]);
     }
 
     #[test]
     fn next_hold_after_short_one_starts_normally() {
         let h = Harness::push_mode();
-        h.gesture.press("GLOBE");
+        h.gesture.press(GLOBE);
         h.advance(200);
-        h.gesture.release("GLOBE");
+        h.gesture.release(GLOBE);
         h.advance(100);
-        h.gesture.press("GLOBE");
+        h.gesture.press(GLOBE);
         h.advance(200);
-        h.gesture.release("GLOBE");
+        h.gesture.release(GLOBE);
         assert_eq!(h.commands(), ["start", "stop", "start", "stop"]);
     }
 
     #[test]
     fn microphone_prepared_at_press_and_kept() {
         let h = Harness::push_mode();
-        h.gesture.press("GLOBE");
+        h.gesture.press(GLOBE);
         assert_eq!(h.preparation(), ["prepare"]);
         h.advance(150);
-        h.gesture.release("GLOBE");
+        h.gesture.release(GLOBE);
         assert_eq!(h.commands(), ["start", "stop"]);
         assert_eq!(h.preparation(), ["prepare"]);
     }
@@ -639,21 +645,21 @@ mod tests {
     #[test]
     fn press_that_never_starts_gives_back_microphone() {
         let short = Harness::push_mode();
-        short.tap_key("GLOBE", 100);
+        short.tap_key(GLOBE, 100);
         assert_eq!(short.preparation(), ["prepare", "cancel"]);
 
         let shortcut = Harness::push_mode();
-        shortcut.gesture.press("GLOBE");
+        shortcut.gesture.press(GLOBE);
         shortcut.advance(50);
         shortcut.gesture.interrupt();
         assert_eq!(shortcut.preparation(), ["prepare", "cancel"]);
         shortcut.advance(500);
-        shortcut.gesture.release("GLOBE");
+        shortcut.gesture.release(GLOBE);
         assert_eq!(shortcut.commands(), NONE);
         assert_eq!(shortcut.preparation(), ["prepare", "cancel"]);
 
         let lost = Harness::push_mode();
-        lost.gesture.press("GLOBE");
+        lost.gesture.press(GLOBE);
         lost.gesture.reset();
         assert_eq!(lost.preparation(), ["prepare", "cancel"]);
     }
@@ -661,12 +667,12 @@ mod tests {
     #[test]
     fn hold_released_too_soon_is_reported_unused() {
         let h = Harness::push_mode();
-        h.tap_key("GLOBE", 100);
+        h.tap_key(GLOBE, 100);
         assert_eq!(h.hints(), [ActivationMode::Push]);
         h.advance(500);
-        h.gesture.press("GLOBE");
+        h.gesture.press(GLOBE);
         h.gesture.interrupt();
-        h.gesture.release("GLOBE");
+        h.gesture.release(GLOBE);
         assert_eq!(h.hints(), [ActivationMode::Push]);
     }
 
@@ -683,7 +689,7 @@ mod tests {
     #[test]
     fn tap_mode_long_press_reported_unused_on_release() {
         let h = Harness::tap_mode();
-        h.tap_key("GLOBE", 1500);
+        h.tap_key(GLOBE, 1500);
         assert_eq!(h.hints(), [ActivationMode::Tap]);
     }
 
@@ -692,9 +698,9 @@ mod tests {
         let h = Harness::tap_mode();
         h.start_hands_free();
         h.tap();
-        h.gesture.press("RightCommand");
+        h.gesture.press(RIGHT_COMMAND);
         h.gesture.interrupt();
-        h.gesture.release("RightCommand");
+        h.gesture.release(RIGHT_COMMAND);
         h.advance(1000);
         assert_eq!(h.commands(), ["stop"]);
         assert!(h.hints().is_empty());
@@ -703,15 +709,15 @@ mod tests {
     #[test]
     fn lost_listener_force_stops_a_hold() {
         let held = Harness::push_mode();
-        held.gesture.press("GLOBE");
+        held.gesture.press(GLOBE);
         held.advance(500);
         held.gesture.release_lost();
-        held.gesture.release("GLOBE");
+        held.gesture.release(GLOBE);
         assert_eq!(held.commands(), ["start", "forceStop"]);
 
         let stopping = Harness::tap_mode();
         stopping.start_hands_free();
-        stopping.gesture.press("RightCommand");
+        stopping.gesture.press(RIGHT_COMMAND);
         stopping.gesture.release_lost();
         assert_eq!(stopping.commands(), ["forceStop"]);
     }
@@ -721,12 +727,12 @@ mod tests {
         let hands_free = Harness::tap_mode();
         hands_free.tap();
         hands_free.advance(150);
-        hands_free.gesture.press("RightCommand");
+        hands_free.gesture.press(RIGHT_COMMAND);
         hands_free.gesture.release_lost();
         assert_eq!(hands_free.commands(), ["start"]);
 
         let pending = Harness::push_mode();
-        pending.gesture.press("GLOBE");
+        pending.gesture.press(GLOBE);
         pending.gesture.release_lost();
         pending.advance(1000);
         assert_eq!(pending.commands(), NONE);
@@ -737,7 +743,7 @@ mod tests {
         first_tap.tap();
         first_tap.gesture.release_lost();
         first_tap.advance(100);
-        first_tap.gesture.press("RightCommand");
+        first_tap.gesture.press(RIGHT_COMMAND);
         first_tap.advance(1000);
         assert_eq!(first_tap.commands(), NONE);
         assert!(first_tap.hints().is_empty());

@@ -1,149 +1,16 @@
-//! Hotkey classification (which path observes a key) and the mapping from
-//! accelerator strings to `global-hotkey` key combinations.
+//! The mapping from accelerators ([`Hotkey::accelerator`]) to `global-hotkey`
+//! key combinations.
+//!
+//! [`Hotkey::accelerator`]: crate::text::hotkeys::Hotkey::accelerator
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
-use crate::text::hotkeys::{is_globe_like_hotkey, is_mouse_button_hotkey};
-
-const RIGHT_SIDE_MODIFIERS: [&str; 10] = [
-    "control", "ctrl", "alt", "option", "shift", "command", "cmd", "super", "meta", "win",
-];
-
-/// Right-side single modifiers ("RightOption") are watched by the native
-/// listener, not registered as shortcuts.
-pub fn is_right_side_modifier(hotkey: &str) -> bool {
-    right_modifier_base(hotkey).is_some()
-}
-
-/// "RightOption" -> "option"; `None` for anything else.
-fn right_modifier_base(hotkey: &str) -> Option<String> {
-    let base = strip_prefix_ignore_case(hotkey, "right")?;
-    RIGHT_SIDE_MODIFIERS
-        .iter()
-        .any(|name| base.eq_ignore_ascii_case(name))
-        .then(|| base.to_ascii_lowercase())
-}
-
-fn strip_prefix_ignore_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
-    let head = value.get(..prefix.len())?;
-    head.eq_ignore_ascii_case(prefix)
-        .then(|| &value[prefix.len()..])
-}
-
-const MODIFIER_NAMES: [&str; 12] = [
-    "control",
-    "ctrl",
-    "alt",
-    "option",
-    "shift",
-    "super",
-    "meta",
-    "win",
-    "command",
-    "cmd",
-    "commandorcontrol",
-    "cmdorctrl",
-];
-
-/// Chords made only of modifiers ("Control+Super") have no ordinary key.
-pub fn is_modifier_only_hotkey(hotkey: &str) -> bool {
-    hotkey.contains('+')
-        && hotkey
-            .split('+')
-            .all(|part| MODIFIER_NAMES.contains(&part.to_ascii_lowercase().as_str()))
-}
-
-/// Hotkeys the native listener reports (and whose release it reports).
-pub fn uses_native_listener(hotkey: &str) -> bool {
-    is_globe_like_hotkey(hotkey) || is_mouse_button_hotkey(hotkey) || is_right_side_modifier(hotkey)
-}
-
-/// macOS only reports a release for keys the native listener watches and for
-/// modifier chords. A lone regular key autorepeats and never reports release.
-pub fn lacks_mac_release_signal(hotkey: &str) -> bool {
-    !hotkey.contains('+') && !uses_native_listener(hotkey)
-}
-
-/// Hold mode needs a key whose release is visible.
-pub fn supports_push_to_talk(hotkey: Option<&str>) -> bool {
-    !hotkey.is_some_and(lacks_mac_release_signal)
-}
-
-pub fn is_unsupported_fn_combination(hotkey: &str) -> bool {
-    strip_prefix_ignore_case(hotkey, "fn+").is_some()
-}
-
-/// Name the native listener uses for a right-side modifier
-/// (`RIGHT_MOD_DOWN:RightOption`), so "RightAlt" matches it too.
-pub fn canonical_listener_key(hotkey: &str) -> String {
-    if let Some(base) = right_modifier_base(hotkey) {
-        let name = match base.as_str() {
-            "control" | "ctrl" => "RightControl",
-            "alt" | "option" => "RightOption",
-            "shift" => "RightShift",
-            _ => "RightCommand",
-        };
-        return name.to_string();
-    }
-    if is_mouse_button_hotkey(hotkey) {
-        return format!("MouseButton{}", &hotkey[hotkey.len() - 1..]);
-    }
-    if is_globe_like_hotkey(hotkey) {
-        return "GLOBE".to_string();
-    }
-    hotkey.to_string()
-}
-
-/// Right-side modifiers register as their generic accelerator modifier.
-pub fn normalize_to_accelerator(hotkey: &str) -> String {
-    hotkey
-        .split('+')
-        .map(|part| match right_modifier_base(part).as_deref() {
-            Some("control" | "ctrl") => "Control".to_string(),
-            Some("alt" | "option") => "Alt".to_string(),
-            Some("shift") => "Shift".to_string(),
-            Some(_) => "Command".to_string(),
-            None => part.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
-/// Modifiers whose release ends a Hold mode key chord, as reported by the
-/// listener's `MODIFIER_UP:<name>` (and `fn` from `FN_UP`).
-pub fn required_modifiers(hotkey: &str) -> Vec<&'static str> {
-    let mut required = Vec::new();
-    for part in hotkey.split('+').map(str::trim) {
-        let modifier = match part {
-            "Command" | "Cmd" | "RightCommand" | "RightCmd" | "CommandOrControl" | "Super"
-            | "Meta" => "command",
-            "Control" | "Ctrl" | "RightControl" | "RightCtrl" => "control",
-            "Alt" | "Option" | "RightAlt" | "RightOption" => "option",
-            "Shift" | "RightShift" => "shift",
-            "Fn" => "fn",
-            _ => continue,
-        };
-        if !required.contains(&modifier) {
-            required.push(modifier);
-        }
-    }
-    required
-}
-
 fn modifier_flag(token: &str) -> Option<Modifiers> {
-    let lowered = token.to_ascii_lowercase().replace(['-', '_', ' '], "");
-    let base = lowered
-        .strip_prefix("left")
-        .or_else(|| lowered.strip_prefix("right"))
-        .or_else(|| lowered.strip_suffix("left"))
-        .or_else(|| lowered.strip_suffix("right"))
-        .unwrap_or(&lowered);
-    match base {
-        "command" | "cmd" | "super" | "meta" | "win" | "commandorcontrol" | "cmdorctrl"
-        | "commandorctrl" | "cmdorcontrol" => Some(Modifiers::SUPER),
-        "control" | "ctrl" => Some(Modifiers::CONTROL),
-        "alt" | "option" | "altgr" => Some(Modifiers::ALT),
-        "shift" => Some(Modifiers::SHIFT),
+    match token {
+        "Command" => Some(Modifiers::SUPER),
+        "Control" => Some(Modifiers::CONTROL),
+        "Alt" => Some(Modifiers::ALT),
+        "Shift" => Some(Modifiers::SHIFT),
         _ => None,
     }
 }
@@ -244,23 +111,23 @@ fn key_code(token: &str) -> Option<(Code, bool)> {
         "SPACE" => Code::Space,
         "TAB" => Code::Tab,
         "BACKSPACE" => Code::Backspace,
-        "DELETE" | "DEL" => Code::Delete,
-        "INSERT" | "INS" => Code::Insert,
-        "RETURN" | "ENTER" => Code::Enter,
-        "UP" | "ARROWUP" => Code::ArrowUp,
-        "DOWN" | "ARROWDOWN" => Code::ArrowDown,
-        "LEFT" | "ARROWLEFT" => Code::ArrowLeft,
-        "RIGHT" | "ARROWRIGHT" => Code::ArrowRight,
+        "DELETE" => Code::Delete,
+        "INSERT" => Code::Insert,
+        "ENTER" => Code::Enter,
+        "UP" => Code::ArrowUp,
+        "DOWN" => Code::ArrowDown,
+        "LEFT" => Code::ArrowLeft,
+        "RIGHT" => Code::ArrowRight,
         "HOME" => Code::Home,
         "END" => Code::End,
-        "PAGEUP" | "PGUP" => Code::PageUp,
-        "PAGEDOWN" | "PGDOWN" => Code::PageDown,
-        "ESCAPE" | "ESC" => Code::Escape,
+        "PAGEUP" => Code::PageUp,
+        "PAGEDOWN" => Code::PageDown,
+        "ESC" => Code::Escape,
         "CAPSLOCK" => Code::CapsLock,
         "NUMLOCK" => Code::NumLock,
         "SCROLLLOCK" => Code::ScrollLock,
         "PAUSE" => Code::Pause,
-        "PRINTSCREEN" | "PRINT" => Code::PrintScreen,
+        "PRINTSCREEN" => Code::PrintScreen,
         "VOLUMEUP" | "AUDIOVOLUMEUP" => Code::AudioVolumeUp,
         "VOLUMEDOWN" | "AUDIOVOLUMEDOWN" => Code::AudioVolumeDown,
         "VOLUMEMUTE" | "AUDIOVOLUMEMUTE" => Code::AudioVolumeMute,
@@ -368,8 +235,8 @@ fn function_code(n: u8) -> Option<Code> {
     Some(code)
 }
 
-/// Parses an accelerator string ("CommandOrControl+Shift+Space", "Control+,",
-/// "Control++", "F13") into a `global-hotkey` combination.
+/// Maps an accelerator ("Command+Shift+Space", "Control+,", "Control++",
+/// "F13") to a `global-hotkey` combination.
 pub fn parse_accelerator(accelerator: &str) -> Result<HotKey, String> {
     let trimmed = accelerator.trim();
     if trimmed.is_empty() {
@@ -424,56 +291,22 @@ pub fn parse_accelerator(accelerator: &str) -> Result<HotKey, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::text::hotkeys::Hotkey;
 
     fn hk(mods: Modifiers, code: Code) -> HotKey {
         HotKey::new(if mods.is_empty() { None } else { Some(mods) }, code)
     }
 
-    #[test]
-    fn classifies_hotkeys() {
-        assert!(is_right_side_modifier("RightOption"));
-        assert!(is_right_side_modifier("rightcmd"));
-        assert!(!is_right_side_modifier("Right"));
-        assert!(!is_right_side_modifier("RightArrow"));
-        assert!(is_modifier_only_hotkey("Control+Alt"));
-        assert!(!is_modifier_only_hotkey("Control+Alt+Space"));
-        assert!(!is_modifier_only_hotkey("Control"));
-        assert!(is_unsupported_fn_combination("Fn+A"));
-        assert!(!is_unsupported_fn_combination("Fn"));
+    fn parse(hotkey: &str) -> Result<HotKey, String> {
+        let accelerator = Hotkey::parse(hotkey)
+            .and_then(|h| h.accelerator())
+            .ok_or_else(|| format!("{hotkey} has no accelerator"))?;
+        parse_accelerator(&accelerator)
     }
 
     #[test]
-    fn only_keys_whose_release_is_visible_can_be_held() {
-        assert!(!supports_push_to_talk(Some("F8")));
-        assert!(!supports_push_to_talk(Some("PageDown")));
-        assert!(supports_push_to_talk(Some("GLOBE")));
-        assert!(supports_push_to_talk(Some("RightOption")));
-        assert!(supports_push_to_talk(Some("Control+R")));
-        assert!(supports_push_to_talk(Some("MouseButton4")));
-        assert!(supports_push_to_talk(None));
-    }
-
-    #[test]
-    fn canonical_listener_names() {
-        assert_eq!(canonical_listener_key("RightAlt"), "RightOption");
-        assert_eq!(canonical_listener_key("RightCmd"), "RightCommand");
-        assert_eq!(canonical_listener_key("Fn"), "GLOBE");
-        assert_eq!(canonical_listener_key("mousebutton5"), "MouseButton5");
-    }
-
-    #[test]
-    fn required_modifiers_follow_the_chord() {
-        assert_eq!(
-            required_modifiers("Control+Shift+Space"),
-            vec!["control", "shift"]
-        );
-        assert_eq!(required_modifiers("CommandOrControl+K"), vec!["command"]);
-        assert_eq!(required_modifiers("F8"), Vec::<&str>::new());
-    }
-
-    #[test]
-    fn maps_accelerators() {
-        let cases: [(&str, HotKey); 12] = [
+    fn maps_hotkey_accelerators() {
+        let cases: [(&str, HotKey); 15] = [
             (
                 "CommandOrControl+Shift+Space",
                 hk(Modifiers::SUPER | Modifiers::SHIFT, Code::Space),
@@ -498,29 +331,28 @@ mod tests {
                 hk(Modifiers::CONTROL | Modifiers::SHIFT, Code::Semicolon),
             ),
             ("Escape", hk(Modifiers::empty(), Code::Escape)),
-            ("Ctrl+Up", hk(Modifiers::CONTROL, Code::ArrowUp)),
+            ("Ctrl+ArrowUp", hk(Modifiers::CONTROL, Code::ArrowUp)),
+            ("Ctrl+Return", hk(Modifiers::CONTROL, Code::Enter)),
             ("ControlLeft+K", hk(Modifiers::CONTROL, Code::KeyK)),
-            ("Option+`", hk(Modifiers::ALT, Code::Backquote)),
+            ("RightCommand+K", hk(Modifiers::SUPER, Code::KeyK)),
+            ("AltGr+`", hk(Modifiers::ALT, Code::Backquote)),
+            ("Control+Num5", hk(Modifiers::CONTROL, Code::Numpad5)),
         ];
-        for (accelerator, expected) in cases {
-            let parsed = parse_accelerator(accelerator).unwrap();
+        for (hotkey, expected) in cases {
+            let parsed = parse(hotkey).unwrap();
             assert_eq!(
                 (parsed.mods, parsed.key),
                 (expected.mods, expected.key),
-                "{accelerator}"
+                "{hotkey}"
             );
         }
-        assert_eq!(
-            normalize_to_accelerator("RightCommand+K"),
-            "Command+K".to_string()
-        );
     }
 
     #[test]
     fn rejects_unrepresentable_accelerators() {
-        assert!(parse_accelerator("Control+Alt").is_err());
-        assert!(parse_accelerator("Control+BAD").is_err());
+        assert!(parse("Control+Alt").is_err());
+        assert!(parse("Control+BAD").is_err());
+        assert!(parse("Hyper+K").is_err());
         assert!(parse_accelerator("").is_err());
-        assert!(parse_accelerator("Hyper+K").is_err());
     }
 }

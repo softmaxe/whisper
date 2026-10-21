@@ -140,7 +140,6 @@ impl AudioStorage {
         })
     }
 
-    #[cfg(test)]
     pub fn read_audio(&self, transcription_id: i64) -> Option<Vec<u8>> {
         let path = self.audio_path(transcription_id)?;
         fs::read(&path)

@@ -27,14 +27,16 @@ pub mod repeat_gate;
 pub mod slots;
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::thread::JoinHandle;
 
 use global_hotkey::HotKeyState;
 
 use crate::paths;
 use crate::settings::{ActivationMode, DEFAULT_HOTKEY};
-use crate::text::hotkeys::{is_globe_like_hotkey, is_mouse_button_hotkey, parse_hotkey_list};
+use crate::text::hotkeys::{
+    Hotkey, ListenerKey, Modifier, parse_hotkey_list, serialize_hotkey_list,
+};
 
 use super::timer::{RealTimers, Timers, lock};
 use backend::CarbonBackend;
@@ -47,7 +49,9 @@ use repeat_gate::RepeatGate;
 use slots::{
     CANCEL_SLOT, DICTATION_SLOT, ListenerConfig, ShortcutBackend, ShortcutTarget, SlotRegistry,
 };
-const CANCEL_KEY: &str = "Escape";
+
+static CANCEL_KEY: LazyLock<Hotkey> =
+    LazyLock::new(|| Hotkey::parse("Escape").expect("static hotkey"));
 
 /// Why a Dictation was stopped without a physical release of its hotkey.
 /// The trigger keys may still be down, so the transcript must be kept
@@ -110,13 +114,9 @@ pub trait DictationStatus: Send + Sync {
 /// Raw listener events for the hotkey capture UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RawKeyEvent {
-    GlobeDown,
-    GlobeUp,
-    RightModifierDown(String),
-    RightModifierUp(String),
-    ModifierUp(String),
-    MouseButtonDown(String),
-    MouseButtonUp(String),
+    KeyDown(ListenerKey),
+    KeyUp(ListenerKey),
+    ModifierUp(Modifier),
     Interrupted,
 }
 
@@ -392,28 +392,28 @@ impl HotkeyManager {
     /// active list.
     pub fn register(&self, hotkey_list: &str, mode: ActivationMode) -> Result<String, HotkeyError> {
         let hotkeys = parse_hotkey_list(hotkey_list);
-        let Some(primary) = hotkeys.first().cloned() else {
+        let Some(primary) = hotkeys.first() else {
             return Err(HotkeyError {
                 hotkey: String::new(),
                 reason: HotkeyFailureReason::RegistrationFailed,
                 suggestions: Vec::new(),
             });
         };
-        if mode == ActivationMode::Push && !keys::supports_push_to_talk(Some(&primary)) {
+        if mode == ActivationMode::Push && !primary.supports_hold() {
             return Err(HotkeyError {
-                hotkey: primary,
+                hotkey: primary.to_string(),
                 reason: HotkeyFailureReason::HoldNeedsReleaseKey,
                 suggestions: Vec::new(),
             });
         }
-        let joined = hotkeys.join(",");
         {
             let mut state = lock(&self.inner.state);
             let backend = Arc::clone(&self.inner.backend);
             state
                 .slots
-                .setup_shortcuts(backend.as_ref(), &joined, DICTATION_SLOT, true)?;
+                .setup_shortcuts(backend.as_ref(), &hotkeys, DICTATION_SLOT, true)?;
         }
+        let joined = serialize_hotkey_list(&hotkeys);
         self.inner.mode.store(mode_to_u8(mode), Ordering::SeqCst);
         self.inner.after_hotkey_change();
         self.inner
@@ -425,7 +425,7 @@ impl HotkeyManager {
     /// failures are reported as [`HotkeyCommand::RegistrationFailed`]),
     /// falling back to [`DEFAULT_HOTKEY`] when nothing registers.
     pub fn register_saved(&self, hotkey_list: &str, mode: ActivationMode) -> StartupRegistration {
-        let saved = hotkey_list.trim();
+        let saved = parse_hotkey_list(hotkey_list);
         let mut active = None;
         if !saved.is_empty() {
             let result = {
@@ -433,41 +433,42 @@ impl HotkeyManager {
                 let backend = Arc::clone(&self.inner.backend);
                 state
                     .slots
-                    .setup_shortcuts(backend.as_ref(), saved, DICTATION_SLOT, false)
+                    .setup_shortcuts(backend.as_ref(), &saved, DICTATION_SLOT, false)
             };
             match result {
                 Ok(outcome) => {
                     for failure in &outcome.failures {
                         self.inner.notify_failure(failure);
                     }
-                    active = Some(outcome.hotkeys.join(","));
+                    active = Some(outcome.hotkeys);
                 }
                 Err(error) => {
                     self.inner.notify_failure(&HotkeyError {
-                        hotkey: saved.to_string(),
+                        hotkey: hotkey_list.trim().to_string(),
                         ..error
                     });
                 }
             }
         }
         let active = active.unwrap_or_else(|| {
+            let default = parse_hotkey_list(DEFAULT_HOTKEY);
             let mut state = lock(&self.inner.state);
             let backend = Arc::clone(&self.inner.backend);
-            let _ = state.slots.setup_shortcuts(
-                backend.as_ref(),
-                DEFAULT_HOTKEY,
-                DICTATION_SLOT,
-                false,
-            );
-            DEFAULT_HOTKEY.to_string()
+            let _ = state
+                .slots
+                .setup_shortcuts(backend.as_ref(), &default, DICTATION_SLOT, false);
+            default
         });
-        let primary = parse_hotkey_list(&active).into_iter().next();
-        let mode =
-            if mode == ActivationMode::Push && !keys::supports_push_to_talk(primary.as_deref()) {
-                ActivationMode::Tap
-            } else {
-                mode
-            };
+        let mode = if mode == ActivationMode::Push
+            && active
+                .first()
+                .is_some_and(|primary| !primary.supports_hold())
+        {
+            ActivationMode::Tap
+        } else {
+            mode
+        };
+        let active = serialize_hotkey_list(&active);
         self.inner.mode.store(mode_to_u8(mode), Ordering::SeqCst);
         self.inner.after_hotkey_change();
         self.inner
@@ -481,15 +482,15 @@ impl HotkeyManager {
         if self.inner.activation_mode() == mode {
             return true;
         }
-        let primary = self.primary_hotkey();
-        if mode == ActivationMode::Push && !keys::supports_push_to_talk(primary.as_deref()) {
-            if let Some(hotkey) = primary {
-                self.inner.notify_failure(&HotkeyError {
-                    hotkey,
-                    reason: HotkeyFailureReason::HoldNeedsReleaseKey,
-                    suggestions: Vec::new(),
-                });
-            }
+        if mode == ActivationMode::Push
+            && let Some(primary) = self.primary_hotkey()
+            && !primary.supports_hold()
+        {
+            self.inner.notify_failure(&HotkeyError {
+                hotkey: primary.to_string(),
+                reason: HotkeyFailureReason::HoldNeedsReleaseKey,
+                suggestions: Vec::new(),
+            });
             return false;
         }
         self.inner.mode.store(mode_to_u8(mode), Ordering::SeqCst);
@@ -557,7 +558,7 @@ impl HotkeyManager {
     pub fn register_cancel_hotkey_for(&self, owner: CancelHotkeyOwner) -> Result<(), HotkeyError> {
         let mut state = lock(&self.inner.state);
         let State { slots, cancel } = &mut *state;
-        cancel.register(slots, self.inner.backend.as_ref(), owner, CANCEL_KEY)
+        cancel.register(slots, self.inner.backend.as_ref(), owner, &CANCEL_KEY)
     }
 
     pub fn unregister_cancel_hotkey_for(&self, owner: CancelHotkeyOwner) {
@@ -573,7 +574,7 @@ impl HotkeyManager {
             .into_iter()
             .next()
             .or_else(|| self.primary_hotkey());
-        let supports = keys::supports_push_to_talk(hotkey.as_deref());
+        let supports = hotkey.is_none_or(|hotkey| hotkey.supports_hold());
         HotkeyModeInfo {
             supports_push_to_talk: supports,
             push_to_talk_unavailable_reason: (!supports)
@@ -582,11 +583,11 @@ impl HotkeyManager {
     }
 
     /// The active Dictation hotkeys.
-    pub fn active_hotkeys(&self) -> Vec<String> {
+    pub fn active_hotkeys(&self) -> Vec<Hotkey> {
         lock(&self.inner.state).slots.slot_hotkeys(DICTATION_SLOT)
     }
 
-    fn primary_hotkey(&self) -> Option<String> {
+    fn primary_hotkey(&self) -> Option<Hotkey> {
         self.active_hotkeys().into_iter().next()
     }
 
@@ -685,35 +686,50 @@ impl Inner {
         lock(&self.raw).retain(|tx| tx.try_send(event.clone()).is_ok() || !tx.is_closed());
     }
 
-    fn dictation_has_listener_key(&self, key: &str) -> bool {
+    fn dictation_has_listener_key(&self, key: ListenerKey) -> bool {
         lock(&self.state)
             .slots
             .slot_hotkeys(DICTATION_SLOT)
             .iter()
-            .any(|hotkey| {
-                keys::uses_native_listener(hotkey) && keys::canonical_listener_key(hotkey) == key
-            })
+            .any(|hotkey| hotkey.listener_key() == Some(key))
     }
 
-    fn press_native(&self, key: &str) {
-        if self.listening.load(Ordering::SeqCst) {
-            return;
+    fn on_key_down(&self, key: ListenerKey) {
+        self.broadcast_raw(RawKeyEvent::KeyDown(key));
+        if self.dictation_has_listener_key(key) && !self.listening.load(Ordering::SeqCst) {
+            self.gesture.press(key);
         }
-        self.gesture.press(key);
+    }
+
+    /// The release ends a press of the key itself and, for Globe (Fn) and
+    /// right-side modifiers, a Hold mode chord using that modifier.
+    fn on_key_up(&self, key: ListenerKey) {
+        self.broadcast_raw(RawKeyEvent::KeyUp(key));
+        self.gesture.release(key);
+        if let Some(modifier) = key.modifier() {
+            self.push.handle_modifier_up(modifier);
+        }
     }
 
     fn on_globe_event(&self, event: GlobeEvent) {
         match event {
-            GlobeEvent::GlobeDown => {
-                self.broadcast_raw(RawKeyEvent::GlobeDown);
-                if self.dictation_has_listener_key("GLOBE") {
-                    self.press_native("GLOBE");
+            GlobeEvent::GlobeDown => self.on_key_down(ListenerKey::Globe),
+            GlobeEvent::GlobeUp => self.on_key_up(ListenerKey::Globe),
+            GlobeEvent::RightModifierDown(name) | GlobeEvent::MouseButtonDown(name) => {
+                if let Some(key) = ListenerKey::parse(&name) {
+                    self.on_key_down(key);
                 }
             }
-            GlobeEvent::GlobeUp => {
-                self.broadcast_raw(RawKeyEvent::GlobeUp);
-                self.gesture.release("GLOBE");
-                self.push.handle_modifier_up("fn");
+            GlobeEvent::RightModifierUp(name) | GlobeEvent::MouseButtonUp(name) => {
+                if let Some(key) = ListenerKey::parse(&name) {
+                    self.on_key_up(key);
+                }
+            }
+            GlobeEvent::ModifierUp(name) => {
+                if let Some(modifier) = Modifier::from_listener_name(&name) {
+                    self.broadcast_raw(RawKeyEvent::ModifierUp(modifier));
+                    self.push.handle_modifier_up(modifier);
+                }
             }
             GlobeEvent::Interrupted => {
                 self.broadcast_raw(RawKeyEvent::Interrupted);
@@ -722,40 +738,6 @@ impl Inner {
             GlobeEvent::ListenerStopped => {
                 self.gesture.release_lost();
                 self.push.force_stop(ForceStopReason::ListenerLost);
-            }
-            GlobeEvent::ModifierUp(modifier) => {
-                self.broadcast_raw(RawKeyEvent::ModifierUp(modifier.clone()));
-                self.push.handle_modifier_up(&modifier);
-            }
-            GlobeEvent::RightModifierDown(modifier) => {
-                self.broadcast_raw(RawKeyEvent::RightModifierDown(modifier.clone()));
-                if self.dictation_has_listener_key(&modifier) {
-                    self.press_native(&modifier);
-                }
-            }
-            GlobeEvent::RightModifierUp(modifier) => {
-                self.broadcast_raw(RawKeyEvent::RightModifierUp(modifier.clone()));
-                self.gesture.release(&modifier);
-                let base = match modifier.as_str() {
-                    "RightCommand" => Some("command"),
-                    "RightOption" => Some("option"),
-                    "RightControl" => Some("control"),
-                    "RightShift" => Some("shift"),
-                    _ => None,
-                };
-                if let Some(base) = base {
-                    self.push.handle_modifier_up(base);
-                }
-            }
-            GlobeEvent::MouseButtonDown(button) => {
-                self.broadcast_raw(RawKeyEvent::MouseButtonDown(button.clone()));
-                if is_mouse_button_hotkey(&button) && self.dictation_has_listener_key(&button) {
-                    self.press_native(&button);
-                }
-            }
-            GlobeEvent::MouseButtonUp(button) => {
-                self.broadcast_raw(RawKeyEvent::MouseButtonUp(button.clone()));
-                self.gesture.release(&button);
             }
             GlobeEvent::Error(message) => self.send(HotkeyCommand::ListenerError { message }),
         }
@@ -776,12 +758,8 @@ impl Inner {
         {
             return;
         }
-        let hotkey = target.hotkey;
-        if self.activation_mode() == ActivationMode::Push
-            && !is_globe_like_hotkey(&hotkey)
-            && hotkey.contains('+')
-        {
-            self.push.start(&hotkey);
+        if self.activation_mode() == ActivationMode::Push && target.hotkey.supports_hold() {
+            self.push.start(&target.hotkey);
             return;
         }
         let now = self.timers.now_ms();
@@ -1021,9 +999,9 @@ mod tests {
         assert_eq!(
             events,
             vec![
-                RawKeyEvent::GlobeDown,
-                RawKeyEvent::RightModifierDown("RightCommand".into()),
-                RawKeyEvent::MouseButtonUp("MouseButton4".into()),
+                RawKeyEvent::KeyDown(ListenerKey::Globe),
+                RawKeyEvent::KeyDown(ListenerKey::RightModifier(Modifier::Command)),
+                RawKeyEvent::KeyUp(ListenerKey::MouseButton(4)),
             ]
         );
     }
@@ -1040,7 +1018,7 @@ mod tests {
                 .register("F7,Control+BAD", ActivationMode::Tap)
                 .is_err()
         );
-        assert_eq!(h.manager.active_hotkeys(), ["F7"]);
+        assert_eq!(serialize_hotkey_list(&h.manager.active_hotkeys()), "F7");
         assert!(!h.manager.set_activation_mode(ActivationMode::Push));
         assert!(h.drain().iter().any(|c| matches!(
             c,
@@ -1067,9 +1045,9 @@ mod tests {
     fn cancel_key_press_is_forwarded() {
         let h = harness();
         h.manager.register_cancel_hotkey();
-        h.fire("Escape");
+        h.fire("Esc");
         assert_eq!(h.drain(), vec![HotkeyCommand::CancelKeyPressed]);
         h.manager.unregister_cancel_hotkey();
-        assert!(!h.backend.is_registered("Escape"));
+        assert!(!h.backend.is_registered("Esc"));
     }
 }

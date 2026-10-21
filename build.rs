@@ -117,7 +117,7 @@ fn is_binary_for_arch(path: &Path, arch: Arch) -> bool {
 /// Frameworks each helper links explicitly.
 fn frameworks_for(name: &str) -> &'static [&'static str] {
     match name {
-        "macos-mic-listener" => &["CoreAudio", "Foundation", "IOKit"],
+        "macos-mic-listener" => &["Foundation", "IOKit"],
         _ => &[],
     }
 }
