@@ -4,6 +4,7 @@
 
 use super::slots::{CANCEL_SLOT, ShortcutBackend, SlotRegistry};
 use super::{HotkeyError, HotkeyFailureReason};
+use crate::text::hotkeys::Hotkey;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancelHotkeyOwner {
@@ -14,7 +15,7 @@ pub enum CancelHotkeyOwner {
 #[derive(Debug, Default)]
 pub struct CancelBinding {
     owners: Vec<CancelHotkeyOwner>,
-    key: Option<String>,
+    key: Option<Hotkey>,
 }
 
 impl CancelBinding {
@@ -23,9 +24,9 @@ impl CancelBinding {
         slots: &mut SlotRegistry,
         backend: &dyn ShortcutBackend,
         owner: CancelHotkeyOwner,
-        key: &str,
+        key: &Hotkey,
     ) -> Result<(), HotkeyError> {
-        if !self.owners.is_empty() && self.key.as_deref() == Some(key) {
+        if !self.owners.is_empty() && self.key.as_ref() == Some(key) {
             if !self.owners.contains(&owner) {
                 self.owners.push(owner);
             }
@@ -38,11 +39,11 @@ impl CancelBinding {
                 suggestions: Vec::new(),
             });
         }
-        slots.setup_shortcuts(backend, key, CANCEL_SLOT, false)?;
+        slots.setup_shortcuts(backend, std::slice::from_ref(key), CANCEL_SLOT, false)?;
         if !self.owners.contains(&owner) {
             self.owners.push(owner);
         }
-        self.key = Some(key.to_string());
+        self.key = Some(key.clone());
         Ok(())
     }
 
@@ -85,15 +86,16 @@ mod tests {
             }
         }
         fn register(&mut self, owner: CancelHotkeyOwner, key: &str) -> Result<(), HotkeyError> {
+            let key = Hotkey::parse(key).expect("hotkey");
             self.binding
-                .register(&mut self.slots, &self.backend, owner, key)
+                .register(&mut self.slots, &self.backend, owner, &key)
         }
         fn unregister(&mut self, owner: CancelHotkeyOwner) {
             self.binding
                 .unregister(&mut self.slots, &self.backend, owner);
         }
         fn escape_bound(&self) -> bool {
-            self.backend.is_registered("Escape")
+            self.backend.is_registered("Esc")
         }
         fn registrations(&self) -> usize {
             // Every successful registration adds one entry; unregisters remove it.

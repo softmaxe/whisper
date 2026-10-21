@@ -10,7 +10,11 @@ use crate::i18n::{t, t_with};
 use crate::settings::DEFAULT_HOTKEY;
 
 use crate::app_state::AppState;
-use crate::backend::{self, RawKey};
+use crate::backend::{self, RawKeyEvent};
+use crate::text::hotkeys::{
+    Hotkey, ListenerKey, Modifier, Side, format_hotkey_list_label, parse_hotkey_list,
+    serialize_hotkey_list,
+};
 
 use super::components::{Button, ButtonSize, ButtonVariant, icon};
 use super::overlays::{Toast, ToastVariant, show_toast};
@@ -31,14 +35,14 @@ struct Capture {
     /// Modifier kinds held, in display order (ctrl, meta, alt, shift).
     held: [bool; 4],
     /// Right-side modifiers reported by the native listener.
-    right_held: Vec<String>,
+    right_held: Vec<Modifier>,
     fn_held: bool,
     fn_used: bool,
     pressed_at: Option<Instant>,
 }
 
 pub struct HotkeyListInput {
-    items: Vec<String>,
+    items: Vec<Hotkey>,
     adding: bool,
     capturing: Option<Slot>,
     capture: Capture,
@@ -49,57 +53,22 @@ pub struct HotkeyListInput {
     _raw_keys: Option<Task<()>>,
 }
 
-const KINDS: [&str; 4] = ["Control", "Command", "Alt", "Shift"];
-const RIGHT_TOKENS: [&str; 4] = ["RightControl", "RightCommand", "RightOption", "RightShift"];
-
-fn parse_list(value: &str) -> Vec<String> {
-    backend::parse_hotkey_list(value)
-}
-
-/// Maps a GPUI key name to the key name used in stored accelerator strings.
-fn accelerator_key(key: &str) -> Option<String> {
-    let mapped = match key {
-        "space" => "Space",
-        "escape" => "Esc",
-        "tab" => "Tab",
-        "enter" => "Enter",
-        "backspace" => "Backspace",
-        "up" => "Up",
-        "down" => "Down",
-        "left" => "Left",
-        "right" => "Right",
-        "insert" => "Insert",
-        "delete" => "Delete",
-        "home" => "Home",
-        "end" => "End",
-        "pageup" => "PageUp",
-        "pagedown" => "PageDown",
-        _ => "",
-    };
-    if !mapped.is_empty() {
-        return Some(mapped.to_string());
-    }
-    if let Some(n) = key.strip_prefix('f')
-        && let Ok(n) = n.parse::<u8>()
-        && (1..=24).contains(&n)
-    {
-        return Some(format!("F{n}"));
-    }
-    let mut chars = key.chars();
-    match (chars.next(), chars.next()) {
-        (Some(c), None) if c.is_ascii_alphanumeric() => Some(c.to_ascii_uppercase().to_string()),
-        (Some(c), None) if "`-=[]\\;',./".contains(c) => Some(c.to_string()),
-        _ => None,
-    }
-}
+/// Modifier kinds in display order (ctrl, meta, alt, shift).
+const MODIFIERS: [Modifier; 4] = [
+    Modifier::Control,
+    Modifier::Command,
+    Modifier::Option,
+    Modifier::Shift,
+];
 
 impl HotkeyListInput {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let items = parse_list(&AppState::settings(cx).effective_dictation_key());
+        let items = parse_hotkey_list(&AppState::settings(cx).effective_dictation_key());
         let state = AppState::global(cx);
         cx.observe(&state, |this: &mut Self, state, cx| {
             if this.capturing.is_none() && !this.registering {
-                let incoming = parse_list(&state.read(cx).settings.effective_dictation_key());
+                let incoming =
+                    parse_hotkey_list(&state.read(cx).settings.effective_dictation_key());
                 if incoming != this.items {
                     this.items = incoming;
                     cx.notify();
@@ -167,18 +136,17 @@ impl HotkeyListInput {
         cx.notify();
     }
 
-    fn finalize(&mut self, hotkey: String, cx: &mut Context<Self>) {
+    fn finalize(&mut self, hotkey: Hotkey, cx: &mut Context<Self>) {
         let Some(slot) = self.capturing else { return };
         let exclude = match slot {
             Slot::Existing(i) => Some(i),
             Slot::New => None,
         };
-        let normalized = backend::normalize_hotkey(&hotkey);
         if self
             .items
             .iter()
             .enumerate()
-            .any(|(i, h)| Some(i) != exclude && backend::normalize_hotkey(h) == normalized)
+            .any(|(i, h)| Some(i) != exclude && *h == hotkey)
         {
             self.reject(t("hotkeyInput.duplicate"), cx);
             return;
@@ -206,13 +174,13 @@ impl HotkeyListInput {
     }
 
     fn reset_to_default(&mut self, cx: &mut Context<Self>) {
-        self.commit(vec![DEFAULT_HOTKEY.to_string()], cx);
+        self.commit(parse_hotkey_list(DEFAULT_HOTKEY), cx);
     }
 
     /// Applies the list optimistically and rolls back when registration fails.
-    fn commit(&mut self, next: Vec<String>, cx: &mut Context<Self>) {
+    fn commit(&mut self, next: Vec<Hotkey>, cx: &mut Context<Self>) {
         let previous = std::mem::replace(&mut self.items, next.clone());
-        let list = backend::serialize_hotkey_list(&next);
+        let list = serialize_hotkey_list(&next);
         self.registering = true;
         cx.notify();
         match backend::register_hotkeys(&list, cx) {
@@ -226,7 +194,7 @@ impl HotkeyListInput {
                 show_toast(
                     Toast::new(t_with(
                         "hotkey.errors.registrationFailed",
-                        &[("hotkey", &list)],
+                        &[("hotkey", &format_hotkey_list_label(&list))],
                     ))
                     .description(message)
                     .variant(ToastVariant::Destructive),
@@ -238,34 +206,35 @@ impl HotkeyListInput {
         cx.notify();
     }
 
-    fn on_raw_key(&mut self, key: RawKey, cx: &mut Context<Self>) {
+    fn on_raw_key(&mut self, event: RawKeyEvent, cx: &mut Context<Self>) {
         if self.capturing.is_none() {
             return;
         }
-        match key {
-            RawKey::FnDown => {
+        match event {
+            RawKeyEvent::KeyDown(ListenerKey::Globe) => {
                 self.warning = None;
                 self.capture.fn_held = true;
                 self.capture.fn_used = false;
             }
-            RawKey::FnUp => {
+            RawKeyEvent::KeyUp(ListenerKey::Globe) => {
                 if self.capture.fn_held && !self.capture.fn_used {
                     self.capture.fn_held = false;
-                    self.finalize("GLOBE".into(), cx);
+                    self.finalize(ListenerKey::Globe.into(), cx);
                     return;
                 }
                 self.capture.fn_held = false;
             }
-            RawKey::RightModifierDown(name) => {
-                if !self.capture.right_held.contains(&name) {
-                    self.capture.right_held.push(name);
+            RawKeyEvent::KeyDown(ListenerKey::RightModifier(modifier)) => {
+                if !self.capture.right_held.contains(&modifier) {
+                    self.capture.right_held.push(modifier);
                 }
             }
-            RawKey::RightModifierUp => {}
-            RawKey::MouseButtonDown(name) => {
-                self.finalize(name, cx);
+            RawKeyEvent::KeyUp(ListenerKey::RightModifier(_)) => {}
+            RawKeyEvent::KeyDown(key @ ListenerKey::MouseButton(_)) => {
+                self.finalize(key.into(), cx);
                 return;
             }
+            _ => return,
         }
         cx.notify();
     }
@@ -276,32 +245,19 @@ impl HotkeyListInput {
         }
         cx.stop_propagation();
         let ks = &event.keystroke;
-        let Some(key) = accelerator_key(&ks.key) else {
+        let m = ks.modifiers;
+        let held = [m.control, m.platform, m.alt, m.shift];
+        let modifiers: Vec<Modifier> = MODIFIERS
+            .into_iter()
+            .zip(held)
+            .filter_map(|(modifier, held)| held.then_some(modifier))
+            .collect();
+        let Some(mut hotkey) = Hotkey::capture(&modifiers, Some(&ks.key)) else {
             return;
         };
-        let mut parts = Vec::new();
-        if ks.modifiers.control {
-            parts.push("Control");
-        }
-        if ks.modifiers.platform {
-            parts.push("Command");
-        }
-        if ks.modifiers.alt {
-            parts.push("Alt");
-        }
-        if ks.modifiers.shift {
-            parts.push("Shift");
-        }
-        let mut hotkey = parts.join("+");
-        if !hotkey.is_empty() {
-            hotkey.push('+');
-        }
-        hotkey.push_str(&key);
-        if self.capture.fn_held
-            || ks.modifiers.function && !(ks.key.starts_with('f') && ks.key.len() > 1)
-        {
+        if self.capture.fn_held || m.function && !(ks.key.starts_with('f') && ks.key.len() > 1) {
             self.capture.fn_used = true;
-            hotkey = format!("Fn+{hotkey}");
+            hotkey = hotkey.with_fn();
         }
         self.capture.pressed_at = None;
         self.finalize(hotkey, cx);
@@ -345,26 +301,22 @@ impl HotkeyListInput {
             .map(|t| t.elapsed())
             .unwrap_or_default();
         let kinds: Vec<usize> = (0..4).filter(|i| held[*i]).collect();
-        let fn_prefix = |h: String, this: &mut Self| {
+        let with_fn = |hotkey: Hotkey, this: &mut Self| {
             if this.capture.fn_held {
                 this.capture.fn_used = true;
-                format!("Fn+{h}")
+                hotkey.with_fn()
             } else {
-                h
+                hotkey
             }
         };
         if kinds.len() == 1 {
-            let kind = kinds[0];
-            let right_token = RIGHT_TOKENS[kind];
-            if right.iter().any(|r| r == right_token) {
-                let hotkey = fn_prefix(right_token.to_string(), self);
+            let modifier = MODIFIERS[kinds[0]];
+            if right.contains(&modifier) {
+                let hotkey = with_fn(ListenerKey::RightModifier(modifier).into(), self);
                 self.finalize(hotkey, cx);
             } else if duration >= MODIFIER_ONLY_HOLD_THRESHOLD && !self.capture.fn_held {
-                let held_label = backend::format_hotkey_label(&format!(
-                    "Left{}",
-                    ["Control", "Command", "Option", "Shift"][kind]
-                ));
-                let right_label = backend::format_hotkey_label(right_token);
+                let held_label = modifier.label(Some(Side::Left));
+                let right_label = modifier.label(Some(Side::Right));
                 self.reject(
                     t_with(
                         "hotkeyInput.singleModifierNeedsRightSide",
@@ -373,13 +325,14 @@ impl HotkeyListInput {
                     cx,
                 );
             }
-        } else if kinds.len() >= 2 && duration >= MODIFIER_ONLY_HOLD_THRESHOLD {
-            let hotkey = kinds
-                .iter()
-                .map(|k| KINDS[*k])
-                .collect::<Vec<_>>()
-                .join("+");
-            let hotkey = fn_prefix(hotkey, self);
+        } else if kinds.len() >= 2
+            && duration >= MODIFIER_ONLY_HOLD_THRESHOLD
+            && let Some(hotkey) = Hotkey::capture(
+                &kinds.iter().map(|k| MODIFIERS[*k]).collect::<Vec<_>>(),
+                None,
+            )
+        {
+            let hotkey = with_fn(hotkey, self);
             self.finalize(hotkey, cx);
         }
         cx.notify();
@@ -387,15 +340,14 @@ impl HotkeyListInput {
 
     fn held_labels(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for (i, held) in self.capture.held.iter().enumerate() {
-            if *held {
-                let right = RIGHT_TOKENS[i];
-                let token = if self.capture.right_held.iter().any(|r| r == right) {
-                    right.to_string()
-                } else {
-                    KINDS[i].to_string()
-                };
-                out.push(backend::format_hotkey_label(&token));
+        for (modifier, held) in MODIFIERS.into_iter().zip(self.capture.held) {
+            if held {
+                let side = self
+                    .capture
+                    .right_held
+                    .contains(&modifier)
+                    .then_some(Side::Right);
+                out.push(modifier.label(side));
             }
         }
         if self.capture.fn_held {
@@ -407,7 +359,7 @@ impl HotkeyListInput {
     fn render_row(
         &self,
         slot: Slot,
-        value: Option<&str>,
+        value: Option<&Hotkey>,
         can_remove: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -567,11 +519,10 @@ impl HotkeyListInput {
                 })
                 .into_any_element()
         } else if let Some(value) = value {
-            let label = backend::format_hotkey_label(value);
-            let is_globe = value == "GLOBE" || value == "Fn";
-            let keys = if value.contains('+') {
+            let parts = value.label_parts();
+            let keys = if parts.len() > 1 {
                 let mut keys = div().flex().items_center().gap(px(4.));
-                for (i, part) in label.split('+').enumerate() {
+                for (i, part) in parts.into_iter().enumerate() {
                     if i > 0 {
                         keys = keys.child(
                             div()
@@ -580,10 +531,10 @@ impl HotkeyListInput {
                                 .child("+"),
                         );
                     }
-                    keys = keys.child(key_chip(part.to_string(), &p));
+                    keys = keys.child(key_chip(part, &p));
                 }
                 keys.into_any_element()
-            } else if is_globe {
+            } else if value.is_globe() {
                 div()
                     .flex()
                     .items_center()
@@ -607,7 +558,7 @@ impl HotkeyListInput {
                     )
                     .into_any_element()
             } else {
-                key_chip(label, &p)
+                key_chip(value.label(), &p)
                     .px(px(10.))
                     .py(px(4.))
                     .into_any_element()
@@ -705,8 +656,7 @@ impl Render for HotkeyListInput {
         if items.is_empty() || self.adding {
             col = col.child(self.render_row(Slot::New, None, false, cx));
         }
-        let current = backend::serialize_hotkey_list(&items);
-        let show_reset = !current.is_empty() && current != DEFAULT_HOTKEY;
+        let show_reset = !items.is_empty() && items != parse_hotkey_list(DEFAULT_HOTKEY);
         let show_add = !self.adding && !items.is_empty();
         if (show_add || show_reset) && !self.adding {
             col = col.child(
@@ -741,7 +691,7 @@ impl Render for HotkeyListInput {
                                 .hover(|s| s.text_color(p.foreground))
                                 .child(t_with(
                                     "settings.general.hotkey.resetToDefault",
-                                    &[("hotkey", &backend::format_hotkey_label(DEFAULT_HOTKEY))],
+                                    &[("hotkey", &format_hotkey_list_label(DEFAULT_HOTKEY))],
                                 ))
                                 .on_click(cx.listener(|this, _, _, cx| this.reset_to_default(cx))),
                         )

@@ -4,12 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use super::keys::{
-    is_modifier_only_hotkey, is_right_side_modifier, is_unsupported_fn_combination,
-    normalize_to_accelerator,
-};
 use super::{HotkeyError, HotkeyFailureReason};
-use crate::text::hotkeys::{is_globe_like_hotkey, is_mouse_button_hotkey, parse_hotkey_list};
+use crate::text::hotkeys::{Hotkey, ListenerKey, serialize_hotkey_list};
 
 pub const DICTATION_SLOT: &str = "dictation";
 pub const CANCEL_SLOT: &str = "cancel";
@@ -21,7 +17,7 @@ const SUGGESTED_COMPOUND: [&str; 3] = ["Control+Alt", "Alt+Command", "Command+Sh
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShortcutTarget {
     pub slot: String,
-    pub hotkey: String,
+    pub hotkey: Hotkey,
 }
 
 /// The OS shortcut registrar (Carbon via `global-hotkey` in production).
@@ -34,7 +30,7 @@ pub trait ShortcutBackend: Send + Sync {
 
 #[derive(Debug, Clone, Default)]
 struct Slot {
-    hotkeys: Vec<String>,
+    hotkeys: Vec<Hotkey>,
     // Mirrors `hotkeys`; `None` for hotkeys a native listener observes.
     accelerators: Vec<Option<String>>,
 }
@@ -43,7 +39,7 @@ struct Slot {
 /// failures (only non-atomic registrations report these).
 #[derive(Debug, Clone, Default)]
 pub struct SetupOutcome {
-    pub hotkeys: Vec<String>,
+    pub hotkeys: Vec<Hotkey>,
     pub failures: Vec<HotkeyError>,
 }
 
@@ -60,14 +56,14 @@ pub struct SlotRegistry {
     slots: BTreeMap<String, Slot>,
 }
 
-fn suggestions_for(failed: &str) -> Vec<String> {
-    let pool: &[&str] = if failed.contains('+') {
-        &SUGGESTED_COMPOUND
-    } else {
+fn suggestions_for(failed: &Hotkey) -> Vec<String> {
+    let pool: &[&str] = if failed.release_modifiers().is_empty() {
         &SUGGESTED_SINGLE
+    } else {
+        &SUGGESTED_COMPOUND
     };
     pool.iter()
-        .filter(|s| **s != failed)
+        .filter(|s| Hotkey::parse(s).as_ref() != Some(failed))
         .take(3)
         .map(|s| s.to_string())
         .collect()
@@ -79,7 +75,7 @@ impl SlotRegistry {
         slots.insert(
             DICTATION_SLOT.to_string(),
             Slot {
-                hotkeys: vec!["GLOBE".into()],
+                hotkeys: vec![ListenerKey::Globe.into()],
                 accelerators: vec![None],
             },
         );
@@ -92,14 +88,14 @@ impl SlotRegistry {
         registry.slots.insert(
             name.to_string(),
             Slot {
-                hotkeys: hotkeys.iter().map(|s| s.to_string()).collect(),
+                hotkeys: hotkeys.iter().filter_map(|s| Hotkey::parse(s)).collect(),
                 accelerators: vec![None; hotkeys.len()],
             },
         );
         registry
     }
 
-    pub fn slot_hotkeys(&self, slot: &str) -> Vec<String> {
+    pub fn slot_hotkeys(&self, slot: &str) -> Vec<Hotkey> {
         self.slots
             .get(slot)
             .map(|s| s.hotkeys.clone())
@@ -108,15 +104,16 @@ impl SlotRegistry {
 
     #[cfg(test)]
     pub fn slot_has_hotkey(&self, slot: &str, key: &str) -> bool {
-        !key.is_empty()
-            && self
-                .slots
-                .get(slot)
-                .is_some_and(|s| s.hotkeys.iter().any(|h| h == key))
+        let Some(key) = Hotkey::parse(key) else {
+            return false;
+        };
+        self.slots
+            .get(slot)
+            .is_some_and(|s| s.hotkeys.contains(&key))
     }
 
     /// All accelerators registered with the backend, by slot.
-    pub fn accelerators(&self) -> Vec<(String, String, String)> {
+    pub fn accelerators(&self) -> Vec<(String, Hotkey, String)> {
         self.slots
             .iter()
             .flat_map(|(name, slot)| {
@@ -137,13 +134,15 @@ impl SlotRegistry {
         let mut config = ListenerConfig::default();
         for slot in slots {
             for hotkey in self.slot_hotkeys(slot) {
-                if is_mouse_button_hotkey(&hotkey) {
-                    let canonical = format!("MouseButton{}", &hotkey[hotkey.len() - 1..]);
-                    if !config.mouse_buttons.contains(&canonical) {
-                        config.mouse_buttons.push(canonical);
+                match hotkey.listener_key() {
+                    Some(key @ ListenerKey::MouseButton(_)) => {
+                        let name = key.to_string();
+                        if !config.mouse_buttons.contains(&name) {
+                            config.mouse_buttons.push(name);
+                        }
                     }
-                } else if is_globe_like_hotkey(&hotkey) {
-                    config.suppress_globe_action = true;
+                    Some(ListenerKey::Globe) => config.suppress_globe_action = true,
+                    _ => {}
                 }
             }
         }
@@ -151,7 +150,11 @@ impl SlotRegistry {
         config
     }
 
-    fn failure(hotkey: &str, reason: HotkeyFailureReason, suggestions: Vec<String>) -> HotkeyError {
+    fn failure(
+        hotkey: &Hotkey,
+        reason: HotkeyFailureReason,
+        suggestions: Vec<String>,
+    ) -> HotkeyError {
         HotkeyError {
             hotkey: hotkey.to_string(),
             reason,
@@ -165,27 +168,23 @@ impl SlotRegistry {
         &self,
         backend: &dyn ShortcutBackend,
         slot: &str,
-        hotkey: &str,
+        hotkey: &Hotkey,
     ) -> Result<Option<String>, HotkeyError> {
-        if is_mouse_button_hotkey(hotkey) || is_globe_like_hotkey(hotkey) {
+        if hotkey.listener_key().is_some() {
             return Ok(None);
         }
         // Fn cannot be part of an accelerator; registering Fn+A as A would
         // claim an ordinary typing key globally.
-        if is_unsupported_fn_combination(hotkey) {
+        let Some(accelerator) = hotkey.accelerator() else {
             return Err(Self::failure(
                 hotkey,
                 HotkeyFailureReason::FnCombinationUnsupported,
                 Vec::new(),
             ));
-        }
-        if is_right_side_modifier(hotkey) {
-            return Ok(None);
-        }
-        let accelerator = normalize_to_accelerator(hotkey);
+        };
         let target = ShortcutTarget {
             slot: slot.to_string(),
-            hotkey: hotkey.to_string(),
+            hotkey: hotkey.clone(),
         };
         if backend.register(&accelerator, target) {
             return Ok(Some(accelerator));
@@ -196,19 +195,11 @@ impl SlotRegistry {
             HotkeyFailureReason::RegistrationFailed
         };
         log::warn!("[hotkeys] failed to register \"{hotkey}\": {reason:?}");
-        Err(Self::failure(hotkey, reason, suggestions_for(&accelerator)))
+        Err(Self::failure(hotkey, reason, suggestions_for(hotkey)))
     }
 
-    pub fn find_slot_conflict(&self, slot: &str, hotkey: &str) -> Option<HotkeyError> {
-        let accelerator = if is_globe_like_hotkey(hotkey)
-            || is_mouse_button_hotkey(hotkey)
-            || is_right_side_modifier(hotkey)
-            || is_modifier_only_hotkey(hotkey)
-        {
-            None
-        } else {
-            Some(normalize_to_accelerator(hotkey))
-        };
+    pub fn find_slot_conflict(&self, slot: &str, hotkey: &Hotkey) -> Option<HotkeyError> {
+        let accelerator = hotkey.accelerator();
         self.slots
             .iter()
             .filter(|(name, _)| name.as_str() != slot)
@@ -228,26 +219,25 @@ impl SlotRegistry {
             })
     }
 
-    /// Registers a slot's hotkey list. Best-effort by default: succeeds when at
+    /// Registers a slot's hotkeys. Best-effort by default: succeeds when at
     /// least one hotkey registers, reporting the rest. `atomic` rolls the slot
     /// back to its previous bindings on any failure.
     pub fn setup_shortcuts(
         &mut self,
         backend: &dyn ShortcutBackend,
-        hotkey_list: &str,
+        desired: &[Hotkey],
         slot_name: &str,
         atomic: bool,
     ) -> Result<SetupOutcome, HotkeyError> {
-        let desired = parse_hotkey_list(hotkey_list);
         if desired.is_empty() {
-            return Err(Self::failure(
-                "",
-                HotkeyFailureReason::RegistrationFailed,
-                Vec::new(),
-            ));
+            return Err(HotkeyError {
+                hotkey: String::new(),
+                reason: HotkeyFailureReason::RegistrationFailed,
+                suggestions: Vec::new(),
+            });
         }
         // Reject conflicts before tearing down this slot's registration.
-        for hotkey in &desired {
+        for hotkey in desired {
             if let Some(conflict) = self.find_slot_conflict(slot_name, hotkey) {
                 return Err(conflict);
             }
@@ -260,7 +250,7 @@ impl SlotRegistry {
 
         let mut registered = Slot::default();
         let mut failures = Vec::new();
-        for hotkey in &desired {
+        for hotkey in desired {
             match self.register_single(backend, slot_name, hotkey) {
                 Ok(accelerator) => {
                     registered.hotkeys.push(hotkey.clone());
@@ -301,7 +291,7 @@ impl SlotRegistry {
         self.slots.insert(slot_name.to_string(), registered);
         log::info!(
             "[hotkeys] slot \"{slot_name}\" registered: \"{}\"",
-            hotkeys.join(", ")
+            serialize_hotkey_list(&hotkeys)
         );
         Ok(SetupOutcome { hotkeys, failures })
     }
@@ -334,7 +324,16 @@ pub(crate) mod tests {
     //! Fn guard, slot rollback, slot unregistration and native listener keys.
     use super::*;
     use crate::native::timer::lock;
+    use crate::text::hotkeys::parse_hotkey_list;
     use std::sync::Mutex;
+
+    fn list(value: &str) -> Vec<Hotkey> {
+        parse_hotkey_list(value)
+    }
+
+    fn names(hotkeys: Vec<Hotkey>) -> Vec<String> {
+        hotkeys.iter().map(Hotkey::to_string).collect()
+    }
 
     /// Stand-in for globalShortcut: accelerators containing "BAD" fail.
     #[derive(Default)]
@@ -390,7 +389,7 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         let err = registry
-            .setup_shortcuts(&backend, "Fn+A", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("Fn+A"), DICTATION_SLOT, true)
             .unwrap_err();
         assert_eq!(err.reason, HotkeyFailureReason::FnCombinationUnsupported);
         assert!(backend.keys().is_empty());
@@ -401,17 +400,17 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "Control+Shift+A", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("Control+Shift+A"), DICTATION_SLOT, true)
             .unwrap();
         assert!(
             registry
-                .setup_shortcuts(&backend, "Fn+A", DICTATION_SLOT, true)
+                .setup_shortcuts(&backend, &list("Fn+A"), DICTATION_SLOT, true)
                 .is_err()
         );
         assert_eq!(backend.keys(), ["Control+Shift+A"]);
         assert_eq!(
             backend.target("Control+Shift+A").map(|t| t.hotkey),
-            Some("Control+Shift+A".to_string())
+            Hotkey::parse("Control+Shift+A")
         );
     }
 
@@ -420,15 +419,15 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "F7", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("F7"), DICTATION_SLOT, true)
             .unwrap();
-        assert_eq!(registry.slot_hotkeys(DICTATION_SLOT), ["F7"]);
+        assert_eq!(names(registry.slot_hotkeys(DICTATION_SLOT)), ["F7"]);
         assert!(
             registry
-                .setup_shortcuts(&backend, "F7,Control+BAD", DICTATION_SLOT, true)
+                .setup_shortcuts(&backend, &list("F7,Control+BAD"), DICTATION_SLOT, true)
                 .is_err()
         );
-        assert_eq!(registry.slot_hotkeys(DICTATION_SLOT), ["F7"]);
+        assert_eq!(names(registry.slot_hotkeys(DICTATION_SLOT)), ["F7"]);
         assert!(backend.is_registered("F7"));
     }
 
@@ -437,9 +436,9 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         let outcome = registry
-            .setup_shortcuts(&backend, "F7,Control+BAD", DICTATION_SLOT, false)
+            .setup_shortcuts(&backend, &list("F7,Control+BAD"), DICTATION_SLOT, false)
             .unwrap();
-        assert_eq!(outcome.hotkeys, ["F7"]);
+        assert_eq!(names(outcome.hotkeys), ["F7"]);
         assert_eq!(outcome.failures.len(), 1);
         assert_eq!(outcome.failures[0].hotkey, "Control+BAD");
     }
@@ -449,12 +448,12 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "F7", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("F7"), DICTATION_SLOT, true)
             .unwrap();
         registry
-            .setup_shortcuts(&backend, "F6,F5", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("F6,F5"), DICTATION_SLOT, true)
             .unwrap();
-        assert_eq!(registry.slot_hotkeys(DICTATION_SLOT), ["F6", "F5"]);
+        assert_eq!(names(registry.slot_hotkeys(DICTATION_SLOT)), ["F6", "F5"]);
         assert!(!backend.is_registered("F7"));
         assert!(backend.is_registered("F6"));
         assert!(backend.is_registered("F5"));
@@ -465,17 +464,17 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "F7,Control+Shift+K", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("F7,Control+Shift+K"), DICTATION_SLOT, true)
             .unwrap();
         registry
-            .setup_shortcuts(&backend, "F8", CANCEL_SLOT, true)
+            .setup_shortcuts(&backend, &list("F8"), CANCEL_SLOT, true)
             .unwrap();
         lock(&backend.unregister_calls).clear();
         registry.unregister_slot(&backend, DICTATION_SLOT);
         assert_eq!(*lock(&backend.unregister_calls), ["F7", "Control+Shift+K"]);
         assert_eq!(backend.keys(), ["F8"]);
         assert!(registry.slot_hotkeys(DICTATION_SLOT).is_empty());
-        assert_eq!(registry.slot_hotkeys(CANCEL_SLOT), ["F8"]);
+        assert_eq!(names(registry.slot_hotkeys(CANCEL_SLOT)), ["F8"]);
     }
 
     #[test]
@@ -483,12 +482,12 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "Control+Shift+K", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("Control+Shift+K"), DICTATION_SLOT, true)
             .unwrap();
         registry.unregister_slot(&backend, DICTATION_SLOT);
         assert!(
             registry
-                .setup_shortcuts(&backend, "Control+Shift+K", DICTATION_SLOT, true)
+                .setup_shortcuts(&backend, &list("Control+Shift+K"), DICTATION_SLOT, true)
                 .is_ok()
         );
     }
@@ -498,7 +497,7 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "F7,RightShift", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("F7,RightShift"), DICTATION_SLOT, true)
             .unwrap();
         lock(&backend.unregister_calls).clear();
         registry.unregister_slot(&backend, DICTATION_SLOT);
@@ -513,13 +512,13 @@ pub(crate) mod tests {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
-            .setup_shortcuts(&backend, "Escape", CANCEL_SLOT, true)
+            .setup_shortcuts(&backend, &list("Esc"), CANCEL_SLOT, true)
             .unwrap();
         registry
-            .setup_shortcuts(&backend, "F7", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("F7"), DICTATION_SLOT, true)
             .unwrap();
         let err = registry
-            .setup_shortcuts(&backend, "Escape", DICTATION_SLOT, true)
+            .setup_shortcuts(&backend, &list("Escape"), DICTATION_SLOT, true)
             .unwrap_err();
         assert_eq!(
             err.reason,
@@ -537,13 +536,13 @@ pub(crate) mod tests {
             "Control+Shift+K",
             ShortcutTarget {
                 slot: "other".into(),
-                hotkey: "x".into(),
+                hotkey: ListenerKey::Globe.into(),
             },
         );
         let mut registry = SlotRegistry::new();
         let err = registry
-            .setup_shortcuts(&backend, "F9", DICTATION_SLOT, true)
-            .and_then(|_| registry.setup_shortcuts(&backend, "Control+Shift+K", "x", true))
+            .setup_shortcuts(&backend, &list("F9"), DICTATION_SLOT, true)
+            .and_then(|_| registry.setup_shortcuts(&backend, &list("Control+Shift+K"), "x", true))
             .unwrap_err();
         assert_eq!(err.reason, HotkeyFailureReason::AlreadyRegistered);
         assert_eq!(err.suggestions.len(), 3);
@@ -589,7 +588,7 @@ pub(crate) mod tests {
         assert!(registry.slot_has_hotkey(DICTATION_SLOT, "Control+Shift+R"));
         assert!(!registry.slot_has_hotkey(DICTATION_SLOT, "F12"));
         assert_eq!(
-            registry.slot_hotkeys(DICTATION_SLOT),
+            names(registry.slot_hotkeys(DICTATION_SLOT)),
             ["GLOBE", "Control+Shift+R"]
         );
     }

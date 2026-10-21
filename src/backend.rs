@@ -237,37 +237,11 @@ pub fn run_cleanup_test(
     }
 }
 
-/// Key events from the native listener used while capturing a hotkey.
-#[derive(Clone, Debug)]
-pub enum RawKey {
-    FnDown,
-    FnUp,
-    RightModifierDown(String),
-    RightModifierUp,
-    MouseButtonDown(String),
-}
+pub use crate::native::hotkeys::RawKeyEvent;
 
-pub fn raw_key_events() -> Option<async_channel::Receiver<RawKey>> {
-    let manager = hotkeys()?;
-    let raw = manager.subscribe_raw_keys();
-    let (tx, rx) = async_channel::unbounded();
-    std::thread::spawn(move || {
-        use crate::native::hotkeys::RawKeyEvent as E;
-        while let Ok(event) = raw.recv_blocking() {
-            let mapped = match event {
-                E::GlobeDown => RawKey::FnDown,
-                E::GlobeUp => RawKey::FnUp,
-                E::RightModifierDown(name) => RawKey::RightModifierDown(name),
-                E::RightModifierUp(_) => RawKey::RightModifierUp,
-                E::MouseButtonDown(name) => RawKey::MouseButtonDown(name),
-                _ => continue,
-            };
-            if tx.send_blocking(mapped).is_err() {
-                break;
-            }
-        }
-    });
-    Some(rx)
+/// Key events from the native listener, used while capturing a hotkey.
+pub fn raw_key_events() -> Option<async_channel::Receiver<RawKeyEvent>> {
+    Some(hotkeys()?.subscribe_raw_keys())
 }
 
 pub fn set_hotkey_listening_mode(enabled: bool) {
@@ -276,21 +250,17 @@ pub fn set_hotkey_listening_mode(enabled: bool) {
     }
 }
 
+/// The hotkeys of a stored list, in their stored spelling.
 pub fn parse_hotkey_list(value: &str) -> Vec<String> {
     crate::text::hotkeys::parse_hotkey_list(value)
-}
-
-pub fn serialize_hotkey_list(list: &[String]) -> String {
-    crate::text::hotkeys::serialize_hotkey_list(list)
-}
-
-pub fn normalize_hotkey(hotkey: &str) -> String {
-    crate::text::hotkeys::normalize_hotkey(hotkey)
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// The user-facing reason a captured hotkey is rejected, if any.
-pub fn validate_hotkey(hotkey: &str) -> Option<String> {
-    let message = crate::text::hotkeys::get_validation_message::<&str>(hotkey, &[])?;
+pub fn validate_hotkey(hotkey: &crate::text::hotkeys::Hotkey) -> Option<String> {
+    let message = hotkey.validation_message()?;
     let params: Vec<(&str, &str)> = message
         .params
         .iter()
@@ -303,8 +273,10 @@ pub fn validate_hotkey(hotkey: &str) -> Option<String> {
     )
 }
 
-pub fn format_hotkey_label(hotkey: &str) -> String {
-    crate::text::hotkeys::format_hotkey_label(Some(hotkey))
+/// User-facing label for a stored hotkey or hotkey list; empty shows the
+/// default hotkey.
+pub fn format_hotkey_label(hotkeys: &str) -> String {
+    crate::text::hotkeys::format_hotkey_list_label(hotkeys)
 }
 
 /// Registers the global Dictation hotkeys; returns the list actually active.
