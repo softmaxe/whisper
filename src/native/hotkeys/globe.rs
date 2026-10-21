@@ -1,20 +1,24 @@
 //! Supervises `macos-globe-listener`, the helper that reports Globe/Fn,
 //! right-side modifiers, modifier releases and side mouse buttons, and that
 //! holds the macOS Globe action at "Do Nothing" while the app owns the key.
-//! Covers the spawn/restart policy, stdin JSON reconfiguration and recovery
-//! of a preference left behind by a crash.
+//! Covers its restart policy (run by `supervised_child`), stdin JSON
+//! reconfiguration and recovery of a preference left behind by a crash.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{ChildStdin, Command, Stdio};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
 
-use super::super::helper::{arch_mismatch, resolve_helper, signal_pid};
-use super::super::timer::{TimerId, Timers, lock};
+use super::super::helper::{arch_mismatch, resolve_helper};
+pub(super) use super::super::supervised_child::ChildEvent;
+use super::super::supervised_child::{
+    BinaryResolver, ChildOptions, ChildSink, Control, Down, HelperSpawner, ProcessSpawner,
+    Protocol, Recovery, RestartPolicy, SupervisedChild,
+};
+use super::super::timer::{Timers, lock};
 use super::slots::ListenerConfig;
 
 /// Rapid automatic restarts before giving up.
@@ -22,6 +26,8 @@ const MAX_RESTART_ATTEMPTS: u32 = 3;
 const RESTART_DELAY_MS: u64 = 1000;
 /// Sustained uptime after which the restart counter resets (sleep/wake).
 const RESTART_RESET_MS: u64 = 10_000;
+/// The listener prints short event names; anything longer is garbage.
+const MAX_LINE_BYTES: usize = 4096;
 const PREFERENCE_RECOVERY_TIMEOUT: Duration = Duration::from_millis(2000);
 const PREFERENCE_RECOVERY_TERMINATION_TIMEOUT: Duration = Duration::from_millis(1000);
 
@@ -45,121 +51,6 @@ pub enum GlobeEvent {
     Error(String),
 }
 
-/// Output and lifecycle of a spawned helper.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ChildEvent {
-    Stdout(String),
-    Stderr(String),
-    Exit {
-        code: Option<i32>,
-        signal: Option<i32>,
-    },
-    Error(String),
-}
-
-pub type ChildSink = Arc<dyn Fn(ChildEvent) + Send + Sync>;
-
-pub trait ListenerChild: Send {
-    /// Writes one line to stdin; false when stdin is no longer writable.
-    fn write_line(&mut self, line: &str) -> bool;
-    fn kill(&mut self, signal: i32);
-}
-
-pub trait ListenerSpawner: Send + Sync {
-    fn spawn(
-        &self,
-        program: &Path,
-        args: &[String],
-        sink: ChildSink,
-    ) -> std::io::Result<Box<dyn ListenerChild>>;
-}
-
-/// Spawns real processes; output and exit arrive on reader threads.
-pub struct ProcessSpawner;
-
-struct ProcessChild {
-    pid: u32,
-    stdin: Option<ChildStdin>,
-}
-
-impl ListenerChild for ProcessChild {
-    fn write_line(&mut self, line: &str) -> bool {
-        let Some(stdin) = self.stdin.as_mut() else {
-            return false;
-        };
-        let ok = stdin
-            .write_all(format!("{line}\n").as_bytes())
-            .and_then(|_| stdin.flush())
-            .is_ok();
-        if !ok {
-            self.stdin = None;
-        }
-        ok
-    }
-
-    fn kill(&mut self, signal: i32) {
-        signal_pid(self.pid, signal);
-    }
-}
-
-fn forward_lines<R: Read + Send + 'static>(
-    reader: R,
-    sink: ChildSink,
-    wrap: fn(String) -> ChildEvent,
-) -> std::thread::JoinHandle<()> {
-    std::thread::spawn(move || {
-        for line in BufReader::new(reader).lines() {
-            match line {
-                Ok(line) => sink(wrap(format!("{line}\n"))),
-                Err(_) => break,
-            }
-        }
-    })
-}
-
-impl ListenerSpawner for ProcessSpawner {
-    fn spawn(
-        &self,
-        program: &Path,
-        args: &[String],
-        sink: ChildSink,
-    ) -> std::io::Result<Box<dyn ListenerChild>> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        let pid = child.id();
-        let stdin = child.stdin.take();
-        let stdout = child
-            .stdout
-            .take()
-            .map(|out| forward_lines(out, Arc::clone(&sink), ChildEvent::Stdout));
-        if let Some(err) = child.stderr.take() {
-            forward_lines(err, Arc::clone(&sink), ChildEvent::Stderr);
-        }
-        std::thread::spawn(move || {
-            let status = child.wait();
-            // Deliver remaining output before the exit, like a "close".
-            if let Some(reader) = stdout {
-                let _ = reader.join();
-            }
-            match status {
-                Ok(status) => {
-                    use std::os::unix::process::ExitStatusExt;
-                    sink(ChildEvent::Exit {
-                        code: status.code(),
-                        signal: status.signal(),
-                    });
-                }
-                Err(error) => sink(ChildEvent::Error(error.to_string())),
-            }
-        });
-        Ok(Box::new(ProcessChild { pid, stdin }))
-    }
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WireConfig<'a> {
@@ -175,11 +66,9 @@ fn wire_line(config: &ListenerConfig) -> String {
     .unwrap_or_default()
 }
 
-pub type BinaryResolver = Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>;
-
 pub struct GlobeOptions {
     pub preference_state_path: Option<PathBuf>,
-    pub spawner: Arc<dyn ListenerSpawner>,
+    pub spawner: Arc<dyn HelperSpawner>,
     pub resolve_binary: BinaryResolver,
     pub timers: Arc<dyn Timers>,
     pub recovery_timeout: Duration,
@@ -199,62 +88,167 @@ impl GlobeOptions {
     }
 }
 
-#[derive(Default)]
-struct State {
-    child: Option<(u64, Box<dyn ListenerChild>)>,
-    generation: u64,
-    stdout_buffer: String,
-    has_reported_error: bool,
-    is_stopping: bool,
-    restart_count: u32,
-    restart_reset_timer: Option<TimerId>,
-    recovery_blocked: bool,
+/// The listener's side of the supervised child: arguments from the current
+/// configuration, stdout lines as [`GlobeEvent`]s, and errors reported once
+/// until a listener starts again.
+struct Listener {
     config: ListenerConfig,
+    preference_state_path: Option<PathBuf>,
+    has_reported_error: bool,
 }
 
-struct Inner {
-    state: Mutex<State>,
-    options: GlobeOptions,
-    sink: Arc<dyn Fn(GlobeEvent) + Send + Sync>,
-    this: Weak<Inner>,
+impl Listener {
+    fn report_error(&mut self, message: String, cx: &mut Control<'_, GlobeEvent>) {
+        if self.has_reported_error {
+            return;
+        }
+        self.has_reported_error = true;
+        log::error!("[globe] {message}");
+        cx.emit(GlobeEvent::Error(message));
+    }
+}
+
+impl Protocol for Listener {
+    type Event = GlobeEvent;
+
+    fn args(&self) -> Vec<String> {
+        let mut args = Vec::new();
+        if !self.config.mouse_buttons.is_empty() {
+            args.push(self.config.mouse_buttons.join(","));
+        }
+        if let Some(path) = &self.preference_state_path {
+            args.push("--globe-preference-state".into());
+            args.push(path.display().to_string());
+        }
+        if self.config.suppress_globe_action {
+            args.push("--suppress-system-globe-action".into());
+        }
+        args
+    }
+
+    fn on_start(&mut self, _cx: &mut Control<'_, GlobeEvent>) {
+        self.has_reported_error = false;
+        log::info!("[globe] listener spawned with {:?}", self.args());
+    }
+
+    fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, GlobeEvent>) {
+        if let Some(event) = parse_line(line.trim()) {
+            cx.emit(event);
+        }
+    }
+
+    fn on_stderr(&mut self, text: &str, cx: &mut Control<'_, GlobeEvent>) {
+        let message = text.trim();
+        if message.contains("Failed to create event monitor") {
+            cx.fail(message);
+        } else if !message.is_empty() {
+            log::warn!("[globe] listener stderr: {message}");
+        }
+    }
+
+    fn on_down(&mut self, down: &Down, recovery: Recovery, cx: &mut Control<'_, GlobeEvent>) {
+        match down {
+            Down::Missing => self.report_error(
+                "macOS Globe listener binary not found. Build the helpers (cargo build) before packaging."
+                    .into(),
+                cx,
+            ),
+            Down::NotStarted(message) => self.report_error(message.clone(), cx),
+            // Keys held when the listener goes away never report their release.
+            Down::Stopped => cx.emit(GlobeEvent::ListenerStopped),
+            Down::Failed(message) => {
+                cx.emit(GlobeEvent::ListenerStopped);
+                self.report_error(message.clone(), cx);
+            }
+            Down::Exited { code, signal } => {
+                log::info!("[globe] listener exited: code {code:?} signal {signal:?}");
+                cx.emit(GlobeEvent::ListenerStopped);
+                if matches!(signal, Some(libc::SIGINT | libc::SIGTERM)) {
+                    return;
+                }
+                if *code != Some(0) {
+                    let describe = |v: Option<i32>| v.map_or("null".to_string(), |v| v.to_string());
+                    let message = format!(
+                        "Globe key listener exited with code {} signal {}",
+                        describe(*code),
+                        describe(*signal)
+                    );
+                    return self.report_error(message, cx);
+                }
+                // Exit 0 without a stop request: the event tap was likely
+                // invalidated (sleep/wake). Restart a few times.
+                match recovery {
+                    Recovery::Restarting { attempt } => log::warn!(
+                        "[globe] unexpected exit, restarting (attempt {attempt}/{MAX_RESTART_ATTEMPTS})"
+                    ),
+                    Recovery::GaveUp => self.report_error(
+                        format!(
+                            "Globe key listener keeps exiting unexpectedly ({MAX_RESTART_ATTEMPTS} restarts failed). Try restarting Whisper."
+                        ),
+                        cx,
+                    ),
+                    Recovery::NotRestarting => {}
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 pub struct GlobeListener {
-    inner: Arc<Inner>,
+    child: SupervisedChild<Listener>,
+    options: Arc<GlobeOptions>,
+    recovery_blocked: Arc<AtomicBool>,
 }
 
 impl GlobeListener {
     pub fn new(options: GlobeOptions, sink: Arc<dyn Fn(GlobeEvent) + Send + Sync>) -> Self {
+        let child = SupervisedChild::new(
+            ChildOptions {
+                label: "Globe listener",
+                resolve_binary: Arc::clone(&options.resolve_binary),
+                spawner: Arc::clone(&options.spawner),
+                timers: Arc::clone(&options.timers),
+                restart: RestartPolicy::CleanExit {
+                    delay: Duration::from_millis(RESTART_DELAY_MS),
+                    max_attempts: MAX_RESTART_ATTEMPTS,
+                    reset_after: Duration::from_millis(RESTART_RESET_MS),
+                },
+                heartbeat: None,
+                max_line: MAX_LINE_BYTES,
+            },
+            Listener {
+                config: ListenerConfig::default(),
+                preference_state_path: options.preference_state_path.clone(),
+                has_reported_error: false,
+            },
+            sink,
+        );
         Self {
-            inner: Arc::new_cyclic(|this| Inner {
-                state: Mutex::new(State::default()),
-                options,
-                sink,
-                this: this.clone(),
-            }),
+            child,
+            options: Arc::new(options),
+            recovery_blocked: Arc::new(AtomicBool::new(false)),
         }
     }
 
     #[cfg(test)]
     pub fn is_running(&self) -> bool {
-        lock(&self.inner.state).child.is_some()
+        self.child.is_running()
     }
 
     pub fn start(&self) {
-        let events = {
-            let mut state = lock(&self.inner.state);
-            self.inner.start_locked(&mut state)
-        };
-        self.inner.dispatch(events);
+        if self.recovery_blocked.load(Ordering::SeqCst) {
+            let message =
+                "Globe listener blocked because preference recovery could not be terminated";
+            self.child
+                .update(|listener, cx| listener.report_error(message.into(), cx));
+            return;
+        }
+        self.child.start();
     }
 
     pub fn stop(&self) {
-        let events = {
-            let mut state = lock(&self.inner.state);
-            self.inner.stop_locked(&mut state)
-        };
-        self.inner.dispatch(events);
+        self.child.stop();
     }
 
     /// Replaces the listener's whole state. A running listener is reconfigured
@@ -272,33 +266,25 @@ impl GlobeListener {
             mouse_buttons: buttons,
             suppress_globe_action: config.suppress_globe_action,
         };
-        let events = {
-            let mut state = lock(&self.inner.state);
-            if state.config == next {
-                return;
+        let stdin_lost = self.child.update(|listener, cx| {
+            if listener.config == next {
+                return false;
             }
-            state.config = next;
-            let line = wire_line(&state.config);
-            let sent = match state.child.as_mut() {
-                None => return,
-                Some((_, child)) => child.write_line(&line),
-            };
-            if sent {
-                Vec::new()
-            } else {
-                let mut events = self.inner.stop_locked(&mut state);
-                events.extend(self.inner.start_locked(&mut state));
-                events
-            }
-        };
-        self.inner.dispatch(events);
+            listener.config = next;
+            cx.is_running() && !cx.write_line(&wire_line(&listener.config))
+        });
+        // The old listener must be terminated so it restores the preference.
+        if stdin_lost {
+            self.child.stop();
+            self.child.start();
+        }
     }
 
     /// Restores a Globe preference marker left by a crashed run, using the
     /// helper's one-shot mode. Blocks for at most the recovery timeouts; a
     /// helper that cannot be terminated blocks the long-lived listener.
     pub fn restore_leftover_system_preference(&self) {
-        let options = &self.inner.options;
+        let options = &self.options;
         let Some(state_path) = options.preference_state_path.clone() else {
             return;
         };
@@ -350,249 +336,11 @@ impl GlobeListener {
                     }
                     _ => {
                         log::warn!("[globe] preference recovery helper did not exit after SIGKILL");
-                        lock(&self.inner.state).recovery_blocked = true;
+                        self.recovery_blocked.store(true, Ordering::SeqCst);
                     }
                 }
             }
         }
-    }
-}
-
-impl Inner {
-    fn dispatch(&self, events: Vec<GlobeEvent>) {
-        for event in events {
-            (self.sink)(event);
-        }
-    }
-
-    fn listener_args(&self, state: &State) -> Vec<String> {
-        let mut args = Vec::new();
-        if !state.config.mouse_buttons.is_empty() {
-            args.push(state.config.mouse_buttons.join(","));
-        }
-        if let Some(path) = &self.options.preference_state_path {
-            args.push("--globe-preference-state".into());
-            args.push(path.display().to_string());
-        }
-        if state.config.suppress_globe_action {
-            args.push("--suppress-system-globe-action".into());
-        }
-        args
-    }
-
-    fn start_locked(&self, state: &mut State) -> Vec<GlobeEvent> {
-        if state.recovery_blocked {
-            return self.report_error(
-                state,
-                "Globe listener blocked because preference recovery could not be terminated".into(),
-            );
-        }
-        if state.child.is_some() {
-            return Vec::new();
-        }
-        state.is_stopping = false;
-
-        let Some(binary) = (self.options.resolve_binary)() else {
-            return self.report_error(
-                state,
-                "macOS Globe listener binary not found. Build the helpers (cargo build) before packaging."
-                    .into(),
-            );
-        };
-        if let Some(mismatch) = arch_mismatch(&binary, "Globe listener") {
-            return self.report_error(state, mismatch);
-        }
-
-        state.has_reported_error = false;
-        state.generation += 1;
-        let generation = state.generation;
-        let weak = self.this.clone();
-        let sink: ChildSink = Arc::new(move |event| {
-            if let Some(inner) = weak.upgrade() {
-                inner.on_child_event(generation, event);
-            }
-        });
-        let args = self.listener_args(state);
-        match self.options.spawner.spawn(&binary, &args, sink) {
-            Ok(child) => {
-                log::info!("[globe] listener spawned with {args:?}");
-                state.child = Some((generation, child));
-                state.stdout_buffer.clear();
-            }
-            Err(error) => return self.report_error(state, error.to_string()),
-        }
-
-        if let Some(timer) = state.restart_reset_timer.take() {
-            self.options.timers.cancel(timer);
-        }
-        let weak = self.this.clone();
-        state.restart_reset_timer = Some(self.options.timers.schedule(
-            Duration::from_millis(RESTART_RESET_MS),
-            Box::new(move || {
-                if let Some(inner) = weak.upgrade() {
-                    let mut state = lock(&inner.state);
-                    state.restart_reset_timer = None;
-                    if state.restart_count > 0 {
-                        log::info!("[globe] sustained uptime, restart counter reset");
-                        state.restart_count = 0;
-                    }
-                }
-            }),
-        ));
-        Vec::new()
-    }
-
-    fn stop_locked(&self, state: &mut State) -> Vec<GlobeEvent> {
-        state.is_stopping = true;
-        if let Some(timer) = state.restart_reset_timer.take() {
-            self.options.timers.cancel(timer);
-        }
-        match state.child.take() {
-            Some((_, mut child)) => {
-                child.kill(libc::SIGTERM);
-                vec![GlobeEvent::ListenerStopped]
-            }
-            None => Vec::new(),
-        }
-    }
-
-    // Keys held when the listener goes away never report their release.
-    fn drop_process(&self, state: &mut State) -> Vec<GlobeEvent> {
-        match state.child.take() {
-            Some(_) => vec![GlobeEvent::ListenerStopped],
-            None => Vec::new(),
-        }
-    }
-
-    fn report_error(&self, state: &mut State, message: String) -> Vec<GlobeEvent> {
-        if state.has_reported_error {
-            return Vec::new();
-        }
-        state.has_reported_error = true;
-        let mut events = Vec::new();
-        if let Some((_, child)) = state.child.as_mut() {
-            child.kill(libc::SIGTERM);
-            events.extend(self.drop_process(state));
-        }
-        log::error!("[globe] {message}");
-        events.push(GlobeEvent::Error(message));
-        events
-    }
-
-    fn is_current(state: &State, generation: u64) -> bool {
-        state.child.as_ref().is_some_and(|(g, _)| *g == generation)
-    }
-
-    fn on_child_event(&self, generation: u64, event: ChildEvent) {
-        let events = {
-            let mut state = lock(&self.state);
-            match event {
-                ChildEvent::Stdout(chunk) => {
-                    if !Self::is_current(&state, generation) {
-                        return;
-                    }
-                    state.stdout_buffer.push_str(&chunk);
-                    let mut events = Vec::new();
-                    while let Some(newline) = state.stdout_buffer.find('\n') {
-                        let line: String = state.stdout_buffer.drain(..=newline).collect();
-                        if let Some(event) = parse_line(line.trim()) {
-                            events.push(event);
-                        }
-                    }
-                    events
-                }
-                ChildEvent::Stderr(text) => {
-                    let message = text.trim().to_string();
-                    if message.is_empty() || !Self::is_current(&state, generation) {
-                        return;
-                    }
-                    if message.contains("Failed to create event monitor") {
-                        self.report_error(&mut state, message)
-                    } else {
-                        log::warn!("[globe] listener stderr: {message}");
-                        Vec::new()
-                    }
-                }
-                ChildEvent::Error(message) => {
-                    if !Self::is_current(&state, generation) {
-                        return;
-                    }
-                    let mut events = self.report_error(&mut state, message);
-                    events.extend(self.drop_process(&mut state));
-                    events
-                }
-                ChildEvent::Exit { code, signal } => {
-                    self.on_exit(&mut state, generation, code, signal)
-                }
-            }
-        };
-        self.dispatch(events);
-    }
-
-    fn on_exit(
-        &self,
-        state: &mut State,
-        generation: u64,
-        code: Option<i32>,
-        signal: Option<i32>,
-    ) -> Vec<GlobeEvent> {
-        log::info!("[globe] listener exited: code {code:?} signal {signal:?}");
-        // A replaced listener's late exit must not touch the current one.
-        if !Self::is_current(state, generation) {
-            return Vec::new();
-        }
-        let mut events = self.drop_process(state);
-        if let Some(timer) = state.restart_reset_timer.take() {
-            self.options.timers.cancel(timer);
-        }
-        if state.is_stopping || matches!(signal, Some(libc::SIGINT | libc::SIGTERM)) {
-            return events;
-        }
-        if code != Some(0) {
-            let describe = |v: Option<i32>| v.map_or("null".to_string(), |v| v.to_string());
-            events.extend(self.report_error(
-                state,
-                format!(
-                    "Globe key listener exited with code {} signal {}",
-                    describe(code),
-                    describe(signal)
-                ),
-            ));
-            return events;
-        }
-        // Exit 0 without a stop request: the event tap was likely invalidated
-        // (sleep/wake). Restart a few times.
-        if state.restart_count < MAX_RESTART_ATTEMPTS {
-            state.restart_count += 1;
-            log::warn!(
-                "[globe] unexpected exit, restarting (attempt {}/{MAX_RESTART_ATTEMPTS})",
-                state.restart_count
-            );
-            let weak = self.this.clone();
-            self.options.timers.schedule(
-                Duration::from_millis(RESTART_DELAY_MS),
-                Box::new(move || {
-                    if let Some(inner) = weak.upgrade() {
-                        let events = {
-                            let mut state = lock(&inner.state);
-                            if state.is_stopping || state.child.is_some() {
-                                return;
-                            }
-                            inner.start_locked(&mut state)
-                        };
-                        inner.dispatch(events);
-                    }
-                }),
-            );
-        } else {
-            events.extend(self.report_error(
-                state,
-                format!(
-                    "Globe key listener keeps exiting unexpectedly ({MAX_RESTART_ATTEMPTS} restarts failed). Try restarting Whisper."
-                ),
-            ));
-        }
-        events
     }
 }
 
@@ -621,77 +369,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::native::timer::FakeTimers;
 
-    #[derive(Default)]
-    pub struct FakeChildState {
-        pub writes: Vec<String>,
-        pub writable: bool,
-        pub kills: Vec<i32>,
-    }
-
-    pub struct SpawnCall {
-        pub program: PathBuf,
-        pub args: Vec<String>,
-        pub sink: ChildSink,
-        pub child: Arc<Mutex<FakeChildState>>,
-    }
-
-    #[derive(Default)]
-    pub struct FakeSpawner {
-        pub calls: Mutex<Vec<SpawnCall>>,
-    }
-
-    struct FakeChild(Arc<Mutex<FakeChildState>>);
-
-    impl ListenerChild for FakeChild {
-        fn write_line(&mut self, line: &str) -> bool {
-            let mut state = lock(&self.0);
-            if !state.writable {
-                return false;
-            }
-            state.writes.push(format!("{line}\n"));
-            true
-        }
-        fn kill(&mut self, signal: i32) {
-            lock(&self.0).kills.push(signal);
-        }
-    }
-
-    impl ListenerSpawner for FakeSpawner {
-        fn spawn(
-            &self,
-            program: &Path,
-            args: &[String],
-            sink: ChildSink,
-        ) -> std::io::Result<Box<dyn ListenerChild>> {
-            let child = Arc::new(Mutex::new(FakeChildState {
-                writable: true,
-                ..Default::default()
-            }));
-            lock(&self.calls).push(SpawnCall {
-                program: program.to_path_buf(),
-                args: args.to_vec(),
-                sink,
-                child: Arc::clone(&child),
-            });
-            Ok(Box::new(FakeChild(child)))
-        }
-    }
-
-    impl FakeSpawner {
-        pub fn count(&self) -> usize {
-            lock(&self.calls).len()
-        }
-        pub fn args(&self, index: usize) -> Vec<String> {
-            lock(&self.calls)[index].args.clone()
-        }
-        pub fn emit(&self, index: usize, event: ChildEvent) {
-            let sink = Arc::clone(&lock(&self.calls)[index].sink);
-            sink(event);
-        }
-        pub fn child(&self, index: usize) -> Arc<Mutex<FakeChildState>> {
-            Arc::clone(&lock(&self.calls)[index].child)
-        }
-    }
+    pub use crate::native::supervised_child::tests::FakeSpawner;
 
     pub const LISTENER_PATH: &str = "/fake/resources/bin/macos-globe-listener";
 

@@ -1,18 +1,21 @@
 //! The laptop lid (clamshell) state, watched through
 //! `macos-mic-listener --watch-lid-state`.
 
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use super::super::helper::resolve_helper;
-use super::super::hotkeys::globe::{
-    ChildEvent, ChildSink, ListenerChild, ListenerSpawner, ProcessSpawner,
+use super::super::supervised_child::{
+    BinaryResolver, ChildOptions, Control, Down, HelperSpawner, ProcessSpawner, Protocol, Recovery,
+    RestartPolicy, SupervisedChild,
 };
-use super::super::timer::{RealTimers, TimerId, Timers, lock};
+use super::super::timer::{RealTimers, Timers};
 
+/// The helper samples every second; a sample this old (or a helper this
+/// quiet) no longer counts.
 const LID_STALE_STATE_MS: u64 = 5000;
 const LID_RESTART_DELAY_MS: u64 = 2000;
-const LID_MAX_BUFFER: usize = 4096;
+const LID_MAX_LINE_BYTES: usize = 4096;
 const MIC_LISTENER_BINARY: &str = "macos-mic-listener";
 
 /// `{"lidClosed":true|false|null}` -> Some(state); anything else -> None.
@@ -26,49 +29,79 @@ pub fn parse_lid_state(line: &str) -> Option<Option<bool>> {
 }
 
 pub struct LidHooks {
-    pub spawner: Arc<dyn ListenerSpawner>,
-    pub resolve_binary: Arc<dyn Fn() -> Option<std::path::PathBuf> + Send + Sync>,
+    pub spawner: Arc<dyn HelperSpawner>,
+    pub resolve_binary: BinaryResolver,
     pub timers: Arc<dyn Timers>,
-    /// Called with every change of the known lid state.
-    pub on_change: Arc<dyn Fn(Option<bool>) + Send + Sync>,
 }
 
-#[derive(Default)]
-struct LidState {
-    running: bool,
-    child: Option<(u64, Box<dyn ListenerChild>)>,
-    generation: u64,
-    restart_timer: Option<TimerId>,
-    stale_timer: Option<TimerId>,
-    state: Option<bool>,
-    received: bool,
-    last_sample_at: u64,
-    buffer: String,
+struct Sample {
+    closed: Option<bool>,
+    at_ms: u64,
 }
 
-struct LidInner {
-    state: Mutex<LidState>,
-    hooks: LidHooks,
-    this: Weak<LidInner>,
+/// The helper's side of the supervised child: every valid line is a sample
+/// and a heartbeat; a helper that goes away takes its sample with it.
+struct LidWatch {
+    timers: Arc<dyn Timers>,
+    sample: Option<Sample>,
+}
+
+impl Protocol for LidWatch {
+    type Event = std::convert::Infallible;
+
+    fn args(&self) -> Vec<String> {
+        vec!["--watch-lid-state".into()]
+    }
+
+    fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, Self::Event>) {
+        if let Some(closed) = parse_lid_state(line.trim()) {
+            self.sample = Some(Sample {
+                closed,
+                at_ms: self.timers.now_ms(),
+            });
+            cx.heartbeat();
+        }
+    }
+
+    fn on_down(&mut self, down: &Down, _recovery: Recovery, _cx: &mut Control<'_, Self::Event>) {
+        self.sample = None;
+        match down {
+            Down::NotStarted(error) => log::warn!("[lid] cannot start the lid monitor: {error}"),
+            Down::Failed(error) => log::warn!("[lid] laptop lid monitor unavailable: {error}"),
+            Down::Stopped | Down::Missing | Down::Exited { .. } => {}
+        }
+    }
 }
 
 /// Watches the clamshell state through the mic listener helper, which emits
-/// a heartbeat every second; a silent helper is replaced. Reads never block:
+/// a sample every second; a silent helper is replaced. Reads never block:
 /// they return the latest sample.
 #[derive(Clone)]
 pub struct LaptopLidMonitor {
-    inner: Arc<LidInner>,
+    child: SupervisedChild<LidWatch>,
 }
 
 impl LaptopLidMonitor {
     pub fn new(hooks: LidHooks) -> Self {
-        Self {
-            inner: Arc::new_cyclic(|this| LidInner {
-                state: Mutex::new(LidState::default()),
-                hooks,
-                this: this.clone(),
-            }),
-        }
+        let child = SupervisedChild::new(
+            ChildOptions {
+                label: "Lid monitor",
+                resolve_binary: hooks.resolve_binary,
+                spawner: hooks.spawner,
+                timers: Arc::clone(&hooks.timers),
+                restart: RestartPolicy::Always {
+                    delay: Duration::from_millis(LID_RESTART_DELAY_MS),
+                },
+                heartbeat: Some(Duration::from_millis(LID_STALE_STATE_MS)),
+                max_line: LID_MAX_LINE_BYTES,
+            },
+            LidWatch {
+                timers: hooks.timers,
+                sample: None,
+            },
+            Arc::new(|never| match never {}),
+        );
+        Self { child }
     }
 
     /// The process-wide monitor used by
@@ -81,7 +114,6 @@ impl LaptopLidMonitor {
                     spawner: Arc::new(ProcessSpawner),
                     resolve_binary: Arc::new(|| resolve_helper(MIC_LISTENER_BINARY)),
                     timers: RealTimers::shared(),
-                    on_change: Arc::new(|_| {}),
                 });
                 monitor.start();
                 monitor
@@ -90,199 +122,36 @@ impl LaptopLidMonitor {
     }
 
     pub fn start(&self) {
-        let mut state = lock(&self.inner.state);
-        if state.running {
-            return;
-        }
-        state.running = true;
-        self.inner.launch(&mut state);
+        self.child.start();
     }
 
     /// The latest lid state, at once: `None` until the helper reports, while
     /// it restarts, after a sample went stale, or on a Mac without a lid.
     pub fn state(&self) -> Option<bool> {
-        let inner = &self.inner;
-        let mut state = lock(&inner.state);
-        let now = inner.hooks.timers.now_ms();
-        if state.received && now.saturating_sub(state.last_sample_at) < LID_STALE_STATE_MS {
-            return state.state;
-        }
-        // Timers can be delayed by sleep; never answer with a pre-sleep value.
-        if state.received {
-            let generation = state.child.as_ref().map(|(g, _)| *g);
-            if let Some(generation) = generation {
-                inner.retire(
-                    &mut state,
-                    generation,
-                    Some("Cached lid state expired"),
-                    true,
-                );
+        self.child.update(|lid, cx| {
+            let sample = lid.sample.as_ref()?;
+            if lid.timers.now_ms().saturating_sub(sample.at_ms) < LID_STALE_STATE_MS {
+                return sample.closed;
             }
-        }
-        None
+            // Timers can be delayed by sleep; never answer with a pre-sleep
+            // value, and replace the helper that failed to refresh it.
+            lid.sample = None;
+            cx.fail("cached lid state expired");
+            None
+        })
     }
 
     #[cfg(test)]
     pub fn stop(&self) {
-        let inner = &self.inner;
-        let mut state = lock(&inner.state);
-        state.running = false;
-        if let Some(timer) = state.restart_timer.take() {
-            inner.hooks.timers.cancel(timer);
-        }
-        let previous = state.child.take();
-        inner.invalidate(&mut state);
-        drop(state);
-        if let Some((_, mut child)) = previous {
-            child.kill(libc::SIGTERM);
-        }
-    }
-}
-
-impl LidInner {
-    fn update_state(&self, state: &mut LidState, value: Option<bool>) {
-        if state.state != value {
-            state.state = value;
-            (self.hooks.on_change)(value);
-        }
-    }
-
-    fn invalidate(&self, state: &mut LidState) {
-        state.received = false;
-        state.last_sample_at = 0;
-        if let Some(timer) = state.stale_timer.take() {
-            self.hooks.timers.cancel(timer);
-        }
-        self.update_state(state, None);
-    }
-
-    fn schedule_restart(&self, state: &mut LidState) {
-        if !state.running || state.restart_timer.is_some() {
-            return;
-        }
-        let weak = self.this.clone();
-        state.restart_timer = Some(self.hooks.timers.schedule(
-            Duration::from_millis(LID_RESTART_DELAY_MS),
-            Box::new(move || {
-                if let Some(inner) = weak.upgrade() {
-                    let mut state = lock(&inner.state);
-                    state.restart_timer = None;
-                    inner.launch(&mut state);
-                }
-            }),
-        ));
-    }
-
-    fn retire(&self, state: &mut LidState, generation: u64, error: Option<&str>, kill: bool) {
-        if !state.child.as_ref().is_some_and(|(g, _)| *g == generation) {
-            return;
-        }
-        let child = state.child.take();
-        self.invalidate(state);
-        if let Some(error) = error {
-            log::warn!("[lid] laptop lid monitor unavailable: {error}");
-        }
-        if let (true, Some((_, mut child))) = (kill, child) {
-            child.kill(libc::SIGTERM);
-        }
-        self.schedule_restart(state);
-    }
-
-    fn arm_stale_timer(&self, state: &mut LidState, generation: u64) {
-        if let Some(timer) = state.stale_timer.take() {
-            self.hooks.timers.cancel(timer);
-        }
-        let weak = self.this.clone();
-        state.stale_timer = Some(self.hooks.timers.schedule(
-            Duration::from_millis(LID_STALE_STATE_MS),
-            Box::new(move || {
-                if let Some(inner) = weak.upgrade() {
-                    let mut state = lock(&inner.state);
-                    state.stale_timer = None;
-                    inner.retire(
-                        &mut state,
-                        generation,
-                        Some("Lid state heartbeat timed out"),
-                        true,
-                    );
-                }
-            }),
-        ));
-    }
-
-    fn launch(&self, state: &mut LidState) {
-        if !state.running || state.child.is_some() {
-            return;
-        }
-        let Some(binary) = (self.hooks.resolve_binary)() else {
-            self.schedule_restart(state);
-            return;
-        };
-        state.generation += 1;
-        let generation = state.generation;
-        let weak = self.this.clone();
-        let sink: ChildSink = Arc::new(move |event| {
-            if let Some(inner) = weak.upgrade() {
-                inner.on_child_event(generation, event);
-            }
-        });
-        match self
-            .hooks
-            .spawner
-            .spawn(&binary, &["--watch-lid-state".to_string()], sink)
-        {
-            Ok(child) => {
-                state.child = Some((generation, child));
-                state.buffer.clear();
-                self.arm_stale_timer(state, generation);
-            }
-            Err(error) => {
-                log::warn!("[lid] cannot start the lid monitor: {error}");
-                self.schedule_restart(state);
-            }
-        }
-    }
-
-    fn on_child_event(&self, generation: u64, event: ChildEvent) {
-        let mut state = lock(&self.state);
-        let current = state.child.as_ref().is_some_and(|(g, _)| *g == generation);
-        if !current || !state.running {
-            return;
-        }
-        match event {
-            ChildEvent::Stdout(chunk) => {
-                state.buffer.push_str(&chunk);
-                if state.buffer.len() > LID_MAX_BUFFER {
-                    self.retire(
-                        &mut state,
-                        generation,
-                        Some("Invalid lid state output"),
-                        true,
-                    );
-                    return;
-                }
-                while let Some(newline) = state.buffer.find('\n') {
-                    let line: String = state.buffer.drain(..=newline).collect();
-                    let Some(value) = parse_lid_state(line.trim()) else {
-                        continue;
-                    };
-                    state.last_sample_at = self.hooks.timers.now_ms();
-                    state.received = true;
-                    self.update_state(&mut state, value);
-                    self.arm_stale_timer(&mut state, generation);
-                }
-            }
-            ChildEvent::Stderr(_) => {}
-            ChildEvent::Error(error) => self.retire(&mut state, generation, Some(&error), true),
-            ChildEvent::Exit { .. } => self.retire(&mut state, generation, None, false),
-        }
+        self.child.stop();
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::hotkeys::globe::tests::FakeSpawner;
+    use crate::native::supervised_child::ChildEvent;
+    use crate::native::supervised_child::tests::FakeSpawner;
     use crate::native::timer::FakeTimers;
     use std::path::PathBuf;
 
@@ -290,48 +159,30 @@ mod tests {
         monitor: LaptopLidMonitor,
         spawner: Arc<FakeSpawner>,
         timers: Arc<FakeTimers>,
-        broadcasts: Arc<Mutex<Vec<Option<bool>>>>,
     }
 
-    fn lid(binary: Option<&'static str>) -> (Lid, Arc<std::sync::atomic::AtomicUsize>) {
+    fn helper() -> Lid {
         let spawner = Arc::new(FakeSpawner::default());
         let timers = FakeTimers::starting_at(100);
-        let broadcasts = Arc::new(Mutex::new(Vec::new()));
-        let lookups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (b, l) = (broadcasts.clone(), lookups.clone());
         let monitor = LaptopLidMonitor::new(LidHooks {
             spawner: spawner.clone(),
-            resolve_binary: Arc::new(move || {
-                l.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                binary.map(PathBuf::from)
-            }),
+            resolve_binary: Arc::new(|| Some(PathBuf::from("/helper/macos-mic-listener"))),
             timers: timers.clone(),
-            on_change: Arc::new(move |v| lock(&b).push(v)),
         });
-        (
-            Lid {
-                monitor,
-                spawner,
-                timers,
-                broadcasts,
-            },
-            lookups,
-        )
-    }
-
-    fn helper() -> (Lid, Arc<std::sync::atomic::AtomicUsize>) {
-        lid(Some("/helper/macos-mic-listener"))
+        monitor.start();
+        Lid {
+            monitor,
+            spawner,
+            timers,
+        }
     }
 
     impl Lid {
         fn out(&self, index: usize, text: &str) {
             self.spawner.emit(index, ChildEvent::Stdout(text.into()));
         }
-        fn broadcasts(&self) -> Vec<Option<bool>> {
-            lock(&self.broadcasts).clone()
-        }
         fn kills(&self, index: usize) -> usize {
-            lock(&self.spawner.child(index)).kills.len()
+            self.spawner.kills(index).len()
         }
     }
 
@@ -353,128 +204,73 @@ mod tests {
 
     #[test]
     fn reads_return_the_latest_sample_at_once() {
-        let (h, _) = helper();
-        h.monitor.start();
-        assert_eq!(h.spawner.count(), 1);
+        let h = helper();
         assert_eq!(h.spawner.args(0), vec!["--watch-lid-state".to_string()]);
         assert_eq!(h.monitor.state(), None, "unknown before the first sample");
-        h.out(0, "{\"lidClo");
-        h.out(0, "sed\":false}\n{\"lidClosed\":false}\n");
+        h.out(0, "{\"lidClosed\":false}\n");
         assert_eq!(h.monitor.state(), Some(false));
         assert_eq!(h.monitor.state(), Some(false));
         assert_eq!(h.spawner.count(), 1, "reads share the running helper");
-        assert_eq!(h.broadcasts(), vec![Some(false)]);
-        h.out(0, "{\"lidClosed\":true}\n{\"lidClosed\":null}\n");
-        assert_eq!(h.broadcasts(), vec![Some(false), Some(true), None]);
+        h.out(0, "{\"lidClosed\":true}\n");
+        assert_eq!(h.monitor.state(), Some(true));
+        h.out(0, "{\"lidClosed\":null}\n");
         assert_eq!(h.monitor.state(), None);
         h.monitor.stop();
     }
 
     #[test]
-    fn unrecognized_output_leaves_the_state_unknown() {
-        let (h, _) = helper();
-        h.monitor.start();
+    fn unrecognized_output_is_neither_a_sample_nor_a_heartbeat() {
+        let h = helper();
         h.out(0, "CAPABILITY PID\n{\"lidClosed\":1}\n");
         assert_eq!(h.monitor.state(), None);
-        assert!(h.broadcasts().is_empty());
+        h.timers.advance(4000);
+        h.out(0, "CAPABILITY PID\n");
+        h.timers.advance(1000);
+        assert_eq!(h.kills(0), 1);
         h.monitor.stop();
     }
 
     #[test]
-    fn helper_failure_clears_state_and_restarts_once() {
-        let (h, _) = helper();
-        h.monitor.start();
+    fn samples_keep_the_helper_alive_until_they_stop() {
+        let h = helper();
+        h.out(0, "{\"lidClosed\":false}\n");
+        h.timers.advance(4000);
+        h.out(0, "{\"lidClosed\":false}\n");
+        h.timers.advance(4000);
+        assert_eq!(h.monitor.state(), Some(false));
+        assert_eq!(h.kills(0), 0);
+        h.timers.advance(1000);
+        assert_eq!(h.kills(0), 1);
+        assert_eq!(h.monitor.state(), None);
+        h.timers.advance(2000);
+        assert_eq!(h.spawner.count(), 2);
+        h.monitor.stop();
+    }
+
+    #[test]
+    fn helper_failure_clears_state_until_the_replacement_reports() {
+        let h = helper();
         h.out(0, "{\"lidClosed\":true}\n");
         assert_eq!(h.monitor.state(), Some(true));
         h.spawner
             .emit(0, ChildEvent::Error("process failed".into()));
-        h.spawner.emit(
-            0,
-            ChildEvent::Exit {
-                code: Some(1),
-                signal: None,
-            },
-        );
-        assert_eq!(h.broadcasts(), vec![Some(true), None]);
         assert_eq!(h.monitor.state(), None);
         h.timers.advance(2000);
         assert_eq!(h.spawner.count(), 2);
-        h.out(0, "{\"lidClosed\":true}\n");
         h.out(1, "{\"lidClosed\":false}\n");
         assert_eq!(h.monitor.state(), Some(false));
-        assert_eq!(h.broadcasts(), vec![Some(true), None, Some(false)]);
-        h.monitor.stop();
-    }
-
-    #[test]
-    fn heartbeats_refresh_without_duplicate_broadcasts() {
-        let (h, _) = helper();
-        h.monitor.start();
-        h.out(0, "{\"lidClosed\":false}\n");
-        h.timers.advance(4000);
-        h.out(0, "{\"lidClosed\":false}\n");
-        h.timers.advance(4000);
-        assert_eq!(h.monitor.state(), Some(false));
-        assert_eq!(h.broadcasts(), vec![Some(false)]);
-        h.timers.advance(1000);
-        assert_eq!(h.broadcasts(), vec![Some(false), None]);
-        assert_eq!(h.kills(0), 1);
-        h.timers.advance(2000);
-        assert_eq!(h.spawner.count(), 2);
         h.monitor.stop();
     }
 
     #[test]
     fn delayed_timer_after_sleep_cannot_expose_stale_state() {
-        let (h, _) = helper();
-        h.monitor.start();
+        let h = helper();
         h.out(0, "{\"lidClosed\":true}\n");
         h.timers.advance_without_running(10_000);
         assert_eq!(h.monitor.state(), None);
-        assert_eq!(h.broadcasts(), vec![Some(true), None]);
         assert_eq!(h.kills(0), 1);
         h.timers.advance(2000);
         assert_eq!(h.spawner.count(), 2);
-        h.monitor.stop();
-    }
-
-    #[test]
-    fn stop_cancels_timers() {
-        let (h, _) = helper();
-        h.monitor.start();
-        h.monitor.stop();
-        assert_eq!(h.kills(0), 1);
-        assert_eq!(h.timers.pending(), 0);
-        h.spawner.emit(
-            0,
-            ChildEvent::Exit {
-                code: Some(0),
-                signal: None,
-            },
-        );
-        h.timers.advance(10_000);
-        assert_eq!(h.spawner.count(), 1);
-    }
-
-    #[test]
-    fn missing_helper_is_retried_without_blocking() {
-        let (h, lookups) = lid(None);
-        h.monitor.start();
-        assert_eq!(h.monitor.state(), None);
-        h.timers.advance(2000);
-        assert_eq!(lookups.load(std::sync::atomic::Ordering::SeqCst), 2);
-        h.monitor.stop();
-        assert_eq!(h.timers.pending(), 0);
-    }
-
-    #[test]
-    fn excessive_output_retires_the_helper() {
-        let (h, _) = helper();
-        h.monitor.start();
-        h.out(0, "{\"lidClosed\":true}\n");
-        h.out(0, &"x".repeat(4097));
-        assert_eq!(h.broadcasts(), vec![Some(true), None]);
-        assert_eq!(h.kills(0), 1);
         h.monitor.stop();
     }
 }
