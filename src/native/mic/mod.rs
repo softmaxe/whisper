@@ -330,9 +330,18 @@ pub fn resolve_microphone_selection(
     }
 }
 
-/// Lists devices, reads lid state (Auto) and the system default, and applies
-/// the policy. Blocks up to ~1.5 s on the first lid read; call off the main
+/// Starts watching the laptop lid so that microphone selection finds a
+/// current lid state. Spawns the helper; call once at launch, off the main
 /// thread.
+pub fn watch_laptop_lid() {
+    LaptopLidMonitor::shared();
+}
+
+/// Lists devices and the system default through CoreAudio, reads the lid
+/// state (Auto) and applies the policy. The lid read returns the monitor's
+/// latest sample without waiting; an unknown state (before the first sample,
+/// while the helper restarts, or on a Mac without a lid) counts as open, so
+/// Auto keeps the built-in microphone.
 pub fn resolve_preferred_microphone(settings: &Settings) -> MicResolution {
     let preference = MicPreference::from_settings(settings);
     let devices = list_input_devices();
@@ -349,6 +358,7 @@ pub fn resolve_preferred_microphone(settings: &Settings) -> MicResolution {
         lid_closed,
     )
 }
+
 #[cfg(test)]
 mod tests {
     //! Microphone selection and device selection.

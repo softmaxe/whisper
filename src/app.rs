@@ -252,6 +252,8 @@ pub fn run() {
             log::error!("failed to open the recording pill window: {err}");
         }
         start_hotkeys(cx);
+        cx.background_spawn(async { crate::native::mic::watch_laptop_lid() })
+            .detach();
         tray::init(cx);
         crate::native::dock::init(!start_minimized);
         if !start_minimized {

@@ -1,7 +1,6 @@
 //! The laptop lid (clamshell) state, watched through
 //! `macos-mic-listener --watch-lid-state`.
 
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
@@ -11,7 +10,6 @@ use super::super::hotkeys::globe::{
 };
 use super::super::timer::{RealTimers, TimerId, Timers, lock};
 
-const LID_INITIAL_WAIT_MS: u64 = 1500;
 const LID_STALE_STATE_MS: u64 = 5000;
 const LID_RESTART_DELAY_MS: u64 = 2000;
 const LID_MAX_BUFFER: usize = 4096;
@@ -35,12 +33,6 @@ pub struct LidHooks {
     pub on_change: Arc<dyn Fn(Option<bool>) + Send + Sync>,
 }
 
-struct Waiter {
-    id: u64,
-    tx: mpsc::Sender<Option<bool>>,
-    timer: Option<TimerId>,
-}
-
 #[derive(Default)]
 struct LidState {
     running: bool,
@@ -52,8 +44,6 @@ struct LidState {
     received: bool,
     last_sample_at: u64,
     buffer: String,
-    waiters: Vec<Waiter>,
-    next_waiter: u64,
 }
 
 struct LidInner {
@@ -63,7 +53,8 @@ struct LidInner {
 }
 
 /// Watches the clamshell state through the mic listener helper, which emits
-/// a heartbeat every second; a silent helper is replaced.
+/// a heartbeat every second; a silent helper is replaced. Reads never block:
+/// they return the latest sample.
 #[derive(Clone)]
 pub struct LaptopLidMonitor {
     inner: Arc<LidInner>,
@@ -80,22 +71,24 @@ impl LaptopLidMonitor {
         }
     }
 
-    /// The process-wide monitor used by [`resolve_preferred_microphone`].
+    /// The process-wide monitor used by
+    /// [`super::resolve_preferred_microphone`], started on first use.
     pub fn shared() -> LaptopLidMonitor {
         static SHARED: OnceLock<LaptopLidMonitor> = OnceLock::new();
         SHARED
             .get_or_init(|| {
-                LaptopLidMonitor::new(LidHooks {
+                let monitor = LaptopLidMonitor::new(LidHooks {
                     spawner: Arc::new(ProcessSpawner),
                     resolve_binary: Arc::new(|| resolve_helper(MIC_LISTENER_BINARY)),
                     timers: RealTimers::shared(),
                     on_change: Arc::new(|_| {}),
-                })
+                });
+                monitor.start();
+                monitor
             })
             .clone()
     }
 
-    #[cfg(test)]
     pub fn start(&self) {
         let mut state = lock(&self.inner.state);
         if state.running {
@@ -105,20 +98,14 @@ impl LaptopLidMonitor {
         self.inner.launch(&mut state);
     }
 
-    /// The current lid state: answered at once from a fresh sample, otherwise
-    /// after the next sample or a 1.5 s bound (then `None`).
-    pub fn request_state(&self) -> mpsc::Receiver<Option<bool>> {
-        let (tx, rx) = mpsc::channel();
+    /// The latest lid state, at once: `None` until the helper reports, while
+    /// it restarts, after a sample went stale, or on a Mac without a lid.
+    pub fn state(&self) -> Option<bool> {
         let inner = &self.inner;
         let mut state = lock(&inner.state);
-        if !state.running {
-            state.running = true;
-            inner.launch(&mut state);
-        }
         let now = inner.hooks.timers.now_ms();
         if state.received && now.saturating_sub(state.last_sample_at) < LID_STALE_STATE_MS {
-            let _ = tx.send(state.state);
-            return rx;
+            return state.state;
         }
         // Timers can be delayed by sleep; never answer with a pre-sleep value.
         if state.received {
@@ -132,35 +119,7 @@ impl LaptopLidMonitor {
                 );
             }
         }
-        state.next_waiter += 1;
-        let id = state.next_waiter;
-        let weak = inner.this.clone();
-        let timer = inner.hooks.timers.schedule(
-            Duration::from_millis(LID_INITIAL_WAIT_MS),
-            Box::new(move || {
-                if let Some(inner) = weak.upgrade() {
-                    let mut state = lock(&inner.state);
-                    if let Some(index) = state.waiters.iter().position(|w| w.id == id) {
-                        let waiter = state.waiters.remove(index);
-                        let _ = waiter.tx.send(None);
-                    }
-                }
-            }),
-        );
-        state.waiters.push(Waiter {
-            id,
-            tx,
-            timer: Some(timer),
-        });
-        rx
-    }
-
-    /// Blocking form of [`LaptopLidMonitor::request_state`].
-    pub fn state(&self) -> Option<bool> {
-        self.request_state()
-            .recv_timeout(Duration::from_millis(LID_INITIAL_WAIT_MS + 500))
-            .ok()
-            .flatten()
+        None
     }
 
     #[cfg(test)]
@@ -173,7 +132,6 @@ impl LaptopLidMonitor {
         }
         let previous = state.child.take();
         inner.invalidate(&mut state);
-        inner.finish_waiters(&mut state, None);
         drop(state);
         if let Some((_, mut child)) = previous {
             child.kill(libc::SIGTERM);
@@ -196,15 +154,6 @@ impl LidInner {
             self.hooks.timers.cancel(timer);
         }
         self.update_state(state, None);
-    }
-
-    fn finish_waiters(&self, state: &mut LidState, value: Option<bool>) {
-        for waiter in state.waiters.drain(..) {
-            if let Some(timer) = waiter.timer {
-                self.hooks.timers.cancel(timer);
-            }
-            let _ = waiter.tx.send(value);
-        }
     }
 
     fn schedule_restart(&self, state: &mut LidState) {
@@ -230,7 +179,6 @@ impl LidInner {
         }
         let child = state.child.take();
         self.invalidate(state);
-        self.finish_waiters(state, None);
         if let Some(error) = error {
             log::warn!("[lid] laptop lid monitor unavailable: {error}");
         }
@@ -321,7 +269,6 @@ impl LidInner {
                     state.last_sample_at = self.hooks.timers.now_ms();
                     state.received = true;
                     self.update_state(&mut state, value);
-                    self.finish_waiters(&mut state, value);
                     self.arm_stale_timer(&mut state, generation);
                 }
             }
@@ -405,30 +352,31 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_lookups_share_a_helper_and_parse_partial_lines() {
+    fn reads_return_the_latest_sample_at_once() {
         let (h, _) = helper();
-        let first = h.monitor.request_state();
-        let second = h.monitor.request_state();
+        h.monitor.start();
         assert_eq!(h.spawner.count(), 1);
         assert_eq!(h.spawner.args(0), vec!["--watch-lid-state".to_string()]);
+        assert_eq!(h.monitor.state(), None, "unknown before the first sample");
         h.out(0, "{\"lidClo");
         h.out(0, "sed\":false}\n{\"lidClosed\":false}\n");
-        assert_eq!(first.try_recv().unwrap(), Some(false));
-        assert_eq!(second.try_recv().unwrap(), Some(false));
+        assert_eq!(h.monitor.state(), Some(false));
+        assert_eq!(h.monitor.state(), Some(false));
+        assert_eq!(h.spawner.count(), 1, "reads share the running helper");
         assert_eq!(h.broadcasts(), vec![Some(false)]);
         h.out(0, "{\"lidClosed\":true}\n{\"lidClosed\":null}\n");
         assert_eq!(h.broadcasts(), vec![Some(false), Some(true), None]);
-        assert_eq!(h.monitor.request_state().try_recv().unwrap(), None);
+        assert_eq!(h.monitor.state(), None);
         h.monitor.stop();
     }
 
     #[test]
-    fn initial_lookup_is_bounded() {
+    fn unrecognized_output_leaves_the_state_unknown() {
         let (h, _) = helper();
-        let result = h.monitor.request_state();
+        h.monitor.start();
         h.out(0, "CAPABILITY PID\n{\"lidClosed\":1}\n");
-        h.timers.advance(1500);
-        assert_eq!(result.try_recv().unwrap(), None);
+        assert_eq!(h.monitor.state(), None);
+        assert!(h.broadcasts().is_empty());
         h.monitor.stop();
     }
 
@@ -437,7 +385,7 @@ mod tests {
         let (h, _) = helper();
         h.monitor.start();
         h.out(0, "{\"lidClosed\":true}\n");
-        assert_eq!(h.monitor.request_state().try_recv().unwrap(), Some(true));
+        assert_eq!(h.monitor.state(), Some(true));
         h.spawner
             .emit(0, ChildEvent::Error("process failed".into()));
         h.spawner.emit(
@@ -448,11 +396,12 @@ mod tests {
             },
         );
         assert_eq!(h.broadcasts(), vec![Some(true), None]);
+        assert_eq!(h.monitor.state(), None);
         h.timers.advance(2000);
         assert_eq!(h.spawner.count(), 2);
         h.out(0, "{\"lidClosed\":true}\n");
         h.out(1, "{\"lidClosed\":false}\n");
-        assert_eq!(h.monitor.request_state().try_recv().unwrap(), Some(false));
+        assert_eq!(h.monitor.state(), Some(false));
         assert_eq!(h.broadcasts(), vec![Some(true), None, Some(false)]);
         h.monitor.stop();
     }
@@ -465,7 +414,7 @@ mod tests {
         h.timers.advance(4000);
         h.out(0, "{\"lidClosed\":false}\n");
         h.timers.advance(4000);
-        assert_eq!(h.monitor.request_state().try_recv().unwrap(), Some(false));
+        assert_eq!(h.monitor.state(), Some(false));
         assert_eq!(h.broadcasts(), vec![Some(false)]);
         h.timers.advance(1000);
         assert_eq!(h.broadcasts(), vec![Some(false), None]);
@@ -481,22 +430,19 @@ mod tests {
         h.monitor.start();
         h.out(0, "{\"lidClosed\":true}\n");
         h.timers.advance_without_running(10_000);
-        let result = h.monitor.request_state();
+        assert_eq!(h.monitor.state(), None);
         assert_eq!(h.broadcasts(), vec![Some(true), None]);
         assert_eq!(h.kills(0), 1);
-        h.timers.advance(1500);
-        assert_eq!(result.try_recv().unwrap(), None);
-        h.timers.advance(500);
+        h.timers.advance(2000);
         assert_eq!(h.spawner.count(), 2);
         h.monitor.stop();
     }
 
     #[test]
-    fn stop_resolves_pending_reads_and_cancels_timers() {
+    fn stop_cancels_timers() {
         let (h, _) = helper();
-        let result = h.monitor.request_state();
+        h.monitor.start();
         h.monitor.stop();
-        assert_eq!(result.try_recv().unwrap(), None);
         assert_eq!(h.kills(0), 1);
         assert_eq!(h.timers.pending(), 0);
         h.spawner.emit(
@@ -513,10 +459,9 @@ mod tests {
     #[test]
     fn missing_helper_is_retried_without_blocking() {
         let (h, lookups) = lid(None);
-        let result = h.monitor.request_state();
-        h.timers.advance(1500);
-        assert_eq!(result.try_recv().unwrap(), None);
-        h.timers.advance(500);
+        h.monitor.start();
+        assert_eq!(h.monitor.state(), None);
+        h.timers.advance(2000);
         assert_eq!(lookups.load(std::sync::atomic::Ordering::SeqCst), 2);
         h.monitor.stop();
         assert_eq!(h.timers.pending(), 0);
