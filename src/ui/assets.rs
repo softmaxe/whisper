@@ -36,9 +36,8 @@ impl AssetSource for Assets {
     }
 }
 
-/// Registers the bundled Anthropic Sans, Anthropic Serif and JetBrains Mono
-/// faces, then checks that each family the UI asks for resolves to a bundled
-/// face instead of the fallback stack.
+/// Registers the bundled JetBrains Mono Nerd Font Mono faces, then checks that
+/// each family the UI asks for resolves without falling back.
 pub fn load_fonts(cx: &mut App) {
     let fonts: Vec<Cow<'static, [u8]>> = Embedded::iter()
         .filter(|p| p.starts_with("fonts/") && p.ends_with(".ttf"))
@@ -57,9 +56,9 @@ pub fn load_fonts(cx: &mut App) {
         })
         .collect();
     if missing.is_empty() {
-        log::info!("bundled fonts resolved: {FONT_UI}, {FONT_VOICE}, {FONT_MONO}");
+        log::info!("font families resolved: {FONT_UI}, {FONT_VOICE}, {FONT_MONO}");
     } else {
-        log::warn!("bundled fonts fell back for: {}", missing.join(", "));
+        log::warn!("font families fell back for: {}", missing.join(", "));
     }
 }
 
@@ -96,38 +95,31 @@ mod tests {
             .collect()
     }
 
+    /// The system UI face is supplied by macOS, so only the bundled Nerd Font
+    /// weights are checked here.
     #[test]
-    fn every_role_has_the_faces_the_ui_uses() {
+    fn bundled_mono_has_the_faces_the_ui_uses() {
         let have: BTreeSet<(String, u16, bool)> =
             faces().into_iter().map(|(f, w, i, _)| (f, w, i)).collect();
-        // Weights the views ask for: NORMAL, MEDIUM, SEMIBOLD, plus italic fine print.
-        for (family, weight, italic) in [
-            (FONT_UI, 400, false),
-            (FONT_UI, 500, false),
-            (FONT_UI, 600, false),
-            (FONT_UI, 400, true),
-            (FONT_VOICE, 400, false),
-            (FONT_VOICE, 500, false),
-            (FONT_VOICE, 400, true),
-            (FONT_MONO, 400, false),
-        ] {
+        for weight in [400, 500, 600, 700] {
             assert!(
-                have.contains(&(family.to_string(), weight, italic)),
-                "missing {family} {weight} italic={italic}; have {have:?}"
+                have.contains(&("JetBrainsMono NFM".to_string(), weight, false)),
+                "missing {FONT_MONO} {weight}; have {have:?}"
             );
         }
     }
 
     /// Every non-CJK character of the English and Chinese UI strings is drawn
-    /// by Anthropic Sans itself, so chrome never mixes in a fallback Latin face.
+    /// by the bundled Nerd Font face, so code never mixes in a fallback Latin
+    /// face.
     #[test]
-    fn ui_face_covers_every_locale_character() {
+    fn mono_face_covers_every_locale_character() {
         let faces = faces();
-        let sans = faces
+        let mono = faces
             .iter()
-            .find(|(f, w, i, _)| f == FONT_UI && *w == 400 && !*i)
+            .find(|(f, w, i, _)| f == "JetBrainsMono NFM" && *w == 400 && !*i)
             .unwrap();
-        let face = ttf_parser::Face::parse(&sans.3, 0).unwrap();
+        let face = ttf_parser::Face::parse(&mono.3, 0).unwrap();
         let mut missing = BTreeSet::new();
         for file in ["en.json", "zh-CN.json"] {
             let path = concat!(env!("CARGO_MANIFEST_DIR"), "/locales/");
@@ -149,7 +141,7 @@ mod tests {
                 }
             }
         }
-        assert!(missing.is_empty(), "{FONT_UI} lacks {missing:?}");
+        assert!(missing.is_empty(), "{FONT_MONO} lacks {missing:?}");
     }
 
     /// CJK, fullwidth punctuation, symbols and emoji are left to the system
