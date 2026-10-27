@@ -56,7 +56,7 @@ scripts/sign-macos-release.sh verify dist/Whisper.app
 
 ## Configure GitHub releases
 
-Store the original identity as secrets of the `release` Actions environment, named `WHISPER_SIGNING_CERTIFICATE` and `WHISPER_SIGNING_PASSWORD`. The environment only accepts deployments from `v*` tags, so workflows on branches and pull requests cannot read these secrets. Do not keep copies as repository secrets. With GitHub CLI authenticated for this repository, upload the local files without printing their contents:
+Store the original identity as secrets of the `release` Actions environment, named `WHISPER_SIGNING_CERTIFICATE` and `WHISPER_SIGNING_PASSWORD`. The environment only accepts deployments from `v*.*.*` tags, so workflows on branches and pull requests cannot read these secrets. Do not keep copies as repository secrets. With GitHub CLI authenticated for this repository, upload the local files without printing their contents:
 
 ```sh
 base64 -i "$HOME/.config/whisper/signing/identity.p12" | gh secret set WHISPER_SIGNING_CERTIFICATE --env release
@@ -69,7 +69,7 @@ Store the Homebrew tap token as `HOMEBREW_TAP_TOKEN` in a separate `homebrew-tap
 gh secret set HOMEBREW_TAP_TOKEN --env homebrew-tap
 ```
 
-The Release workflow requires the tag to point at a commit on `main` that passed CI. Its Build call uses the `release` environment for tagged releases. Pull requests and pushes to `main` run checks without signing credentials. Manual Build runs, and pull requests that change packaging files, produce ad-hoc signed packages without release credentials. A release cannot proceed with a different certificate or an ad-hoc signature.
+The Release workflow requires the tag to point at a commit on `main` that passed CI. Its Build call uses the `release` environment for tagged releases. Pull requests and pushes to `main` run checks without signing credentials. Manual Build runs, and CI runs for pull requests that change packaging files, produce ad-hoc signed packages without release credentials. A release cannot proceed with a different certificate or an ad-hoc signature.
 
 Restore these same secret values when moving the release workflow to another repository. Do not generate a fresh certificate on each runner or release. The private key is needed only to build releases; users do not need the signing files.
 

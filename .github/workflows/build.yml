@@ -1,21 +1,7 @@
 name: Build
 
 on:
-  # Pull requests that touch packaging build an unsigned package; the CI
-  # workflow already runs the checks for every pull request.
-  pull_request:
-    branches: [main]
-    paths:
-      - .github/workflows/build.yml
-      - assets/**
-      - build.rs
-      - packaging/**
-      - resources/**
-      - scripts/build-mediaremote-adapter.sh
-      - scripts/bundle-macos.sh
-      - scripts/check-version.sh
-      - scripts/download-ffmpeg.sh
-      - scripts/sign-macos-release.sh
+  # CI calls this for pull requests that touch packaging, and Release for v* tags.
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -42,7 +28,7 @@ jobs:
     name: Package macOS arm64
     runs-on: macos-15
     timeout-minutes: 45
-    # Signing secrets live in the release environment, which only v* tags can use.
+    # Signing secrets live in the release environment, which only v*.*.* tags can use.
     environment: ${{ inputs.release-tag != '' && 'release' || '' }}
     outputs:
       version: ${{ steps.metadata.outputs.version }}
@@ -56,17 +42,8 @@ jobs:
         with:
           persist-credentials: false
 
-      # Only downloaded crates are cached; release binaries are always built from scratch.
-      - name: Cache Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: cargo-${{ runner.os }}-
-
+      # No Cargo cache: tag and pull request runs can only read caches saved on
+      # their own ref or main, and main never runs this workflow.
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Validate architecture, toolchain and package version
         id: metadata
@@ -82,18 +59,14 @@ jobs:
         if: inputs.release-tag == ''
         run: scripts/bundle-macos.sh
 
+      # Both variables are always set here, so the signing script fails on an
+      # empty secret instead of falling back to local files or ad-hoc signing.
       - name: Package release application with the persistent signing identity
         if: inputs.release-tag != ''
         env:
           WHISPER_SIGNING_CERTIFICATE: ${{ secrets.WHISPER_SIGNING_CERTIFICATE }}
           WHISPER_SIGNING_PASSWORD: ${{ secrets.WHISPER_SIGNING_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$WHISPER_SIGNING_CERTIFICATE" || -z "$WHISPER_SIGNING_PASSWORD" ]]; then
-            echo "::error::Release signing credentials are required; ad-hoc releases are not allowed."
-            exit 1
-          fi
-          scripts/bundle-macos.sh --release
+        run: scripts/bundle-macos.sh --release
 
       - name: Verify application
         env:
