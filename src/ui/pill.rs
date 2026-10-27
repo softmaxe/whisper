@@ -217,7 +217,6 @@ pub struct PillView {
     last_frame: Option<Instant>,
     started: Instant,
     hovered: bool,
-    menu_open: bool,
     finishing_until: Option<Instant>,
     was_active: bool,
     error: Option<ErrorCard>,
@@ -260,7 +259,6 @@ impl PillView {
             last_frame: None,
             started: Instant::now(),
             hovered: false,
-            menu_open: false,
             finishing_until: None,
             was_active: false,
             error: None,
@@ -326,7 +324,6 @@ impl PillView {
         }
         self.was_processing = active && processing;
         if !active && self.was_active {
-            self.menu_open = false;
             // Keep the window for the finish fade, or for the delivered check.
             let hold = if self.resolved_at.is_some() {
                 RESOLVE
@@ -439,7 +436,7 @@ impl PillView {
         macos::set_ignores_mouse_events(window, !over);
         if over != self.hovered {
             self.hovered = over;
-            if !over && !self.menu_open {
+            if !over {
                 self.drag_origin = None;
             }
             cx.notify();
@@ -689,10 +686,8 @@ impl PillView {
             .children(check)
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    this.menu_open = false;
+                cx.listener(|this, e: &MouseDownEvent, _, _| {
                     this.drag_origin = Some(e.position);
-                    cx.notify();
                 }),
             )
             .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, _| {
@@ -714,13 +709,6 @@ impl PillView {
                     if this.drag_origin.take().is_some() && Self::snapshot(cx).is_active() {
                         Dictation::global(cx).update(cx, |d, cx| d.toggle_listening(cx));
                     }
-                }),
-            )
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|this, _, _, cx| {
-                    this.menu_open = !this.menu_open;
-                    cx.notify();
                 }),
             );
         div()
@@ -788,58 +776,6 @@ impl PillView {
             .child(button)
             .into_any_element();
         (slot, t_in)
-    }
-
-    fn render_menu(&mut self, recording: bool, cx: &mut Context<Self>) -> AnyElement {
-        let p = cx.palette();
-        let item = |id: &'static str, label: String| {
-            div()
-                .id(id)
-                .w_full()
-                .px(px(12.))
-                .py(px(8.))
-                .text_size(px(14.))
-                .cursor_pointer()
-                .hover(move |s| s.bg(p.muted))
-                .child(label)
-        };
-        div()
-            .w(px(192.))
-            .rounded(px(8.))
-            .border_1()
-            .border_color(p.border)
-            .bg(p.popover)
-            .text_color(p.foreground)
-            .shadow_lg()
-            .overflow_hidden()
-            .child(
-                item(
-                    "menu-toggle",
-                    if recording {
-                        t("app.commandMenu.stopListening")
-                    } else {
-                        t("app.commandMenu.startListening")
-                    },
-                )
-                .font_weight(FontWeight::MEDIUM)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.menu_open = false;
-                    Dictation::global(cx).update(cx, |d, cx| d.toggle_listening(cx));
-                })),
-            )
-            .child(div().h(px(1.)).bg(p.border))
-            .child(
-                item("menu-hide", t("app.commandMenu.hideForNow")).on_click(cx.listener(
-                    |this, _, window, cx| {
-                        this.menu_open = false;
-                        this.finishing_until = None;
-                        macos::order_out(window, cx);
-                        this.shown = false;
-                        cx.notify();
-                    },
-                )),
-            )
-            .into_any_element()
     }
 
     fn render_error(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1316,7 +1252,7 @@ impl Render for PillView {
             root = root.child(positioned.child(tracked));
 
             // Tooltip above the pill while hovered.
-            if self.hovered && !self.menu_open && active {
+            if self.hovered && active {
                 let p = cx.palette();
                 let label = if snapshot.is_recording {
                     t("app.mic.recording")
@@ -1347,21 +1283,6 @@ impl Render for PillView {
                         ),
                 );
             }
-        }
-
-        if self.menu_open && (active || finishing) {
-            let menu = self.render_menu(recording, cx);
-            let tracked = self.tracked(menu);
-            root = root.child(
-                div()
-                    .absolute()
-                    .bottom(px(DOCK_INSET + PILL_H + 12.))
-                    .map(|d| match dock {
-                        PanelStartPosition::BottomLeft => d.left(px(DOCK_INSET)),
-                        _ => d.right(px(DOCK_INSET)),
-                    })
-                    .child(tracked),
-            );
         }
 
         let card = self.render_error(cx).or_else(|| self.render_recovery(cx));
