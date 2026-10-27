@@ -1186,6 +1186,8 @@ impl PillView {
                     .child(
                         div()
                             .flex_1()
+                            // Let long descriptions wrap inside the card.
+                            .min_w_0()
                             .px(px(10.))
                             .py(px(8.))
                             .child(
