@@ -551,8 +551,7 @@
     },
     "commandMenu": {
       "stopListening": "停止录音",
-      "startListening": "开始录音",
-      "hideForNow": "暂时隐藏"
+      "startListening": "开始录音"
     }
   },
   "commandSearch": {
