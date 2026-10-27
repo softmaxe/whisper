@@ -14,8 +14,51 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Pushes to main always run the checks: Release requires them on the tagged
+  # commit, and they refresh the cache that pull requests restore.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.paths.outputs.code }}
+      package: ${{ steps.paths.outputs.package }}
+    steps:
+      - name: Classify changed paths
+        id: paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PR_NUMBER" ]]; then
+            printf 'code=true\npackage=false\n' >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          code=false
+          package=false
+          while IFS= read -r file; do
+            case "$file" in
+              docs/* | *.md | LICENSE) ;;
+              *) code=true ;;
+            esac
+            case "$file" in
+              .github/workflows/build.yml | .github/workflows/ci.yml | assets/* | build.rs | packaging/* | resources/* | \
+                scripts/build-mediaremote-adapter.sh | scripts/bundle-macos.sh | scripts/check-version.sh | \
+                scripts/download-ffmpeg.sh | scripts/sign-macos-release.sh)
+                package=true
+                ;;
+            esac
+          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')
+          printf 'code=%s\npackage=%s\n' "$code" "$package" | tee -a "$GITHUB_OUTPUT"
+
   checks:
     name: Check Whisper
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: macos-15
     timeout-minutes: 45
     defaults:
@@ -85,3 +128,30 @@ jobs:
 
       - name: Lint shell scripts
         run: shellcheck --severity=warning scripts/*.sh
+
+  # Pull requests that touch packaging build an unsigned package.
+  package:
+    name: Package
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
+    uses: ./.github/workflows/build.yml
+
+  # The single required status check: skipped jobs pass, anything else fails.
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, checks, lint, package]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass or be skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          set -euo pipefail
+          for result in $RESULTS; do
+            if [[ "$result" != success && "$result" != skipped ]]; then
+              echo "::error::A required CI job finished with $result."
+              exit 1
+            fi
+          done
