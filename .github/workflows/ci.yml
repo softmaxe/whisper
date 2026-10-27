@@ -61,6 +61,11 @@ jobs:
     if: needs.changes.outputs.code == 'true'
     runs-on: macos-15
     timeout-minutes: 45
+    # Incremental artifacts and full debug info do not help a CI build but
+    # make up most of the cached target directory.
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     defaults:
       run:
         shell: bash
@@ -71,7 +76,8 @@ jobs:
           persist-credentials: false
 
       # Only main saves the cache, so pull requests reuse it without filling
-      # the repository's cache quota with a copy per pull request.
+      # the repository's cache quota with a copy per pull request. The prefix
+      # names the build settings above so older, larger caches are not restored.
       - name: Restore Cargo downloads and build output
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -81,8 +87,8 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ci-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: ci-${{ runner.os }}-
+          key: ci-${{ runner.os }}-lines-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: ci-${{ runner.os }}-lines-
 
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Validate architecture, toolchain and package version
