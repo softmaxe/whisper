@@ -11,8 +11,8 @@
 ## 功能
 
 - **随处听写。** 可用 Globe/Fn 键、单个修饰键（如右 Command）或任意组合键触发。
-  双击进入免手持录音，或按住说话。录音时会出现悬浮条，显示实时波形，并提供取消
-  按钮和命令菜单；按 Esc 取消。
+  单键双击进入免手持录音（组合键按一次即开始或结束），或按住说话。录音时会出现
+  悬浮条，显示实时波形；点击悬浮条结束录音，悬停时可点取消按钮，按 Esc 取消。
 - **自托管模型。** 语音识别请求发送到你自己的 `/audio/transcriptions` 接口；可选的
   文字整理请求发送到 `/chat/completions` 接口，提示词可编辑，并可在 Prompt Studio
   中测试。
@@ -23,7 +23,7 @@
 - **文件转写。** 可转写单个音频或视频文件，也可批量转写。
 - **统计。** 已听写字数、听写次数、每分钟字数、连续天数，以及六个月的活跃度热力图，
   全部在本机计算。
-- **融入 macOS。** 菜单栏图标、标准应用菜单、开机启动、录音时暂停媒体播放、
+- **融入 macOS。** 菜单栏图标、标准应用菜单、开机启动（macOS 13+）、可选在录音时暂停媒体播放、
   英文和简体中文界面，以及浅色、深色或自动主题。
 
 数据保存在 `~/Library/Application Support/com.softmaxe.whisper`。
@@ -65,10 +65,10 @@ brew install --cask softmaxe/tap/whisper
 | 录音时 CPU | 6.1% | 43.6% | 少约 86% |
 | 空闲 CPU，应用隐藏 | 0.0% | 0.0% | 相同 |
 | 空闲 CPU，控制面板在前台 | 1.2–1.4% | 0.1% | 更高 |
-| 应用包大小 | 64 MB | 319 MB | 小 80% |
-| 应用包内文件数 | 17 | 344 | |
+| 应用包大小 | 95 MB | 319 MB | 小 70% |
+| 应用包内文件数 | 19 | 344 | |
 
-Rust 版应用包的 64 MB 中包含一个 21 MB 的静态 `ffmpeg`。
+Rust 版应用包的 95 MB（0.0.6 实测）中包含一个 43 MB 的静态 `ffmpeg`。
 
 唯一的退步是控制面板可见时的空闲 CPU。GPUI 会让可见窗口的 display link 以屏幕刷新率
 持续运行，即使没有任何重绘。窗口被隐藏、最小化、关闭或遮挡后，它就会停止。
@@ -97,7 +97,7 @@ scripts/check.sh             # formatting, clippy and tests, as in CI
 scripts/bundle-macos.sh      # release build -> dist/Whisper.app (ad-hoc signed)
 ```
 
-内置 ffmpeg（上传非 WAV 音频和视频时需要）是可选的：
+内置 ffmpeg 是可选的。只有上传视频，或 MP3、WAV、M4A、WebM、Ogg/Opus、FLAC、AAC 以外的音频时才需要；未内置时会使用 Homebrew 或 `PATH` 中的 ffmpeg。
 `scripts/download-ffmpeg.sh` 下载发布版使用的固定静态构建，
 `scripts/fetch-ffmpeg.sh [path-to-ffmpeg]` 把本地的 ffmpeg 复制到 `resources/bin`。
 请在运行打包脚本之前执行其中一个。

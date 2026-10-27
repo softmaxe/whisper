@@ -13,9 +13,10 @@ typing in.
 ## Features
 
 - **Dictate anywhere.** Trigger with Globe/Fn, a single modifier such as Right
-  Command, or any key combination. Double-tap for hands-free recording or hold
-  to talk. A floating recording pill shows a live waveform and offers cancel and a
-  command menu; Escape cancels.
+  Command, or any key combination. Double-tap a single key for hands-free
+  recording (key combinations toggle with one press), or hold to talk. A
+  floating recording pill shows a live waveform; click it to finish, hover for a
+  cancel button, or press Escape to cancel.
 - **Self-hosted models.** Speech recognition goes to your own
   `/audio/transcriptions` endpoint; optional cleanup goes to a
   `/chat/completions` endpoint, with an editable prompt and a Prompt Studio to
@@ -29,9 +30,9 @@ typing in.
 - **File transcription.** Transcribe a single audio or video file, or a batch.
 - **Insights.** Words spoken, dictation count, words per minute, streaks and
   a six-month activity heatmap, all computed on device.
-- **Fits into macOS.** Menu bar icon, standard app menu, start at login,
-  pauses media while recording, English and Simplified Chinese UI, and light,
-  dark or automatic themes.
+- **Fits into macOS.** Menu bar icon, standard app menu, start at login
+  (macOS 13+), optional media pause while recording, English and Simplified
+  Chinese UI, and light, dark or automatic themes.
 
 Data lives in `~/Library/Application Support/com.softmaxe.whisper`.
 
@@ -76,10 +77,10 @@ versions with the same data directory and settings.
 | CPU while recording | 6.1% | 43.6% | ~86% less |
 | CPU idle, app hidden | 0.0% | 0.0% | same |
 | CPU idle, control panel in front | 1.2–1.4% | 0.1% | higher |
-| App bundle size | 64 MB | 319 MB | 80% smaller |
-| Files in the bundle | 17 | 344 | |
+| App bundle size | 95 MB | 319 MB | 70% smaller |
+| Files in the bundle | 19 | 344 | |
 
-The Rust bundle's 64 MB includes a 21 MB static `ffmpeg`.
+The Rust bundle's 95 MB (measured on 0.0.6) includes a 43 MB static `ffmpeg`.
 
 The one regression is idle CPU while the control panel is visible. GPUI keeps
 a display link ticking at the screen refresh rate for visible windows, even
@@ -115,7 +116,9 @@ scripts/check.sh             # formatting, clippy and tests, as in CI
 scripts/bundle-macos.sh      # release build -> dist/Whisper.app (ad-hoc signed)
 ```
 
-Bundling ffmpeg (needed to upload non-WAV audio and video) is optional:
+Bundling ffmpeg is optional. Uploads need it only for video and for audio
+other than MP3, WAV, M4A, WebM, Ogg/Opus, FLAC and AAC; without a bundled copy
+the app uses an ffmpeg from Homebrew or `PATH`.
 `scripts/download-ffmpeg.sh` fetches the pinned static build that releases
 ship, and `scripts/fetch-ffmpeg.sh [path-to-ffmpeg]` copies a local one into
 `resources/bin`. Run either before the bundle script.
