@@ -37,6 +37,7 @@ const PILL_W: f32 = 84.;
 const PILL_H: f32 = 30.;
 const CANCEL_SIZE: f32 = 28.;
 const CANCEL_GAP: f32 = 8.;
+const TOAST_W: f32 = 300.;
 const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
 const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
@@ -1094,7 +1095,7 @@ impl PillView {
         if self.toasts.is_empty() {
             return None;
         }
-        let mut stack = div().flex().flex_col().gap(px(6.)).w(px(300.));
+        let mut stack = div().flex().flex_col().gap(px(6.)).w(px(TOAST_W));
         for (i, toast) in self.toasts.iter().enumerate() {
             let accent: Hsla = if toast.destructive {
                 rgb(0xf87171).into()
@@ -1121,6 +1122,8 @@ impl PillView {
                     .child(
                         div()
                             .flex_1()
+                            // Let long descriptions wrap inside the card.
+                            .min_w_0()
                             .px(px(10.))
                             .py(px(8.))
                             .child(
@@ -1245,8 +1248,9 @@ impl Render for PillView {
             let positioned = div().absolute().bottom(px(DOCK_INSET)).map(|d| match dock {
                 PanelStartPosition::BottomRight => d.right(px(DOCK_INSET)),
                 PanelStartPosition::BottomLeft => d.left(px(DOCK_INSET)),
+                // Center the pill itself; the cancel slot sits to its left.
                 PanelStartPosition::Center => {
-                    d.left(WINDOW_SIZE.width / 2. - px((PILL_W + CANCEL_SIZE + CANCEL_GAP) / 2.))
+                    d.left(WINDOW_SIZE.width / 2. - px(PILL_W / 2. + CANCEL_SIZE + CANCEL_GAP))
                 }
             });
             root = root.child(positioned.child(tracked));
@@ -1309,7 +1313,12 @@ impl Render for PillView {
                     } else {
                         DOCK_INSET
                     }))
-                    .right(px(DOCK_INSET))
+                    .map(|d| match dock {
+                        PanelStartPosition::Center => {
+                            d.left((WINDOW_SIZE.width - px(TOAST_W)) / 2.)
+                        }
+                        _ => d.right(px(DOCK_INSET)),
+                    })
                     .child(tracked),
             );
             window.request_animation_frame();
