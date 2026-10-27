@@ -28,7 +28,7 @@ jobs:
     name: Package macOS arm64
     runs-on: macos-15
     timeout-minutes: 45
-    # Signing secrets live in the release environment, which only v* tags can use.
+    # Signing secrets live in the release environment, which only v*.*.* tags can use.
     environment: ${{ inputs.release-tag != '' && 'release' || '' }}
     outputs:
       version: ${{ steps.metadata.outputs.version }}

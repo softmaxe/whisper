@@ -56,7 +56,7 @@ scripts/sign-macos-release.sh verify dist/Whisper.app
 
 ## Configure GitHub releases
 
-Store the original identity as secrets of the `release` Actions environment, named `WHISPER_SIGNING_CERTIFICATE` and `WHISPER_SIGNING_PASSWORD`. The environment only accepts deployments from `v*` tags, so workflows on branches and pull requests cannot read these secrets. Do not keep copies as repository secrets. With GitHub CLI authenticated for this repository, upload the local files without printing their contents:
+Store the original identity as secrets of the `release` Actions environment, named `WHISPER_SIGNING_CERTIFICATE` and `WHISPER_SIGNING_PASSWORD`. The environment only accepts deployments from `v*.*.*` tags, so workflows on branches and pull requests cannot read these secrets. Do not keep copies as repository secrets. With GitHub CLI authenticated for this repository, upload the local files without printing their contents:
 
 ```sh
 base64 -i "$HOME/.config/whisper/signing/identity.p12" | gh secret set WHISPER_SIGNING_CERTIFICATE --env release
