@@ -13,7 +13,7 @@ use crate::app_state::AppState;
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{f32_tx, icon};
 use super::dictionary_view::DictionaryView;
-use super::history_view::{HistoryEvent, HistoryView};
+use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
@@ -87,16 +87,6 @@ impl ControlPanel {
         let overlays = Overlays::global(cx);
         cx.observe(&overlays, |_, _, cx| cx.notify()).detach();
         let history = cx.new(HistoryView::new);
-        cx.subscribe_in(
-            &history,
-            window,
-            |this, _, event: &HistoryEvent, window, cx| match event {
-                HistoryEvent::OpenSettings(section) => {
-                    this.open_settings(Some(SettingsSection::from_name(section)), window, cx)
-                }
-            },
-        )
-        .detach();
         let upload = cx.new(UploadView::new);
         cx.subscribe_in(
             &upload,

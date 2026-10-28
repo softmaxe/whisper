@@ -25,8 +25,7 @@ typing in.
   you make right after a paste are learned, and Snippets expand short phrases
   into longer text.
 - **History.** Search with Cmd+K, view raw transcripts, retry from saved audio,
-  review failed or discarded entries, and set how long audio and transcripts
-  are kept.
+  and set how long audio and transcripts are kept.
 - **File transcription.** Transcribe a single audio or video file, or a batch.
 - **Insights.** Words spoken, dictation count, words per minute, streaks and
   a six-month activity heatmap, all computed on device.

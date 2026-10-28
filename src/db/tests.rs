@@ -116,12 +116,10 @@ fn upload_rows_list_with_their_route() {
 }
 
 #[test]
-fn updates_text_status_and_audio() {
+fn updates_text_and_audio() {
     let db = db();
     let row = save(&db, "text", "2026-09-01T10:00:00.000Z");
     db.update_transcription_text(row.id, "new", Some("raw"))
-        .unwrap();
-    db.update_transcription_status(row.id, TranscriptionStatus::Discarded, Some("m"), None)
         .unwrap();
     db.update_transcription_audio(
         row.id,
@@ -138,8 +136,6 @@ fn updates_text_status_and_audio() {
         (got.text.as_str(), got.raw_text.as_deref()),
         ("new", Some("raw"))
     );
-    assert_eq!(got.status, TranscriptionStatus::Discarded);
-    assert_eq!(got.error_message.as_deref(), Some("m"));
     assert!(got.has_audio);
     assert_eq!(got.audio_duration_ms, Some(1234));
     assert_eq!(got.provider.as_deref(), Some("self-hosted"));
@@ -152,31 +148,6 @@ fn updates_text_status_and_audio() {
             .has_audio
     );
     assert!(db.get_transcription_by_id(9999).unwrap().is_none());
-}
-
-#[test]
-fn retry_marks_a_failed_row_completed() {
-    let db = db();
-    let failed = db
-        .save_transcription(
-            "",
-            None,
-            SaveTranscriptionOptions {
-                status: TranscriptionStatus::Failed,
-                error_message: Some("boom".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert!(db.get_transcriptions(50, false).unwrap().is_empty());
-    db.update_transcription_text(failed.id, "retried", Some("retried"))
-        .unwrap();
-    db.update_transcription_status(failed.id, TranscriptionStatus::Completed, None, None)
-        .unwrap();
-    let rows = db.get_transcriptions(50, false).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].text, "retried");
-    assert_eq!(rows[0].error_message, None);
 }
 
 #[test]

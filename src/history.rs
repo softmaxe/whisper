@@ -1,6 +1,6 @@
-//! History recording: turns a delivered, failed or discarded Dictation, a
-//! History retry or an upload into its History row, its stored recording and
-//! its Insights counter.
+//! History recording: turns a delivered Dictation, a History retry or an
+//! upload into its History row, its stored recording and its Insights counter.
+//! Failed and cancelled Dictations are not kept.
 //!
 //! Each write applies the retention settings and keeps a row and its audio
 //! consistent. `AppState` publishes the rows returned here to the windows.
@@ -13,15 +13,9 @@ use chrono::{DateTime, Utc};
 
 use crate::analytics::AnalyticsEventInput;
 use crate::audio_storage::AudioStorage;
-use crate::db::{
-    Database, SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionItem,
-    TranscriptionStatus,
-};
+use crate::db::{Database, SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionItem};
 use crate::pipeline::Transcript;
 use crate::settings::Settings;
-
-/// Recordings shorter than this are not kept as discarded. See #907.
-const MIN_DISCARDED_DURATION: Duration = Duration::from_secs(1);
 
 /// A finished recording, saved next to its row when audio retention is on.
 #[derive(Debug, Clone, Copy)]
@@ -87,68 +81,6 @@ impl HistoryStore {
         }))
     }
 
-    /// A Dictation whose transcription failed, kept so it can be retried.
-    pub fn record_failed(
-        &self,
-        recording: &Recording,
-        message: &str,
-        code: Option<&str>,
-        settings: &Settings,
-    ) -> anyhow::Result<Option<Recorded>> {
-        if !settings.data_retention_enabled {
-            return Ok(None);
-        }
-        let options = SaveTranscriptionOptions {
-            status: TranscriptionStatus::Failed,
-            error_message: Some(message.to_string()),
-            error_code: code.map(str::to_string),
-            occurred_at: Some(recording.occurred_at),
-            ..Default::default()
-        };
-        let item = self.db.save_transcription("", None, options)?;
-        if let Err(err) = self.store_audio(&item, recording, AudioMeta::default(), settings) {
-            log::warn!("failed to save transcription audio: {err}");
-        }
-        Ok(Some(Recorded {
-            item: self.reread(item),
-            insights_changed: false,
-        }))
-    }
-
-    /// Whether a cancelled recording would be kept, checked before encoding it.
-    pub fn keeps_discarded(duration: Duration, settings: &Settings) -> bool {
-        settings.save_discarded_transcriptions
-            && settings.data_retention_enabled
-            && settings.audio_retention_days > 0
-            && duration >= MIN_DISCARDED_DURATION
-    }
-
-    /// A recording the user cancelled. Its audio is the only way to recover
-    /// it, so no row is kept without it (#907).
-    pub fn record_discarded(
-        &self,
-        recording: &Recording,
-        settings: &Settings,
-    ) -> anyhow::Result<Option<Recorded>> {
-        if !Self::keeps_discarded(recording.duration, settings) {
-            return Ok(None);
-        }
-        let options = SaveTranscriptionOptions {
-            status: TranscriptionStatus::Discarded,
-            occurred_at: Some(recording.occurred_at),
-            ..Default::default()
-        };
-        let item = self.db.save_transcription("", None, options)?;
-        if let Err(err) = self.store_audio(&item, recording, AudioMeta::default(), settings) {
-            let _ = self.db.delete_transcription(item.id);
-            return Err(err);
-        }
-        Ok(Some(Recorded {
-            item: self.reread(item),
-            insights_changed: false,
-        }))
-    }
-
     /// An uploaded file's raw transcript. Uploads skip cleanup, Snippets and
     /// Insights.
     pub fn record_upload(
@@ -175,24 +107,18 @@ impl HistoryStore {
         self.audio.read_audio(id)
     }
 
-    /// Replaces a row's text with a retry's transcript. A failed or discarded
-    /// row becomes a delivered Dictation, so it is counted in Insights and
-    /// Dictionary usage once; a completed row only gets the new text.
+    /// Replaces a row's text with a retry's transcript.
     pub fn apply_retry(
         &self,
         id: i64,
         transcript: &Transcript,
-        settings: &Settings,
     ) -> anyhow::Result<Option<Recorded>> {
         let before = self
             .db
             .get_transcription_by_id(id)?
             .ok_or_else(|| anyhow!("History row {id} no longer exists"))?;
-        let recovered = before.status != TranscriptionStatus::Completed;
         self.db
             .update_transcription_text(id, &transcript.text, Some(&transcript.raw_text))?;
-        self.db
-            .update_transcription_status(id, TranscriptionStatus::Completed, None, None)?;
         self.db.update_transcription_audio(
             id,
             &TranscriptionAudioUpdate {
@@ -202,22 +128,9 @@ impl HistoryStore {
                 model: transcript.model.clone(),
             },
         )?;
-        let mut insights_changed = false;
-        if recovered {
-            if let Err(err) = self.db.record_dictionary_usage(&transcript.spoken_text) {
-                log::warn!("failed to record dictionary usage: {err}");
-            }
-            if settings.data_retention_enabled {
-                let duration =
-                    Duration::from_millis(before.audio_duration_ms.unwrap_or(0).max(0) as u64);
-                let occurred_at = before.occurred_at().unwrap_or_else(Utc::now);
-                insights_changed = self.record_insights(transcript, occurred_at, duration);
-            }
-        }
-        let item = self.reread(before);
         Ok(Some(Recorded {
-            item,
-            insights_changed,
+            item: self.reread(before),
+            insights_changed: false,
         }))
     }
 
@@ -374,85 +287,7 @@ mod tests {
         assert!(f.db.get_transcriptions(10, true).unwrap().is_empty());
         assert_eq!(total_dictations(&f.db), 0);
         assert_eq!(f.db.get_dictionary_by_priority().unwrap(), vec!["hello"]);
-        assert_eq!(
-            f.store
-                .record_failed(&recording(), "boom", None, &settings)
-                .unwrap(),
-            None
-        );
         assert_eq!(f.store.record_upload("text", &settings).unwrap(), None);
-    }
-
-    #[test]
-    fn audio_retention_off_saves_the_row_without_audio() {
-        let f = fixture();
-        let settings = Settings {
-            audio_retention_days: 0,
-            ..Settings::default()
-        };
-        let item = f
-            .store
-            .record_failed(&recording(), "boom", Some("CODE"), &settings)
-            .unwrap()
-            .unwrap()
-            .item;
-        assert_eq!(item.status, TranscriptionStatus::Failed);
-        assert_eq!(item.error_code.as_deref(), Some("CODE"));
-        assert!(!item.has_audio);
-        assert_eq!(f.audio.read_audio(item.id), None);
-    }
-
-    #[test]
-    fn discarded_recordings_need_the_option_retention_and_a_second_of_audio() {
-        let f = fixture();
-        let opted_in = Settings {
-            save_discarded_transcriptions: true,
-            ..Settings::default()
-        };
-        assert_eq!(
-            f.store
-                .record_discarded(&recording(), &Settings::default())
-                .unwrap(),
-            None
-        );
-        let short = Recording {
-            duration: Duration::from_millis(500),
-            ..recording()
-        };
-        assert_eq!(f.store.record_discarded(&short, &opted_in).unwrap(), None);
-        let no_audio = Settings {
-            audio_retention_days: 0,
-            ..opted_in.clone()
-        };
-        assert_eq!(
-            f.store.record_discarded(&recording(), &no_audio).unwrap(),
-            None
-        );
-        let item = f
-            .store
-            .record_discarded(&recording(), &opted_in)
-            .unwrap()
-            .unwrap()
-            .item;
-        assert_eq!(item.status, TranscriptionStatus::Discarded);
-        assert!(item.has_audio);
-    }
-
-    #[test]
-    fn discarded_row_is_removed_when_its_audio_cannot_be_saved() {
-        let dir = tempfile::tempdir().unwrap();
-        let blocked = dir.path().join("audio");
-        let db = Arc::new(Database::open_in_memory().unwrap());
-        let store = HistoryStore::new(db.clone(), Arc::new(AudioStorage::new(blocked.clone())));
-        // A file where the directory should be makes every save fail.
-        std::fs::remove_dir_all(&blocked).unwrap();
-        std::fs::write(&blocked, b"").unwrap();
-        let settings = Settings {
-            save_discarded_transcriptions: true,
-            ..Settings::default()
-        };
-        assert!(store.record_discarded(&recording(), &settings).is_err());
-        assert!(db.get_transcriptions(10, true).unwrap().is_empty());
     }
 
     #[test]
@@ -469,51 +304,34 @@ mod tests {
     }
 
     #[test]
-    fn retrying_a_failed_row_counts_it_once() {
+    fn retrying_a_row_replaces_its_text_without_counting_it_again() {
         let f = fixture();
-        let settings = Settings::default();
-        let failed = f
+        let item = f
             .store
-            .record_failed(&recording(), "boom", Some("CODE"), &settings)
+            .record_delivered(&transcript("hello"), &recording(), &Settings::default())
             .unwrap()
             .unwrap()
             .item;
-        let id = failed.id;
+        let id = item.id;
         assert_eq!(f.store.retry_audio(id).as_deref(), Some(WAV));
 
         let recorded = f
             .store
-            .apply_retry(id, &transcript("recovered"), &settings)
+            .apply_retry(id, &transcript("again"))
             .unwrap()
             .unwrap();
-        assert!(recorded.insights_changed);
+        assert!(!recorded.insights_changed);
         let item = recorded.item;
-        assert_eq!(item.text, "recovered");
-        assert_eq!(item.status, TranscriptionStatus::Completed);
-        assert_eq!(item.error_code, None);
+        assert_eq!(item.text, "again");
+        assert_eq!(item.raw_text.as_deref(), Some("um again"));
         assert!(item.has_audio);
         assert_eq!(item.audio_duration_ms, Some(3000));
-        assert_eq!(item.model.as_deref(), Some("whisper-1"));
-        assert_eq!(total_dictations(&f.db), 1);
-
-        // Retrying the now-completed row only replaces the text.
-        let again = f
-            .store
-            .apply_retry(id, &transcript("again"), &settings)
-            .unwrap()
-            .unwrap();
-        assert!(!again.insights_changed);
-        assert_eq!(again.item.text, "again");
         assert_eq!(total_dictations(&f.db), 1);
     }
 
     #[test]
     fn retrying_a_missing_row_fails() {
         let f = fixture();
-        assert!(
-            f.store
-                .apply_retry(42, &transcript("x"), &Settings::default())
-                .is_err()
-        );
+        assert!(f.store.apply_retry(42, &transcript("x")).is_err());
     }
 }

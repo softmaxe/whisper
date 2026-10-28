@@ -7,12 +7,11 @@ use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::db::{TranscriptionItem, TranscriptionStatus};
-use crate::i18n::{self, Language, t, t_with};
+use crate::db::TranscriptionItem;
+use crate::i18n::{self, Language, t};
 
 use crate::app_state::{AppEvent, AppState};
 use crate::backend;
-use crate::services::transcription::{CUSTOM_ENDPOINT_INVALID_CODE, INVALID_KEY_CODE};
 
 use super::components::{f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner};
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
@@ -33,10 +32,6 @@ struct PendingRow {
     arrived: bool,
 }
 
-pub enum HistoryEvent {
-    OpenSettings(&'static str),
-}
-
 pub struct HistoryView {
     /// A row picked in the search palette flashes briefly so it is easy to find.
     highlighted: Option<(i64, Instant)>,
@@ -49,8 +44,6 @@ pub struct HistoryView {
     /// A row that just landed from Dictation; it reveals and tints briefly.
     arrived: Option<(i64, Instant)>,
 }
-
-impl EventEmitter<HistoryEvent> for HistoryView {}
 
 pub fn copy_with_toast(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -92,10 +85,6 @@ pub fn format_date_group(date: NaiveDate) -> String {
     }
 }
 
-fn format_mm_ss(total_seconds: i64) -> String {
-    format!("{}:{:02}", total_seconds / 60, total_seconds % 60)
-}
-
 impl HistoryView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let state = AppState::global(cx);
@@ -117,7 +106,7 @@ impl HistoryView {
         })
         .detach();
         if !state.read(cx).history_loaded {
-            Self::reload(false, cx);
+            Self::reload(cx);
         }
         Self {
             highlighted: None,
@@ -136,8 +125,8 @@ impl HistoryView {
         cx.notify();
     }
 
-    fn reload(include_discarded: bool, cx: &mut App) {
-        let result = AppState::global(cx).update(cx, |s, cx| s.load_history(include_discarded, cx));
+    fn reload(cx: &mut App) {
+        let result = AppState::global(cx).update(cx, |s, cx| s.load_history(cx));
         if result.is_err() {
             show_dialog(
                 DialogRequest::alert(
@@ -220,7 +209,7 @@ impl HistoryView {
         }
     }
 
-    fn retry(&mut self, id: i64, recover: bool, cx: &mut Context<Self>) {
+    fn retry(&mut self, id: i64, cx: &mut Context<Self>) {
         if !self.retrying.insert(id) {
             return;
         }
@@ -232,14 +221,7 @@ impl HistoryView {
             let _ = this.update(cx, |this, cx| {
                 this.retrying.remove(&id);
                 match result {
-                    Ok(()) => show_toast(
-                        Toast::new(if recover {
-                            t("controlPanel.history.discarded.recovered")
-                        } else {
-                            t("controlPanel.history.retrySuccess")
-                        }),
-                        cx,
-                    ),
+                    Ok(()) => show_toast(Toast::new(t("controlPanel.history.retrySuccess")), cx),
                     Err(message) => show_toast(
                         Toast::new(t("controlPanel.history.retryError"))
                             .description(message)
@@ -253,29 +235,6 @@ impl HistoryView {
         .detach();
     }
 
-    fn render_discarded_toggle(&self, include: bool, p: &Palette) -> Stateful<Div> {
-        let p = *p;
-        div()
-            .id("toggle-discarded")
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .px(px(6.))
-            .py(px(2.))
-            .rounded(px(4.))
-            .text_size(px(TEXT_CAPTION))
-            .text_color(p.muted_foreground.opacity(0.7))
-            .cursor_pointer()
-            .hover(move |s| s.text_color(p.foreground).bg(p.hover_wash(0.05)))
-            .child(icon("archive", 11., p.muted_foreground.opacity(0.7)))
-            .child(if include {
-                t("controlPanel.history.discarded.hide")
-            } else {
-                t("controlPanel.history.discarded.show")
-            })
-            .on_click(move |_, _, cx| Self::reload(!include, cx))
-    }
-
     fn render_item(
         &self,
         item: &TranscriptionItem,
@@ -284,10 +243,6 @@ impl HistoryView {
     ) -> AnyElement {
         let p = cx.palette();
         let id = item.id;
-        let is_failed = item.status == TranscriptionStatus::Failed;
-        let is_discarded = item.status == TranscriptionStatus::Discarded;
-        let is_transcribed = !is_failed && !is_discarded;
-        let has_audio = item.has_audio;
         let raw_text = item.raw_text.clone();
         let expanded = self.expanded.contains(&id);
         let retrying = self.retrying.contains(&id);
@@ -307,196 +262,86 @@ impl HistoryView {
             cx,
         );
 
-        let body: AnyElement = if is_failed {
-            let code = item.error_code.clone().unwrap_or_default();
-            let is_config = matches!(
-                code.as_str(),
-                "API_KEY_MISSING"
-                    | INVALID_KEY_CODE
-                    | "MODEL_NOT_AVAILABLE"
-                    | CUSTOM_ENDPOINT_INVALID_CODE
-            );
+        // A new transcript eases up 3 px into place.
+        let reveal = arrived.map_or(1., |e| ease_out(progress(e, DUR_BASE)));
+        let body = div()
+            .relative()
+            .top(px(3. * (1. - reveal)))
+            .opacity(reveal)
+            .font_family(FONT_VOICE)
+            .text_size(px(TEXT_READING))
+            .line_height(px(LINE_READING))
+            .text_color(p.foreground)
+            .child(item.text.clone())
+            .into_any_element();
+
+        let raw_section = (raw_text.is_some() && raw_progress > 0.001).then(|| {
+            let raw = raw_text.clone().unwrap_or_default();
+            let same = raw == item.text;
+            let copy_raw = raw.clone();
             div()
-                .flex()
-                .items_start()
-                .gap(px(8.))
+                .overflow_hidden()
+                .opacity(raw_progress)
+                .max_h(px(400. * raw_progress))
                 .child(
                     div()
-                        .mt(px(2.))
-                        .child(icon("alert-circle", 14., p.destructive)),
-                )
-                .child(
-                    div()
-                        .min_w_0()
+                        .relative()
+                        .top(px(3. * (1. - raw_progress)))
+                        .mt(px(8.))
+                        .pt(px(8.))
+                        .border_t_1()
+                        .border_color(p.border.opacity(0.7))
                         .child(
                             div()
-                                .text_size(px(TEXT_BODY))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.destructive)
-                                .child(t("controlPanel.history.transcriptionFailed")),
-                        )
-                        .when_some(
-                            item.error_message.clone().filter(|m| !m.is_empty()),
-                            |d, msg| {
-                                d.child(
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(
                                     div()
-                                        .mt(px(2.))
-                                        .text_size(px(TEXT_SMALL))
-                                        .line_height(px(LINE_SMALL))
+                                        .text_size(px(TEXT_CAPTION))
+                                        .font_weight(FontWeight::MEDIUM)
                                         .text_color(p.muted_foreground)
-                                        .child(msg),
+                                        .child(
+                                            t("controlPanel.history.rawTranscript").to_uppercase(),
+                                        ),
                                 )
-                            },
+                                .child(
+                                    div()
+                                        .id(("copy-raw", id as usize))
+                                        .size(px(20.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded(px(2.))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(p.foreground.opacity(0.1)))
+                                        .child(icon("copy", 10., p.muted_foreground))
+                                        .on_click(move |_, _, cx| {
+                                            copy_with_toast(copy_raw.clone(), cx)
+                                        }),
+                                ),
                         )
-                        .when(is_config, |d| {
+                        .child(
+                            div()
+                                .mt(px(4.))
+                                .font_family(FONT_VOICE)
+                                .text_size(px(TEXT_BODY))
+                                .line_height(px(20.))
+                                .text_color(p.muted_foreground.opacity(0.8))
+                                .child(raw),
+                        )
+                        .when(same, |d| {
                             d.child(
                                 div()
                                     .mt(px(4.))
-                                    .flex()
-                                    .flex_wrap()
-                                    .gap(px(4.))
-                                    .text_size(px(TEXT_SMALL))
-                                    .text_color(p.muted_foreground)
-                                    .child(
-                                        div()
-                                            .id(("failed-cta", id as usize))
-                                            .text_color(p.primary)
-                                            .cursor_pointer()
-                                            .hover(|s| s.underline())
-                                            .child(if has_audio {
-                                                t("controlPanel.history.failedCtaSettings")
-                                            } else {
-                                                t("controlPanel.history.failedCtaSettingsOnly")
-                                            })
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.emit(HistoryEvent::OpenSettings("transcription"))
-                                            })),
-                                    )
-                                    .when(has_audio, |d| {
-                                        d.child(t("controlPanel.history.failedCtaAndRetry"))
-                                    }),
+                                    .text_size(px(TEXT_CAPTION))
+                                    .italic()
+                                    .text_color(p.muted_foreground.opacity(0.7))
+                                    .child(t("controlPanel.history.noAiProcessing")),
                             )
                         }),
                 )
-                .into_any_element()
-        } else if is_discarded {
-            let label = match item.audio_duration_ms.filter(|ms| *ms > 0) {
-                Some(ms) => t_with(
-                    "controlPanel.history.discarded.recordingWithDuration",
-                    &[(
-                        "duration",
-                        &format_mm_ss((ms as f64 / 1000.).round() as i64),
-                    )],
-                ),
-                None => t("controlPanel.history.discarded.recording"),
-            };
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .px(px(6.))
-                        .py(px(2.))
-                        .rounded(px(2.))
-                        .bg(p.muted)
-                        .text_size(px(TEXT_CAPTION))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground)
-                        .child(t("controlPanel.history.discarded.badge").to_uppercase()),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(px(TEXT_BODY))
-                        .text_color(p.muted_foreground)
-                        .child(label),
-                )
-                .into_any_element()
-        } else {
-            // A new transcript eases up 3 px into place.
-            let reveal = arrived.map_or(1., |e| ease_out(progress(e, DUR_BASE)));
-            div()
-                .relative()
-                .top(px(3. * (1. - reveal)))
-                .opacity(reveal)
-                .font_family(FONT_VOICE)
-                .text_size(px(TEXT_READING))
-                .line_height(px(LINE_READING))
-                .text_color(p.foreground)
-                .child(item.text.clone())
-                .into_any_element()
-        };
-
-        let raw_section =
-            (is_transcribed && raw_text.is_some() && raw_progress > 0.001).then(|| {
-                let raw = raw_text.clone().unwrap_or_default();
-                let same = raw == item.text;
-                let copy_raw = raw.clone();
-                div()
-                    .overflow_hidden()
-                    .opacity(raw_progress)
-                    .max_h(px(400. * raw_progress))
-                    .child(
-                        div()
-                            .relative()
-                            .top(px(3. * (1. - raw_progress)))
-                            .mt(px(8.))
-                            .pt(px(8.))
-                            .border_t_1()
-                            .border_color(p.border.opacity(0.7))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        div()
-                                            .text_size(px(TEXT_CAPTION))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(p.muted_foreground)
-                                            .child(
-                                                t("controlPanel.history.rawTranscript")
-                                                    .to_uppercase(),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .id(("copy-raw", id as usize))
-                                            .size(px(20.))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .rounded(px(2.))
-                                            .cursor_pointer()
-                                            .hover(|s| s.bg(p.foreground.opacity(0.1)))
-                                            .child(icon("copy", 10., p.muted_foreground))
-                                            .on_click(move |_, _, cx| {
-                                                copy_with_toast(copy_raw.clone(), cx)
-                                            }),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(4.))
-                                    .font_family(FONT_VOICE)
-                                    .text_size(px(TEXT_BODY))
-                                    .line_height(px(20.))
-                                    .text_color(p.muted_foreground.opacity(0.8))
-                                    .child(raw),
-                            )
-                            .when(same, |d| {
-                                d.child(
-                                    div()
-                                        .mt(px(4.))
-                                        .text_size(px(TEXT_CAPTION))
-                                        .italic()
-                                        .text_color(p.muted_foreground.opacity(0.7))
-                                        .child(t("controlPanel.history.noAiProcessing")),
-                                )
-                            }),
-                    )
-            });
+        });
 
         let action_btn = |id_str: &'static str, name: &'static str| {
             div()
@@ -512,7 +357,7 @@ impl HistoryView {
         };
 
         // Row actions surface on hover in 120 ms and leave in 60 ms.
-        let actions_shown = !is_transcribed || menu_open || self.hovered_row == Some(id);
+        let actions_shown = menu_open || self.hovered_row == Some(id);
         let actions_t = f32_tx(
             ("row-actions", id as usize),
             if actions_shown { 1. } else { 0. },
@@ -532,12 +377,10 @@ impl HistoryView {
             .mt(px(-2.))
             .mr(px(-6.))
             .opacity(actions_t)
-            .when(is_transcribed, |d| {
-                d.child(
-                    action_btn("copy-row", "copy")
-                        .on_click(move |_, _, cx| copy_with_toast(copy_text.clone(), cx)),
-                )
-            })
+            .child(
+                action_btn("copy-row", "copy")
+                    .on_click(move |_, _, cx| copy_with_toast(copy_text.clone(), cx)),
+            )
             .child(
                 div()
                     .relative()
@@ -595,15 +438,11 @@ impl HistoryView {
             .rounded(px(12.))
             .px(px(12.))
             .py(px(10.))
-            .when(is_failed, |d| d.bg(p.destructive.opacity(0.05)))
-            .when(is_discarded, |d| d.bg(p.muted.opacity(0.2)).opacity(0.8))
-            .when(is_transcribed, |d| {
-                d.hover(move |s| {
-                    s.bg(if p.dark {
-                        p.white.opacity(0.03)
-                    } else {
-                        p.muted.opacity(0.3)
-                    })
+            .hover(move |s| {
+                s.bg(if p.dark {
+                    p.white.opacity(0.03)
+                } else {
+                    p.muted.opacity(0.3)
                 })
             })
             .when(route_translation, |d| {
@@ -715,31 +554,20 @@ impl HistoryView {
     fn render_menu(&self, item: &TranscriptionItem, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let id = item.id;
-        let is_failed = item.status == TranscriptionStatus::Failed;
-        let is_discarded = item.status == TranscriptionStatus::Discarded;
-        let is_transcribed = !is_failed && !is_discarded;
         let mut entries: Vec<(&'static str, String, u8, bool)> = Vec::new();
-        if is_discarded && item.has_audio {
-            entries.push((
-                "archive-restore",
-                t("controlPanel.history.discarded.recover"),
-                0,
-                false,
-            ));
-        }
-        if !is_discarded && item.has_audio {
+        if item.has_audio {
             let label = if item.route_kind.as_deref() == Some("translation") {
                 t("controlPanel.history.retryTranslationMode")
             } else {
                 t("controlPanel.history.retryTranscription")
             };
-            entries.push(("rotate-ccw", label, 1, false));
+            entries.push(("rotate-ccw", label, 0, false));
         }
-        if is_transcribed && item.raw_text.is_some() {
+        if item.raw_text.is_some() {
             entries.push((
                 "file-text",
                 t("controlPanel.history.viewRawTranscript"),
-                2,
+                1,
                 false,
             ));
         }
@@ -747,11 +575,11 @@ impl HistoryView {
             entries.push((
                 "folder-open",
                 t("controlPanel.history.showInFolder"),
-                3,
+                2,
                 false,
             ));
         }
-        entries.push(("trash2", t("controlPanel.history.deleteItem"), 4, true));
+        entries.push(("trash2", t("controlPanel.history.deleteItem"), 3, true));
 
         let mut menu = div()
             .id(("row-menu", id as usize))
@@ -806,14 +634,13 @@ impl HistoryView {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_menu = None;
                         match action {
-                            0 => this.retry(id, true, cx),
-                            1 => this.retry(id, false, cx),
-                            2 => {
+                            0 => this.retry(id, cx),
+                            1 => {
                                 if !this.expanded.remove(&id) {
                                     this.expanded.insert(id);
                                 }
                             }
-                            3 => Self::show_in_folder(id, cx),
+                            2 => Self::show_in_folder(id, cx),
                             _ => Self::delete(id, cx),
                         }
                         cx.notify();
@@ -835,12 +662,11 @@ impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
         let state = AppState::global(cx);
-        let (history, loaded, include, retention, hotkey) = {
+        let (history, loaded, retention, hotkey) = {
             let s = state.read(cx);
             (
                 s.history.clone(),
                 s.history_loaded,
-                s.include_discarded,
                 s.settings.data_retention_enabled,
                 s.settings.effective_dictation_key(),
             )
@@ -898,7 +724,7 @@ impl Render for HistoryView {
                     ),
             );
         } else if history.is_empty() && pending.is_none() {
-            content = content.child(render_empty_with_hotkey(self, include, &hotkey, &p));
+            content = content.child(render_empty_with_hotkey(&hotkey, &p));
         } else {
             // Group consecutive rows by local day.
             let mut groups: Vec<(String, Vec<TranscriptionItem>)> = Vec::new();
@@ -957,7 +783,6 @@ impl Render for HistoryView {
                             .pl(px(8.))
                             .bg(p.background)
                             .opacity(if show_controls { 1. } else { 0. })
-                            .child(self.render_discarded_toggle(include, &p))
                             .child(
                                 div()
                                     .id("clear-all")
@@ -1006,12 +831,7 @@ impl Render for HistoryView {
     }
 }
 
-fn render_empty_with_hotkey(
-    view: &HistoryView,
-    include: bool,
-    hotkey: &str,
-    p: &Palette,
-) -> AnyElement {
+fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
     let mut keys = div().flex().items_center().gap(px(4.));
     for (i, key) in backend::parse_hotkey_list(hotkey).into_iter().enumerate() {
         if i > 0 {
@@ -1019,25 +839,18 @@ fn render_empty_with_hotkey(
         }
         keys = keys.child(kbd(backend::format_hotkey_label(&key), p));
     }
-    empty_card(view, include, keys, p)
+    empty_card(keys, p)
 }
 
-fn empty_card(view: &HistoryView, include: bool, keys: Div, p: &Palette) -> AnyElement {
+fn empty_card(keys: Div, p: &Palette) -> AnyElement {
     div()
         .child(
             div()
-                .flex()
-                .items_center()
-                .justify_between()
                 .pt(px(8.))
                 .pb(px(10.))
-                .child(
-                    div()
-                        .text_size(px(TEXT_BODY))
-                        .text_color(p.muted_foreground)
-                        .child(t("controlPanel.history.sectionTitle")),
-                )
-                .child(view.render_discarded_toggle(include, p)),
+                .text_size(px(TEXT_BODY))
+                .text_color(p.muted_foreground)
+                .child(t("controlPanel.history.sectionTitle")),
         )
         .child(
             div()

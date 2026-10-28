@@ -257,6 +257,19 @@ impl Database {
         })
     }
 
+    /// Deletes failed and discarded rows, which History no longer keeps.
+    /// Returns their ids so their recordings can be removed.
+    pub fn delete_hidden_transcriptions(&self) -> Result<Vec<i64>> {
+        let conn = self.lock();
+        let ids = conn
+            .prepare(
+                "DELETE FROM transcriptions WHERE status IN ('failed', 'discarded') RETURNING id",
+            )?
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(ids)
+    }
+
     /// Returns false when the row does not exist.
     pub fn delete_transcription(&self, id: i64) -> Result<bool> {
         let changed = self
@@ -286,20 +299,6 @@ impl Database {
         self.lock().execute(
             "UPDATE transcriptions SET text = ?, raw_text = ? WHERE id = ?",
             params![text, raw_text, id],
-        )?;
-        Ok(())
-    }
-
-    pub fn update_transcription_status(
-        &self,
-        id: i64,
-        status: TranscriptionStatus,
-        error_message: Option<&str>,
-        error_code: Option<&str>,
-    ) -> Result<()> {
-        self.lock().execute(
-            "UPDATE transcriptions SET status = ?, error_message = ?, error_code = ? WHERE id = ?",
-            params![status.as_str(), error_message, error_code, id],
         )?;
         Ok(())
     }

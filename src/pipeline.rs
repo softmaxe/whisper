@@ -66,9 +66,7 @@ pub struct Transcript {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipelineOutcome {
     /// The server heard nothing usable, or echoed the dictionary prompt.
-    NoAudio {
-        dictionary_echo: bool,
-    },
+    NoAudio,
     Transcribed(Transcript),
     Failed {
         message: String,
@@ -192,9 +190,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         Ok(response) => response,
         Err(TranscriptionError::Cancelled) => return PipelineOutcome::Cancelled,
         Err(TranscriptionError::EmptyText) => {
-            return PipelineOutcome::NoAudio {
-                dictionary_echo: false,
-            };
+            return PipelineOutcome::NoAudio;
         }
         Err(err) => return PipelineOutcome::failed_from(&err),
     };
@@ -208,9 +204,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
             .as_deref()
             .is_some_and(|p| matches_dictionary_prompt(&raw, p));
     if echo {
-        return PipelineOutcome::NoAudio {
-            dictionary_echo: true,
-        };
+        return PipelineOutcome::NoAudio;
     }
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
@@ -222,9 +216,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     }
     let spoken_text = finalize_script(&cleaned, &input.settings);
     if spoken_text.trim().is_empty() {
-        return PipelineOutcome::NoAudio {
-            dictionary_echo: false,
-        };
+        return PipelineOutcome::NoAudio;
     }
     PipelineOutcome::Transcribed(Transcript {
         text: expand_snippets(&spoken_text, &input.snippets),
@@ -380,9 +372,7 @@ mod tests {
         i.dictionary = vec!["Supabase".into(), "Tauri".into()];
         assert_eq!(
             run_test(run(i, CancellationToken::new())),
-            PipelineOutcome::NoAudio {
-                dictionary_echo: true
-            }
+            PipelineOutcome::NoAudio
         );
     }
 
