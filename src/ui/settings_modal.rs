@@ -2367,48 +2367,38 @@ impl SettingsModal {
                                 }),
                                 &p,
                             )),
-                    )
-                    .child(
-                        div()
-                            .mt(px(20.))
-                            .child(
-                                div()
-                                    .mb(px(12.))
-                                    .text_size(px(TEXT_SMALL))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(p.foreground)
-                                    .child(t("settings.permissions.troubleshootingTitle")),
-                            )
-                            .child(settings_panel(
-                                vec![
-                                    settings_row(
-                                        t("settings.permissions.resetAccessibility.label"),
-                                        Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
-                                        Button::new("troubleshoot-ax")
-                                            .label(t("settings.permissions.troubleshoot"))
-                                            .variant(ButtonVariant::Ghost)
-                                            .size(ButtonSize::Sm)
-                                            .on_click(|_, _, cx| {
-                                                show_dialog(
-                                                    DialogRequest::confirm(
-                                                        t("settings.permissions.resetAccessibility.title"),
-                                                        Some(
-                                                            t("settings.permissions.resetAccessibility.description")
-                                                                .into(),
-                                                        ),
-                                                        false,
-                                                        |_, _| backend::request_accessibility_permission(),
-                                                    ),
-                                                    cx,
-                                                )
-                                            }),
-                                        &p,
-                                    )
-                                    .into_any_element(),
-                                ],
-                                &p,
-                            )),
                     ),
+            ))
+            .child(block(
+                div()
+                    .child(section_header(t("settings.permissions.troubleshootingTitle"), None, &p))
+                    .child(settings_panel(
+                        vec![
+                            settings_row(
+                                t("settings.permissions.resetAccessibility.label"),
+                                Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
+                                Button::new("troubleshoot-ax")
+                                    .label(t("settings.permissions.troubleshoot"))
+                                    .variant(ButtonVariant::Outline)
+                                    .size(ButtonSize::Sm)
+                                    .h(28.)
+                                    .on_click(|_, _, cx| {
+                                        show_dialog(
+                                            DialogRequest::confirm(
+                                                t("settings.permissions.resetAccessibility.title"),
+                                                Some(t("settings.permissions.resetAccessibility.description").into()),
+                                                false,
+                                                |_, _| backend::request_accessibility_permission(),
+                                            ),
+                                            cx,
+                                        )
+                                    }),
+                                &p,
+                            )
+                            .into_any_element(),
+                        ],
+                        &p,
+                    )),
             ))
             .into_any_element()
     }

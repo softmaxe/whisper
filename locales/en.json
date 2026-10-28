@@ -113,7 +113,7 @@
       "resetAccessibility": {
         "description": "This will remove Whisper from accessibility permissions. You'll need to re-grant access in System Settings > Privacy & Security > Accessibility.",
         "label": "Reset accessibility permissions",
-        "rowDescription": "Fix issues after reinstalling or rebuilding the app by removing and re-adding Whisper in System Settings",
+        "rowDescription": "Remove and re-add Whisper if auto-paste stops working after a reinstall",
         "title": "Reset Accessibility Permissions"
       },
       "grantAccess": "Grant Access",

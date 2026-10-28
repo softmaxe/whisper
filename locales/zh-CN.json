@@ -113,7 +113,7 @@
       "resetAccessibility": {
         "description": "这将从辅助功能权限中移除 Whisper。你需要在系统设置 > 隐私与安全 > 辅助功能中重新授权。",
         "label": "重置辅助功能权限",
-        "rowDescription": "重新安装或重新构建应用后，通过在系统设置中移除并重新添加 Whisper 来解决问题",
+        "rowDescription": "重新安装后自动粘贴失效时，移除并重新添加 Whisper",
         "title": "重置辅助功能权限"
       },
       "grantAccess": "授予访问权限",
