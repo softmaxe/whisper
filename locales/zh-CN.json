@@ -395,9 +395,10 @@
     "noneAvailable": "没有可用的模型"
   },
   "upload": {
-    "title": "上传音频",
+    "dropTitle": "拖入录音文件",
+    "dropHint": "音频或视频，可以一次拖入多个文件。",
+    "chooseFiles": "选择文件",
     "changeModel": "更改",
-    "dropOrBrowse": "拖放音频或视频文件，或点击浏览",
     "supportedFormats": "MP3、WAV、M4A、MP4、MOV 及大多数其他音频或视频格式",
     "unsupportedFiles": "已跳过 {{names}}：不支持的音频或视频格式。",
     "transcribe": "转录",
@@ -412,6 +413,8 @@
     "noProviderTitle": "尚未设置转录服务器",
     "noProviderAction": "打开转录设置",
     "queueProgress": "{{completed}}/{{total}} 已完成",
+    "queueTitle": "队列",
+    "queueEmpty": "一次拖入多个文件即可批量转录。",
     "cancelAll": "取消全部",
     "clearQueue": "清除",
     "batchCancelled": "已取消",
@@ -422,7 +425,11 @@
     "completionHint": "完成后可查看并复制全文",
     "savedToHistory": "已保存到历史记录",
     "copyFullText": "复制全文",
-    "viewInHistory": "在历史记录中查看"
+    "viewInHistory": "在历史记录中查看",
+    "settingsTitle": "转录",
+    "engine": "引擎",
+    "model": "模型",
+    "language": "语言"
   },
   "dictionary": {
     "clearAll": "全部清除",

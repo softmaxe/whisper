@@ -434,9 +434,10 @@
     "loadError": "Insights couldn't be read from this device."
   },
   "upload": {
-    "title": "Upload Audio",
+    "dropTitle": "Drop recordings here",
+    "dropHint": "Audio or video, one file or several at once.",
+    "chooseFiles": "Choose Files",
     "changeModel": "Change",
-    "dropOrBrowse": "Drop an audio or video file, or click to browse",
     "supportedFormats": "MP3, WAV, M4A, MP4, MOV and most other audio or video formats",
     "unsupportedFiles": "Skipped {{names}}: not a supported audio or video format.",
     "transcribe": "Transcribe",
@@ -451,6 +452,8 @@
     "noProviderTitle": "No transcription server set up",
     "noProviderAction": "Open Transcription Settings",
     "queueProgress": "{{completed}}/{{total}} completed",
+    "queueTitle": "Queue",
+    "queueEmpty": "Drop several files at once to transcribe them as a batch.",
     "cancelAll": "Cancel all",
     "clearQueue": "Clear",
     "batchCancelled": "Cancelled",
@@ -461,7 +464,11 @@
     "completionHint": "When it finishes, you can read and copy the full transcript.",
     "savedToHistory": "Saved to history",
     "copyFullText": "Copy full text",
-    "viewInHistory": "View in history"
+    "viewInHistory": "View in history",
+    "settingsTitle": "Transcription",
+    "engine": "Engine",
+    "model": "Model",
+    "language": "Language"
   },
   "dictionary": {
     "clearTitle": "Clear dictionary?",

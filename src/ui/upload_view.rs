@@ -3,6 +3,7 @@
 //! The view entity outlives navigation, so a running batch keeps draining
 //! while the user looks at other pages.
 
+use std::f32::consts::TAU;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -20,8 +21,8 @@ use crate::app_state::AppState;
 use super::components::{Button, ButtonSize, ButtonVariant, f32_tx, icon, spinner};
 use super::history_view::copy_with_toast;
 use super::theme::{
-    DUR_SHEET, FONT_VOICE, LINE_READING, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_CAPTION,
-    TEXT_DISPLAY, TEXT_READING, TEXT_SMALL, ease_out,
+    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, Palette, PaletteExt, TEXT_BODY,
+    TEXT_CAPTION, TEXT_DISPLAY, TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out,
 };
 
 pub enum UploadEvent {
@@ -173,16 +174,6 @@ impl UploadView {
             .remote_transcription_url
             .trim()
             .is_empty()
-    }
-
-    fn model_label(cx: &App) -> String {
-        let name = t("settings.transcription.modes.selfHosted");
-        let model = AppState::settings(cx).remote_transcription_model;
-        if model.trim().is_empty() {
-            name
-        } else {
-            format!("{name} · {model}")
-        }
     }
 
     fn reset(&mut self, cx: &mut Context<Self>) {
@@ -414,198 +405,161 @@ impl UploadView {
 
     // ---- Rendering -------------------------------------------------------------------------
 
-    fn render_idle(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_stage_panel(
+        &mut self,
+        wide: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = cx.palette();
-        let label = Self::model_label(cx);
+        let ready = Self::provider_ready(cx);
+        let stage = self.stage.clone();
+        let accepts_drop = ready && stage != Stage::Transcribing;
+        let browsable = ready && stage == Stage::Idle;
+        let content = match stage.clone() {
+            Stage::Idle if !ready => self.render_no_provider(cx),
+            Stage::Idle => self.render_idle(cx),
+            Stage::Selected => self.render_selected(cx),
+            Stage::Transcribing => self.render_transcribing(cx),
+            Stage::Complete {
+                text,
+                transcription_id,
+                save_error,
+            } => self.render_complete(text, transcription_id, save_error, wide, cx),
+            Stage::Error(error) => self.render_error(error, cx),
+        };
+        let notice = self.skipped_notice.clone();
+        let _ = window;
+
         div()
-            .id("upload-card")
-            .rounded(px(12.))
+            .id("upload-stage")
+            .group(STAGE_GROUP)
+            .flex()
+            .flex_col()
             .overflow_hidden()
-            .bg(p.card)
+            .rounded(px(12.))
             .border_1()
-            .border_color(if p.dark {
-                p.white.opacity(0.12)
-            } else {
-                p.foreground.opacity(0.1)
+            .border_color(panel_border(&p))
+            .bg(p.card)
+            .when(wide, |d| d.flex_grow(1.7).flex_basis(px(0.)).min_w_0())
+            .when(!wide, |d| d.w_full().min_h(px(340.)))
+            .when(accepts_drop, |d| {
+                d.drag_over::<ExternalPaths>(move |s, _, _, _| {
+                    s.border_color(p.foreground.opacity(0.35))
+                        .bg(p.hover_wash(0.03))
+                })
+                .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                    this.accept_paths(paths.paths().to_vec(), true, cx);
+                }))
             })
-            .drag_over::<ExternalPaths>(move |s, _, _, _| {
-                s.border_color(p.primary.opacity(0.3))
-                    .bg(p.primary.opacity(if p.dark { 0.06 } else { 0.04 }))
+            .when(browsable, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.border_color(p.border_hover))
+                    .on_click(cx.listener(|this, _, _, cx| this.browse(cx)))
             })
-            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.accept_paths(paths.paths().to_vec(), true, cx);
-            }))
             .child(
                 div()
-                    .id("upload-drop")
-                    .group("upload-drop")
-                    .relative()
-                    .px(px(36.))
-                    .pt(px(44.))
-                    .pb(px(36.))
+                    .flex_1()
+                    .min_h_0()
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .gap(px(10.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(p.hover_wash(0.02)))
-                    .on_click(cx.listener(|this, _, _, cx| this.browse(cx)))
-                    .child(
-                        div()
-                            .mb(px(8.))
-                            .size(px(52.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(13.))
-                            .border_1()
-                            .border_color(if p.dark {
-                                p.white.opacity(0.12)
-                            } else {
-                                p.foreground.opacity(0.1)
-                            })
-                            .bg(if p.dark {
-                                p.white.opacity(0.06)
-                            } else {
-                                p.foreground.opacity(0.04)
-                            })
-                            .child(icon("upload", 22., p.foreground.opacity(0.8))),
-                    )
-                    .child(
-                        div()
-                            .font_family(FONT_VOICE)
-                            .text_size(px(TEXT_DISPLAY))
-                            .font_weight(FontWeight::MEDIUM)
-                            .line_height(px(30.))
-                            .text_color(p.foreground)
-                            .child(t("upload.title")),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .text_color(p.foreground.opacity(0.8))
-                            .child(t("upload.dropOrBrowse")),
-                    )
-                    .child(
-                        div()
-                            .max_w(px(320.))
-                            .text_center()
-                            .text_size(px(TEXT_SMALL))
-                            .line_height(px(LINE_SMALL))
-                            .text_color(p.foreground.opacity(0.6))
-                            .child(t("upload.supportedFormats")),
+                    .child(content)
+                    .with_animation(
+                        SharedString::from(format!("upload-stage-{}", stage_key(&stage))),
+                        Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_out),
+                        |d, t| d.opacity(t),
                     ),
+            )
+            .when_some(notice, |d, notice| {
+                d.child(
+                    div()
+                        .px(px(28.))
+                        .pb(px(16.))
+                        .text_size(px(TEXT_CAPTION))
+                        .text_color(p.warning.opacity(0.8))
+                        .child(notice),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn render_idle(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        stage_body()
+            .child(waveform(&p, 0.09, false))
+            .child(
+                div()
+                    .mt(px(24.))
+                    .font_family(FONT_VOICE)
+                    .text_size(px(TEXT_DISPLAY))
+                    .font_weight(FontWeight::MEDIUM)
+                    .line_height(px(30.))
+                    .text_color(p.foreground)
+                    .child(t("upload.dropTitle")),
             )
             .child(
                 div()
-                    .id("upload-model")
-                    .group("upload-model")
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
-                    .py(px(12.))
-                    .pl(px(20.))
-                    .pr(px(16.))
-                    .border_t_1()
-                    .border_color(if p.dark {
-                        p.white.opacity(0.08)
-                    } else {
-                        p.foreground.opacity(0.08)
-                    })
-                    .bg(p.hover_wash(0.02))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(p.hover_wash(0.04)))
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.emit(UploadEvent::OpenSettings("uploadTranscription"))
-                    }))
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(TEXT_BODY))
-                            .text_color(p.foreground.opacity(0.85))
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .rounded(px(6.))
-                            .border_1()
-                            .border_color(if p.dark {
-                                p.white.opacity(0.12)
-                            } else {
-                                p.foreground.opacity(0.12)
-                            })
-                            .px(px(10.))
-                            .py(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.foreground.opacity(0.85))
-                            .group_hover("upload-model", |s| s.text_color(p.foreground))
-                            .child(t("upload.changeModel")),
-                    ),
+                    .mt(px(6.))
+                    .text_size(px(TEXT_BODY))
+                    .text_color(p.muted_foreground)
+                    .child(t("upload.dropHint")),
+            )
+            .child(
+                div()
+                    .mt(px(2.))
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .text_color(p.muted_foreground.opacity(0.7))
+                    .child(t("upload.supportedFormats")),
+            )
+            .child(
+                // No handler of its own: the click reaches the panel, which browses.
+                div().mt(px(18.)).flex().child(
+                    Button::new("upload-browse")
+                        .label(t("upload.chooseFiles"))
+                        .size(ButtonSize::Sm),
+                ),
             )
             .into_any_element()
     }
 
     fn render_no_provider(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(16.))
-            .py(px(8.))
+        stage_body()
+            .child(waveform(&p, 0.05, false))
             .child(
                 div()
-                    .size(px(40.))
+                    .mt(px(24.))
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .rounded(px(10.))
-                    .border_1()
-                    .border_color(if p.dark {
-                        p.white.opacity(0.1)
-                    } else {
-                        p.foreground.opacity(0.08)
-                    })
-                    .bg(if p.dark {
-                        p.white.opacity(0.05)
-                    } else {
-                        p.foreground.opacity(0.035)
-                    })
-                    .child(icon("settings", 17., p.foreground.opacity(0.45))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
+                    .gap(px(10.))
+                    .child(icon("settings", 18., p.muted_foreground))
                     .child(
                         div()
-                            .mb(px(4.))
-                            .text_size(px(TEXT_SMALL))
+                            .text_size(px(TEXT_TITLE))
                             .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
                             .child(t("upload.noProviderTitle")),
-                    )
-                    .child(
-                        div()
-                            .max_w(px(240.))
-                            .text_center()
-                            .text_size(px(TEXT_SMALL))
-                            .line_height(px(LINE_SMALL))
-                            .text_color(p.foreground.opacity(0.45))
-                            .child(t("upload.customEndpointInvalid")),
                     ),
             )
             .child(
-                Button::new("no-provider")
-                    .label(t("upload.noProviderAction"))
-                    .size(ButtonSize::Sm)
-                    .h(28.)
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.emit(UploadEvent::OpenSettings("uploadTranscription"))
-                    })),
+                div()
+                    .mt(px(6.))
+                    .max_w(px(360.))
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .text_color(p.muted_foreground)
+                    .child(t("upload.customEndpointInvalid")),
+            )
+            .child(
+                div().mt(px(18.)).flex().child(
+                    Button::new("no-provider")
+                        .label(t("upload.noProviderAction"))
+                        .size(ButtonSize::Sm)
+                        .on_click(cx.listener(|_, _, _, cx| {
+                            cx.emit(UploadEvent::OpenSettings("uploadTranscription"))
+                        })),
+                ),
             )
             .into_any_element()
     }
@@ -613,101 +567,55 @@ impl UploadView {
     fn render_selected(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let file = self.file.clone().expect("selected file");
-        let label = Self::model_label(cx);
         let disabled = self.batch_processing || !Self::provider_ready(cx);
-        div()
+        stage_body()
+            .child(waveform(&p, 0.2, false))
             .child(
                 div()
-                    .mb(px(12.))
-                    .p(px(16.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(if p.dark {
-                        p.white.opacity(0.1)
-                    } else {
-                        p.foreground.opacity(0.08)
-                    })
-                    .bg(if p.dark {
-                        p.white.opacity(0.03)
-                    } else {
-                        p.surface_1.opacity(0.4)
-                    })
+                    .mt(px(24.))
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(file_badge(&p))
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.))
+                            .flex_1()
+                            .min_w_0()
                             .child(
                                 div()
-                                    .size(px(36.))
-                                    .flex_none()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(8.))
-                                    .border_1()
-                                    .border_color(p.primary.opacity(if p.dark {
-                                        0.15
-                                    } else {
-                                        0.1
-                                    }))
-                                    .bg(p.primary.opacity(if p.dark { 0.12 } else { 0.08 }))
-                                    .child(icon("file-audio", 15., p.primary.opacity(0.6))),
+                                    .truncate()
+                                    .text_size(px(TEXT_BODY))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.foreground)
+                                    .child(file.name.clone()),
                             )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        div()
-                                            .truncate()
-                                            .text_size(px(TEXT_SMALL))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(p.foreground.opacity(0.7))
-                                            .child(file.name.clone()),
-                                    )
-                                    .when(!file.size.is_empty(), |d| {
-                                        d.child(
-                                            div()
-                                                .mt(px(2.))
-                                                .text_size(px(TEXT_SMALL))
-                                                .text_color(p.foreground.opacity(0.45))
-                                                .child(file.size.clone()),
-                                        )
-                                    })
-                                    .child(
-                                        div()
-                                            .id("selected-model")
-                                            .mt(px(2.))
-                                            .truncate()
-                                            .text_size(px(TEXT_SMALL))
-                                            .text_color(p.foreground.opacity(0.7))
-                                            .underline()
-                                            .cursor_pointer()
-                                            .hover(|s| s.text_color(p.foreground))
-                                            .child(label)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.emit(UploadEvent::OpenSettings(
-                                                    "uploadTranscription",
-                                                ))
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .id("selected-clear")
-                                    .p(px(4.))
-                                    .cursor_pointer()
-                                    .child(icon("x", 12., p.foreground.opacity(0.45)))
-                                    .on_click(cx.listener(|this, _, _, cx| this.reset(cx))),
-                            ),
+                            .when(!file.size.is_empty(), |d| {
+                                d.child(
+                                    div()
+                                        .mt(px(2.))
+                                        .text_size(px(TEXT_SMALL))
+                                        .text_color(p.muted_foreground)
+                                        .child(file.size.clone()),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id("selected-clear")
+                            .flex_none()
+                            .p(px(6.))
+                            .rounded(px(6.))
+                            .cursor_pointer()
+                            .hover(|s| s.bg(p.hover_wash(0.06)))
+                            .child(icon("x", 12., p.muted_foreground))
+                            .on_click(cx.listener(|this, _, _, cx| this.reset(cx))),
                     ),
             )
             .child(
                 div()
+                    .mt(px(18.))
                     .flex()
                     .items_center()
-                    .justify_center()
                     .gap(px(8.))
                     .child(
                         Button::new("upload-transcribe")
@@ -730,46 +638,46 @@ impl UploadView {
     fn render_transcribing(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let name = self.file.as_ref().map(|f| f.name.clone());
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
+        stage_body()
+            .child(waveform(&p, 0.22, true))
             .child(
                 div()
-                    .mb(px(20.))
-                    .child(spinner("upload-spin", 32., p.primary)),
-            )
-            .child(
-                div()
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(t("upload.transcribing")),
+                    .mt(px(24.))
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(spinner("upload-spin", 15., p.foreground.opacity(0.7)))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_TITLE))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
+                            .child(t("upload.transcribing")),
+                    ),
             )
             .when_some(name, |d, name| {
                 d.child(
                     div()
                         .mt(px(4.))
-                        .max_w(px(200.))
                         .truncate()
-                        .text_size(px(TEXT_SMALL))
+                        .text_size(px(TEXT_BODY))
                         .text_color(p.muted_foreground)
                         .child(name),
                 )
             })
             .child(
                 div()
-                    .mt(px(16.))
-                    .text_center()
+                    .mt(px(2.))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground)
+                    .text_color(p.muted_foreground.opacity(0.7))
                     .child(t("upload.completionHint")),
             )
             .child(
-                div().mt(px(16.)).child(
+                div().mt(px(18.)).flex().child(
                     Button::new("cancel-upload")
                         .label(t("upload.cancelTranscription"))
-                        .variant(ButtonVariant::Ghost)
+                        .variant(ButtonVariant::Outline)
                         .size(ButtonSize::Sm)
                         .on_click(cx.listener(|this, _, _, cx| this.cancel_transcription(cx))),
                 ),
@@ -782,147 +690,95 @@ impl UploadView {
         text: String,
         transcription_id: Option<i64>,
         save_error: Option<String>,
-        window: &mut Window,
+        wide: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
-        // The ring fills, then the check draws in, as in `ring-fill`/`draw-check`.
-        let ring = f32_tx("upload-ring", 1., 800, ease_out, window, cx);
         let file_name = self.file.as_ref().map(|f| f.name.clone());
         let copy_text = text.clone();
+        let status = match (&save_error, transcription_id) {
+            (Some(err), _) => Some((err.clone(), p.destructive.opacity(0.8))),
+            (None, Some(_)) => Some((t("upload.savedToHistory"), p.muted_foreground)),
+            (None, None) => Some((
+                t("controlPanel.history.dataRetentionDisabled"),
+                p.muted_foreground,
+            )),
+        };
         div()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
-            .items_center()
             .child(
                 div()
-                    .relative()
-                    .size(px(48.))
-                    .mb(px(16.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .px(px(20.))
+                    .py(px(14.))
+                    .border_b_1()
+                    .border_color(panel_border(&p))
+                    .child(icon("check", 14., p.success))
                     .child(
                         div()
-                            .absolute()
-                            .inset_0()
-                            .rounded_full()
-                            .border(px(1.5))
-                            .border_color(p.success.opacity(0.15)),
+                            .flex_none()
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.foreground)
+                            .child(t("upload.transcriptionComplete")),
                     )
                     .child(
                         div()
-                            .absolute()
-                            .inset_0()
-                            .rounded_full()
-                            .border(px(1.5))
-                            .border_color(p.success.opacity(0.6 * ring))
-                            .with_animation(
-                                "ring-fill",
-                                Animation::new(Duration::from_millis(800)).with_easing(ease_out),
-                                |d, t| d.opacity(t),
-                            ),
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.muted_foreground)
+                            .when_some(file_name, |d, name| d.child(name)),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("check", 20., p.success.opacity(0.7)))
-                            .with_animation(
-                                "draw-check",
-                                Animation::new(Duration::from_millis(900)).with_easing(ease_out),
-                                |d, t| d.opacity(((t - 0.55) / 0.45).clamp(0., 1.)),
-                            ),
-                    ),
-            )
-            .child(
-                div()
-                    .mb(px(4.))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(t("upload.transcriptionComplete")),
-            )
-            .when(transcription_id.is_some(), |d| {
-                d.child(
-                    div()
-                        .mb(px(16.))
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.muted_foreground)
-                        .child(t("upload.savedToHistory")),
-                )
-            })
-            .child(
-                div()
-                    .w_full()
-                    .mb(px(16.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(p.border)
-                    .bg(p.surface_1)
-                    .overflow_hidden()
-                    .when_some(file_name, |d, name| {
+                    .when_some(status, |d, (status, color)| {
                         d.child(
                             div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .px(px(16.))
-                                .py(px(10.))
-                                .border_b_1()
-                                .border_color(p.border)
-                                .child(icon("file-audio", 14., p.muted_foreground))
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .text_size(px(TEXT_SMALL))
-                                        .text_color(p.muted_foreground)
-                                        .child(name),
-                                ),
+                                .flex_none()
+                                .max_w(px(220.))
+                                .truncate()
+                                .text_size(px(TEXT_CAPTION))
+                                .text_color(color)
+                                .child(status),
                         )
-                    })
-                    .child(
-                        div()
-                            .id("upload-result")
-                            .max_h(px(320.))
-                            .overflow_y_scroll()
-                            .p(px(16.))
-                            .font_family(FONT_VOICE)
-                            .text_size(px(TEXT_READING))
-                            .line_height(px(LINE_READING))
-                            .text_color(p.foreground)
-                            .child(text),
-                    ),
+                    }),
             )
-            .when_some(save_error.clone(), |d, err| {
-                d.child(
-                    div()
-                        .mb(px(16.))
-                        .text_center()
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.destructive)
-                        .child(err),
-                )
-            })
-            .when(transcription_id.is_none() && save_error.is_none(), |d| {
-                d.child(
-                    div()
-                        .mb(px(16.))
-                        .text_center()
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.muted_foreground)
-                        .child(t("controlPanel.history.dataRetentionDisabled")),
-                )
-            })
             .child(
                 div()
+                    .id("upload-result")
+                    .flex_1()
+                    .min_h_0()
+                    .when(!wide, |d| d.max_h(px(360.)))
+                    .overflow_y_scroll()
+                    .px(px(24.))
+                    .py(px(20.))
+                    .font_family(FONT_VOICE)
+                    .text_size(px(TEXT_READING))
+                    .line_height(px(LINE_READING))
+                    .text_color(p.foreground)
+                    .child(text),
+            )
+            .child(
+                div()
+                    .flex_none()
                     .flex()
                     .flex_wrap()
                     .items_center()
-                    .justify_center()
                     .gap(px(8.))
+                    .px(px(20.))
+                    .py(px(14.))
+                    .border_t_1()
+                    .border_color(panel_border(&p))
                     .child(
                         Button::new("copy-full")
                             .label(t("upload.copyFullText"))
+                            .icon("copy", 13.)
                             .size(ButtonSize::Sm)
                             .on_click(move |_, _, cx| copy_with_toast(copy_text.clone(), cx)),
                     )
@@ -937,6 +793,7 @@ impl UploadView {
                                 ),
                         )
                     })
+                    .child(div().flex_1())
                     .child(
                         Button::new("upload-another")
                             .label(t("upload.uploadAnother"))
@@ -950,55 +807,39 @@ impl UploadView {
 
     fn render_error(&mut self, error: String, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        div()
+        stage_body()
+            .child(waveform(&p, 0.05, false))
             .child(
                 div()
-                    .mb(px(16.))
-                    .p(px(16.))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(p.destructive.opacity(if p.dark { 0.2 } else { 0.15 }))
-                    .bg(p.destructive.opacity(if p.dark { 0.05 } else { 0.03 }))
+                    .mt(px(24.))
+                    .flex()
+                    .items_start()
+                    .gap(px(10.))
+                    .child(div().mt(px(2.)).child(icon(
+                        "alert-circle",
+                        15.,
+                        p.destructive.opacity(0.8),
+                    )))
                     .child(
                         div()
-                            .flex()
-                            .items_start()
-                            .gap(px(10.))
-                            .child(div().mt(px(2.)).child(icon(
-                                "alert-circle",
-                                14.,
-                                p.destructive.opacity(0.5),
-                            )))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .text_size(px(TEXT_SMALL))
-                                    .line_height(px(LINE_SMALL))
-                                    .text_color(p.destructive.opacity(0.7))
-                                    .child(error),
-                            )
-                            .child(
-                                div()
-                                    .id("error-dismiss")
-                                    .p(px(2.))
-                                    .cursor_pointer()
-                                    .child(icon("x", 11., p.foreground.opacity(0.45)))
-                                    .on_click(cx.listener(|this, _, _, cx| this.reset(cx))),
-                            ),
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(TEXT_BODY))
+                            .line_height(px(20.))
+                            .text_color(p.foreground)
+                            .child(error),
                     ),
             )
             .child(
                 div()
+                    .mt(px(18.))
                     .flex()
                     .items_center()
-                    .justify_center()
                     .gap(px(8.))
                     .child(
                         Button::new("upload-retry")
                             .label(t("upload.retry"))
-                            .variant(ButtonVariant::Ghost)
                             .size(ButtonSize::Sm)
-                            .h(28.)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if this.file.is_some() {
                                     this.transcribe(cx)
@@ -1012,14 +853,101 @@ impl UploadView {
                             .label(t("upload.startOver"))
                             .variant(ButtonVariant::Ghost)
                             .size(ButtonSize::Sm)
-                            .h(28.)
                             .on_click(cx.listener(|this, _, _, cx| this.reset(cx))),
                     ),
             )
             .into_any_element()
     }
 
-    fn render_queue(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let s = AppState::settings(cx);
+        let model = s.remote_transcription_model.trim().to_string();
+        let language = crate::text::language::languages()
+            .iter()
+            .find(|l| l.code == s.preferred_language)
+            .map(|l| l.label.clone())
+            .unwrap_or_else(|| s.preferred_language.clone());
+        let row = |label: String, value: AnyElement| {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(12.))
+                .px(px(16.))
+                .py(px(5.))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(TEXT_SMALL))
+                        .text_color(p.muted_foreground)
+                        .child(label),
+                )
+                .child(div().min_w_0().truncate().child(value))
+        };
+        let text_value = |value: String| {
+            div()
+                .truncate()
+                .text_size(px(TEXT_SMALL))
+                .text_color(p.foreground)
+                .child(value)
+                .into_any_element()
+        };
+        div()
+            .id("upload-settings")
+            .group("upload-settings")
+            .flex_none()
+            .pb(px(10.))
+            .rounded(px(12.))
+            .border_1()
+            .border_color(panel_border(&p))
+            .cursor_pointer()
+            .hover(|s| s.bg(p.hover_wash(0.02)))
+            .on_click(
+                cx.listener(|_, _, _, cx| {
+                    cx.emit(UploadEvent::OpenSettings("uploadTranscription"))
+                }),
+            )
+            .child(side_header(
+                &p,
+                t("upload.settingsTitle"),
+                Some(
+                    div()
+                        .text_size(px(TEXT_CAPTION))
+                        .text_color(p.muted_foreground)
+                        .group_hover("upload-settings", |s| s.text_color(p.foreground))
+                        .child(t("upload.changeModel"))
+                        .into_any_element(),
+                ),
+            ))
+            .child(row(
+                t("upload.engine"),
+                text_value(t("settings.transcription.modes.selfHosted")),
+            ))
+            .child(row(
+                t("upload.model"),
+                if model.is_empty() {
+                    text_value("—".into())
+                } else {
+                    div()
+                        .truncate()
+                        .font_family(FONT_MONO)
+                        .text_size(px(TEXT_CAPTION))
+                        .text_color(p.foreground)
+                        .child(model)
+                        .into_any_element()
+                },
+            ))
+            .child(row(t("upload.language"), text_value(language)))
+            .into_any_element()
+    }
+
+    fn render_queue(
+        &mut self,
+        wide: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = cx.palette();
         let total = self.queue.len();
         let completed = self
@@ -1045,22 +973,60 @@ impl UploadView {
             .iter()
             .any(|i| i.status == ItemStatus::Done && i.transcription_id.is_none());
 
+        // Cancels a running batch, or clears a finished one.
+        let cancels = self.batch_processing && !all_done;
+        let action = (cancels || all_done).then(|| {
+            div()
+                .id("queue-action")
+                .text_size(px(TEXT_CAPTION))
+                .text_color(p.muted_foreground)
+                .cursor_pointer()
+                .hover(|s| s.text_color(p.foreground))
+                .child(if cancels {
+                    t("upload.cancelAll")
+                } else {
+                    t("upload.clearQueue")
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if cancels {
+                        this.cancel_batch(cx)
+                    } else {
+                        this.clear_queue(cx)
+                    }
+                }))
+                .into_any_element()
+        });
+
+        let mut title = t("upload.queueTitle");
+        if total > 0 {
+            title = format!(
+                "{title} · {}",
+                t_with(
+                    "upload.queueProgress",
+                    &[
+                        ("completed", &completed.to_string()),
+                        ("total", &total.to_string()),
+                    ],
+                )
+            );
+        }
+
         let mut list = div()
             .id("batch-list")
-            .max_h(px(300.))
+            .when(wide, |d| d.flex_1().min_h_0())
+            .when(!wide, |d| d.max_h(px(300.)))
             .overflow_y_scroll()
+            .px(px(8.))
             .flex()
-            .flex_col()
-            .gap(px(4.));
+            .flex_col();
         for (index, item) in self.queue.iter().enumerate() {
             let status_icon = match item.status {
-                ItemStatus::Done => icon("check", 12., p.success.opacity(0.7)).into_any_element(),
-                ItemStatus::Error => icon("x", 12., p.destructive.opacity(0.7)).into_any_element(),
-                ItemStatus::Queued => {
-                    icon("clock", 12., p.foreground.opacity(0.45)).into_any_element()
-                }
+                ItemStatus::Done => icon("check", 12., p.success).into_any_element(),
+                ItemStatus::Error => icon("x", 12., p.destructive.opacity(0.8)).into_any_element(),
+                ItemStatus::Queued => icon("clock", 12., p.muted_foreground).into_any_element(),
                 ItemStatus::Transcribing => {
-                    spinner(("batch-spin", index), 12., p.primary.opacity(0.6)).into_any_element()
+                    spinner(("batch-spin", index), 12., p.foreground.opacity(0.7))
+                        .into_any_element()
                 }
             };
             let id = item.id.clone();
@@ -1068,268 +1034,308 @@ impl UploadView {
                 .text
                 .clone()
                 .filter(|_| item.transcription_id.is_none());
-            list =
-                list.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .px(px(10.))
-                        .py(px(6.))
-                        .rounded(px(6.))
-                        .text_size(px(TEXT_SMALL))
-                        .border_1()
-                        .border_color(if item.status == ItemStatus::Error {
-                            p.destructive.opacity(0.15)
-                        } else if p.dark {
-                            p.white.opacity(0.1)
-                        } else {
-                            p.foreground.opacity(0.04)
-                        })
-                        .bg(if p.dark {
-                            p.white.opacity(0.02)
-                        } else {
-                            p.surface_1.opacity(0.3)
-                        })
-                        .child(status_icon)
-                        .child(
-                            div()
-                                .flex_1()
-                                .truncate()
-                                .text_color(p.foreground.opacity(0.6))
-                                .child(item.name.clone()),
-                        )
-                        .when(
-                            item.status == ItemStatus::Done && item.transcription_id.is_some(),
-                            |d| {
-                                d.child(
-                                    div()
-                                        .id(("batch-history", index))
-                                        .text_size(px(TEXT_CAPTION))
-                                        .text_color(p.primary.opacity(0.5))
-                                        .cursor_pointer()
-                                        .hover(|s| s.text_color(p.primary.opacity(0.7)))
-                                        .child(t("controlPanel.history.sectionTitle"))
-                                        .on_click(cx.listener(|_, _, _, cx| {
-                                            cx.emit(UploadEvent::OpenHistory)
-                                        })),
+            let link = |id: (&'static str, usize), label: String| {
+                div()
+                    .id(id)
+                    .flex_none()
+                    .text_size(px(TEXT_CAPTION))
+                    .text_color(p.muted_foreground)
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(p.foreground))
+                    .child(label)
+            };
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(8.))
+                    .py(px(6.))
+                    .rounded(px(6.))
+                    .text_size(px(TEXT_SMALL))
+                    .child(div().flex_none().child(status_icon))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(if item.status == ItemStatus::Queued {
+                                p.muted_foreground
+                            } else {
+                                p.foreground
+                            })
+                            .child(item.name.clone()),
+                    )
+                    .when(
+                        item.status == ItemStatus::Done && item.transcription_id.is_some(),
+                        |d| {
+                            d.child(
+                                link(
+                                    ("batch-history", index),
+                                    t("controlPanel.history.sectionTitle"),
                                 )
-                            },
+                                .on_click(
+                                    cx.listener(|_, _, _, cx| cx.emit(UploadEvent::OpenHistory)),
+                                ),
+                            )
+                        },
+                    )
+                    .when_some(copy, |d, text| {
+                        d.child(
+                            link(("batch-copy", index), t("controlPanel.history.copyText"))
+                                .on_click(move |_, _, cx| copy_with_toast(text.clone(), cx)),
                         )
-                        .when_some(copy, |d, text| {
+                    })
+                    .when_some(
+                        item.error
+                            .clone()
+                            .filter(|_| item.status == ItemStatus::Error),
+                        |d, err| {
                             d.child(
                                 div()
-                                    .id(("batch-copy", index))
+                                    .flex_none()
+                                    .max_w(px(110.))
+                                    .truncate()
                                     .text_size(px(TEXT_CAPTION))
-                                    .text_color(p.primary.opacity(0.5))
-                                    .cursor_pointer()
-                                    .hover(|s| s.text_color(p.primary.opacity(0.7)))
-                                    .child(t("controlPanel.history.copyText"))
-                                    .on_click(move |_, _, cx| copy_with_toast(text.clone(), cx)),
+                                    .text_color(p.destructive.opacity(0.8))
+                                    .child(err),
                             )
-                        })
-                        .when_some(
-                            item.error
-                                .clone()
-                                .filter(|_| item.status == ItemStatus::Error),
-                            |d, err| {
-                                d.child(
-                                    div()
-                                        .max_w(px(80.))
-                                        .truncate()
-                                        .text_size(px(TEXT_CAPTION))
-                                        .text_color(p.destructive.opacity(0.5))
-                                        .child(err),
-                                )
-                            },
+                        },
+                    )
+                    .when(item.status == ItemStatus::Queued, |d| {
+                        d.child(
+                            div()
+                                .id(("batch-remove", index))
+                                .flex_none()
+                                .p(px(2.))
+                                .cursor_pointer()
+                                .child(icon("trash2", 11., p.muted_foreground))
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.queue.retain(|i| i.id != id);
+                                    cx.notify();
+                                })),
                         )
-                        .when(item.status == ItemStatus::Queued, |d| {
-                            d.child(
-                                div()
-                                    .id(("batch-remove", index))
-                                    .cursor_pointer()
-                                    .child(icon("trash2", 10., p.foreground.opacity(0.45)))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.queue.retain(|i| i.id != id);
-                                        cx.notify();
-                                    })),
-                            )
-                        }),
-                );
+                    }),
+            );
         }
 
         div()
-            .mt(px(12.))
-            .child(
-                div()
-                    .mb(px(12.))
-                    .child(
-                        div()
-                            .mb(px(6.))
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .flex()
-                                    .text_size(px(TEXT_SMALL))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(p.foreground.opacity(0.5))
-                                    .child(t_with(
-                                        "upload.queueProgress",
-                                        &[
-                                            ("completed", &completed.to_string()),
-                                            ("total", &total.to_string()),
-                                        ],
-                                    ))
-                                    .when(failed > 0, |d| {
-                                        d.child(
-                                            div()
-                                                .font_weight(FontWeight::NORMAL)
-                                                .text_color(p.destructive.opacity(0.5))
-                                                .child(format!(
-                                                    " · {}",
-                                                    t_with(
-                                                        "upload.queueFailed",
-                                                        &[("n", &failed.to_string())]
-                                                    )
-                                                )),
-                                        )
-                                    }),
-                            )
-                            .when(all_done, |d| {
-                                d.child(
-                                    Button::new("clear-queue")
-                                        .label(t("upload.clearQueue"))
-                                        .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Sm)
-                                        .h(24.)
-                                        .text_size(10.)
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.clear_queue(cx)),
-                                        ),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .h(px(3.))
-                            .rounded_full()
-                            .overflow_hidden()
-                            .bg(if p.dark {
-                                p.white.opacity(0.05)
-                            } else {
-                                p.foreground.opacity(0.05)
-                            })
-                            .child(
-                                div()
-                                    .h_full()
-                                    .w(relative(progress))
-                                    .rounded_full()
-                                    .bg(p.primary.opacity(0.5)),
-                            ),
-                    ),
-            )
-            .child(list)
+            .flex()
+            .flex_col()
+            .rounded(px(12.))
+            .border_1()
+            .border_color(panel_border(&p))
+            .when(wide && total > 0, |d| d.flex_1().min_h_0())
+            .child(side_header(&p, title, action))
+            .when(failed > 0, |d| {
+                d.child(
+                    div()
+                        .px(px(16.))
+                        .pb(px(6.))
+                        .text_size(px(TEXT_CAPTION))
+                        .text_color(p.destructive.opacity(0.8))
+                        .child(t_with("upload.queueFailed", &[("n", &failed.to_string())])),
+                )
+            })
+            .when(total == 0, |d| {
+                d.child(
+                    div()
+                        .px(px(16.))
+                        .text_size(px(TEXT_SMALL))
+                        .line_height(px(LINE_SMALL))
+                        .text_color(p.muted_foreground.opacity(0.8))
+                        .child(t("upload.queueEmpty")),
+                )
+            })
+            .when(total > 0, |d| {
+                d.child(
+                    div()
+                        .mx(px(16.))
+                        .mb(px(6.))
+                        .h(px(3.))
+                        .rounded_full()
+                        .overflow_hidden()
+                        .bg(p.hover_wash(0.06))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(relative(progress))
+                                .rounded_full()
+                                .bg(p.foreground.opacity(0.6)),
+                        ),
+                )
+                .child(list)
+            })
             .when(unsaved, |d| {
                 d.child(
                     div()
-                        .mt(px(8.))
-                        .text_center()
+                        .px(px(16.))
+                        .pt(px(6.))
                         .text_size(px(TEXT_CAPTION))
-                        .text_color(p.foreground.opacity(0.45))
+                        .text_color(p.muted_foreground)
                         .child(t("controlPanel.history.dataRetentionDisabled")),
-                )
-            })
-            .when(self.batch_processing && !all_done, |d| {
-                d.child(
-                    div().mt(px(12.)).flex().justify_center().child(
-                        Button::new("cancel-batch")
-                            .label(t("upload.cancelAll"))
-                            .variant(ButtonVariant::Ghost)
-                            .size(ButtonSize::Sm)
-                            .h(28.)
-                            .on_click(cx.listener(|this, _, _, cx| this.cancel_batch(cx))),
-                    ),
                 )
             })
             .when(!self.batch_processing && has_queued, |d| {
                 let disabled = !Self::provider_ready(cx) || self.stage == Stage::Transcribing;
                 d.child(
-                    div().mt(px(12.)).flex().justify_center().child(
+                    div().px(px(12.)).pt(px(8.)).flex().child(
                         Button::new("batch-transcribe")
                             .label(t("upload.transcribe"))
                             .size(ButtonSize::Sm)
+                            .full_width()
                             .disabled(disabled)
                             .on_click(cx.listener(|this, _, _, cx| this.process_queue(cx))),
                     ),
                 )
             })
+            .child(div().flex_none().h(px(12.)))
             .into_any_element()
     }
 }
 
 impl Render for UploadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = cx.palette();
-        let ready = Self::provider_ready(cx);
-        let stage = self.stage.clone();
-        let body = match stage.clone() {
-            Stage::Idle if !ready => self.render_no_provider(cx),
-            Stage::Idle => self.render_idle(cx),
-            Stage::Selected => self.render_selected(cx),
-            Stage::Transcribing => self.render_transcribing(cx),
-            Stage::Complete {
-                text,
-                transcription_id,
-                save_error,
-            } => self.render_complete(text, transcription_id, save_error, window, cx),
-            Stage::Error(error) => self.render_error(error, cx),
-        };
-        let wide = matches!(stage, Stage::Complete { .. });
-        let narrow = !matches!(stage, Stage::Complete { .. } | Stage::Idle);
-        let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
-        let notice = self.skipped_notice.clone();
-        let viewport = window.viewport_size().height - px(66.);
+        let viewport = window.viewport_size();
+        let wide = viewport.width >= px(WIDE_MIN_WIDTH);
+        let stage = self.render_stage_panel(wide, window, cx);
+        let settings = self.render_settings(cx);
+        let queue = self.render_queue(wide, window, cx);
 
         div()
             .w_full()
-            .min_h(viewport)
             .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .px(px(24.))
+            .gap(px(16.))
+            .p(px(20.))
+            .when(wide, |d| d.flex_row().h(viewport.height - px(66.)))
+            .when(!wide, |d| d.flex_col().min_h(viewport.height - px(66.)))
+            .child(stage)
             .child(
                 div()
-                    .w_full()
-                    .max_w(px(if wide { 672. } else { 448. }))
-                    .when(wide, |d| d.py(px(24.)))
-                    .child(
-                        div()
-                            .mx_auto()
-                            .when(narrow, |d| d.max_w(px(320.)))
-                            .child(body)
-                            .when_some(notice, |d, notice| {
-                                d.child(
-                                    div()
-                                        .mt(px(8.))
-                                        .text_center()
-                                        .text_size(px(TEXT_CAPTION))
-                                        .text_color(p.warning.opacity(0.6))
-                                        .child(notice),
-                                )
-                            })
-                            .children(queue),
-                    )
-                    .with_animation(
-                        SharedString::from(format!("upload-stage-{}", stage_key(&stage))),
-                        Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_out),
-                        |d, t| d.opacity(t).mt(px(8. * (1. - t))),
-                    ),
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .when(wide, |d| {
+                        d.flex_grow(1.)
+                            .flex_basis(px(0.))
+                            .min_w(px(260.))
+                            .max_w(px(360.))
+                    })
+                    .when(!wide, |d| d.w_full())
+                    .child(settings)
+                    .child(queue),
             )
     }
+}
+
+/// Window width at which the side column moves beside the stage panel.
+const WIDE_MIN_WIDTH: f32 = 860.;
+
+/// Hover and drag styles on the stage panel's children key off this group.
+const STAGE_GROUP: &str = "upload-stage";
+
+/// Height of the decorative waveform, in px.
+const WAVE_HEIGHT: f32 = 96.;
+
+/// Bar heights of the decorative waveform as fractions of `WAVE_HEIGHT`.
+/// Fixed so the motif stays put between renders.
+const WAVE: [f32; 56] = [
+    0.25, 0.34, 0.22, 0.18, 0.24, 0.43, 0.26, 0.33, 0.54, 0.37, 0.52, 0.65, 0.73, 0.54, 0.44, 0.54,
+    0.55, 0.64, 0.47, 0.81, 0.4, 0.82, 0.36, 0.54, 0.63, 0.7, 0.73, 0.78, 0.83, 0.59, 0.89, 0.37,
+    0.38, 0.59, 0.87, 0.38, 0.79, 0.69, 0.8, 0.51, 0.71, 0.7, 0.58, 0.59, 0.39, 0.64, 0.56, 0.55,
+    0.45, 0.36, 0.43, 0.25, 0.21, 0.27, 0.18, 0.19,
+];
+
+fn panel_border(p: &Palette) -> Hsla {
+    if p.dark {
+        p.white.opacity(0.08)
+    } else {
+        p.border
+    }
+}
+
+/// The stage panel's padded column: the waveform fills the space above and
+/// the stage's text and actions sit at the bottom left.
+fn stage_body() -> Div {
+    div().flex_1().flex().flex_col().p(px(28.))
+}
+
+/// A static waveform, or a rolling one while `animated`. `tone` is the bar
+/// opacity; bars brighten while files are dragged over the stage panel.
+fn waveform(p: &Palette, tone: f32, animated: bool) -> Div {
+    let rest = p.foreground.opacity(tone);
+    let lit = p.foreground.opacity(0.4);
+    let mut bars = div()
+        .w_full()
+        .h(px(WAVE_HEIGHT))
+        .flex()
+        .items_center()
+        .gap(px(3.));
+    for (i, level) in WAVE.iter().copied().enumerate() {
+        let height = (WAVE_HEIGHT * level).max(4.);
+        let bar = div()
+            .flex_1()
+            .h(px(height))
+            .rounded(px(1.5))
+            .bg(rest)
+            .group_drag_over::<ExternalPaths>(STAGE_GROUP, move |s| s.bg(lit));
+        bars = bars.child(if animated {
+            let offset = i as f32 / WAVE.len() as f32;
+            bar.with_animation(
+                ("upload-wave", i),
+                Animation::new(Duration::from_millis(1600)).repeat(),
+                move |d, t| {
+                    let k = 0.5 - 0.5 * ((t - offset) * TAU).cos();
+                    d.h(px(height * (0.45 + 0.55 * k)))
+                },
+            )
+            .into_any_element()
+        } else {
+            bar.into_any_element()
+        });
+    }
+    div()
+        .flex_1()
+        .min_h(px(WAVE_HEIGHT))
+        .flex()
+        .items_center()
+        .child(bars)
+}
+
+fn file_badge(p: &Palette) -> Div {
+    div()
+        .size(px(36.))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(8.))
+        .border_1()
+        .border_color(panel_border(p))
+        .bg(p.hover_wash(0.04))
+        .child(icon("file-audio", 15., p.foreground.opacity(0.7)))
+}
+
+/// Title row of a side-column card, with an optional trailing control.
+fn side_header(p: &Palette, title: String, trailing: Option<AnyElement>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(8.))
+        .px(px(16.))
+        .pt(px(12.))
+        .pb(px(8.))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(px(TEXT_CAPTION))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.muted_foreground)
+                .child(title),
+        )
+        .children(trailing)
 }
 
 fn stage_key(stage: &Stage) -> &'static str {
