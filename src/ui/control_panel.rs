@@ -18,8 +18,8 @@ use super::insights_view::InsightsView;
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::theme::{
-    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_MONO, FONT_UI, LINE_TITLE, PaletteExt, TEXT_BODY,
-    TEXT_CAPTION, TEXT_TITLE, ease_out, ease_snap,
+    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_MONO, FONT_UI, NAV_ROW_HEIGHT, PaletteExt,
+    TEXT_BODY, TEXT_CAPTION, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
 };
 use super::upload_view::{UploadEvent, UploadView};
 
@@ -233,11 +233,9 @@ impl ControlPanel {
         for view in PanelView::ALL {
             let is_active = view == active;
             let icon_color = if is_active {
-                p.primary
-            } else if p.dark {
-                p.foreground.opacity(0.65)
+                p.foreground
             } else {
-                p.foreground.opacity(0.7)
+                p.foreground.opacity(0.55)
             };
             nav = nav.child(
                 div()
@@ -246,16 +244,12 @@ impl ControlPanel {
                     .items_center()
                     .gap(px(10.))
                     .w_full()
-                    .h(px(32.))
+                    .h(px(NAV_ROW_HEIGHT))
                     .px(px(10.))
                     .rounded(px(6.))
                     .cursor_pointer()
                     .when(is_active, |d| {
-                        d.bg(if p.dark {
-                            p.white.opacity(0.06)
-                        } else {
-                            p.primary.opacity(0.08)
-                        })
+                        d.bg(p.hover_wash(if p.dark { 0.08 } else { 0.06 }))
                     })
                     .when(!is_active, |d| d.hover(|s| s.bg(p.hover_wash(0.04))))
                     .child(icon(view.icon(), 16., icon_color))
@@ -266,7 +260,7 @@ impl ControlPanel {
                             .text_color(if is_active {
                                 p.foreground
                             } else {
-                                p.foreground.opacity(if p.dark { 0.85 } else { 0.9 })
+                                p.foreground.opacity(if p.dark { 0.75 } else { 0.8 })
                             })
                             .child(view.label()),
                     )
@@ -281,7 +275,12 @@ impl ControlPanel {
             .flex()
             .flex_col()
             .bg(p.surface_window)
-            .child(drag_region().w_full().h(px(40.)).flex_none())
+            .child(
+                drag_region()
+                    .w_full()
+                    .h(px(WORKSPACE_TOP_BAR_HEIGHT))
+                    .flex_none(),
+            )
             .child(nav)
             .child(div().flex_1())
             .child(
@@ -292,20 +291,16 @@ impl ControlPanel {
                         .items_center()
                         .gap(px(10.))
                         .w_full()
-                        .h(px(32.))
+                        .h(px(NAV_ROW_HEIGHT))
                         .px(px(10.))
                         .rounded(px(6.))
                         .cursor_pointer()
                         .hover(|s| s.bg(p.hover_wash(0.04)))
-                        .child(icon(
-                            "settings",
-                            16.,
-                            p.foreground.opacity(if p.dark { 0.65 } else { 0.7 }),
-                        ))
+                        .child(icon("settings", 16., p.foreground.opacity(0.55)))
                         .child(
                             div()
                                 .text_size(px(TEXT_BODY))
-                                .text_color(p.foreground.opacity(if p.dark { 0.85 } else { 0.9 }))
+                                .text_color(p.foreground.opacity(if p.dark { 0.75 } else { 0.8 }))
                                 .child(t("sidebar.settings")),
                         )
                         .on_click(cx.listener(|_, _, window, cx| {
@@ -335,18 +330,18 @@ impl ControlPanel {
         let title = self.active.label();
 
         div()
-            .h(px(48.))
+            .h(px(WORKSPACE_TOP_BAR_HEIGHT))
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(16.))
+            .gap(px(12.))
             .pl(px(start_pad))
             .pr(px(12.))
             .border_b_1()
             .border_color(if p.dark {
-                p.white.opacity(0.1)
+                p.white.opacity(0.08)
             } else {
-                p.border
+                p.border.opacity(0.8)
             })
             .on_mouse_down(MouseButton::Left, |event, window, _| {
                 if event.click_count == 1 {
@@ -391,9 +386,9 @@ impl ControlPanel {
                     )
                     .child(
                         div()
-                            .text_size(px(TEXT_TITLE))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .line_height(px(LINE_TITLE))
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .line_height(px(20.))
                             .text_color(p.foreground)
                             .truncate()
                             .child(title),
@@ -403,14 +398,14 @@ impl ControlPanel {
                 div()
                     .id("search-trigger")
                     .flex_none()
-                    .w(px(340.))
+                    .w(px(360.))
                     .max_w(relative(0.34))
                     .h(px(32.))
                     .flex()
                     .items_center()
                     .gap(px(10.))
                     .px(px(16.))
-                    .rounded(px(6.))
+                    .rounded(px(8.))
                     .border_1()
                     .border_color(if p.dark {
                         p.white.opacity(0.1)

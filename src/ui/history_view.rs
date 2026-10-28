@@ -17,8 +17,8 @@ use super::components::{f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner}
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
-    PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap,
-    progress,
+    PaletteExt, READING_MAX_WIDTH, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL, TEXT_TITLE,
+    ease_out, ease_snap, progress,
 };
 
 /// How long a new or picked row stays tinted.
@@ -434,7 +434,7 @@ impl HistoryView {
                 cx.notify();
             }))
             .flex()
-            .gap(px(16.))
+            .gap(px(12.))
             .rounded(px(12.))
             .px(px(12.))
             .py(px(10.))
@@ -450,11 +450,11 @@ impl HistoryView {
             })
             .child(
                 div()
-                    .w(px(64.))
+                    .w(px(56.))
                     .flex_none()
                     .pt(px(4.))
-                    .text_size(px(TEXT_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_size(px(TEXT_CAPTION))
+                    .text_color(p.muted_foreground.opacity(0.65))
                     .child(format_time(item)),
             )
             .child(div().flex_1().min_w_0().child(body).children(raw_section))
@@ -477,18 +477,18 @@ impl HistoryView {
         };
         div()
             .flex()
-            .gap(px(16.))
+            .gap(px(12.))
             .rounded(px(12.))
             .px(px(12.))
             .py(px(10.))
             .overflow_hidden()
             .child(
                 div()
-                    .w(px(64.))
+                    .w(px(56.))
                     .flex_none()
                     .pt(px(4.))
-                    .text_size(px(TEXT_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_size(px(TEXT_CAPTION))
+                    .text_color(p.muted_foreground.opacity(0.65))
                     .child(time),
             )
             .child(
@@ -823,11 +823,13 @@ impl Render for HistoryView {
             content = content.child(list);
         }
 
-        div()
-            .px(px(16.))
-            .pt(px(16.))
-            .pb(px(24.))
-            .child(div().mx_auto().max_w(px(1024.)).flex().child(content))
+        div().px(px(20.)).pt(px(20.)).pb(px(32.)).child(
+            div()
+                .mx_auto()
+                .max_w(px(READING_MAX_WIDTH))
+                .flex()
+                .child(content),
+        )
     }
 }
 
