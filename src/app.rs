@@ -211,6 +211,19 @@ fn start_hotkeys(cx: &mut App) {
 
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // A second process would answer the same shortcut and paste every
+    // dictation twice.
+    let _instance = match crate::instance::acquire(crate::paths::data_dir()) {
+        Ok(crate::instance::Acquired::Locked(lock)) => Some(lock),
+        Ok(crate::instance::Acquired::HeldBy(pid)) => {
+            log::warn!("Whisper is already running (pid {pid:?}); exiting");
+            return;
+        }
+        Err(err) => {
+            log::error!("failed to take the instance lock: {err}");
+            None
+        }
+    };
     let settings = Settings::load();
     let db = match crate::db::Database::open(&crate::paths::database_path()) {
         Ok(db) => Arc::new(db),
