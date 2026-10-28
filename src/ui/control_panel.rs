@@ -572,11 +572,7 @@ impl Render for ControlPanel {
                                     .overflow_hidden()
                                     .rounded(px(12.))
                                     .border_1()
-                                    .border_color(if p.dark {
-                                        p.white.opacity(0.06)
-                                    } else {
-                                        p.border
-                                    })
+                                    .border_color(p.border)
                                     .bg(p.background)
                                     .child(top_bar)
                                     .child(

@@ -289,13 +289,7 @@ impl RenderOnce for Button {
             .text_color(fg)
             .when_some(border, |d, b| d.border_1().border_color(b))
             .whitespace_nowrap();
-        if self.variant == ButtonVariant::Primary && !p.dark {
-            el = el.bg(linear_gradient(
-                180.,
-                linear_color_stop(Hsla::from(rgb(0x5588f0)), 0.),
-                linear_color_stop(Hsla::from(rgb(0x3466e2)), 1.),
-            ));
-        } else if let Some(bg) = bg {
+        if let Some(bg) = bg {
             el = el.bg(bg);
         }
         if disabled {
@@ -330,34 +324,28 @@ fn variant_colors(
     variant: ButtonVariant,
 ) -> (Option<Hsla>, Option<Hsla>, Hsla, Option<Hsla>, FontWeight) {
     match variant {
-        ButtonVariant::Primary => {
-            if p.dark {
-                (
-                    Some(p.primary),
-                    Some(p.primary.opacity(0.9)),
-                    p.primary_foreground,
-                    None,
-                    FontWeight::SEMIBOLD,
-                )
-            } else {
-                (None, None, p.white, None, FontWeight::SEMIBOLD)
-            }
-        }
+        ButtonVariant::Primary => (
+            Some(p.primary),
+            Some(p.primary.opacity(0.9)),
+            p.primary_foreground,
+            None,
+            FontWeight::SEMIBOLD,
+        ),
         ButtonVariant::Outline => {
             if p.dark {
                 (
-                    Some(p.surface_raised.opacity(0.9)),
-                    Some(p.surface_raised),
+                    Some(p.white.opacity(0.035)),
+                    Some(p.white.opacity(0.07)),
                     p.foreground,
                     Some(p.border_hover),
                     FontWeight::MEDIUM,
                 )
             } else {
                 (
-                    Some(p.muted.opacity(0.7)),
-                    Some(p.muted),
+                    Some(p.popover),
+                    Some(p.muted.opacity(0.5)),
                     p.foreground,
-                    Some(p.border.opacity(0.7)),
+                    Some(p.border_hover),
                     FontWeight::MEDIUM,
                 )
             }
