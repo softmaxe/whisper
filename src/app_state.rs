@@ -9,7 +9,7 @@ use std::sync::Arc;
 use gpui_kit::*;
 
 use crate::audio_storage::AudioStorage;
-use crate::db::{Database, DictionarySource, Snippet, TranscriptionItem, TranscriptionStatus};
+use crate::db::{Database, DictionarySource, Snippet, TranscriptionItem};
 use crate::history::{HistoryStore, Recorded};
 use crate::i18n::{self, Language};
 use crate::settings::Settings;
@@ -49,7 +49,6 @@ pub struct AppState {
     pub history_store: Arc<HistoryStore>,
     pub history: Vec<TranscriptionItem>,
     pub history_loaded: bool,
-    pub include_discarded: bool,
     pub dictionary: Vec<String>,
     pub snippets: Vec<Snippet>,
 }
@@ -75,7 +74,6 @@ impl AppState {
             audio,
             history: Vec::new(),
             history_loaded: false,
-            include_discarded: false,
             dictionary,
             snippets,
         });
@@ -115,13 +113,9 @@ impl AppState {
 }
 
 impl AppState {
-    pub fn load_history(
-        &mut self,
-        include_discarded: bool,
-        cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        self.include_discarded = include_discarded;
-        let result = self.db.get_transcriptions(HISTORY_LIMIT, include_discarded);
+    /// Loads the newest rows. Failed and discarded rows stay hidden.
+    pub fn load_history(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let result = self.db.get_transcriptions(HISTORY_LIMIT, false);
         self.history_loaded = true;
         match result {
             Ok(items) => {
@@ -155,19 +149,12 @@ impl AppState {
         Ok(Some(id))
     }
 
-    /// Inserts or replaces a row: hidden statuses drop out unless shown,
-    /// newest first, capped at the limit.
+    /// Inserts or replaces a row, newest first, capped at the limit.
     pub fn upsert_history_item(&mut self, item: TranscriptionItem, cx: &mut Context<Self>) {
         self.history.retain(|existing| existing.id != item.id);
-        let hidden = matches!(
-            item.status,
-            TranscriptionStatus::Failed | TranscriptionStatus::Discarded
-        ) && !self.include_discarded;
-        if !hidden {
-            self.history.push(item);
-            self.history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-            self.history.truncate(HISTORY_LIMIT);
-        }
+        self.history.push(item);
+        self.history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        self.history.truncate(HISTORY_LIMIT);
         cx.emit(AppEvent::HistoryChanged);
         cx.notify();
     }
@@ -208,7 +195,7 @@ impl AppState {
     /// Deletes every stored recording, keeping the transcripts.
     pub fn delete_all_audio(&mut self, cx: &mut Context<Self>) {
         self.audio.delete_all_audio_and_flags(&self.db);
-        if let Err(err) = self.load_history(self.include_discarded, cx) {
+        if let Err(err) = self.load_history(cx) {
             log::warn!("failed to reload History: {err}");
         }
     }

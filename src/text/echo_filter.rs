@@ -9,10 +9,6 @@ static NON_WORD_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[^\p{L}\p{N}\s]").expect("static regex"));
 static WHITESPACE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("static regex"));
 
-/// Error code attached to the "No audio detected" error raised for a
-/// discarded dictionary echo, so the pipeline can tell it apart from silence.
-pub const DICTIONARY_ECHO_CODE: &str = "DICTIONARY_ECHO";
-
 fn normalize(s: &str) -> String {
     let lowered = s.to_lowercase();
     let stripped = NON_WORD_RE.replace_all(&lowered, "");

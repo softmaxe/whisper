@@ -23,7 +23,6 @@ use crate::i18n::t;
 use crate::pipeline::{self, PipelineInput, PipelineOutcome, Transcript};
 use crate::services::transcription;
 use crate::settings::Settings;
-use crate::text::echo_filter::DICTIONARY_ECHO_CODE;
 
 use crate::app_state::{AppState, DictationSnapshot};
 use crate::backend;
@@ -345,12 +344,9 @@ impl Dictation {
         self.start_lock = false;
         self.recorder.cancel_prepared();
         if self.phase == Phase::Recording {
-            let started = self.started_at.take();
-            let audio = self.recorder.stop();
+            self.started_at = None;
+            self.recorder.stop();
             self.set_phase(Phase::Idle, cx);
-            if let (Some(audio), Some((_, occurred_at))) = (audio, started) {
-                self.save_discarded(audio, occurred_at, cx);
-            }
         } else {
             self.recorder.cancel();
             if self.phase == Phase::Preparing {
@@ -454,18 +450,7 @@ impl Dictation {
             PipelineOutcome::Cancelled => {
                 self.set_phase(Phase::Idle, cx);
             }
-            PipelineOutcome::NoAudio { dictionary_echo } => {
-                if dictionary_echo {
-                    // Keep the recording so the user can retry the dictation (#1547).
-                    record(cx, |history, settings| {
-                        history.record_failed(
-                            &recording,
-                            "No audio detected",
-                            Some(DICTIONARY_ECHO_CODE),
-                            settings,
-                        )
-                    });
-                }
+            PipelineOutcome::NoAudio => {
                 self.set_phase(Phase::Idle, cx);
                 cx.emit(DictationNotice::NoAudio);
             }
@@ -474,9 +459,6 @@ impl Dictation {
                 code,
                 message_key,
             } => {
-                record(cx, |history, settings| {
-                    history.record_failed(&recording, &message, code.as_deref(), settings)
-                });
                 self.set_phase(Phase::Idle, cx);
                 let title = match code.as_deref() {
                     Some(transcription::CONNECTION_FAILED_CODE) => {
@@ -586,29 +568,6 @@ impl Dictation {
             self.set_phase(Phase::Idle, cx);
         }
     }
-
-    fn save_discarded(
-        &mut self,
-        audio: RecordedAudio,
-        occurred_at: DateTime<Utc>,
-        cx: &mut Context<Self>,
-    ) {
-        // Checked first so a recording that will not be kept is never encoded.
-        if !audio.received_audio_data
-            || !HistoryStore::keeps_discarded(audio.duration, &AppState::settings(cx))
-        {
-            return;
-        }
-        let wav = audio.to_wav_16k();
-        let recording = Recording {
-            wav: &wav,
-            duration: audio.duration,
-            occurred_at,
-        };
-        record(cx, |history, settings| {
-            history.record_discarded(&recording, settings)
-        });
-    }
 }
 
 /// Runs a History write; a failure is logged and the Dictation goes on.
@@ -638,9 +597,7 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
             PipelineOutcome::Transcribed(transcript) => cx.update(|cx| {
                 AppState::global(cx)
                     .update(cx, |s, cx| {
-                        s.record_history(cx, |history, settings| {
-                            history.apply_retry(id, &transcript, settings)
-                        })
+                        s.record_history(cx, |history, _| history.apply_retry(id, &transcript))
                     })
                     .map_err(|e| e.to_string())?;
                 if let Some(failure) = transcript.cleanup_failure {
@@ -658,7 +615,7 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
                 }
                 Ok(())
             }),
-            PipelineOutcome::NoAudio { .. } => Err(t("dictation.noAudio.title")),
+            PipelineOutcome::NoAudio => Err(t("dictation.noAudio.title")),
             PipelineOutcome::Failed {
                 message,
                 message_key,

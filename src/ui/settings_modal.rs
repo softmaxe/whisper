@@ -2326,15 +2326,6 @@ impl SettingsModal {
                         &p,
                     )
                     .into_any_element(),
-                    settings_row(
-                        t("settings.privacy.saveDiscarded"),
-                        Some(t("settings.privacy.saveDiscardedDescription").into()),
-                        Toggle::new("save-discarded", s.save_discarded_transcriptions)
-                            .disabled(!s.data_retention_enabled || s.audio_retention_days == 0)
-                            .on_change(|v, _, cx| update_settings(cx, |s| s.save_discarded_transcriptions = v)),
-                        &p,
-                    )
-                    .into_any_element(),
                 ],
                 &p,
             ))))

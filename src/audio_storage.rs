@@ -293,21 +293,31 @@ pub struct RetentionCleanupReport {
     pub audio: AudioCleanup,
 }
 
-/// The retention sweep: expired transcripts with their audio and counters,
-/// then expired recordings. A retention of 0 days disables that half.
+/// The retention sweep: failed and discarded rows left by older versions,
+/// expired transcripts with their audio and counters, then expired
+/// recordings. A retention of 0 days disables that half.
 pub fn run_retention_cleanup(
     db: &Database,
     storage: &AudioStorage,
     settings: RetentionSettings,
 ) -> RetentionCleanupReport {
     let mut report = RetentionCleanupReport::default();
+    match db.delete_hidden_transcriptions() {
+        Ok(ids) => {
+            for id in &ids {
+                storage.delete_audio(*id);
+            }
+            report.deleted_transcription_ids = ids;
+        }
+        Err(err) => log::error!("Failed to remove failed and discarded rows: {err:#}"),
+    }
     if settings.transcript_retention_days > 0 {
         match db.delete_transcriptions_expired_before(settings.transcript_retention_days) {
             Ok(purge) => {
                 for id in &purge.ids {
                     storage.delete_audio(*id);
                 }
-                report.deleted_transcription_ids = purge.ids;
+                report.deleted_transcription_ids.extend(purge.ids);
                 report.analytics_purged = purge.analytics_purged;
             }
             Err(err) => log::error!("Retention cleanup failed: {err:#}"),
@@ -322,7 +332,7 @@ pub fn run_retention_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{SaveTranscriptionOptions, TranscriptionAudioUpdate};
+    use crate::db::{SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionStatus};
     use chrono::FixedOffset;
 
     fn storage() -> (tempfile::TempDir, AudioStorage) {
@@ -492,6 +502,46 @@ mod tests {
         );
         assert!(storage.audio_path(old.id).is_none());
         assert!(storage.audio_path(fresh.id).is_some());
+    }
+
+    #[test]
+    fn retention_sweep_removes_failed_and_discarded_rows_with_their_audio() {
+        let (_tmp, storage) = storage();
+        let db = Database::open_in_memory().unwrap();
+        let hidden: Vec<i64> = [TranscriptionStatus::Failed, TranscriptionStatus::Discarded]
+            .into_iter()
+            .map(|status| {
+                let row = db
+                    .save_transcription(
+                        "",
+                        None,
+                        SaveTranscriptionOptions {
+                            status,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                storage.save_audio(row.id, b"a", None, "wav").unwrap();
+                row.id
+            })
+            .collect();
+        let kept = db
+            .save_transcription("kept", None, SaveTranscriptionOptions::default())
+            .unwrap();
+        storage.save_audio(kept.id, b"b", None, "wav").unwrap();
+
+        let report = run_retention_cleanup(
+            &db,
+            &storage,
+            RetentionSettings {
+                audio_retention_days: 0,
+                transcript_retention_days: 0,
+            },
+        );
+        assert_eq!(report.deleted_transcription_ids, hidden);
+        assert!(hidden.iter().all(|id| storage.audio_path(*id).is_none()));
+        assert!(storage.audio_path(kept.id).is_some());
+        assert_eq!(db.get_transcriptions(10, true).unwrap(), [kept]);
     }
 
     #[test]

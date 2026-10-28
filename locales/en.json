@@ -135,9 +135,7 @@
       "dataRetentionDescription": "Store transcriptions and audio locally in your history. When disabled, transcriptions are pasted but not saved.",
       "transcriptRetention": "Transcript Retention",
       "transcriptRetentionDescription": "Automatically delete saved transcriptions, their audio, and their Insights counters after this period.",
-      "transcriptRetentionForever": "Forever",
-      "saveDiscarded": "Save discarded dictations",
-      "saveDiscardedDescription": "When you cancel a dictation with Escape, keep its audio in history so you can recover it. Requires data and audio retention to be on."
+      "transcriptRetentionForever": "Forever"
     },
     "prompts": {
       "title": "Prompt Studio"
@@ -246,10 +244,6 @@
       "retryError": "Failed to re-transcribe",
       "audioNotFound": "Audio file not found or expired",
       "noAiProcessing": "No AI processing was applied to this transcription",
-      "transcriptionFailed": "Transcription failed",
-      "failedCtaSettings": "Set up your transcription server",
-      "failedCtaAndRetry": "then click retry",
-      "failedCtaSettingsOnly": "Set up your transcription server in Settings",
       "rawTranscript": "Raw Transcript",
       "clearAll": "Clear all",
       "clearAllTitle": "Clear All Transcriptions",
@@ -257,15 +251,6 @@
       "clearAllSuccess": "History cleared",
       "clearAllErrorTitle": "Couldn't clear history",
       "clearAllErrorDescription": "Something went wrong. Please try again.",
-      "discarded": {
-        "show": "Show failed and discarded",
-        "hide": "Hide failed and discarded",
-        "badge": "Discarded",
-        "recording": "Discarded recording",
-        "recordingWithDuration": "Discarded recording · {{duration}}",
-        "recover": "Recover",
-        "recovered": "Recovered"
-      },
       "retryTranslationMode": "Translation Mode"
     },
     "loading": "Loading..."

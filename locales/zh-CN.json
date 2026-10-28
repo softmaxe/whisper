@@ -135,9 +135,7 @@
       "audioStorageUsage": "存储用量",
       "audioStorageFiles": "{{count}} 个文件，{{size}}",
       "audioStorageEmpty": "没有存储的音频文件",
-      "clearAllAudio": "清除所有音频",
-      "saveDiscarded": "保存已放弃的听写",
-      "saveDiscardedDescription": "用 Escape 取消听写时，将其音频保留在历史记录中以便恢复。需开启数据和音频保留。"
+      "clearAllAudio": "清除所有音频"
     },
     "prompts": {
       "title": "提示词工作室"
@@ -236,10 +234,6 @@
         "today": "今天",
         "yesterday": "昨天"
       },
-      "transcriptionFailed": "转录失败",
-      "failedCtaSettings": "设置转录服务器",
-      "failedCtaAndRetry": "然后点击重试",
-      "failedCtaSettingsOnly": "在设置中配置转录服务器",
       "clearAll": "全部清除",
       "clearAllTitle": "清除所有转录",
       "clearAllDescriptionDevice": "此设备上的所有转录、音频文件和统计数据都将被永久删除。",
@@ -257,15 +251,6 @@
       "audioNotFound": "音频文件未找到或已过期",
       "noAiProcessing": "此转录未应用 AI 处理",
       "rawTranscript": "原始转录",
-      "discarded": {
-        "show": "显示失败和已放弃的记录",
-        "hide": "隐藏失败和已放弃的记录",
-        "badge": "已放弃",
-        "recording": "已放弃的录音",
-        "recordingWithDuration": "已放弃的录音 · {{duration}}",
-        "recover": "恢复",
-        "recovered": "已恢复"
-      },
       "retryTranslationMode": "翻译模式"
     },
     "loading": "加载中..."

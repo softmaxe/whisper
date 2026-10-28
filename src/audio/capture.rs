@@ -70,9 +70,6 @@ pub struct RecordedAudio {
     /// Mono samples at `sample_rate` (the device rate).
     pub samples: Vec<f32>,
     pub sample_rate: u32,
-    /// Wall-clock duration from the recording start (the prepared stream's
-    /// start when pre-roll was adopted) to stop.
-    pub duration: Duration,
     /// Whether any audio frame was captured.
     pub received_audio_data: bool,
     /// Speech-gate decision; `Unavailable` (fail open) when pre-roll was adopted.
@@ -121,7 +118,6 @@ struct CoreState {
     first_audio_at: Option<Instant>,
     last_frames_at: Option<Instant>,
     waiter: Option<(Waiter, Instant)>,
-    recording_started_at: Option<Instant>,
     open_error: Option<AudioError>,
     device_error: Option<String>,
     device_error_reported: bool,
@@ -162,7 +158,6 @@ impl Core {
                 first_audio_at: None,
                 last_frames_at: None,
                 waiter: None,
-                recording_started_at: None,
                 open_error: None,
                 device_error: None,
                 device_error_reported: false,
@@ -255,11 +250,9 @@ impl Core {
             // The gate never measured the pre-roll; fail it open rather than
             // discard an utterance spoken entirely before start.
             st.gate = None;
-            st.recording_started_at = Some(st.opened_at);
         } else {
             st.samples.clear();
             st.gate = Some(SpeechGateState::default());
-            st.recording_started_at = Some(now);
         }
         st.frames_since_window = 0;
         st.phase = Phase::Recording;
@@ -340,7 +333,7 @@ impl Core {
         outcome
     }
 
-    fn finish(&self, now: Instant) -> RecordedAudio {
+    fn finish(&self) -> RecordedAudio {
         let mut st = self.state.lock();
         self.recording.store(false, Ordering::Relaxed);
         resolve(st.waiter.take(), Err(AudioError::Cancelled));
@@ -351,15 +344,10 @@ impl Core {
         } else {
             Vec::new()
         };
-        let duration = st
-            .recording_started_at
-            .map(|t| now.saturating_duration_since(t))
-            .unwrap_or_default();
         RecordedAudio {
             received_audio_data: !samples.is_empty(),
             samples,
             sample_rate: st.sample_rate,
-            duration,
             speech_gate: gate_decision(st.gate.as_ref()),
         }
     }
@@ -452,7 +440,7 @@ impl CaptureSession {
 
     /// Stops and returns the recording; the stream closes on its thread.
     pub fn finish(self) -> RecordedAudio {
-        self.core.finish(Instant::now())
+        self.core.finish()
     }
 
     /// Stops and drops all buffered audio.
@@ -768,15 +756,10 @@ mod tests {
             .unwrap();
         assert!(rx.is_none(), "first audio already arrived");
         core.push(tone(4800, 0.3).into_iter(), t0 + Duration::from_millis(600));
-        let audio = core.finish(t0 + Duration::from_millis(1500));
+        let audio = core.finish();
         assert_eq!(audio.samples.len(), 9600);
         assert_eq!(audio.speech_gate.reason, GateReason::Unavailable);
         assert!(!audio.speech_gate.skip);
-        assert_eq!(
-            audio.duration,
-            Duration::from_millis(1500),
-            "duration starts at prepare"
-        );
         assert!(audio.received_audio_data);
     }
 
@@ -795,9 +778,8 @@ mod tests {
             vec![0.0; 48_000].into_iter(),
             t0 + Duration::from_millis(3200),
         );
-        let audio = core.finish(t0 + Duration::from_millis(3200));
+        let audio = core.finish();
         assert_eq!(audio.samples.len(), 48_000);
-        assert_eq!(audio.duration, Duration::from_millis(1000));
         // Ten 100 ms windows of digital silence.
         assert!(audio.speech_gate.is_silence());
         assert_eq!(audio.speech_gate.metrics.unwrap().window_count, 10);
@@ -816,7 +798,7 @@ mod tests {
         assert_eq!(block_on(rx).unwrap(), Ok(()));
         let level = core.level().unwrap();
         assert!(level > 0.1 && level < 0.2, "level {level}");
-        let audio = core.finish(t0 + Duration::from_secs(1));
+        let audio = core.finish();
         assert_eq!(audio.samples.len(), 48_000);
         assert_eq!(audio.speech_gate.reason, GateReason::SpeechDetected);
         assert_eq!(audio.speech_gate.metrics.unwrap().window_count, 10);
@@ -907,7 +889,7 @@ mod tests {
         let rx = core.begin(false, FIRST_AUDIO_TIMEOUT, t0).unwrap().unwrap();
         core.discard();
         assert_eq!(block_on(rx).unwrap(), Err(AudioError::Cancelled));
-        let audio = core.finish(t0);
+        let audio = core.finish();
         assert!(audio.samples.is_empty());
         assert!(!audio.received_audio_data);
     }
@@ -917,7 +899,6 @@ mod tests {
         let audio = RecordedAudio {
             samples: vec![0.1; 48_000],
             sample_rate: 48_000,
-            duration: Duration::from_secs(1),
             received_audio_data: true,
             speech_gate: SpeechGateDecision::unavailable(),
         };
