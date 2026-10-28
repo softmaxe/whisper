@@ -170,7 +170,6 @@ pub struct Button {
     disabled: bool,
     full_width: bool,
     height: Option<f32>,
-    text_size: Option<f32>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -185,7 +184,6 @@ impl Button {
             disabled: false,
             full_width: false,
             height: None,
-            text_size: None,
             on_click: None,
         }
     }
@@ -222,11 +220,6 @@ impl Button {
 
     pub fn h(mut self, height: f32) -> Self {
         self.height = Some(height);
-        self
-    }
-
-    pub fn text_size(mut self, size: f32) -> Self {
-        self.text_size = Some(size);
         self
     }
 
@@ -269,7 +262,6 @@ impl RenderOnce for Button {
             ButtonSize::Sm => (30., 12., TEXT_SMALL),
         };
         let height = self.height.unwrap_or(height);
-        let text = self.text_size.unwrap_or(text);
         let (bg, hover_bg, fg, border, weight) = variant_colors(&p, self.variant);
         let disabled = self.disabled;
         let (pressed, depth) = press_depth(&self.id, window, cx);
