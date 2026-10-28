@@ -45,6 +45,8 @@ The screenshots use sample data.
 | ![History grouped by day, with search](docs/images/en/home.png) | ![Words, words per minute and streaks compared with the previous period, and a daily trend chart](docs/images/en/insights.png) |
 | **Dictionary** | **Speech-to-text settings** |
 | ![Dictionary words used as spelling hints](docs/images/en/dictionary.png) | ![Self-hosted speech server URL and model](docs/images/en/settings.png) |
+| **File transcription** | |
+| ![A finished transcript beside the transcription settings and a completed batch queue](docs/images/en/upload.png) | |
 
 ## Install
 

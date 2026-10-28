@@ -37,6 +37,8 @@
 | ![按天分组的历史记录，支持搜索](docs/images/zh/home.png) | ![字数、每分钟字数和连续天数的环比，以及每日趋势图](docs/images/zh/insights.png) |
 | **词典** | **语音转文字设置** |
 | ![作为拼写提示的词典词条](docs/images/zh/dictionary.png) | ![自托管语音服务的地址和模型](docs/images/zh/settings.png) |
+| **文件转录** | |
+| ![转录完成的文字稿，旁边是转录设置和已完成的批量队列](docs/images/zh/upload.png) | |
 
 ## 安装
 
