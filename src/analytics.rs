@@ -1,18 +1,20 @@
 //! Insights math shared by the database and the Insights view.
 //!
 //! The database groups events per local day in SQL; everything derived from
-//! those day totals (WPM, coverage, streaks, the heatmap window) lives here so
-//! there is a single owner of each figure.
+//! those day totals (WPM, coverage, streaks, period totals, the trend chart)
+//! lives here so there is a single owner of each figure.
 
-use chrono::{DateTime, Datelike, Local, Months, NaiveDate, TimeZone, Utc};
+use std::collections::HashMap;
+
+use chrono::{DateTime, Datelike, Days, Local, NaiveDate, TimeZone, Utc};
 use icu_segmenter::WordSegmenter;
 use icu_segmenter::options::WordBreakInvariantOptions;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-/// The heatmap shows this month and the five before it.
-pub const ANALYTICS_ACTIVITY_MONTH_COUNT: u32 = 6;
+/// The trend chart switches from daily to weekly bars beyond this many days.
+pub const TREND_DAILY_LIMIT_DAYS: i64 = 92;
 
 static CJK_SCRIPT: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]")
@@ -124,6 +126,8 @@ pub struct AnalyticsDailyBucket {
     pub words: i64,
     pub dictations: i64,
     pub spoken_duration_ms: i64,
+    /// Words from dictations whose spoken duration is known; the WPM basis.
+    pub covered_words: i64,
 }
 
 /// Everything the Insights view shows.
@@ -150,31 +154,113 @@ pub struct Streaks {
     pub longest_streak_days: i64,
 }
 
-/// One heatmap cell.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ActivityDay {
-    pub date: String,
-    pub words: i64,
+/// Words per minute over `covered_words`, `None` without measured speech.
+fn words_per_minute(covered_words: i64, spoken_duration_ms: i64) -> Option<i64> {
+    (spoken_duration_ms > 0)
+        .then(|| ((covered_words as f64 * 60_000.0) / spoken_duration_ms as f64).round() as i64)
 }
 
-/// Every day from the first of the month five months back through `today`,
-/// with that day's words (0 when idle); the heatmap's input.
-pub fn build_activity_days(daily: &[AnalyticsDailyBucket], today: NaiveDate) -> Vec<ActivityDay> {
-    let by_date: std::collections::HashMap<&str, i64> =
-        daily.iter().map(|b| (b.date.as_str(), b.words)).collect();
-    let first_of_month = today.with_day(1).unwrap_or(today);
-    let start = first_of_month
-        .checked_sub_months(Months::new(ANALYTICS_ACTIVITY_MONTH_COUNT - 1))
-        .unwrap_or(first_of_month);
-    start
-        .iter_days()
-        .take_while(|date| *date <= today)
-        .map(|date| {
-            let key = date.format("%Y-%m-%d").to_string();
-            let words = by_date.get(key.as_str()).copied().unwrap_or(0);
-            ActivityDay { date: key, words }
+fn date_key(date: NaiveDate) -> String {
+    date.format("%Y-%m-%d").to_string()
+}
+
+/// Totals over an inclusive range of local dates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PeriodTotals {
+    pub words: i64,
+    pub dictations: i64,
+    pub spoken_duration_ms: i64,
+    pub covered_words: i64,
+}
+
+impl PeriodTotals {
+    pub fn wpm(&self) -> Option<i64> {
+        words_per_minute(self.covered_words, self.spoken_duration_ms)
+    }
+}
+
+/// Sums the days from `first` through `last`, both inclusive.
+pub fn period_totals(
+    daily: &[AnalyticsDailyBucket],
+    first: NaiveDate,
+    last: NaiveDate,
+) -> PeriodTotals {
+    let (first, last) = (date_key(first), date_key(last));
+    daily
+        .iter()
+        .filter(|b| b.date >= first && b.date <= last)
+        .fold(PeriodTotals::default(), |acc, b| PeriodTotals {
+            words: acc.words + b.words,
+            dictations: acc.dictations + b.dictations,
+            spoken_duration_ms: acc.spoken_duration_ms + b.spoken_duration_ms,
+            covered_words: acc.covered_words + b.covered_words,
         })
-        .collect()
+}
+
+/// One bar of the trend chart: a day, or a week ending on `end`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrendBar {
+    pub start: NaiveDate,
+    pub end: NaiveDate,
+    pub words: i64,
+    pub dictations: i64,
+    /// Trailing average in words per bar: 7 days for daily bars, 4 weeks for
+    /// weekly ones. `None` while that window reaches back before first use.
+    pub average: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Trend {
+    /// 1 for daily bars, 7 for weekly ones.
+    pub bucket_days: i64,
+    pub bars: Vec<TrendBar>,
+}
+
+/// Bars from `start` through `today`, aligned so the last one ends today.
+/// Spans longer than [`TREND_DAILY_LIMIT_DAYS`] use weekly bars.
+pub fn build_trend(daily: &[AnalyticsDailyBucket], start: NaiveDate, today: NaiveDate) -> Trend {
+    let by_date: HashMap<&str, (i64, i64)> = daily
+        .iter()
+        .map(|b| (b.date.as_str(), (b.words, b.dictations)))
+        .collect();
+    let first_use = daily
+        .iter()
+        .filter(|b| b.words > 0)
+        .map(|b| b.date.as_str())
+        .min()
+        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+    let span = (today - start).num_days().max(0) + 1;
+    let bucket_days: i64 = if span > TREND_DAILY_LIMIT_DAYS { 7 } else { 1 };
+    let average_days = if bucket_days == 1 { 7 } else { 28 };
+    let count = (span + bucket_days - 1) / bucket_days;
+    let back = |date: NaiveDate, days: i64| date - Days::new(days as u64);
+    let sum = |first: NaiveDate, last: NaiveDate| {
+        first
+            .iter_days()
+            .take_while(|d| *d <= last)
+            .filter_map(|d| by_date.get(date_key(d).as_str()))
+            .fold((0, 0), |(w, n), (dw, dn)| (w + dw, n + dn))
+    };
+    let bars = (0..count)
+        .rev()
+        .map(|i| {
+            let end = back(today, i * bucket_days);
+            let start = back(end, bucket_days - 1);
+            let (words, dictations) = sum(start, end);
+            let window_start = back(end, average_days - 1);
+            let average = first_use.filter(|f| window_start >= *f).map(|_| {
+                sum(window_start, end).0 as f64 * bucket_days as f64 / average_days as f64
+            });
+            TrendBar {
+                start,
+                end,
+                words,
+                dictations,
+                average,
+            }
+        })
+        .collect();
+    Trend { bucket_days, bars }
 }
 
 fn day_number(value: &str) -> Option<i64> {
@@ -252,9 +338,7 @@ pub fn summarize_analytics_days(
         covered_words += day.covered_words;
     }
 
-    let average_wpm = (total_spoken_duration_ms > 0).then(|| {
-        ((covered_words as f64 * 60_000.0) / total_spoken_duration_ms as f64).round() as i64
-    });
+    let average_wpm = words_per_minute(covered_words, total_spoken_duration_ms);
     let wpm_coverage_percent = if total_words > 0 {
         ((covered_words as f64 / total_words as f64) * 100.0).round() as i64
     } else {
@@ -271,6 +355,7 @@ pub fn summarize_analytics_days(
             words: d.words,
             dictations: d.dictations,
             spoken_duration_ms: d.spoken_duration_ms,
+            covered_words: d.covered_words,
         })
         .collect();
 
@@ -306,41 +391,67 @@ mod tests {
             words,
             dictations: 1,
             spoken_duration_ms: 0,
+            covered_words: 0,
         }
     }
 
+    fn date(value: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(value, "%Y-%m-%d").unwrap()
+    }
+
     #[test]
-    fn activity_covers_this_month_and_the_previous_five() {
-        let days = build_activity_days(
-            &[
-                bucket("2026-03-31", 99),
-                bucket("2026-04-01", 3),
-                bucket("2026-09-15", 7),
-            ],
-            NaiveDate::from_ymd_opt(2026, 9, 15).unwrap(),
-        );
+    fn period_totals_sum_an_inclusive_range() {
+        let mut daily = vec![
+            bucket("2026-09-01", 10),
+            bucket("2026-09-02", 20),
+            bucket("2026-09-03", 40),
+        ];
+        daily[1].spoken_duration_ms = 6_000;
+        daily[1].covered_words = 20;
+        let totals = period_totals(&daily, date("2026-09-02"), date("2026-09-03"));
+        assert_eq!(totals.words, 60);
+        assert_eq!(totals.dictations, 2);
+        assert_eq!(totals.wpm(), Some(200));
+        let empty = period_totals(&daily, date("2026-08-01"), date("2026-08-31"));
+        assert_eq!(empty, PeriodTotals::default());
+        assert_eq!(empty.wpm(), None);
+    }
+
+    #[test]
+    fn daily_trend_ends_today_with_a_trailing_average() {
+        let daily: Vec<_> = (1..=10)
+            .map(|d| bucket(&format!("2026-09-{d:02}"), 7))
+            .collect();
+        let trend = build_trend(&daily, date("2026-08-28"), date("2026-09-10"));
+        assert_eq!(trend.bucket_days, 1);
+        assert_eq!(trend.bars.len(), 14);
+        assert_eq!(trend.bars[0].start, date("2026-08-28"));
+        let last = trend.bars.last().unwrap();
         assert_eq!(
-            days[0],
-            ActivityDay {
-                date: "2026-04-01".into(),
-                words: 3
-            }
+            (last.start, last.end, last.words),
+            (date("2026-09-10"), date("2026-09-10"), 7)
         );
+        // The 7-day window first fits after first use on Sep 7.
+        let averages: Vec<Option<f64>> = trend.bars.iter().map(|b| b.average).collect();
+        assert_eq!(averages[..10], [None; 10]);
+        assert_eq!(averages[10..], [Some(7.); 4]);
+    }
+
+    #[test]
+    fn long_trends_use_weekly_bars() {
+        let trend = build_trend(
+            &[bucket("2026-01-05", 3), bucket("2026-09-10", 5)],
+            date("2026-01-01"),
+            date("2026-09-10"),
+        );
+        assert_eq!(trend.bucket_days, 7);
+        let last = trend.bars.last().unwrap();
         assert_eq!(
-            days.last().unwrap(),
-            &ActivityDay {
-                date: "2026-09-15".into(),
-                words: 7
-            }
+            (last.start, last.end, last.words),
+            (date("2026-09-04"), date("2026-09-10"), 5)
         );
-        let mut months: Vec<&str> = days.iter().map(|d| &d.date[..7]).collect();
-        months.dedup();
-        assert_eq!(
-            months,
-            [
-                "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"
-            ]
-        );
+        assert!(trend.bars[0].start <= date("2026-01-01"));
+        assert_eq!(trend.bars.iter().map(|b| b.words).sum::<i64>(), 8);
     }
 
     #[test]
@@ -379,7 +490,16 @@ mod tests {
         let json = serde_json::to_value(&summary.daily[0]).unwrap();
         let mut keys: Vec<&String> = json.as_object().unwrap().keys().collect();
         keys.sort();
-        assert_eq!(keys, ["date", "dictations", "spokenDurationMs", "words"]);
+        assert_eq!(
+            keys,
+            [
+                "coveredWords",
+                "date",
+                "dictations",
+                "spokenDurationMs",
+                "words"
+            ]
+        );
     }
 
     #[test]
