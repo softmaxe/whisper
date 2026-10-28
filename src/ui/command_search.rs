@@ -1,7 +1,7 @@
 //! The Cmd+K transcript palette. Keyboard-first, so it appears and
 //! disappears without animation.
 
-use chrono::Local;
+use chrono::{DateTime, Local, Utc};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable, Size};
 use gpui_kit::prelude::FluentBuilder;
@@ -34,9 +34,13 @@ fn relative_label(item: &TranscriptionItem) -> String {
     } else {
         &item.created_at
     };
-    let Some(ts) = normalize_db_date(source) else {
-        return String::new();
-    };
+    normalize_db_date(source)
+        .map(relative_time_label)
+        .unwrap_or_default()
+}
+
+/// A short age such as "5m", "3d" or "Mar 4".
+pub(super) fn relative_time_label(ts: DateTime<Utc>) -> String {
     match relative_time(ts, &Local::now()) {
         RelativeTime::Now => t("commandSearch.relativeTime.now"),
         RelativeTime::MinutesAgo(n) => t_with(

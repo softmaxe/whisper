@@ -6,7 +6,7 @@ use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::db::{DictionarySource, Snippet};
+use crate::db::{DictionaryEntry, DictionarySource, Snippet};
 use crate::i18n::{t, t_with};
 use crate::text::dictionary_import::{format_dictionary_export, parse_dictionary_import_text};
 use crate::text::prompt_cap::WHISPER_DECODER_PROMPT_CHARS;
@@ -14,6 +14,7 @@ use crate::text::snippets::get_dictionary_hint_words;
 
 use crate::app_state::{AppEvent, AppState};
 
+use super::command_search::relative_time_label;
 use super::components::{Button, ButtonSize, ButtonVariant, icon};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
@@ -48,12 +49,51 @@ enum Tab {
     Snippets,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceFilter {
+    All,
+    Manual,
+    Learned,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SortKey {
+    Word,
+    Uses,
+    LastUsed,
+}
+
+/// Dictionary table column widths, in px. The word column takes the rest.
+const COL_SOURCE: f32 = 96.;
+const COL_USES: f32 = 96.;
+const COL_LAST_USED: f32 = 72.;
+const COL_ACTIONS: f32 = 52.;
+/// Width of the use-count bar for the most used word.
+const USE_BAR_MAX: f32 = 48.;
+
+/// Sorts dictionary rows in place. Ties list the newest word first, so a word
+/// just added tops the rows it ties with.
+fn sort_entries(entries: &mut [DictionaryEntry], key: SortKey, descending: bool) {
+    entries.reverse();
+    entries.sort_by(|a, b| {
+        let order = match key {
+            SortKey::Word => a.word.to_lowercase().cmp(&b.word.to_lowercase()),
+            SortKey::Uses => a.use_count.cmp(&b.use_count),
+            SortKey::LastUsed => a.last_used_at.cmp(&b.last_used_at),
+        };
+        if descending { order.reverse() } else { order }
+    });
+}
+
 pub struct DictionaryView {
     tab: Tab,
     // Dictionary
     add_input: Entity<InputState>,
     bulk: Entity<TextareaState>,
     show_bulk: bool,
+    filter: SourceFilter,
+    sort: SortKey,
+    descending: bool,
     editing: Option<String>,
     edit_input: Entity<InputState>,
     // Snippets
@@ -134,6 +174,9 @@ impl DictionaryView {
             add_input,
             bulk,
             show_bulk: false,
+            filter: SourceFilter::All,
+            sort: SortKey::Uses,
+            descending: true,
             editing: None,
             edit_input,
             trigger_input,
@@ -403,48 +446,184 @@ impl DictionaryView {
             .hover(move |s| s.text_color(hover))
     }
 
+    fn filter_tabs(&self, entries: &[DictionaryEntry], cx: &mut Context<Self>) -> Div {
+        let p = cx.palette();
+        let learned = entries
+            .iter()
+            .filter(|e| e.source == DictionarySource::Learned)
+            .count();
+        let mut seg = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .h(px(32.))
+            .p(px(3.))
+            .gap(px(2.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(if p.dark {
+                p.white.opacity(0.1)
+            } else {
+                p.foreground.opacity(0.08)
+            })
+            .bg(p.hover_wash(0.03));
+        for (filter, key, count) in [
+            (SourceFilter::All, "dictionary.filterAll", entries.len()),
+            (
+                SourceFilter::Manual,
+                "dictionary.filterManual",
+                entries.len() - learned,
+            ),
+            (SourceFilter::Learned, "dictionary.filterLearned", learned),
+        ] {
+            let active = self.filter == filter;
+            seg = seg.child(
+                div()
+                    .id(SharedString::from(key))
+                    .h_full()
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .gap(px(5.))
+                    .rounded(px(5.))
+                    .text_size(px(TEXT_SMALL))
+                    .cursor_pointer()
+                    .when(active, |d| {
+                        d.bg(if p.dark {
+                            p.surface_raised
+                        } else {
+                            p.background
+                        })
+                        .text_color(p.foreground)
+                    })
+                    .when(!active, |d| {
+                        d.text_color(p.muted_foreground)
+                            .hover(|s| s.text_color(p.foreground))
+                    })
+                    .child(t(key))
+                    .child(
+                        div()
+                            .text_color(p.foreground.opacity(0.35))
+                            .child(count.to_string()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.filter = filter;
+                        cx.notify();
+                    })),
+            );
+        }
+        seg
+    }
+
+    /// A column heading; sortable columns toggle direction on a second click.
+    fn column_heading(
+        &self,
+        key: &'static str,
+        sort: Option<SortKey>,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let p = cx.palette();
+        let active = sort.is_some_and(|s| s == self.sort);
+        let mut cell = div()
+            .id(SharedString::from(key))
+            .flex()
+            .items_center()
+            .gap(px(3.))
+            .text_size(px(TEXT_CAPTION))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(p.foreground.opacity(if active { 0.7 } else { 0.4 }))
+            .child(t(key));
+        if active {
+            let name = if self.descending {
+                "chevron-down"
+            } else {
+                "chevron-up"
+            };
+            cell = cell.child(icon(name, 10., p.foreground.opacity(0.7)));
+        }
+        if let Some(sort) = sort {
+            cell = cell
+                .cursor_pointer()
+                .hover(|s| s.text_color(p.foreground.opacity(0.7)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.sort == sort {
+                        this.descending = !this.descending;
+                    } else {
+                        this.sort = sort;
+                        this.descending = sort != SortKey::Word;
+                    }
+                    cx.notify();
+                }));
+        }
+        cell
+    }
+
+    fn footer_action(id: &'static str, label: String, hover: Hsla, p: &Palette) -> Stateful<Div> {
+        div()
+            .id(id)
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.foreground.opacity(0.45))
+            .cursor_pointer()
+            .hover(move |s| s.text_color(hover))
+            .child(label)
+    }
+
     fn render_dictionary(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let (words, snippets) = {
+        let (entries, words, snippets) = {
             let s = AppState::global(cx).read(cx);
-            (s.dictionary.clone(), s.snippets.clone())
+            (
+                s.dictionary_entries.clone(),
+                s.dictionary.clone(),
+                s.snippets.clone(),
+            )
         };
         let query_raw = self.add_input.read(cx).value().trim().to_string();
         let query = query_raw.to_lowercase();
-        let visible: Vec<String> = if query.is_empty() {
-            words.clone()
-        } else {
-            words
-                .iter()
-                .filter(|w| w.to_lowercase().contains(&query))
-                .cloned()
-                .collect()
-        };
+        let mut visible: Vec<DictionaryEntry> = entries
+            .iter()
+            .filter(|e| match self.filter {
+                SourceFilter::All => true,
+                SourceFilter::Manual => e.source == DictionarySource::Manual,
+                SourceFilter::Learned => e.source == DictionarySource::Learned,
+            })
+            .filter(|e| query.is_empty() || e.word.to_lowercase().contains(&query))
+            .cloned()
+            .collect();
+        sort_entries(&mut visible, self.sort, self.descending);
+        let shown = visible.len();
+        let max_uses = entries.iter().map(|e| e.use_count).max().unwrap_or(0);
         let prompt_chars = get_dictionary_hint_words(&words, &snippets)
             .join(", ")
             .chars()
             .count();
         let pending = parse_dictionary_import_text(&self.bulk.read(cx).value()).len();
         let can_add = !query_raw.is_empty();
+        let rule = if p.dark {
+            p.white.opacity(0.06)
+        } else {
+            p.foreground.opacity(0.06)
+        };
 
         let add_row = div()
-            .relative()
-            .child(
-                text_field_sized(&self.add_input, 12., FieldKind::Line, false, window, cx)
-                    .pr(px(96.)),
-            )
+            .flex()
+            .items_center()
+            .gap(px(8.))
             .child(
                 div()
-                    .absolute()
-                    .right(px(10.))
-                    .top(px(0.))
-                    .h(px(32.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
+                    .flex_1()
+                    .relative()
+                    .child(
+                        text_field_sized(&self.add_input, 12., FieldKind::Line, false, window, cx)
+                            .pr(px(64.)),
+                    )
                     .child(
                         div()
                             .id("dict-add")
+                            .absolute()
+                            .right(px(10.))
+                            .top(px(0.))
+                            .h(px(32.))
                             .flex()
                             .items_center()
                             .gap(px(4.))
@@ -458,24 +637,11 @@ impl DictionaryView {
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.add_from_input(window, cx)),
                             ),
-                    )
-                    .child(div().w(px(1.)).h(px(14.)).bg(if p.dark {
-                        p.white.opacity(0.08)
-                    } else {
-                        p.foreground.opacity(0.1)
-                    }))
-                    .child(
-                        div()
-                            .id("dict-import")
-                            .cursor_pointer()
-                            .child(icon("upload", 11., p.foreground.opacity(0.45)))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.show_bulk = true;
-                                this.bulk.update(cx, |i, cx| i.focus(window, cx));
-                                cx.notify();
-                            })),
                     ),
-            );
+            )
+            .when(!entries.is_empty(), |d| {
+                d.child(self.filter_tabs(&entries, cx))
+            });
 
         let bulk = self.show_bulk.then(|| {
             div()
@@ -542,199 +708,142 @@ impl DictionaryView {
                 )
         });
 
-        let mut list = Self::list_frame(&p);
-        if !words.is_empty() {
-            list = list
+        let mut table = div().flex().flex_col();
+        if entries.is_empty() {
+            table = table.child(Self::list_frame(&p).child(Self::render_empty(&p, cx)));
+        } else {
+            table = table.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h(px(30.))
+                    .px(px(8.))
+                    .border_b_1()
+                    .border_color(rule)
+                    .child(div().flex_1().child(self.column_heading(
+                        "dictionary.columnWord",
+                        Some(SortKey::Word),
+                        cx,
+                    )))
+                    .child(div().w(px(COL_SOURCE)).child(self.column_heading(
+                        "dictionary.columnSource",
+                        None,
+                        cx,
+                    )))
+                    .child(div().w(px(COL_USES)).child(self.column_heading(
+                        "dictionary.columnUses",
+                        Some(SortKey::Uses),
+                        cx,
+                    )))
+                    .child(div().w(px(COL_LAST_USED)).flex().justify_end().child(
+                        self.column_heading(
+                            "dictionary.columnLastUsed",
+                            Some(SortKey::LastUsed),
+                            cx,
+                        ),
+                    ))
+                    .child(div().w(px(COL_ACTIONS))),
+            );
+            if visible.is_empty() {
+                let message = if query_raw.is_empty() {
+                    t("dictionary.filterEmpty")
+                } else {
+                    t_with("dictionary.noMatches", &[("word", &query_raw)])
+                };
+                table = table.child(
+                    div()
+                        .py(px(24.))
+                        .text_center()
+                        .text_size(px(TEXT_SMALL))
+                        .text_color(p.foreground.opacity(0.45))
+                        .child(message),
+                );
+            }
+            for (index, entry) in visible.into_iter().enumerate() {
+                table = table.child(self.render_row(index, entry, max_uses, rule, window, cx));
+            }
+        }
+
+        let count = if self.filter == SourceFilter::All && query.is_empty() {
+            t_with(
+                "dictionary.wordCount",
+                &[("count", &entries.len().to_string())],
+            )
+        } else {
+            t_with(
+                "dictionary.wordCountFiltered",
+                &[
+                    ("shown", &shown.to_string()),
+                    ("total", &entries.len().to_string()),
+                ],
+            )
+        };
+        let link_hover = p.foreground.opacity(0.75);
+        let footer = (!entries.is_empty()).then(|| {
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px(px(8.))
+                .child(
+                    div()
+                        .text_size(px(TEXT_SMALL))
+                        .text_color(p.foreground.opacity(0.4))
+                        .child(count),
+                )
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .justify_between()
-                        .child(Self::list_heading(t("dictionary.yourDictionary"), &p))
+                        .gap(px(14.))
                         .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(12.))
-                                .child(
-                                    div()
-                                        .id("dict-clear")
-                                        .text_size(px(TEXT_SMALL))
-                                        .text_color(p.foreground.opacity(0.45))
-                                        .cursor_pointer()
-                                        .hover(|s| s.text_color(p.destructive.opacity(0.7)))
-                                        .child(t("dictionary.clearAll"))
-                                        .on_click(move |_, _, cx| {
-                                            let words =
-                                                AppState::global(cx).read(cx).dictionary.clone();
-                                            show_dialog(
-                                                DialogRequest::confirm(
-                                                    t("dictionary.clearTitle"),
-                                                    Some(t("dictionary.clearDescription").into()),
-                                                    true,
-                                                    move |_, cx| {
-                                                        update_dictionary(
-                                                            Vec::new(),
-                                                            words.clone(),
-                                                            cx,
-                                                        )
-                                                    },
-                                                ),
-                                                cx,
-                                            )
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .id("dict-export")
-                                        .cursor_pointer()
-                                        .child(icon("download", 12., p.foreground.opacity(0.45)))
-                                        .on_click(|_, _, cx| Self::export(cx)),
-                                ),
-                        ),
-                )
-                .child(Self::dashed_rule(&p));
-        }
-        if words.is_empty() {
-            list = list.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .py(px(32.))
-                    .child(
-                        div()
-                            .size(px(40.))
-                            .mb(px(14.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(10.))
-                            .border_1()
-                            .border_color(p.primary.opacity(if p.dark { 0.15 } else { 0.1 }))
-                            .bg(p.primary.opacity(if p.dark { 0.09 } else { 0.06 }))
-                            .child(icon(
-                                "book-open",
-                                17.,
-                                p.primary.opacity(if p.dark { 0.6 } else { 0.5 }),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .mb(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(t("dictionary.emptyTitle")),
-                    )
-                    .child(
-                        div()
-                            .mb(px(16.))
-                            .max_w(px(240.))
-                            .text_center()
-                            .text_size(px(TEXT_SMALL))
-                            .line_height(px(LINE_SMALL))
-                            .text_color(p.foreground.opacity(0.45))
-                            .child(t_with(
-                                "dictionary.emptyDescription",
-                                &[("agentName", &agent_name())],
-                            )),
-                    )
-                    .child(
-                        Button::new("dict-first")
-                            .icon("plus", 12.)
-                            .label(t("dictionary.addFirstWord"))
-                            .size(ButtonSize::Sm)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.add_input.update(cx, |i, cx| i.focus(window, cx));
-                            })),
-                    )
-                    .child(
-                        div()
-                            .id("dict-import-list")
-                            .mt(px(12.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.foreground.opacity(0.45))
-                            .cursor_pointer()
-                            .hover(|s| s.text_color(p.foreground.opacity(0.6)))
-                            .child(icon("upload", 11., p.foreground.opacity(0.45)))
-                            .child(t("dictionary.importList"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_bulk = true;
-                                cx.notify();
-                            })),
-                    ),
-            );
-        } else if visible.is_empty() {
-            list = list.child(
-                div()
-                    .py(px(24.))
-                    .text_center()
-                    .text_size(px(TEXT_SMALL))
-                    .text_color(p.foreground.opacity(0.45))
-                    .child(t_with("dictionary.noMatches", &[("word", &query_raw)])),
-            );
-        } else {
-            for (index, word) in visible.into_iter().enumerate() {
-                let group: SharedString = format!("dict-row-{index}").into();
-                let editing = self.editing.as_deref() == Some(word.as_str());
-                let mut row = Self::row(("dict-row", index), group.clone(), &p);
-                if editing {
-                    row = row.child(
-                        div().flex_1().child(
-                            text_field_sized(
-                                &self.edit_input,
-                                12.,
-                                FieldKind::Line,
-                                false,
-                                window,
-                                cx,
+                            Self::footer_action(
+                                "dict-import",
+                                t("dictionary.import"),
+                                link_hover,
+                                &p,
                             )
-                            .h(px(28.)),
-                        ),
-                    );
-                } else {
-                    let edit_word = word.clone();
-                    let remove_word = word.clone();
-                    row = row
-                        .child(
-                            div()
-                                .flex_1()
-                                .truncate()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.foreground.opacity(0.6))
-                                .child(word.clone()),
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.show_bulk = true;
+                                    this.bulk.update(cx, |i, cx| i.focus(window, cx));
+                                    cx.notify();
+                                },
+                            )),
                         )
                         .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .opacity(0.)
-                                .group_hover(group, |s| s.opacity(1.))
-                                .child(
-                                    Self::row_action(("dict-edit", index), "pencil", false, &p)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.start_edit(edit_word.clone(), window, cx)
-                                        })),
+                            Self::footer_action(
+                                "dict-export",
+                                t("dictionary.export"),
+                                link_hover,
+                                &p,
+                            )
+                            .on_click(|_, _, cx| Self::export(cx)),
+                        )
+                        .child(
+                            Self::footer_action(
+                                "dict-clear",
+                                t("dictionary.clearAll"),
+                                p.destructive.opacity(0.7),
+                                &p,
+                            )
+                            .on_click(move |_, _, cx| {
+                                let words = AppState::global(cx).read(cx).dictionary.clone();
+                                show_dialog(
+                                    DialogRequest::confirm(
+                                        t("dictionary.clearTitle"),
+                                        Some(t("dictionary.clearDescription").into()),
+                                        true,
+                                        move |_, cx| {
+                                            update_dictionary(Vec::new(), words.clone(), cx)
+                                        },
+                                    ),
+                                    cx,
                                 )
-                                .child(
-                                    Self::row_action(("dict-remove", index), "x", true, &p)
-                                        .on_click(move |_, _, cx| {
-                                            update_dictionary(
-                                                Vec::new(),
-                                                vec![remove_word.clone()],
-                                                cx,
-                                            )
-                                        }),
-                                ),
-                        );
-                }
-                list = list.child(stagger_in(row, format!("dict-in-{word}"), index));
-            }
-        }
+                            }),
+                        ),
+                )
+        });
 
         div()
             .px(px(20.))
@@ -744,10 +853,12 @@ impl DictionaryView {
             .gap(px(12.))
             .child(add_row)
             .children(bulk)
-            .child(list)
+            .child(table)
+            .children(footer)
             .when(prompt_chars > WHISPER_DECODER_PROMPT_CHARS, |d| {
                 d.child(
                     div()
+                        .px(px(8.))
                         .text_size(px(TEXT_SMALL))
                         .line_height(px(LINE_SMALL))
                         .text_color(p.foreground.opacity(0.45))
@@ -758,6 +869,208 @@ impl DictionaryView {
                 )
             })
             .into_any_element()
+    }
+
+    fn render_row(
+        &mut self,
+        index: usize,
+        entry: DictionaryEntry,
+        max_uses: i64,
+        rule: Hsla,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnimationElement<Stateful<Div>> {
+        let p = cx.palette();
+        let group: SharedString = format!("dict-row-{index}").into();
+        let editing = self.editing.as_deref() == Some(entry.word.as_str());
+        let learned = entry.source == DictionarySource::Learned;
+        let muted = p.foreground.opacity(0.5);
+        let word_cell = if editing {
+            div().flex_1().pr(px(12.)).child(
+                text_field_sized(&self.edit_input, 12., FieldKind::Line, false, window, cx)
+                    .h(px(28.)),
+            )
+        } else {
+            div()
+                .flex_1()
+                .min_w_0()
+                .pr(px(12.))
+                .truncate()
+                .text_size(px(TEXT_BODY))
+                .text_color(p.foreground.opacity(0.9))
+                .child(entry.word.clone())
+        };
+        let bar = if max_uses > 0 {
+            USE_BAR_MAX * entry.use_count as f32 / max_uses as f32
+        } else {
+            0.
+        };
+        let last_used = entry
+            .last_used_at
+            .map(relative_time_label)
+            .unwrap_or_else(|| "—".to_string());
+        let edit_word = entry.word.clone();
+        let remove_word = entry.word.clone();
+        let row = div()
+            .id(("dict-row", index))
+            .group(group.clone())
+            .flex()
+            .items_center()
+            .h(px(36.))
+            .px(px(8.))
+            .border_b_1()
+            .border_color(rule)
+            .hover(|s| s.bg(p.hover_wash(0.025)))
+            .child(word_cell)
+            .child(
+                div()
+                    .w(px(COL_SOURCE))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(muted)
+                    .when(learned, |d| {
+                        d.child(div().size(px(6.)).rounded_full().bg(p.success))
+                    })
+                    .child(t(if learned {
+                        "dictionary.filterLearned"
+                    } else {
+                        "dictionary.filterManual"
+                    })),
+            )
+            .child(
+                div()
+                    .w(px(COL_USES))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div().w(px(USE_BAR_MAX)).flex().child(
+                            div()
+                                .h(px(4.))
+                                .w(px(bar))
+                                .rounded(px(2.))
+                                .bg(p.foreground.opacity(0.22)),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(if entry.use_count > 0 {
+                                muted
+                            } else {
+                                p.foreground.opacity(0.3)
+                            })
+                            .child(entry.use_count.to_string()),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(COL_LAST_USED))
+                    .flex()
+                    .justify_end()
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(muted)
+                    .child(last_used),
+            )
+            .child(
+                div()
+                    .w(px(COL_ACTIONS))
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(2.))
+                    .opacity(0.)
+                    .group_hover(group, |s| s.opacity(1.))
+                    .child(
+                        Self::row_action(("dict-edit", index), "pencil", false, &p).on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.start_edit(edit_word.clone(), window, cx)
+                            }),
+                        ),
+                    )
+                    .child(
+                        Self::row_action(("dict-remove", index), "x", true, &p).on_click(
+                            move |_, _, cx| {
+                                update_dictionary(Vec::new(), vec![remove_word.clone()], cx)
+                            },
+                        ),
+                    ),
+            );
+        stagger_in(row, format!("dict-in-{}", entry.word), index)
+    }
+
+    fn render_empty(p: &Palette, cx: &mut Context<Self>) -> Div {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .py(px(32.))
+            .child(
+                div()
+                    .size(px(40.))
+                    .mb(px(14.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(10.))
+                    .border_1()
+                    .border_color(p.primary.opacity(if p.dark { 0.15 } else { 0.1 }))
+                    .bg(p.primary.opacity(if p.dark { 0.09 } else { 0.06 }))
+                    .child(icon(
+                        "book-open",
+                        17.,
+                        p.primary.opacity(if p.dark { 0.6 } else { 0.5 }),
+                    )),
+            )
+            .child(
+                div()
+                    .mb(px(4.))
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(t("dictionary.emptyTitle")),
+            )
+            .child(
+                div()
+                    .mb(px(16.))
+                    .max_w(px(240.))
+                    .text_center()
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .text_color(p.foreground.opacity(0.45))
+                    .child(t_with(
+                        "dictionary.emptyDescription",
+                        &[("agentName", &agent_name())],
+                    )),
+            )
+            .child(
+                Button::new("dict-first")
+                    .icon("plus", 12.)
+                    .label(t("dictionary.addFirstWord"))
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.add_input.update(cx, |i, cx| i.focus(window, cx));
+                    })),
+            )
+            .child(
+                div()
+                    .id("dict-import-list")
+                    .mt(px(12.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(p.foreground.opacity(0.45))
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(p.foreground.opacity(0.6)))
+                    .child(icon("upload", 11., p.foreground.opacity(0.45)))
+                    .child(t("dictionary.importList"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_bulk = true;
+                        cx.notify();
+                    })),
+            )
     }
 
     fn render_snippets(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1261,5 +1574,57 @@ impl Render for SnippetEditor {
             |_, cx| close_custom(cx),
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{DateTime, Utc};
+
+    use super::{DictionaryEntry, DictionarySource, SortKey, sort_entries};
+
+    fn entry(word: &str, use_count: i64, last_used_at: Option<i64>) -> DictionaryEntry {
+        DictionaryEntry {
+            word: word.to_string(),
+            source: DictionarySource::Manual,
+            use_count,
+            last_used_at: last_used_at.and_then(DateTime::<Utc>::from_timestamp_millis),
+        }
+    }
+
+    fn sorted(key: SortKey, descending: bool) -> Vec<String> {
+        // Insertion order, oldest first.
+        let mut entries = vec![
+            entry("codex", 3, Some(2_000)),
+            entry("Alpha", 0, None),
+            entry("tailscale", 9, Some(1_000)),
+            entry("beta", 0, None),
+        ];
+        sort_entries(&mut entries, key, descending);
+        entries.into_iter().map(|e| e.word).collect()
+    }
+
+    #[test]
+    fn sorts_by_uses_with_the_newest_word_first_on_ties() {
+        assert_eq!(
+            sorted(SortKey::Uses, true),
+            ["tailscale", "codex", "beta", "Alpha"]
+        );
+    }
+
+    #[test]
+    fn sorts_words_case_insensitively() {
+        assert_eq!(
+            sorted(SortKey::Word, false),
+            ["Alpha", "beta", "codex", "tailscale"]
+        );
+    }
+
+    #[test]
+    fn never_used_words_sort_after_used_ones_by_last_use() {
+        assert_eq!(
+            sorted(SortKey::LastUsed, true),
+            ["codex", "tailscale", "beta", "Alpha"]
+        );
     }
 }

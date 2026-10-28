@@ -9,7 +9,7 @@ use std::sync::Arc;
 use gpui_kit::*;
 
 use crate::audio_storage::AudioStorage;
-use crate::db::{Database, DictionarySource, Snippet, TranscriptionItem};
+use crate::db::{Database, DictionaryEntry, DictionarySource, Snippet, TranscriptionItem};
 use crate::history::{HistoryStore, Recorded};
 use crate::i18n::{self, Language};
 use crate::settings::Settings;
@@ -50,6 +50,8 @@ pub struct AppState {
     pub history: Vec<TranscriptionItem>,
     pub history_loaded: bool,
     pub dictionary: Vec<String>,
+    /// The same words as `dictionary`, with source and usage.
+    pub dictionary_entries: Vec<DictionaryEntry>,
     pub snippets: Vec<Snippet>,
 }
 
@@ -63,7 +65,8 @@ impl AppState {
     pub fn init(settings: Settings, db: Arc<Database>, cx: &mut App) -> Entity<AppState> {
         i18n::set_language(Language::from_code(&settings.ui_language));
         theme::init(settings.theme, cx);
-        let dictionary = db.get_dictionary().unwrap_or_default();
+        let dictionary_entries = db.get_dictionary_entries().unwrap_or_default();
+        let dictionary = dictionary_entries.iter().map(|e| e.word.clone()).collect();
         let snippets = db.get_snippets().unwrap_or_default();
         let audio = Arc::new(AudioStorage::default());
         let state = cx.new(|_| AppState {
@@ -75,6 +78,7 @@ impl AppState {
             history: Vec::new(),
             history_loaded: false,
             dictionary,
+            dictionary_entries,
             snippets,
         });
         cx.set_global(AppStateGlobal(state.clone()));
@@ -132,13 +136,16 @@ impl AppState {
     }
 
     /// Runs a History write and shows the row it returns. Returns the row id,
-    /// or `None` when retention kept nothing.
+    /// or `None` when retention kept nothing. The write may count Dictionary
+    /// usage, so the Dictionary is reloaded either way.
     pub fn record_history(
         &mut self,
         cx: &mut Context<Self>,
         write: impl FnOnce(&HistoryStore, &Settings) -> anyhow::Result<Option<Recorded>>,
     ) -> anyhow::Result<Option<i64>> {
-        let Some(recorded) = write(&self.history_store, &self.settings)? else {
+        let written = write(&self.history_store, &self.settings);
+        self.reload_dictionary(cx);
+        let Some(recorded) = written? else {
             return Ok(None);
         };
         let id = recorded.item.id;
@@ -240,7 +247,12 @@ impl AppState {
     }
 
     fn reload_dictionary(&mut self, cx: &mut Context<Self>) {
-        self.dictionary = self.db.get_dictionary().unwrap_or_default();
+        self.dictionary_entries = self.db.get_dictionary_entries().unwrap_or_default();
+        self.dictionary = self
+            .dictionary_entries
+            .iter()
+            .map(|e| e.word.clone())
+            .collect();
         cx.emit(AppEvent::DictionaryChanged);
         cx.notify();
     }

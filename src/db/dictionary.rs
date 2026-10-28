@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
@@ -34,6 +34,23 @@ impl DictionarySource {
             Self::Learned => "learned",
         }
     }
+
+    fn from_db(value: &str) -> Self {
+        if value == Self::Learned.as_str() {
+            Self::Learned
+        } else {
+            Self::Manual
+        }
+    }
+}
+
+/// A dictionary word with the metadata the Dictionary view shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DictionaryEntry {
+    pub word: String,
+    pub source: DictionarySource,
+    pub use_count: i64,
+    pub last_used_at: Option<DateTime<Utc>>,
 }
 
 /// How many words a delta actually changed (not how many were requested).
@@ -214,7 +231,8 @@ fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<bo
 }
 
 impl Database {
-    /// Words in insertion order (the Dictionary view's order).
+    /// Words in insertion order.
+    #[cfg(test)]
     pub fn get_dictionary(&self) -> Result<Vec<String>> {
         let conn = self.lock();
         let words = conn
@@ -222,6 +240,27 @@ impl Database {
             .query_map([], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(words)
+    }
+
+    /// Words with their source and usage, in insertion order.
+    pub fn get_dictionary_entries(&self) -> Result<Vec<DictionaryEntry>> {
+        let conn = self.lock();
+        let entries = conn
+            .prepare(
+                "SELECT word, source, use_count, last_used_at FROM custom_dictionary ORDER BY id ASC",
+            )?
+            .query_map([], |row| {
+                let source: String = row.get(1)?;
+                let last_used_at: Option<String> = row.get(3)?;
+                Ok(DictionaryEntry {
+                    word: row.get(0)?,
+                    source: DictionarySource::from_db(&source),
+                    use_count: row.get(2)?,
+                    last_used_at: last_used_at.as_deref().and_then(parse_db_timestamp),
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(entries)
     }
 
     /// Words highest priority first, for picking what fits in the STT prompt.
@@ -372,6 +411,25 @@ mod tests {
 
     fn manual() -> DictionarySource {
         DictionarySource::Manual
+    }
+
+    #[test]
+    fn entries_carry_source_and_usage() {
+        let db = db();
+        db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
+            .unwrap();
+        db.apply_dictionary_changes(&["Kubernetes"], NONE, DictionarySource::Learned)
+            .unwrap();
+        db.record_dictionary_usage("whisper and Whisper").unwrap();
+        let entries = db.get_dictionary_entries().unwrap();
+        let words: Vec<&str> = entries.iter().map(|e| e.word.as_str()).collect();
+        assert_eq!(words, ["Whisper", "Alice", "Kubernetes"]);
+        assert_eq!(entries[0].use_count, 2);
+        assert!(entries[0].last_used_at.is_some());
+        assert_eq!(entries[1].use_count, 0);
+        assert_eq!(entries[1].last_used_at, None);
+        assert_eq!(entries[1].source, DictionarySource::Manual);
+        assert_eq!(entries[2].source, DictionarySource::Learned);
     }
 
     #[test]
