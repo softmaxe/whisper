@@ -14,6 +14,7 @@ mod db;
 mod dictation;
 mod history;
 mod i18n;
+mod instance;
 mod macos;
 mod menu;
 mod native;
