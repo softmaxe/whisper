@@ -27,8 +27,9 @@ typing in.
 - **History.** Search with Cmd+K, view raw transcripts, retry from saved audio,
   and set how long audio and transcripts are kept.
 - **File transcription.** Transcribe a single audio or video file, or a batch.
-- **Insights.** Words spoken, dictation count, words per minute, streaks and
-  a six-month activity heatmap, all computed on device.
+- **Insights.** Words, dictations, words per minute and streaks for the last
+  7 or 30 days or all time, each compared with the previous period, plus a
+  daily trend chart with a 7-day average, all computed on device.
 - **Fits into macOS.** Menu bar icon, standard app menu, start at login
   (macOS 13+), optional media pause while recording, English and Simplified
   Chinese UI, and light, dark or automatic themes.
@@ -41,7 +42,7 @@ The screenshots use sample data.
 
 | History | Insights |
 | --- | --- |
-| ![History grouped by day, with search](docs/images/en/home.png) | ![Words spoken, words per minute, streaks and a six-month activity heatmap](docs/images/en/insights.png) |
+| ![History grouped by day, with search](docs/images/en/home.png) | ![Words, words per minute and streaks compared with the previous period, and a daily trend chart](docs/images/en/insights.png) |
 | **Dictionary** | **Speech-to-text settings** |
 | ![Dictionary words used as spelling hints](docs/images/en/dictionary.png) | ![Self-hosted speech server URL and model](docs/images/en/settings.png) |
 
