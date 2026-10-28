@@ -951,8 +951,8 @@ impl SettingsModal {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .px(px(8.))
-                    .py(px(6.))
+                    .h(px(32.))
+                    .px(px(10.))
                     .rounded(px(6.))
                     .text_size(px(TEXT_BODY))
                     .cursor_pointer()
@@ -979,11 +979,11 @@ impl SettingsModal {
                         section.icon(),
                         16.,
                         if active {
-                            p.primary
+                            p.foreground
                         } else if p.dark {
-                            p.foreground.opacity(0.55)
+                            p.foreground.opacity(0.5)
                         } else {
-                            p.muted_foreground.opacity(0.7)
+                            p.muted_foreground.opacity(0.65)
                         },
                     ))
                     .child(

@@ -211,17 +211,27 @@ pub const FONT_MONO: &str = "JetBrainsMono Nerd Font Mono";
 /// - `DISPLAY`: hero titles
 /// - `FIGURE`: large numbers
 pub const TEXT_CAPTION: f32 = 11.;
-pub const TEXT_SMALL: f32 = 12.5;
-pub const TEXT_BODY: f32 = 13.5;
+pub const TEXT_SMALL: f32 = 12.;
+pub const TEXT_BODY: f32 = 14.;
 pub const TEXT_READING: f32 = 15.5;
-pub const TEXT_TITLE: f32 = 15.;
-pub const TEXT_DISPLAY: f32 = 23.;
+pub const TEXT_TITLE: f32 = 16.;
+pub const TEXT_DISPLAY: f32 = 24.;
 pub const TEXT_FIGURE: f32 = 34.;
 
 /// Line heights paired with the scale.
-pub const LINE_SMALL: f32 = 19.;
+pub const LINE_SMALL: f32 = 18.;
 pub const LINE_READING: f32 = 25.;
-pub const LINE_TITLE: f32 = 22.;
+pub const LINE_TITLE: f32 = 24.;
+
+/// Workspace geometry. These keep the top bar, sidebar rows and settings
+/// navigation on the same compact control rhythm.
+/// The window's 8 px inset brings the toolbar to 52 px from the window edge.
+pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 44.;
+pub const NAV_ROW_HEIGHT: f32 = 36.;
+
+/// A comfortable long-form reading measure. The canvas may be wider, but
+/// transcripts and their metadata stay in one scan-friendly column.
+pub const READING_MAX_WIDTH: f32 = 736.;
 
 /// Motion durations, in ms. Five steps replace one-off timings:
 ///
