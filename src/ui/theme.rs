@@ -32,6 +32,9 @@ pub struct Palette {
     pub surface_3: Hsla,
     pub surface_raised: Hsla,
     pub surface_window: Hsla,
+    /// Settings navigation: T3 Code's root `--sidebar`. In dark mode it is the
+    /// card tone, a step above the true-black app sidebar on `surface_window`.
+    pub settings_sidebar: Hsla,
     pub border_subtle: Hsla,
     pub border_hover: Hsla,
     /// Amber tones used by the "data retention disabled" banner.
@@ -76,6 +79,7 @@ impl Palette {
             surface_3: c(0xf4f4f5),
             surface_raised: c(0xebebed),
             surface_window: c(0xfafafa),
+            settings_sidebar: c(0xfafafa),
             border_subtle: c(0xe4e4e7),
             border_hover: c(0xd4d4d8),
             amber_border: c(0xfe9a00).opacity(0.3),
@@ -114,6 +118,7 @@ impl Palette {
             surface_3: c(0x141414),
             surface_raised: c(0x1e1e1e),
             surface_window: c(0x000000),
+            settings_sidebar: c(0x111111),
             border_subtle: c(0xffffff).opacity(0.06),
             border_hover: c(0xffffff).opacity(0.11),
             amber_border: c(0xfe9a00).opacity(0.3),
