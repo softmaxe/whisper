@@ -7,8 +7,9 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::theme::{
-    DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, Palette, PaletteExt,
-    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
+    CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE,
+    NAV_ROW_HEIGHT, Palette, PaletteExt, RADIUS_LG, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION,
+    TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -53,7 +54,7 @@ pub fn f32_tx(
     )
 }
 
-/// Pill switch: 34×20 track, 14 px knob, 120 ms slide.
+/// Pill switch: 30×18 track, 14 px knob, 120 ms slide.
 #[derive(IntoElement)]
 pub struct Toggle {
     id: ElementId,
@@ -95,15 +96,13 @@ impl RenderOnce for Toggle {
             }
         } else if self.checked {
             p.primary
-        } else if p.dark {
-            p.surface_raised
         } else {
-            p.muted_foreground.opacity(0.3)
+            p.input_border
         };
         let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
             (id.clone(), "knob"),
-            if self.checked { 17.0 } else { 3.0 },
+            if self.checked { 14.0 } else { 2.0 },
             DUR_SNAP,
             ease_css,
             window,
@@ -121,8 +120,8 @@ impl RenderOnce for Toggle {
             .id(id)
             .relative()
             .flex_none()
-            .w(px(34.))
-            .h(px(20.))
+            .w(px(30.))
+            .h(px(18.))
             .rounded_full()
             .bg(track)
             .when(disabled, |d| d.opacity(0.5))
@@ -130,12 +129,12 @@ impl RenderOnce for Toggle {
             .child(
                 div()
                     .absolute()
-                    .top(px(3.))
+                    .top(px(2.))
                     .left(px(knob_x))
                     .size(px(14.))
                     .rounded_full()
                     .bg(knob)
-                    .when(!disabled, |d| d.shadow_sm()),
+                    .when(!disabled, |d| d.shadow(vec![drop(0., 1., 2., 0.1)])),
             )
             .when_some(on_change.filter(|_| !disabled), |d, f| {
                 d.on_click(move |_, window, cx| f(!checked, window, cx))
@@ -145,7 +144,7 @@ impl RenderOnce for Toggle {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ButtonVariant {
-    /// Brand-blue glass in light mode; near-white in dark mode.
+    /// Brand blue with a top highlight.
     Primary,
     Outline,
     OutlineFlat,
@@ -159,7 +158,7 @@ pub enum ButtonSize {
     Sm,
 }
 
-/// Rounded-full buttons in several variants.
+/// Rounded buttons in several variants, 32 px tall by default.
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
@@ -258,19 +257,32 @@ impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = cx.palette();
         let (height, pad_x, text) = match self.size {
-            ButtonSize::Default => (36., 16., TEXT_BODY),
-            ButtonSize::Sm => (30., 12., TEXT_SMALL),
+            ButtonSize::Default => (CONTROL_HEIGHT, 12., TEXT_BODY),
+            ButtonSize::Sm => (28., 10., TEXT_SMALL),
         };
         let height = self.height.unwrap_or(height);
-        let (bg, hover_bg, fg, border, weight) = variant_colors(&p, self.variant);
+        let style = variant_style(&p, self.variant);
         let disabled = self.disabled;
         let (pressed, depth) = press_depth(&self.id, window, cx);
-        // A press reads as scale(.975). GPUI cannot scale a div, so the face
+        // A press reads as scale(.97). GPUI cannot scale a div, so the face
         // insets inside its own footprint: margins give back what the size
         // loses, and the layout around it does not move.
-        let inset_y = height * 0.0125 * depth;
+        let inset_y = height * 0.015 * depth;
         // A full-width face only sinks vertically; side margins would overflow.
         let inset_x = if self.full_width { 0. } else { inset_y * 2.5 };
+        // Pressed faces lose their lift and their highlight.
+        let lift = 1. - depth;
+        let mut shadows: Vec<BoxShadow> = style
+            .shadows
+            .iter()
+            .map(|s| BoxShadow {
+                color: s.color.opacity(s.color.a * lift),
+                ..s.clone()
+            })
+            .collect();
+        if depth > 0.01 && style.bg.is_some() {
+            shadows.push(inset(0., 1., 0., hsla(0., 0., 0., 0.08 * depth)));
+        }
         let mut el = div()
             .id(self.id)
             .flex()
@@ -282,21 +294,22 @@ impl RenderOnce for Button {
             .my(px(inset_y))
             .mx(px(inset_x))
             .px(px(pad_x - inset_x))
-            .rounded_full()
+            .rounded(px(RADIUS_LG))
             .when(self.full_width, |d| d.w_full().flex_1())
             .text_size(px(text))
-            .font_weight(weight)
-            .text_color(fg)
-            .when_some(border, |d, b| d.border_1().border_color(b))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(style.fg)
+            .when_some(style.border, |d, b| d.border_1().border_color(b))
+            .when(!shadows.is_empty() && !disabled, |d| d.shadow(shadows))
             .whitespace_nowrap();
-        if let Some(bg) = bg {
+        if let Some(bg) = style.bg {
             el = el.bg(bg);
         }
         if disabled {
-            el = el.opacity(0.5);
+            el = el.opacity(0.64);
         } else {
             el = el.cursor_pointer();
-            if let Some(hover_bg) = hover_bg {
+            if let Some(hover_bg) = style.hover_bg {
                 el = el.hover(move |s| s.bg(hover_bg));
             }
             if let Some(f) = self.on_click {
@@ -314,75 +327,137 @@ impl RenderOnce for Button {
                     set_pressed(&up_out, false, cx)
                 });
         }
-        el.when_some(self.icon, |d, (name, size)| d.child(icon(name, size, fg)))
-            .when_some(self.label, |d, label| d.child(label))
+        el.when_some(self.icon, |d, (name, size)| {
+            d.child(icon(name, size, style.icon))
+        })
+        .when_some(self.label, |d, label| d.child(label))
     }
 }
 
-fn variant_colors(
-    p: &Palette,
-    variant: ButtonVariant,
-) -> (Option<Hsla>, Option<Hsla>, Hsla, Option<Hsla>, FontWeight) {
+/// An outer shadow.
+pub fn drop(x: f32, y: f32, blur: f32, alpha: f32) -> BoxShadow {
+    BoxShadow {
+        color: hsla(0., 0., 0., alpha),
+        offset: point(px(x), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(0.),
+        inset: false,
+    }
+}
+
+/// An inner shadow, used as the 1 px highlight along a control's edge.
+pub fn inset(x: f32, y: f32, blur: f32, color: Hsla) -> BoxShadow {
+    BoxShadow {
+        color,
+        offset: point(px(x), px(y)),
+        blur_radius: px(blur),
+        spread_radius: px(0.),
+        inset: true,
+    }
+}
+
+/// Elevation of dialogs, the settings sheet and the command palette.
+pub fn dialog_shadow(p: &Palette) -> Vec<BoxShadow> {
+    let mut shadows = vec![BoxShadow {
+        color: hsla(0., 0., 0., if p.dark { 0.65 } else { 0.3 }),
+        offset: point(px(0.), px(24.)),
+        blur_radius: px(64.),
+        spread_radius: px(-24.),
+        inset: false,
+    }];
+    if p.dark {
+        shadows.push(inset(0., 1., 0., p.white.opacity(0.04)));
+    }
+    shadows
+}
+
+/// The scrim behind dialogs and sheets.
+pub fn backdrop(p: &Palette) -> Hsla {
+    if p.dark {
+        hsla(0., 0., 0., 0.72)
+    } else {
+        hsla(240. / 360., 0.06, 0.1, 0.32)
+    }
+}
+
+struct ButtonStyle {
+    bg: Option<Hsla>,
+    hover_bg: Option<Hsla>,
+    fg: Hsla,
+    icon: Hsla,
+    border: Option<Hsla>,
+    shadows: Vec<BoxShadow>,
+}
+
+fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
     match variant {
-        ButtonVariant::Primary => (
-            Some(p.primary),
-            Some(p.primary.opacity(0.9)),
-            p.primary_foreground,
-            None,
-            FontWeight::SEMIBOLD,
-        ),
-        ButtonVariant::Outline => {
-            if p.dark {
-                (
-                    Some(p.white.opacity(0.035)),
-                    Some(p.white.opacity(0.07)),
-                    p.foreground,
-                    Some(p.border_hover),
-                    FontWeight::MEDIUM,
-                )
+        ButtonVariant::Primary => ButtonStyle {
+            bg: Some(p.primary),
+            hover_bg: Some(p.primary.opacity(0.9)),
+            fg: p.primary_foreground,
+            icon: p.primary_foreground,
+            border: Some(p.primary),
+            shadows: vec![
+                BoxShadow {
+                    color: p.primary.opacity(0.24),
+                    ..drop(0., 1., 2., 0.)
+                },
+                inset(0., 1., 0., p.white.opacity(0.16)),
+            ],
+        },
+        ButtonVariant::Outline => ButtonStyle {
+            bg: Some(if p.dark {
+                p.white.opacity(0.035)
             } else {
-                (
-                    Some(p.popover),
-                    Some(p.muted.opacity(0.5)),
-                    p.foreground,
-                    Some(p.border_hover),
-                    FontWeight::MEDIUM,
-                )
-            }
-        }
-        ButtonVariant::OutlineFlat => (
-            None,
-            Some(p.hover_wash(0.05)),
-            p.muted_foreground.opacity(0.7),
-            Some(if p.dark {
-                p.white.opacity(0.1)
-            } else {
-                p.border.opacity(0.7)
+                p.popover
             }),
-            FontWeight::MEDIUM,
-        ),
-        ButtonVariant::Ghost => (
-            None,
-            Some(if p.dark {
-                p.white.opacity(0.08)
+            hover_bg: Some(if p.dark {
+                p.white.opacity(0.06)
             } else {
-                p.muted
+                p.muted.opacity(0.5)
             }),
-            if p.dark {
-                p.foreground.opacity(0.9)
+            fg: p.foreground,
+            icon: p.muted_foreground,
+            border: Some(p.input_border),
+            shadows: if p.dark {
+                vec![inset(0., 1., 0., p.white.opacity(0.06))]
             } else {
-                p.foreground
+                vec![
+                    drop(0., 1., 2., 0.05),
+                    inset(0., -1., 0., hsla(0., 0., 0., 0.04)),
+                ]
             },
-            None,
-            FontWeight::MEDIUM,
-        ),
-        ButtonVariant::Destructive => (
-            Some(p.destructive),
-            Some(p.destructive.opacity(0.9)),
-            p.white,
-            Some(p.destructive.opacity(0.7)),
-            FontWeight::SEMIBOLD,
-        ),
+        },
+        ButtonVariant::OutlineFlat => ButtonStyle {
+            bg: None,
+            hover_bg: Some(p.hover_wash(0.05)),
+            fg: p.muted_foreground,
+            icon: p.muted_foreground,
+            border: Some(p.border),
+            shadows: Vec::new(),
+        },
+        ButtonVariant::Ghost => ButtonStyle {
+            bg: None,
+            hover_bg: Some(p.hover_wash(if p.dark { 0.06 } else { 0.05 })),
+            fg: p.foreground,
+            icon: p.muted_foreground,
+            border: None,
+            shadows: Vec::new(),
+        },
+        ButtonVariant::Destructive => ButtonStyle {
+            bg: Some(p.destructive),
+            hover_bg: Some(p.destructive.opacity(0.9)),
+            fg: p.white,
+            icon: p.white,
+            border: Some(p.destructive),
+            shadows: vec![
+                BoxShadow {
+                    color: p.destructive.opacity(0.24),
+                    ..drop(0., 1., 2., 0.)
+                },
+                inset(0., 1., 0., p.white.opacity(0.16)),
+            ],
+        },
     }
 }
 
@@ -393,7 +468,8 @@ pub fn section_header(
     p: &Palette,
 ) -> Div {
     div()
-        .mb(px(12.))
+        .mb(px(10.))
+        .px(px(4.))
         .child(
             div()
                 .text_size(px(TEXT_TITLE))
@@ -416,26 +492,15 @@ pub fn section_header(
 
 /// `SettingsPanel`: a bordered group whose rows are separated by hairlines.
 pub fn settings_panel(rows: Vec<AnyElement>, p: &Palette) -> Div {
-    let divider = if p.dark {
-        p.border_subtle.opacity(0.5)
-    } else {
-        p.border.opacity(0.6)
-    };
+    let divider = p.border.opacity(0.5);
     let mut panel = div()
         .flex()
         .flex_col()
-        .rounded(px(8.))
+        .rounded(px(RADIUS_XL))
         .border_1()
-        .border_color(if p.dark {
-            p.border_subtle.opacity(0.7)
-        } else {
-            p.border.opacity(0.7)
-        })
-        .bg(if p.dark {
-            p.surface_2.opacity(0.5)
-        } else {
-            p.card.opacity(0.5)
-        });
+        .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
+        .bg(p.card.opacity(0.4))
+        .shadow(vec![drop(0., 1., 2., 0.05)]);
     for (index, row) in rows.into_iter().enumerate() {
         panel = panel.child(
             div()
@@ -463,7 +528,7 @@ pub fn settings_row(
             .flex()
             .items_center()
             .justify_between()
-            .gap(px(16.))
+            .gap(px(32.))
             .child(label_block(label, description, p))
             .child(div().flex_none().child(control)),
     )
@@ -536,7 +601,7 @@ pub fn settings_field_tagged(
         .child(
             div()
                 .px(px(6.))
-                .rounded(px(4.))
+                .rounded(px(RADIUS_SM))
                 .border_1()
                 .border_color(if p.dark { p.border_hover } else { p.border })
                 .bg(if p.dark { p.surface_3 } else { p.muted })
@@ -586,18 +651,66 @@ fn field_with_label(
     )
 }
 
-/// A `<kbd>` chip.
+/// A sidebar row: muted until hovered, foreground and a raised fill when active.
+pub fn nav_row(
+    id: SharedString,
+    icon_name: &'static str,
+    label: impl Into<SharedString>,
+    active: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let (fg, icon_color) = if active {
+        (p.foreground, p.foreground)
+    } else {
+        (p.muted_foreground, p.muted_foreground.opacity(0.85))
+    };
+    let hover_bg = p.hover_wash(if p.dark { 0.08 } else { 0.04 });
+    let hover_fg = p.foreground;
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .w_full()
+        .h(px(NAV_ROW_HEIGHT))
+        .px(px(10.))
+        .rounded(px(RADIUS_LG))
+        .cursor_pointer()
+        .text_size(px(TEXT_BODY))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(fg)
+        .when(active, |d| {
+            if p.dark {
+                d.bg(p.white.opacity(0.09))
+            } else {
+                d.bg(p.card)
+                    .border_1()
+                    .border_color(p.border.opacity(0.7))
+                    .shadow(vec![drop(0., 1., 2., 0.04)])
+            }
+        })
+        .when(!active, |d| {
+            d.hover(move |s| s.bg(hover_bg).text_color(hover_fg))
+        })
+        .child(icon(icon_name, 16., icon_color))
+        .child(div().flex_1().min_w_0().truncate().child(label.into()))
+}
+
+/// A `<kbd>` chip: a flat 20 px tint, no border or shadow.
 pub fn kbd(text: impl Into<SharedString>, p: &Palette) -> Div {
     div()
-        .rounded(px(6.))
-        .bg(if p.dark { p.surface_2 } else { p.background })
-        .px(px(6.))
-        .py(px(1.))
-        .font_family(FONT_MONO)
-        .text_size(px(TEXT_CAPTION))
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .h(px(20.))
+        .min_w(px(20.))
+        .px(px(4.))
+        .rounded(px(RADIUS_SM))
+        .bg(p.foreground.opacity(0.07))
+        .text_size(px(TEXT_SMALL))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(p.foreground.opacity(0.8))
-        .shadow_sm()
+        .text_color(p.muted_foreground)
         .child(text.into())
 }
 
@@ -661,7 +774,7 @@ pub fn skeleton_line(width: f32, index: usize, since: Instant, p: &Palette, cx: 
         .relative()
         .h(px(10.))
         .w(relative(width))
-        .rounded(px(4.))
+        .rounded(px(RADIUS_SM))
         .bg(wash)
         .overflow_hidden();
     if cx.reduce_motion() {

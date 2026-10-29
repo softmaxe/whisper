@@ -13,9 +13,11 @@ use crate::text::format::{RelativeTime, normalize_db_date, relative_time};
 
 use crate::app_state::AppState;
 
-use super::components::icon;
+use super::components::{backdrop, dialog_shadow, icon, kbd};
 use super::overlays::close_custom;
-use super::theme::{FONT_VOICE, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL};
+use super::theme::{
+    FONT_VOICE, PaletteExt, RADIUS_2XL, RADIUS_LG, TEXT_BODY, TEXT_SMALL, tabular_nums,
+};
 
 pub enum CommandSearchEvent {
     Selected(i64),
@@ -129,23 +131,13 @@ impl Render for CommandSearch {
         let hint = |keys: &[&'static str], label: String| {
             let mut row = div().flex().items_center().gap(px(4.));
             for k in keys {
-                row = row.child(
-                    div()
-                        .px(px(4.))
-                        .rounded(px(4.))
-                        .border_1()
-                        .border_color(p.border.opacity(0.7))
-                        .bg(p.muted.opacity(0.5))
-                        .text_size(px(TEXT_CAPTION))
-                        .text_color(p.muted_foreground.opacity(0.55))
-                        .child(*k),
-                );
+                row = row.child(kbd(*k, &p));
             }
             row.child(
                 div()
                     .ml(px(2.))
-                    .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(p.muted_foreground)
                     .child(label),
             )
         };
@@ -154,7 +146,7 @@ impl Render for CommandSearch {
             .id("search-results")
             .max_h(px(340.))
             .overflow_y_scroll()
-            .p(px(6.));
+            .p(px(8.));
         if results.is_empty() {
             list = list.child(
                 div()
@@ -162,7 +154,7 @@ impl Render for CommandSearch {
                     .flex()
                     .justify_center()
                     .text_size(px(TEXT_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_color(p.muted_foreground)
                     .child(if query.trim().is_empty() {
                         t("commandSearch.emptyState")
                     } else {
@@ -174,17 +166,15 @@ impl Render for CommandSearch {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .px(px(10.))
-                    .pt(px(8.))
-                    .pb(px(4.))
-                    .child(icon("mic", 11., p.muted_foreground.opacity(0.7)))
+                    .px(px(8.))
+                    .pt(px(4.))
+                    .pb(px(6.))
                     .child(
                         div()
-                            .text_size(px(TEXT_CAPTION))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(p.muted_foreground.opacity(0.7))
-                            .child(t("commandSearch.sections.transcripts").to_uppercase()),
+                            .text_size(px(TEXT_SMALL))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.muted_foreground)
+                            .child(t("commandSearch.sections.transcripts")),
                     ),
             );
             for (idx, item) in results.iter().enumerate() {
@@ -194,16 +184,17 @@ impl Render for CommandSearch {
                         .id(("search-row", idx))
                         .flex()
                         .items_center()
-                        .gap(px(10.))
+                        .gap(px(8.))
                         .w_full()
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(8.))
+                        .min_h(px(32.))
+                        .px(px(8.))
+                        .py(px(6.))
+                        .rounded(px(RADIUS_LG))
                         .cursor_pointer()
-                        .when(selected, |d| {
-                            d.bg(p.primary.opacity(if p.dark { 0.1 } else { 0.08 }))
+                        .when(selected, |d| d.bg(p.foreground.opacity(0.09)))
+                        .when(!selected, |d| {
+                            d.hover(move |s| s.bg(p.foreground.opacity(0.06)))
                         })
-                        .when(!selected, |d| d.hover(move |s| s.bg(p.hover_wash(0.04))))
                         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                             if *hovered && this.selected != idx {
                                 this.selected = idx;
@@ -213,11 +204,11 @@ impl Render for CommandSearch {
                         .on_click(cx.listener(move |this, _, _, cx| this.choose(idx, cx)))
                         .child(icon(
                             "mic",
-                            13.,
+                            16.,
                             if selected {
-                                p.primary
+                                p.foreground
                             } else {
-                                p.muted_foreground.opacity(0.7)
+                                p.muted_foreground.opacity(0.8)
                             },
                         ))
                         .child(
@@ -227,14 +218,19 @@ impl Render for CommandSearch {
                                 .truncate()
                                 .font_family(FONT_VOICE)
                                 .text_size(px(TEXT_BODY))
-                                .text_color(p.foreground.opacity(0.75))
+                                .text_color(if selected {
+                                    p.foreground
+                                } else {
+                                    p.foreground.opacity(0.85)
+                                })
                                 .child(item.text.clone()),
                         )
                         .child(
                             div()
                                 .flex_none()
-                                .text_size(px(TEXT_CAPTION))
-                                .text_color(p.muted_foreground.opacity(0.7))
+                                .text_size(px(TEXT_SMALL))
+                                .font_features(tabular_nums())
+                                .text_color(p.muted_foreground)
                                 .child(relative_label(item)),
                         ),
                 );
@@ -245,15 +241,11 @@ impl Render for CommandSearch {
             .id("command-search")
             .occlude()
             .w(px(576.))
-            .rounded(px(12.))
+            .rounded(px(RADIUS_2XL))
             .border_1()
-            .border_color(if p.dark {
-                p.border
-            } else {
-                p.border.opacity(0.7)
-            })
-            .bg(if p.dark { p.surface_2 } else { p.card })
-            .shadow_2xl()
+            .border_color(p.border)
+            .bg(p.popover)
+            .shadow(dialog_shadow(&p))
             .overflow_hidden()
             .on_click(|_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::on_key))
@@ -261,12 +253,12 @@ impl Render for CommandSearch {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .px(px(14.))
-                    .py(px(12.))
+                    .gap(px(8.))
+                    .h(px(48.))
+                    .px(px(16.))
                     .border_b_1()
-                    .border_color(p.border.opacity(0.7))
-                    .child(icon("search", 14., p.muted_foreground.opacity(0.7)))
+                    .border_color(p.border)
+                    .child(icon("search", 16., p.muted_foreground))
                     .child(
                         div().flex_1().text_size(px(TEXT_BODY)).child(
                             Input::new(&self.input)
@@ -278,11 +270,14 @@ impl Render for CommandSearch {
                         d.child(
                             div()
                                 .id("search-clear")
-                                .text_size(px(TEXT_CAPTION))
-                                .text_color(p.muted_foreground.opacity(0.7))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(24.))
+                                .rounded(px(RADIUS_LG))
                                 .cursor_pointer()
-                                .hover(move |s| s.text_color(p.muted_foreground))
-                                .child("✕")
+                                .hover(move |s| s.bg(p.foreground.opacity(0.06)))
+                                .child(icon("x", 14., p.muted_foreground))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.input.update(cx, |i, cx| i.set_value("", window, cx));
                                 })),
@@ -295,11 +290,11 @@ impl Render for CommandSearch {
                     .flex()
                     .items_center()
                     .gap(px(16.))
-                    .px(px(14.))
-                    .py(px(8.))
+                    .px(px(16.))
+                    .py(px(10.))
                     .border_t_1()
-                    .border_color(p.border.opacity(0.7))
-                    .bg(p.muted.opacity(0.15))
+                    .border_color(p.foreground.opacity(0.07))
+                    .bg(p.foreground.opacity(0.025))
                     .child(hint(&["↑", "↓"], t("commandSearch.footer.navigate")))
                     .child(hint(&["↵"], t("commandSearch.footer.open")))
                     .child(hint(&["Esc"], t("commandSearch.footer.dismiss"))),
@@ -309,13 +304,13 @@ impl Render for CommandSearch {
             .id("command-search-backdrop")
             .absolute()
             .inset_0()
-            .bg(hsla(0., 0., 0., 0.5))
+            .bg(backdrop(&p))
             .occlude()
             .on_click(|_, _, cx| close_custom(cx))
             .child(
                 div()
                     .absolute()
-                    .top(relative(0.18))
+                    .top(relative(0.12))
                     .left_0()
                     .right_0()
                     .flex()

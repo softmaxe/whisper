@@ -8,10 +8,10 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{Button, ButtonVariant, icon};
+use super::components::{Button, ButtonVariant, backdrop, dialog_shadow, icon};
 use super::theme::{
-    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_TITLE, PaletteExt, TEXT_BODY, TEXT_SMALL,
-    TEXT_TITLE, ease_out, ease_snap,
+    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_2XL, RADIUS_LG,
+    RADIUS_SM, TEXT_BODY, TEXT_SMALL, ease_out, ease_snap,
 };
 
 pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -212,7 +212,7 @@ pub fn modal_frame(
         .flex()
         .items_center()
         .justify_center()
-        .bg(hsla(0., 0., 0., 0.6))
+        .bg(backdrop(&p))
         .occlude()
         .on_click(move |_, window, cx| dismiss(window, cx))
         .child(
@@ -222,29 +222,15 @@ pub fn modal_frame(
                 .relative()
                 .w(px(width))
                 .p(px(24.))
-                .rounded(px(16.))
+                .rounded(px(RADIUS_2XL))
                 .border_1()
-                .border_color(if p.dark {
-                    p.border
-                } else {
-                    p.border.opacity(0.7)
-                })
-                .bg(if p.dark { p.surface_2 } else { p.card })
-                .shadow_2xl()
+                .border_color(p.border)
+                .bg(p.popover)
+                .shadow(dialog_shadow(&p))
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(content)
                 .child(
-                    div()
-                        .id("modal-close")
-                        .absolute()
-                        .top(px(16.))
-                        .right(px(16.))
-                        .p(px(6.))
-                        .rounded_full()
-                        .opacity(0.5)
-                        .cursor_pointer()
-                        .hover(|s| s.opacity(1.).bg(p.muted.opacity(0.5)))
-                        .child(icon("x", 16., p.muted_foreground))
+                    close_button("modal-close", &p)
                         .on_click(move |_, window, cx| on_dismiss(window, cx)),
                 )
                 .with_animation(
@@ -312,40 +298,36 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .id("dialog-card")
         .occlude()
         .relative()
-        .w(px(425.))
+        .w(px(448.))
         .flex()
         .flex_col()
-        .gap(px(16.))
-        .p(px(24.))
-        .rounded(px(16.))
+        .rounded(px(RADIUS_2XL))
+        .overflow_hidden()
         .border_1()
-        .border_color(if p.dark {
-            p.border
-        } else {
-            p.border.opacity(0.7)
-        })
-        .bg(if p.dark { p.surface_2 } else { p.card })
-        .shadow_2xl()
+        .border_color(p.border)
+        .bg(p.popover)
+        .shadow(dialog_shadow(&p))
         .on_click(|_, _, cx| cx.stop_propagation())
         .child(
             div()
                 .flex()
                 .flex_col()
-                .gap(px(6.))
+                .gap(px(8.))
+                .p(px(24.))
                 .child(
                     div()
-                        .text_size(px(TEXT_TITLE))
+                        .text_size(px(20.))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .line_height(px(LINE_TITLE))
+                        .line_height(px(24.))
                         .text_color(p.foreground)
-                        .pr(px(24.))
+                        .pr(px(28.))
                         .child(request.title.clone()),
                 )
                 .when_some(request.description.clone(), |d, desc| {
                     d.child(
                         div()
                             .text_size(px(TEXT_BODY))
-                            .line_height(px(22.))
+                            .line_height(px(20.))
                             .text_color(p.muted_foreground)
                             .child(desc),
                     )
@@ -356,6 +338,15 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 .flex()
                 .justify_end()
                 .gap(px(8.))
+                .px(px(24.))
+                .py(px(16.))
+                .border_t_1()
+                .border_color(p.border)
+                .bg(if p.dark {
+                    p.white.opacity(0.02)
+                } else {
+                    p.muted.opacity(0.72)
+                })
                 .when_some(request.cancel_label.clone(), |d, label| {
                     d.child(
                         Button::new("dialog-cancel")
@@ -375,24 +366,11 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                         .on_click(confirm),
                 ),
         )
-        .child(
-            div()
-                .id("dialog-close")
-                .absolute()
-                .top(px(16.))
-                .right(px(16.))
-                .p(px(6.))
-                .rounded_full()
-                .opacity(0.5)
-                .cursor_pointer()
-                .hover(|s| s.opacity(1.).bg(p.muted.opacity(0.5)))
-                .child(icon("x", 16., p.muted_foreground))
-                .on_click(close.clone()),
-        )
+        .child(close_button("dialog-close", &p).on_click(close.clone()))
         .with_animation(
             "dialog-in",
             Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
-            |d, t| d.opacity(t).mt(px(8. * (1. - t))),
+            |d, t| d.opacity(t).mt(px(6. * (1. - t))),
         );
 
     Some(
@@ -403,7 +381,7 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .flex()
             .items_center()
             .justify_center()
-            .bg(hsla(0., 0., 0., 0.6))
+            .bg(backdrop(&p))
             .occlude()
             .on_click(close)
             .child(card)
@@ -416,33 +394,52 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     )
 }
 
-/// Renders the toast stack in the bottom-right corner: a 300px dark HUD card
-/// with a 2px accent bar, hover close button and a 1px countdown.
+/// A 28 px ghost close button pinned to a card's top-right corner.
+fn close_button(id: &'static str, p: &super::theme::Palette) -> Stateful<Div> {
+    let hover = p.hover_wash(if p.dark { 0.06 } else { 0.05 });
+    div()
+        .id(id)
+        .absolute()
+        .top(px(14.))
+        .right(px(14.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(28.))
+        .rounded(px(RADIUS_LG))
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .child(icon("x", 16., p.muted_foreground))
+}
+
+/// Renders the toast stack in the bottom-right corner: 360 px popover cards
+/// with a colored type icon, a hover close button and a 1 px countdown.
 pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
     let o = overlays.read(cx);
     if o.toasts.is_empty() {
         return None;
     }
+    let p = cx.palette();
     let mut stack = div()
         .absolute()
-        .bottom(px(20.))
-        .right(px(20.))
+        .bottom(px(24.))
+        .right(px(24.))
         .flex()
         .flex_col()
-        .gap(px(6.))
-        .w(px(300.));
+        .gap(px(8.))
+        .w(px(360.));
     for active in &o.toasts {
         let id = active.id;
         let toast = &active.toast;
-        let (accent, progress) = match toast.variant {
-            ToastVariant::Default => (hsla(0., 0., 1., 0.2), hsla(0., 0., 1., 0.15)),
-            ToastVariant::Success => (rgb(0x34d399).into(), Hsla::from(rgb(0x34d399)).opacity(0.3)),
-            ToastVariant::Destructive => {
-                (rgb(0xf87171).into(), Hsla::from(rgb(0xf87171)).opacity(0.3))
-            }
+        let (type_icon, progress) = match toast.variant {
+            ToastVariant::Default => (None, p.foreground.opacity(0.12)),
+            ToastVariant::Success => (Some(("check", p.success)), p.success.opacity(0.35)),
+            ToastVariant::Destructive => (
+                Some(("alert-circle", p.destructive)),
+                p.destructive.opacity(0.35),
+            ),
         };
-        let accent: Hsla = accent;
         let elapsed = active.shown_at.elapsed().as_secs_f32();
         let total = toast
             .duration
@@ -457,88 +454,89 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let destructive = toast.variant == ToastVariant::Destructive;
         let overlays_close = overlays.clone();
         let group: SharedString = format!("toast-{id}").into();
+        let close_hover = p.hover_wash(0.08);
         let card = div()
             .id(("toast", id as usize))
             .group(group.clone())
             .occlude()
             .relative()
             .flex()
+            .items_start()
+            .gap(px(10.))
             .w_full()
-            .rounded(px(5.))
+            .px(px(14.))
+            .py(px(12.))
+            .rounded(px(RADIUS_LG))
+            .overflow_hidden()
             .border_1()
-            .border_color(rgb(0x202225))
-            .bg(rgb(0x0a0b0e))
-            .shadow_lg()
-            .child(div().w(px(2.)).flex_none().rounded_l(px(5.)).bg(accent))
+            .border_color(p.foreground.opacity(0.1))
+            .bg(p.popover)
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., if p.dark { 0.5 } else { 0.14 }),
+                offset: point(px(0.), px(12.)),
+                blur_radius: px(32.),
+                spread_radius: px(-12.),
+                inset: false,
+            }])
+            .when_some(type_icon, |d, (name, color)| {
+                d.child(div().pt(px(2.)).child(icon(name, 16., color)))
+            })
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .flex()
-                    .items_start()
-                    .gap(px(8.))
-                    .px(px(10.))
-                    .py(px(8.))
+                    .pr(px(16.))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .line_height(px(20.))
+                            .text_color(p.foreground)
+                            .child(message),
+                    )
+                    .when_some(detail, |d, detail| {
+                        if destructive {
+                            d.child(
                                 div()
+                                    .mt(px(6.))
+                                    .px(px(8.))
+                                    .py(px(6.))
+                                    .rounded(px(RADIUS_SM))
+                                    .bg(p.destructive.opacity(if p.dark { 0.12 } else { 0.06 }))
+                                    .font_family(FONT_MONO)
                                     .text_size(px(TEXT_SMALL))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .line_height(px(15.))
-                                    .text_color(hsla(0., 0., 1., 0.9))
-                                    .child(message),
+                                    .line_height(px(LINE_SMALL))
+                                    .text_color(p.destructive)
+                                    .child(detail),
                             )
-                            .when_some(detail, |d, detail| {
-                                if destructive {
-                                    d.child(
-                                        div()
-                                            .mt(px(4.))
-                                            .px(px(6.))
-                                            .py(px(4.))
-                                            .rounded(px(3.))
-                                            .border_1()
-                                            .border_color(hsla(0., 0., 1., 0.06))
-                                            .bg(hsla(0., 0., 1., 0.04))
-                                            .font_family(FONT_MONO)
-                                            .text_size(px(TEXT_SMALL))
-                                            .line_height(px(16.5))
-                                            .text_color(Hsla::from(rgb(0xfca5a5)).opacity(0.8))
-                                            .child(detail),
-                                    )
-                                } else {
-                                    d.child(
-                                        div()
-                                            .mt(px(2.))
-                                            .text_size(px(TEXT_SMALL))
-                                            .line_height(px(16.5))
-                                            .text_color(hsla(0., 0., 1., 0.45))
-                                            .child(detail),
-                                    )
-                                }
-                            }),
-                    ),
+                        } else {
+                            d.child(
+                                div()
+                                    .mt(px(2.))
+                                    .text_size(px(TEXT_SMALL))
+                                    .line_height(px(LINE_SMALL))
+                                    .text_color(p.muted_foreground)
+                                    .child(detail),
+                            )
+                        }
+                    }),
             )
             .child(
                 div()
                     .id("toast-close")
                     .absolute()
-                    .top(px(-8.))
-                    .left(px(-8.))
+                    .top(px(8.))
+                    .right(px(8.))
                     .size(px(24.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_full()
-                    .border_1()
-                    .border_color(hsla(0., 0., 1., 0.1))
-                    .bg(hsla(0., 0., 0.2, 0.9))
+                    .rounded(px(RADIUS_SM))
                     .opacity(0.)
                     .group_hover(group, |s| s.opacity(1.))
+                    .hover(move |s| s.bg(close_hover))
                     .cursor_pointer()
-                    .child(icon("x", 12., hsla(0., 0., 1., 0.7)))
+                    .child(icon("x", 14., p.muted_foreground))
                     .on_click(move |_, _, cx| {
                         overlays_close.update(cx, |o, cx| o.dismiss_toast(id, cx));
                     }),
@@ -547,7 +545,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 div()
                     .absolute()
                     .bottom_0()
-                    .left(px(2.))
+                    .left_0()
                     .h(px(1.))
                     .w(relative(remaining))
                     .bg(progress),
@@ -566,7 +564,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 if closing {
                     d.opacity(1. - t).ml(px(4. * t))
                 } else {
-                    d.opacity(t).ml(px(16. * (1. - t)))
+                    d.opacity(t).mt(px(12. * (1. - t)))
                 }
             },
         );

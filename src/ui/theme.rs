@@ -1,6 +1,8 @@
 //! Design tokens for light and dark mode.
 
-use gpui_kit::{App, Global, Hsla, WindowAppearance, rgb};
+use std::sync::Arc;
+
+use gpui_kit::{App, FontFeatures, Global, Hsla, WindowAppearance, rgb};
 
 use crate::settings::ThemePreference;
 
@@ -14,6 +16,9 @@ pub struct Palette {
     pub destructive: Hsla,
     pub border: Hsla,
     pub input: Hsla,
+    /// Border of text inputs, selects and outline buttons: a step stronger
+    /// than `border` so controls read as interactive.
+    pub input_border: Hsla,
     pub ring: Hsla,
     pub background: Hsla,
     pub foreground: Hsla,
@@ -34,9 +39,8 @@ pub struct Palette {
     pub amber_bg: Hsla,
     pub amber_text: Hsla,
     pub amber_icon: Hsla,
-    /// Opaque dark HUD surface shared by light and dark toasts.
+    /// Opaque dark HUD surface behind the recording pill's hints.
     pub toast_surface: Hsla,
-    pub toast_border: Hsla,
     /// White in light mode and dark mode alike; used for subtle overlays.
     pub white: Hsla,
 }
@@ -58,6 +62,7 @@ impl Palette {
             destructive: c(0xfb2c36),
             border: c(0xe4e4e7),
             input: c(0xffffff),
+            input_border: c(0xd4d4d8),
             ring: c(0x1b4ed8),
             background: c(0xfcfcfc),
             foreground: c(0x18181b),
@@ -78,14 +83,13 @@ impl Palette {
             amber_text: c(0xbb4d00),
             amber_icon: c(0xfe9a00),
             toast_surface: c(0x0a0b0e),
-            toast_border: c(0x202225),
             white: c(0xffffff),
         }
     }
 
-    /// T3 Code's dark theme: a true black sidebar beside a near-black canvas,
-    /// raised surfaces a step above neutral-950, translucent white borders and
-    /// a brighter blue accent.
+    /// T3 Code's dark theme: a true black sidebar and canvas split by a
+    /// hairline, raised surfaces a step above neutral-950, translucent white
+    /// borders and a brighter blue accent.
     pub fn dark() -> Self {
         Self {
             dark: true,
@@ -96,8 +100,9 @@ impl Palette {
             destructive: c(0xfb414a),
             border: c(0xffffff).opacity(0.08),
             input: c(0x0a0a0a),
+            input_border: c(0xffffff).opacity(0.11),
             ring: c(0x346bf1),
-            background: c(0x0a0a0a),
+            background: c(0x000000),
             foreground: c(0xf5f5f5),
             card: c(0x111111),
             popover: c(0x111111),
@@ -116,7 +121,6 @@ impl Palette {
             amber_text: c(0xffb900),
             amber_icon: c(0xfe9a00),
             toast_surface: c(0x0a0b0e),
-            toast_border: c(0x202225),
             white: c(0xffffff),
         }
     }
@@ -225,9 +229,29 @@ pub const LINE_TITLE: f32 = 24.;
 
 /// Workspace geometry. These keep the top bar, sidebar rows and settings
 /// navigation on the same compact control rhythm.
-/// The window's 8 px inset brings the toolbar to 52 px from the window edge.
-pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 44.;
-pub const NAV_ROW_HEIGHT: f32 = 36.;
+/// The top bar centers on the traffic lights.
+pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 52.;
+pub const NAV_ROW_HEIGHT: f32 = 32.;
+/// Height of buttons, inputs and selects at their default size.
+pub const CONTROL_HEIGHT: f32 = 32.;
+
+/// Corner radii. Every rounded surface picks one of these steps.
+///
+/// - `RADIUS_SM`: badges, menu items, small chips
+/// - `RADIUS_MD`: compact controls, tooltips, segmented items
+/// - `RADIUS_LG`: buttons, inputs, nav rows, menus, toasts
+/// - `RADIUS_XL`: cards, settings groups, textareas
+/// - `RADIUS_2XL`: dialogs, the settings sheet, the command palette
+pub const RADIUS_SM: f32 = 4.;
+pub const RADIUS_MD: f32 = 6.;
+pub const RADIUS_LG: f32 = 8.;
+pub const RADIUS_XL: f32 = 12.;
+pub const RADIUS_2XL: f32 = 16.;
+
+/// Tabular figures, so counts, times and durations line up and don't jitter.
+pub fn tabular_nums() -> FontFeatures {
+    FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
+}
 
 /// A comfortable long-form reading measure. The canvas may be wider, but
 /// transcripts and their metadata stay in one scan-friendly column.

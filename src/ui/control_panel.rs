@@ -1,5 +1,5 @@
-//! The main window: collapsible sidebar, top bar with the transcript search,
-//! and the active view inside an inset rounded container.
+//! The main window: a collapsible sidebar split from the canvas by a hairline,
+//! a top bar with the transcript search, and the active view.
 
 use std::time::Duration;
 
@@ -11,21 +11,26 @@ use crate::i18n::t;
 use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
-use super::components::{f32_tx, icon};
+use super::components::{drop, f32_tx, icon, inset, kbd, nav_row};
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::theme::{
-    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_MONO, FONT_UI, NAV_ROW_HEIGHT, PaletteExt,
-    TEXT_BODY, TEXT_CAPTION, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
+    CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG,
+    TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
 };
 use super::upload_view::{UploadEvent, UploadView};
 
 actions!(control_panel, [OpenSearch, OpenSettings, CloseOverlay]);
 
-pub const SIDEBAR_WIDTH: f32 = 192.;
+pub const SIDEBAR_WIDTH: f32 = 232.;
+/// Where the top bar's controls start when the sidebar is hidden, clear of
+/// the traffic lights.
+const TRAFFIC_LIGHTS_END: f32 = 84.;
+/// Where the sidebar's app name starts: the traffic lights plus a gap.
+const BRAND_INSET: f32 = 96.;
 const PEEK_CLOSE_DELAY: Duration = Duration::from_millis(DUR_SNAP);
 /// Height of the fade that softens content scrolled under the top bar.
 const SCROLL_FADE: f32 = 28.;
@@ -223,48 +228,17 @@ impl ControlPanel {
     fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = cx.palette();
         let active = self.active;
-        let mut nav = div()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(8.));
+        let mut nav = div().flex().flex_col().gap(px(2.)).px(px(8.)).pt(px(4.));
         for view in PanelView::ALL {
-            let is_active = view == active;
-            let icon_color = if is_active {
-                p.foreground
-            } else {
-                p.foreground.opacity(0.55)
-            };
             nav = nav.child(
-                div()
-                    .id(SharedString::from(format!("nav-{view:?}")))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .w_full()
-                    .h(px(NAV_ROW_HEIGHT))
-                    .px(px(10.))
-                    .rounded(px(6.))
-                    .cursor_pointer()
-                    .when(is_active, |d| {
-                        d.bg(p.hover_wash(if p.dark { 0.08 } else { 0.06 }))
-                    })
-                    .when(!is_active, |d| d.hover(|s| s.bg(p.hover_wash(0.04))))
-                    .child(icon(view.icon(), 16., icon_color))
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .when(is_active, |d| d.font_weight(FontWeight::MEDIUM))
-                            .text_color(if is_active {
-                                p.foreground
-                            } else {
-                                p.foreground.opacity(if p.dark { 0.75 } else { 0.8 })
-                            })
-                            .child(view.label()),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx))),
+                nav_row(
+                    SharedString::from(format!("nav-{view:?}")),
+                    view.icon(),
+                    view.label(),
+                    view == active,
+                    &p,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx))),
             );
         }
 
@@ -275,37 +249,38 @@ impl ControlPanel {
             .flex()
             .flex_col()
             .bg(p.surface_window)
+            .border_r_1()
+            .border_color(p.border)
             .child(
                 drag_region()
                     .w_full()
                     .h(px(WORKSPACE_TOP_BAR_HEIGHT))
-                    .flex_none(),
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .pl(px(BRAND_INSET))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
+                            .child("Whisper"),
+                    ),
             )
             .child(nav)
             .child(div().flex_1())
             .child(
                 div().px(px(8.)).pb(px(8.)).child(
-                    div()
-                        .id("nav-settings")
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .w_full()
-                        .h(px(NAV_ROW_HEIGHT))
-                        .px(px(10.))
-                        .rounded(px(6.))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(p.hover_wash(0.04)))
-                        .child(icon("settings", 16., p.foreground.opacity(0.55)))
-                        .child(
-                            div()
-                                .text_size(px(TEXT_BODY))
-                                .text_color(p.foreground.opacity(if p.dark { 0.75 } else { 0.8 }))
-                                .child(t("sidebar.settings")),
-                        )
-                        .on_click(cx.listener(|_, _, window, cx| {
-                            window.dispatch_action(Box::new(OpenSettings), cx)
-                        })),
+                    nav_row(
+                        "nav-settings".into(),
+                        "settings",
+                        t("sidebar.settings"),
+                        false,
+                        &p,
+                    )
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        window.dispatch_action(Box::new(OpenSettings), cx)
+                    })),
                 ),
             )
     }
@@ -320,7 +295,11 @@ impl ControlPanel {
         // Eased with the sidebar so the toggle glides past the traffic lights.
         let start_pad = f32_tx(
             "topbar-start-pad",
-            if clear_traffic_lights { 76. } else { 12. },
+            if clear_traffic_lights {
+                TRAFFIC_LIGHTS_END - 4.
+            } else {
+                12.
+            },
             DUR_SHEET,
             ease_out,
             window,
@@ -337,12 +316,6 @@ impl ControlPanel {
             .gap(px(12.))
             .pl(px(start_pad))
             .pr(px(12.))
-            .border_b_1()
-            .border_color(if p.dark {
-                p.white.opacity(0.08)
-            } else {
-                p.border.opacity(0.8)
-            })
             .on_mouse_down(MouseButton::Left, |event, window, _| {
                 if event.click_count == 1 {
                     window.start_window_move();
@@ -362,16 +335,12 @@ impl ControlPanel {
                             .flex_none()
                             .items_center()
                             .justify_center()
-                            .size(px(32.))
-                            .rounded(px(8.))
+                            .size(px(28.))
+                            .rounded(px(RADIUS_LG))
                             .cursor_pointer()
                             .hover(|s| s.bg(p.hover_wash(0.05)))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(icon(
-                                "panel-left-close",
-                                16.,
-                                p.foreground.opacity(if p.dark { 0.5 } else { 0.6 }),
-                            ))
+                            .child(icon("panel-left-close", 16., p.muted_foreground))
                             .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
                             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                                 if !collapsed {
@@ -400,49 +369,44 @@ impl ControlPanel {
                     .flex_none()
                     .w(px(360.))
                     .max_w(relative(0.34))
-                    .h(px(32.))
+                    .h(px(CONTROL_HEIGHT))
                     .flex()
                     .items_center()
-                    .gap(px(10.))
-                    .px(px(16.))
-                    .rounded(px(8.))
+                    .gap(px(8.))
+                    .pl(px(10.))
+                    .pr(px(6.))
+                    .rounded(px(RADIUS_LG))
                     .border_1()
-                    .border_color(if p.dark {
-                        p.white.opacity(0.1)
-                    } else {
-                        p.border
-                    })
+                    .border_color(p.input_border)
                     .bg(if p.dark {
-                        p.white.opacity(0.05)
+                        p.white.opacity(0.035)
                     } else {
-                        p.foreground.opacity(0.04)
+                        p.popover
+                    })
+                    .shadow(if p.dark {
+                        vec![inset(0., 1., 0., p.white.opacity(0.05))]
+                    } else {
+                        vec![drop(0., 1., 2., 0.05)]
                     })
                     .hover(|s| {
                         s.bg(if p.dark {
-                            p.white.opacity(0.08)
+                            p.white.opacity(0.06)
                         } else {
-                            p.foreground.opacity(0.06)
+                            p.muted.opacity(0.6)
                         })
                     })
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(icon("search", 14., p.muted_foreground.opacity(0.7)))
+                    .child(icon("search", 16., p.muted_foreground))
                     .child(
                         div()
                             .flex_1()
                             .truncate()
                             .text_size(px(TEXT_BODY))
-                            .text_color(p.muted_foreground.opacity(0.7))
+                            .text_color(p.muted_foreground)
                             .child(t("commandSearch.sections.transcripts")),
                     )
-                    .child(
-                        div()
-                            .flex_none()
-                            .font_family(FONT_MONO)
-                            .text_size(px(TEXT_CAPTION))
-                            .text_color(p.muted_foreground.opacity(0.7))
-                            .child("⌘K"),
-                    )
+                    .child(kbd("⌘K", &p))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx)),
             )
             .child(div().flex_1())
@@ -552,63 +516,54 @@ impl Render for ControlPanel {
                     .overflow_hidden()
                     .child(div().flex_none().w(px(spacer)))
                     .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .overflow_hidden()
-                            .p(px(8.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .flex()
-                                    .flex_col()
-                                    .overflow_hidden()
-                                    .rounded(px(12.))
-                                    .border_1()
-                                    .border_color(p.border)
-                                    .bg(p.background)
-                                    .child(top_bar)
-                                    .child(
-                                        div()
-                                            .relative()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .flex()
-                                            .flex_col()
-                                            .child(
+                        div().flex_1().flex().flex_col().overflow_hidden().child(
+                            div()
+                                .flex_1()
+                                .min_h_0()
+                                .flex()
+                                .flex_col()
+                                .overflow_hidden()
+                                .bg(p.background)
+                                .child(top_bar)
+                                .child(
+                                    div()
+                                        .relative()
+                                        .flex_1()
+                                        .min_h_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(
+                                            div()
+                                                .id("panel-scroll")
+                                                .flex_1()
+                                                .min_h_0()
+                                                .overflow_y_scroll()
+                                                .track_scroll(&self.scroll)
+                                                .child(content),
+                                        )
+                                        // Content scrolled under the top bar fades out
+                                        // instead of meeting its border at a hard edge.
+                                        .when(fade > 0.001, |d| {
+                                            d.child(
                                                 div()
-                                                    .id("panel-scroll")
-                                                    .flex_1()
-                                                    .min_h_0()
-                                                    .overflow_y_scroll()
-                                                    .track_scroll(&self.scroll)
-                                                    .child(content),
+                                                    .absolute()
+                                                    .top_0()
+                                                    .left_0()
+                                                    .right(px(12.))
+                                                    .h(px(SCROLL_FADE))
+                                                    .opacity(fade)
+                                                    .bg(linear_gradient(
+                                                        180.,
+                                                        linear_color_stop(p.background, 0.),
+                                                        linear_color_stop(
+                                                            p.background.opacity(0.),
+                                                            1.,
+                                                        ),
+                                                    )),
                                             )
-                                            // Content scrolled under the top bar fades out
-                                            // instead of meeting its border at a hard edge.
-                                            .when(fade > 0.001, |d| {
-                                                d.child(
-                                                    div()
-                                                        .absolute()
-                                                        .top_0()
-                                                        .left_0()
-                                                        .right(px(12.))
-                                                        .h(px(SCROLL_FADE))
-                                                        .opacity(fade)
-                                                        .bg(linear_gradient(
-                                                            180.,
-                                                            linear_color_stop(p.background, 0.),
-                                                            linear_color_stop(
-                                                                p.background.opacity(0.),
-                                                                1.,
-                                                            ),
-                                                        )),
-                                                )
-                                            }),
-                                    ),
-                            ),
+                                        }),
+                                ),
+                        ),
                     )
                     // Painted after the main column so the peeking sidebar
                     // overlays it.

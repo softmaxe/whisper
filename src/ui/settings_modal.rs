@@ -17,16 +17,16 @@ use crate::app_state::AppState;
 use crate::backend::{self, AutoStartState, MicDeviceInfo, ModelOption};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, Toggle, icon, panel_row, section_header, settings_field,
-    settings_field_tagged, settings_panel, settings_row,
+    Button, ButtonSize, ButtonVariant, Toggle, backdrop, dialog_shadow, drop, icon, nav_row,
+    panel_row, section_header, settings_field, settings_field_tagged, settings_panel, settings_row,
 };
 use super::hotkey_input::HotkeyListInput;
 use super::overlays::{DialogRequest, Toast, show_dialog, show_toast};
 use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
 use super::text_input::{FieldKind, text_field, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION,
-    TEXT_SMALL, ease_out, ease_snap,
+    DUR_BASE, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL, RADIUS_LG,
+    RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, ease_out, ease_snap,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -710,7 +710,7 @@ impl SettingsModal {
                     .px(px(10.))
                     .flex()
                     .items_center()
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_MD))
                     .border_1()
                     .border_color(if p.dark { p.border_hover } else { p.border })
                     .bg(if p.dark { p.surface_2 } else { p.background })
@@ -931,68 +931,27 @@ impl SettingsModal {
                 nav = nav.child(
                     div()
                         .when(index > 0, |d| d.mt(px(16.)))
-                        .px(px(8.))
+                        .px(px(10.))
                         .pb(px(4.))
-                        .text_size(px(TEXT_CAPTION))
+                        .text_size(px(TEXT_SMALL))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground.opacity(if p.dark { 0.65 } else { 0.7 }))
+                        .text_color(p.muted_foreground.opacity(0.8))
                         .child(t(group)),
                 );
                 last_group = group;
             }
             let active = self.section == section;
             nav = nav.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "settings-nav-{}",
-                        section.key()
-                    )))
-                    .mt(px(1.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .h(px(32.))
-                    .px(px(10.))
-                    .rounded(px(6.))
-                    .text_size(px(TEXT_BODY))
-                    .cursor_pointer()
-                    .when(active, |d| {
-                        d.bg(if p.dark { p.surface_raised } else { p.muted })
-                            .text_color(p.foreground)
-                            .font_weight(FontWeight::MEDIUM)
-                    })
-                    .when(!active, |d| {
-                        d.text_color(if p.dark {
-                            p.foreground.opacity(0.75)
-                        } else {
-                            p.muted_foreground
-                        })
-                        .hover(|s| {
-                            s.text_color(p.foreground).bg(if p.dark {
-                                p.surface_2
-                            } else {
-                                p.muted.opacity(0.5)
-                            })
-                        })
-                    })
-                    .child(icon(
+                div().mt(px(2.)).child(
+                    nav_row(
+                        SharedString::from(format!("settings-nav-{}", section.key())),
                         section.icon(),
-                        16.,
-                        if active {
-                            p.foreground
-                        } else if p.dark {
-                            p.foreground.opacity(0.5)
-                        } else {
-                            p.muted_foreground.opacity(0.65)
-                        },
-                    ))
-                    .child(
-                        div()
-                            .flex_1()
-                            .truncate()
-                            .child(t(&format!("settings.sections.{}.label", section.key()))),
+                        t(&format!("settings.sections.{}.label", section.key())),
+                        active,
+                        &p,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.set_section(section, cx))),
+                ),
             );
         }
         nav
@@ -1006,14 +965,10 @@ impl SettingsModal {
             let mut track = div()
                 .flex()
                 .items_center()
-                .gap(px(1.))
+                .gap(px(2.))
                 .p(px(2.))
-                .rounded(px(6.))
-                .bg(if p.dark {
-                    p.surface_2
-                } else {
-                    p.muted.opacity(0.6)
-                });
+                .rounded(px(RADIUS_LG))
+                .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }));
             for (value, icon_name, key) in [
                 (
                     ThemePreference::Light,
@@ -1040,18 +995,18 @@ impl SettingsModal {
                         .gap(px(4.))
                         .px(px(10.))
                         .py(px(4.))
-                        .rounded(px(5.))
+                        .rounded(px(RADIUS_MD))
                         .text_size(px(TEXT_SMALL))
                         .font_weight(FontWeight::MEDIUM)
                         .cursor_pointer()
                         .when(selected, |d| {
-                            d.bg(if p.dark {
-                                p.surface_raised
-                            } else {
-                                p.background
+                            d.text_color(p.foreground).map(|d| {
+                                if p.dark {
+                                    d.bg(p.white.opacity(0.1))
+                                } else {
+                                    d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
+                                }
                             })
-                            .text_color(p.foreground)
-                            .shadow_sm()
                         })
                         .when(!selected, |d| {
                             d.text_color(p.muted_foreground)
@@ -1059,9 +1014,9 @@ impl SettingsModal {
                         })
                         .child(icon(
                             icon_name,
-                            12.,
+                            14.,
                             if selected {
-                                p.primary
+                                p.foreground
                             } else {
                                 p.muted_foreground
                             },
@@ -1109,7 +1064,7 @@ impl SettingsModal {
                             .flex()
                             .gap(px(12.))
                             .p(px(16.))
-                            .rounded(px(8.))
+                            .rounded(px(RADIUS_LG))
                             .border_1()
                             .border_color(p.warning.opacity(0.3))
                             .bg(p.warning.opacity(if p.dark { 0.1 } else { 0.05 }))
@@ -1428,7 +1383,7 @@ impl SettingsModal {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .rounded(px(4.))
+                                    .rounded(px(RADIUS_SM))
                                     .cursor_pointer()
                                     .hover(|s| {
                                         s.bg(if p.dark {
@@ -1474,7 +1429,7 @@ impl SettingsModal {
                 d.child(
                     div()
                         .p(px(12.))
-                        .rounded(px(8.))
+                        .rounded(px(RADIUS_LG))
                         .border_1()
                         .border_color(p.success.opacity(0.3))
                         .bg(p.success.opacity(if p.dark { 0.2 } else { 0.1 }))
@@ -1651,7 +1606,7 @@ impl SettingsModal {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(px(4.))
+                                .rounded(px(RADIUS_SM))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(p.success.opacity(0.1)))
                                 .child(icon("check", 14., p.success))
@@ -1664,7 +1619,7 @@ impl SettingsModal {
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .rounded(px(4.))
+                                .rounded(px(RADIUS_SM))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(p.muted.opacity(0.5)))
                                 .child(icon("x", 14., p.muted_foreground.opacity(0.7)))
@@ -1684,19 +1639,18 @@ impl SettingsModal {
                 .flex()
                 .items_center()
                 .px(px(12.))
-                .rounded(px(4.))
+                .rounded(px(RADIUS_LG))
                 .border_1()
                 .when(has_key, |d| {
-                    d.border_color(if p.dark {
-                        p.border_subtle.opacity(0.6)
+                    d.border_color(p.input_border).bg(if p.dark {
+                        p.white.opacity(0.035)
                     } else {
-                        p.border.opacity(0.7)
+                        p.input
                     })
-                    .bg(if p.dark { p.surface_1 } else { p.input })
                 })
                 .when(!has_key, |d| {
                     d.border_dashed()
-                        .border_color(p.border.opacity(0.7))
+                        .border_color(p.input_border)
                         .hover(|s| s.bg(p.muted.opacity(0.3)))
                 })
                 .cursor_pointer()
@@ -2005,7 +1959,7 @@ impl SettingsModal {
                             .max_h(px(320.))
                             .overflow_y_scroll()
                             .p(px(16.))
-                            .rounded(px(8.))
+                            .rounded(px(RADIUS_LG))
                             .border_1()
                             .border_color(p.border.opacity(0.7))
                             .bg(if p.dark {
@@ -2104,7 +2058,7 @@ impl SettingsModal {
                                     .gap(px(10.))
                                     .px(px(16.))
                                     .py(px(12.))
-                                    .rounded(px(8.))
+                                    .rounded(px(RADIUS_LG))
                                     .border_1()
                                     .border_color(p.warning.opacity(0.2))
                                     .bg(p.warning.opacity(if p.dark { 0.1 } else { 0.05 }))
@@ -2196,7 +2150,7 @@ impl SettingsModal {
                                                 .flex()
                                                 .items_center()
                                                 .justify_center()
-                                                .rounded(px(4.))
+                                                .rounded(px(RADIUS_SM))
                                                 .cursor_pointer()
                                                 .hover(|s| s.bg(p.muted))
                                                 .child(icon("copy", 12., p.muted_foreground))
@@ -2211,7 +2165,7 @@ impl SettingsModal {
                                         .max_h(px(192.))
                                         .overflow_y_scroll()
                                         .p(px(16.))
-                                        .rounded(px(8.))
+                                        .rounded(px(RADIUS_LG))
                                         .border_1()
                                         .border_color(p.border.opacity(0.7))
                                         .bg(if p.dark {
@@ -2231,7 +2185,7 @@ impl SettingsModal {
         };
 
         div()
-            .rounded(px(12.))
+            .rounded(px(RADIUS_XL))
             .border_1()
             .border_color(if p.dark {
                 p.border_subtle
@@ -2441,7 +2395,7 @@ fn activation_mode_cards(
                 .flex_1()
                 .min_w_0()
                 .p(px(12.))
-                .rounded(px(8.))
+                .rounded(px(RADIUS_LG))
                 .border_1()
                 .when(selected, |d| {
                     d.border_color(p.foreground.opacity(if p.dark { 0.3 } else { 0.4 }))
@@ -2549,7 +2503,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
     let mut table = div()
         .flex()
         .flex_col()
-        .rounded(px(8.))
+        .rounded(px(RADIUS_LG))
         .border_1()
         .border_color(line)
         .bg(if p.dark {
@@ -2678,7 +2632,7 @@ fn permission_card(
 ) -> impl IntoElement {
     div()
         .p(px(12.))
-        .rounded(px(6.))
+        .rounded(px(RADIUS_MD))
         .border_1()
         .when(granted, |d| {
             d.bg(p.success.opacity(0.05))
@@ -2697,7 +2651,7 @@ fn permission_card(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(6.))
+                        .rounded(px(RADIUS_MD))
                         .bg(if granted {
                             p.success.opacity(if p.dark { 0.15 } else { 0.1 })
                         } else {
@@ -2758,10 +2712,52 @@ impl Render for SettingsModal {
             SettingsSection::PrivacyData => self.render_privacy(cx),
         };
         let viewport = window.viewport_size();
-        let width = (viewport.width * 0.9).min(px(896.));
-        let height = viewport.height * 0.85;
+        // Inset clear of the top bar and traffic lights, like a sheet over the canvas.
+        let width = (viewport.width - px(96.)).min(px(1120.));
+        let height = (viewport.height - px(104.)).min(px(960.));
         let compact = width < px(800.);
         let closing = self.closing;
+        let section_label = t(&format!("settings.sections.{}.label", self.section.key()));
+        let header = div()
+            .h(px(48.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pl(px(20.))
+            .pr(px(10.))
+            .border_b_1()
+            .border_color(p.border)
+            .text_size(px(TEXT_BODY))
+            .font_weight(FontWeight::MEDIUM)
+            .child(
+                div()
+                    .text_color(p.muted_foreground)
+                    .child(t("sidebar.settings")),
+            )
+            .child(div().text_color(p.muted_foreground.opacity(0.6)).child("/"))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(p.foreground)
+                    .child(section_label),
+            )
+            .child(
+                div()
+                    .id("settings-close")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(28.))
+                    .rounded(px(RADIUS_LG))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(p.hover_wash(if p.dark { 0.06 } else { 0.05 })))
+                    .child(icon("x", 16., p.muted_foreground))
+                    .on_click(cx.listener(|this, _, _, cx| this.request_close(cx))),
+            );
 
         let panel = div()
             .id("settings-panel")
@@ -2770,60 +2766,49 @@ impl Render for SettingsModal {
             .w(width)
             .h(height)
             .flex()
-            .rounded(px(12.))
+            .rounded(px(RADIUS_2XL))
             .overflow_hidden()
             .border_1()
-            .border_color(if p.dark { p.border_subtle } else { p.border })
-            .bg(if p.dark { p.surface_1 } else { p.background })
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., if p.dark { 0.5 } else { 0.25 }),
-                offset: point(px(0.), px(25.)),
-                blur_radius: px(50.),
-                spread_radius: px(-12.),
-                inset: false,
-            }])
+            .border_color(p.border)
+            .bg(p.background)
+            .shadow(dialog_shadow(&p))
             .on_click(|_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .w(px(if compact { 48. } else { 208. }))
+                    .w(px(if compact { 48. } else { 240. }))
                     .flex_none()
                     .h_full()
                     .border_r_1()
-                    .border_color(if p.dark {
-                        p.border_subtle
-                    } else {
-                        p.border.opacity(0.7)
-                    })
-                    .bg(if p.dark { p.surface_0 } else { p.surface_1 })
+                    .border_color(p.border)
+                    .bg(p.surface_window)
                     .child(nav),
             )
             .child(
                 div()
-                    .id("settings-content")
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .bg(if p.dark { p.surface_1 } else { p.background })
-                    .child(div().p(px(if compact { 16. } else { 24. })).child(content)),
-            )
-            .child(
-                div()
-                    .id("settings-close")
-                    .absolute()
-                    .top(px(16.))
-                    .right(px(16.))
-                    .p(px(6.))
-                    .rounded(px(6.))
-                    .opacity(0.4)
-                    .cursor_pointer()
-                    .hover(|s| {
-                        s.opacity(1.)
-                            .bg(if p.dark { p.surface_raised } else { p.muted })
-                    })
-                    .child(icon("x", 14., p.muted_foreground))
-                    .on_click(cx.listener(|this, _, _, cx| this.request_close(cx))),
+                    .flex()
+                    .flex_col()
+                    .child(header)
+                    .child(
+                        div()
+                            .id("settings-content")
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(896.))
+                                    .mx_auto()
+                                    .px(px(if compact { 16. } else { 24. }))
+                                    .pt(px(24.))
+                                    .pb(px(48.))
+                                    .child(content),
+                            ),
+                    ),
             )
             .with_animation(
                 ("settings-panel-anim", closing as usize),
@@ -2835,8 +2820,8 @@ impl Render for SettingsModal {
                 .with_easing(if closing { ease_snap } else { ease_out }),
                 move |d, t| {
                     let v = if closing { 1. - t } else { t };
-                    // zoom-in-98: approximate the scale with a small lift.
-                    d.opacity(v).mt(px(6. * (1. - v)))
+                    // zoom-in-98.5: approximate the scale with a small lift.
+                    d.opacity(v).mt(px(4. * (1. - v)))
                 },
             );
 
@@ -2849,7 +2834,7 @@ impl Render for SettingsModal {
             .flex()
             .items_center()
             .justify_center()
-            .bg(hsla(0., 0., 0., 0.72))
+            .bg(backdrop(&p))
             .occlude()
             .on_click(cx.listener(|this, _, _, cx| this.request_close(cx)))
             .child(panel)
