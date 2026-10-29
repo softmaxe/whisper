@@ -651,12 +651,22 @@ fn field_with_label(
     )
 }
 
+/// Which sidebar a [`nav_row`] sits on; the two follow different T3 Code row tokens.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum NavSurface {
+    /// The true-black app sidebar (`[data-app-sidebar]`).
+    App,
+    /// The settings navigation on the card-toned `settings_sidebar`.
+    Settings,
+}
+
 /// A sidebar row: muted until hovered, foreground and a raised fill when active.
 pub fn nav_row(
     id: SharedString,
     icon_name: &'static str,
     label: impl Into<SharedString>,
     active: bool,
+    surface: NavSurface,
     p: &Palette,
 ) -> Stateful<Div> {
     let (fg, icon_color) = if active {
@@ -664,7 +674,13 @@ pub fn nav_row(
     } else {
         (p.muted_foreground, p.muted_foreground.opacity(0.85))
     };
-    let hover_bg = p.hover_wash(if p.dark { 0.08 } else { 0.04 });
+    // Dark washes: the app sidebar uses 11% / 8% white over black; settings rows
+    // use T3 Code's muted (3%) / accent (4%) white over the card tone.
+    let (active_wash, hover_wash) = match surface {
+        NavSurface::App => (0.09, 0.08),
+        NavSurface::Settings => (0.03, 0.04),
+    };
+    let hover_bg = p.hover_wash(if p.dark { hover_wash } else { 0.04 });
     let hover_fg = p.foreground;
     div()
         .id(id)
@@ -681,7 +697,7 @@ pub fn nav_row(
         .text_color(fg)
         .when(active, |d| {
             if p.dark {
-                d.bg(p.white.opacity(0.09))
+                d.bg(p.white.opacity(active_wash))
             } else {
                 d.bg(p.card)
                     .border_1()

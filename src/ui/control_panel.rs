@@ -11,7 +11,7 @@ use crate::i18n::t;
 use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
-use super::components::{drop, f32_tx, icon, inset, kbd, nav_row};
+use super::components::{NavSurface, drop, f32_tx, icon, inset, kbd, nav_row};
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
@@ -236,6 +236,7 @@ impl ControlPanel {
                     view.icon(),
                     view.label(),
                     view == active,
+                    NavSurface::App,
                     &p,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx))),
@@ -276,6 +277,7 @@ impl ControlPanel {
                         "settings",
                         t("sidebar.settings"),
                         false,
+                        NavSurface::App,
                         &p,
                     )
                     .on_click(cx.listener(|_, _, window, cx| {
