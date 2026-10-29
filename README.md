@@ -1,6 +1,13 @@
-# Whisper
+<p align="center">
+  <img src="assets/icon.png" alt="Whisper app icon" width="96">
+</p>
 
-English | [简体中文](README.zh-CN.md)
+<h1 align="center">Whisper</h1>
+
+<p align="center">
+  <a href="README.md"><kbd>English</kbd></a>
+  <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
+</p>
 
 A native macOS dictation app built with Rust and [GPUI](https://www.gpui.rs).
 Press a shortcut, speak, and Whisper transcribes your voice with your own
