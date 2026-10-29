@@ -5,12 +5,15 @@ use gpui_kit::component::{Sizable, Size};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::color_tx;
-use super::theme::{DUR_BASE, FONT_MONO, LINE_SMALL, PaletteExt, TEXT_BODY, TEXT_SMALL};
+use super::components::{color_tx, drop};
+use super::theme::{
+    CONTROL_HEIGHT, DUR_BASE, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_LG, RADIUS_XL, TEXT_BODY,
+    TEXT_SMALL,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FieldKind {
-    /// `h-8 text-[13px]` single-line input.
+    /// `h-8 rounded-lg` single-line input.
     Line,
     /// Multi-line textarea (`rounded-xl px-3.5 py-3`).
     Area { min_height: f32 },
@@ -85,27 +88,26 @@ fn field_frame(
     cx: &mut App,
 ) -> Stateful<Div> {
     let p = cx.palette();
-    let border = if focused {
-        if p.dark {
-            p.muted_foreground
-        } else {
-            p.primary
-        }
-    } else if p.dark {
-        p.border_subtle.opacity(0.6)
-    } else {
-        p.border.opacity(0.7)
-    };
+    let border = if focused { p.ring } else { p.input_border };
     let border = color_tx(("field-border", id), border, DUR_BASE, window, cx);
-    let bg = if p.dark { p.surface_1 } else { p.input };
-    let ring = if focused {
-        Some(if p.dark {
-            p.ring.opacity(0.1)
-        } else {
-            p.primary.opacity(0.1)
-        })
+    let bg = if p.dark {
+        p.white.opacity(0.035)
     } else {
-        None
+        p.input
+    };
+    // Focus draws a 3 px ring outside the border; at rest a faint lift.
+    let shadow = if focused {
+        vec![BoxShadow {
+            color: p.ring.opacity(0.24),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(0.),
+            spread_radius: px(3.),
+            inset: false,
+        }]
+    } else if p.dark {
+        Vec::new()
+    } else {
+        vec![drop(0., 1., 2., 0.05)]
     };
     let is_area = matches!(kind, FieldKind::Area { .. });
     div()
@@ -116,27 +118,19 @@ fn field_frame(
         .bg(bg)
         .border_1()
         .border_color(border)
-        .when_some(ring, |d, ring| {
-            d.shadow(vec![BoxShadow {
-                color: ring,
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(2.),
-                inset: false,
-            }])
-        })
+        .when(!shadow.is_empty(), |d| d.shadow(shadow))
         .text_color(p.foreground)
         .when(mono, |d| d.font_family(FONT_MONO))
         .map(|d| match kind {
             FieldKind::Line => d
-                .h(px(32.))
-                .rounded(px(4.))
+                .h(px(CONTROL_HEIGHT))
+                .rounded(px(RADIUS_LG))
                 .px(px(4.))
                 .text_size(px(TEXT_BODY)),
             FieldKind::Area { min_height } => d
                 .min_h(px(min_height))
                 .items_start()
-                .rounded(px(12.))
+                .rounded(px(RADIUS_XL))
                 .px(px(6.))
                 .py(px(12.))
                 .text_size(px(TEXT_SMALL))
@@ -146,7 +140,11 @@ fn field_frame(
             if focused {
                 s
             } else {
-                s.border_color(p.border_hover)
+                s.border_color(if p.dark {
+                    p.white.opacity(0.18)
+                } else {
+                    p.border_hover.blend(p.foreground.opacity(0.08))
+                })
             }
         })
         .child(

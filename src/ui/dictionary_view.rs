@@ -15,15 +15,15 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::command_search::relative_time_label;
-use super::components::{Button, ButtonSize, ButtonVariant, icon};
+use super::components::{Button, ButtonSize, ButtonVariant, drop, icon};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
 };
 use super::text_input::{FieldKind, text_field, text_field_sized, textarea_field};
 use super::theme::{
-    DUR_BASE, FONT_MONO, LINE_SMALL, Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL,
-    TEXT_TITLE, delayed, ease_out,
+    DUR_BASE, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
@@ -351,12 +351,12 @@ impl DictionaryView {
                     .px(px(10.))
                     .flex()
                     .items_center()
-                    .rounded(px(5.))
+                    .rounded(px(RADIUS_MD))
                     .text_size(px(TEXT_SMALL))
                     .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .when(active, |d| {
-                        d.bg(if p.dark { p.surface_raised } else { p.muted })
+                        d.bg(p.foreground.opacity(if p.dark { 0.09 } else { 0.06 }))
                             .text_color(p.foreground)
                     })
                     .when(!active, |d| {
@@ -375,18 +375,10 @@ impl DictionaryView {
 
     fn list_frame(p: &Palette) -> Div {
         div()
-            .rounded(px(6.))
+            .rounded(px(RADIUS_XL))
             .border_1()
-            .border_color(if p.dark {
-                p.white.opacity(0.1)
-            } else {
-                p.foreground.opacity(0.08)
-            })
-            .bg(if p.dark {
-                p.white.opacity(0.03)
-            } else {
-                p.foreground.opacity(0.02)
-            })
+            .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
+            .bg(p.card.opacity(0.4))
             .px(px(16.))
             .py(px(12.))
     }
@@ -394,8 +386,8 @@ impl DictionaryView {
     fn list_heading(title: String, p: &Palette) -> Div {
         div()
             .text_size(px(TEXT_SMALL))
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(p.foreground.opacity(0.45))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(p.muted_foreground)
             .child(title)
     }
 
@@ -418,13 +410,9 @@ impl DictionaryView {
             .flex()
             .items_center()
             .gap(px(8.))
-            .h(px(36.))
+            .h(px(40.))
             .border_b_1()
-            .border_color(if p.dark {
-                p.white.opacity(0.1)
-            } else {
-                p.foreground.opacity(0.04)
-            })
+            .border_color(p.border.opacity(0.5))
     }
 
     fn row_action(
@@ -438,12 +426,21 @@ impl DictionaryView {
         } else {
             p.foreground.opacity(0.6)
         };
+        let hover_bg = if destructive {
+            p.destructive.opacity(0.08)
+        } else {
+            p.hover_wash(0.06)
+        };
         div()
             .id(id)
-            .p(px(4.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(24.))
+            .rounded(px(RADIUS_MD))
             .cursor_pointer()
-            .child(icon(name, 11., p.foreground.opacity(0.45)))
-            .hover(move |s| s.text_color(hover))
+            .child(icon(name, 14., p.muted_foreground))
+            .hover(move |s| s.text_color(hover).bg(hover_bg))
     }
 
     fn filter_tabs(&self, entries: &[DictionaryEntry], cx: &mut Context<Self>) -> Div {
@@ -457,16 +454,10 @@ impl DictionaryView {
             .flex()
             .items_center()
             .h(px(32.))
-            .p(px(3.))
+            .p(px(2.))
             .gap(px(2.))
-            .rounded(px(7.))
-            .border_1()
-            .border_color(if p.dark {
-                p.white.opacity(0.1)
-            } else {
-                p.foreground.opacity(0.08)
-            })
-            .bg(p.hover_wash(0.03));
+            .rounded(px(RADIUS_LG))
+            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }));
         for (filter, key, count) in [
             (SourceFilter::All, "dictionary.filterAll", entries.len()),
             (
@@ -481,20 +472,22 @@ impl DictionaryView {
                 div()
                     .id(SharedString::from(key))
                     .h_full()
-                    .px(px(9.))
+                    .px(px(10.))
                     .flex()
                     .items_center()
-                    .gap(px(5.))
-                    .rounded(px(5.))
+                    .gap(px(6.))
+                    .rounded(px(RADIUS_MD))
                     .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .when(active, |d| {
-                        d.bg(if p.dark {
-                            p.surface_raised
-                        } else {
-                            p.background
+                        d.text_color(p.foreground).map(|d| {
+                            if p.dark {
+                                d.bg(p.white.opacity(0.1))
+                            } else {
+                                d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
+                            }
                         })
-                        .text_color(p.foreground)
                     })
                     .when(!active, |d| {
                         d.text_color(p.muted_foreground)
@@ -503,7 +496,8 @@ impl DictionaryView {
                     .child(t(key))
                     .child(
                         div()
-                            .text_color(p.foreground.opacity(0.35))
+                            .font_features(tabular_nums())
+                            .text_color(p.muted_foreground.opacity(0.8))
                             .child(count.to_string()),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -528,10 +522,14 @@ impl DictionaryView {
             .id(SharedString::from(key))
             .flex()
             .items_center()
-            .gap(px(3.))
-            .text_size(px(TEXT_CAPTION))
+            .gap(px(4.))
+            .text_size(px(TEXT_SMALL))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(p.foreground.opacity(if active { 0.7 } else { 0.4 }))
+            .text_color(if active {
+                p.foreground
+            } else {
+                p.muted_foreground
+            })
             .child(t(key));
         if active {
             let name = if self.descending {
@@ -539,12 +537,12 @@ impl DictionaryView {
             } else {
                 "chevron-up"
             };
-            cell = cell.child(icon(name, 10., p.foreground.opacity(0.7)));
+            cell = cell.child(icon(name, 12., p.foreground));
         }
         if let Some(sort) = sort {
             cell = cell
                 .cursor_pointer()
-                .hover(|s| s.text_color(p.foreground.opacity(0.7)))
+                .hover(|s| s.text_color(p.foreground))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.sort == sort {
                         this.descending = !this.descending;
@@ -562,7 +560,8 @@ impl DictionaryView {
         div()
             .id(id)
             .text_size(px(TEXT_SMALL))
-            .text_color(p.foreground.opacity(0.45))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(p.muted_foreground)
             .cursor_pointer()
             .hover(move |s| s.text_color(hover))
             .child(label)
@@ -599,11 +598,7 @@ impl DictionaryView {
             .count();
         let pending = parse_dictionary_import_text(&self.bulk.read(cx).value()).len();
         let can_add = !query_raw.is_empty();
-        let rule = if p.dark {
-            p.white.opacity(0.06)
-        } else {
-            p.foreground.opacity(0.06)
-        };
+        let rule = p.border.opacity(0.7);
 
         let add_row = div()
             .flex()
@@ -645,7 +640,7 @@ impl DictionaryView {
 
         let bulk = self.show_bulk.then(|| {
             div()
-                .rounded(px(6.))
+                .rounded(px(RADIUS_MD))
                 .border_1()
                 .border_color(p.primary.opacity(if p.dark { 0.4 } else { 0.3 }))
                 .px(px(12.))
@@ -884,7 +879,7 @@ impl DictionaryView {
         let group: SharedString = format!("dict-row-{index}").into();
         let editing = self.editing.as_deref() == Some(entry.word.as_str());
         let learned = entry.source == DictionarySource::Learned;
-        let muted = p.foreground.opacity(0.5);
+        let muted = p.muted_foreground;
         let word_cell = if editing {
             div().flex_1().pr(px(12.)).child(
                 text_field_sized(&self.edit_input, 12., FieldKind::Line, false, window, cx)
@@ -897,7 +892,8 @@ impl DictionaryView {
                 .pr(px(12.))
                 .truncate()
                 .text_size(px(TEXT_BODY))
-                .text_color(p.foreground.opacity(0.9))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.foreground)
                 .child(entry.word.clone())
         };
         let bar = if max_uses > 0 {
@@ -916,11 +912,11 @@ impl DictionaryView {
             .group(group.clone())
             .flex()
             .items_center()
-            .h(px(36.))
+            .h(px(40.))
             .px(px(8.))
             .border_b_1()
             .border_color(rule)
-            .hover(|s| s.bg(p.hover_wash(0.025)))
+            .hover(|s| s.bg(p.hover_wash(if p.dark { 0.03 } else { 0.025 })))
             .child(word_cell)
             .child(
                 div()
@@ -957,10 +953,11 @@ impl DictionaryView {
                     .child(
                         div()
                             .text_size(px(TEXT_SMALL))
+                            .font_features(tabular_nums())
                             .text_color(if entry.use_count > 0 {
                                 muted
                             } else {
-                                p.foreground.opacity(0.3)
+                                muted.opacity(0.6)
                             })
                             .child(entry.use_count.to_string()),
                     ),
@@ -971,6 +968,7 @@ impl DictionaryView {
                     .flex()
                     .justify_end()
                     .text_size(px(TEXT_SMALL))
+                    .font_features(tabular_nums())
                     .text_color(muted)
                     .child(last_used),
             )
@@ -1009,36 +1007,34 @@ impl DictionaryView {
             .py(px(32.))
             .child(
                 div()
-                    .size(px(40.))
-                    .mb(px(14.))
+                    .size(px(36.))
+                    .mb(px(16.))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded(px(10.))
+                    .rounded(px(RADIUS_MD))
                     .border_1()
-                    .border_color(p.primary.opacity(if p.dark { 0.15 } else { 0.1 }))
-                    .bg(p.primary.opacity(if p.dark { 0.09 } else { 0.06 }))
-                    .child(icon(
-                        "book-open",
-                        17.,
-                        p.primary.opacity(if p.dark { 0.6 } else { 0.5 }),
-                    )),
+                    .border_color(p.border)
+                    .bg(p.card)
+                    .shadow(vec![drop(0., 1., 2., 0.05)])
+                    .child(icon("book-open", 16., p.muted_foreground)),
             )
             .child(
                 div()
                     .mb(px(4.))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(17.))
+                    .line_height(px(24.))
+                    .font_weight(FontWeight::MEDIUM)
                     .child(t("dictionary.emptyTitle")),
             )
             .child(
                 div()
                     .mb(px(16.))
-                    .max_w(px(240.))
+                    .max_w(px(280.))
                     .text_center()
-                    .text_size(px(TEXT_SMALL))
-                    .line_height(px(LINE_SMALL))
-                    .text_color(p.foreground.opacity(0.45))
+                    .text_size(px(13.))
+                    .line_height(px(18.))
+                    .text_color(p.muted_foreground)
                     .child(t_with(
                         "dictionary.emptyDescription",
                         &[("agentName", &agent_name())],
@@ -1061,10 +1057,11 @@ impl DictionaryView {
                     .items_center()
                     .gap(px(6.))
                     .text_size(px(TEXT_SMALL))
-                    .text_color(p.foreground.opacity(0.45))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.muted_foreground)
                     .cursor_pointer()
-                    .hover(|s| s.text_color(p.foreground.opacity(0.6)))
-                    .child(icon("upload", 11., p.foreground.opacity(0.45)))
+                    .hover(|s| s.text_color(p.foreground))
+                    .child(icon("upload", 12., p.muted_foreground))
                     .child(t("dictionary.importList"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.show_bulk = true;
@@ -1145,7 +1142,7 @@ impl DictionaryView {
             let kbd = |s: &'static str| {
                 div()
                     .px(px(4.))
-                    .rounded(px(4.))
+                    .rounded(px(RADIUS_SM))
                     .border_1()
                     .border_color(if p.dark {
                         p.white.opacity(0.1)
@@ -1159,7 +1156,7 @@ impl DictionaryView {
                     .child(s)
             };
             div()
-                .rounded(px(6.))
+                .rounded(px(RADIUS_MD))
                 .border_1()
                 .border_color(p.primary.opacity(if p.dark { 0.4 } else { 0.3 }))
                 .px(px(12.))
@@ -1241,7 +1238,7 @@ impl DictionaryView {
                                 .flex()
                                 .items_center()
                                 .gap(px(4.))
-                                .rounded(px(5.))
+                                .rounded(px(RADIUS_MD))
                                 .border_1()
                                 .border_color(p.primary.opacity(if p.dark { 0.2 } else { 0.15 }))
                                 .bg(p.primary.opacity(if p.dark { 0.15 } else { 0.1 }))

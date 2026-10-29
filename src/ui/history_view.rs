@@ -13,12 +13,12 @@ use crate::i18n::{self, Language, t};
 use crate::app_state::{AppEvent, AppState};
 use crate::backend;
 
-use super::components::{f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner};
+use super::components::{drop, f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner};
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
-    PaletteExt, READING_MAX_WIDTH, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL, TEXT_TITLE,
-    ease_out, ease_snap, progress,
+    PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY,
+    TEXT_CAPTION, TEXT_READING, TEXT_SMALL, ease_out, ease_snap, progress, tabular_nums,
 };
 
 /// How long a new or picked row stays tinted.
@@ -298,24 +298,22 @@ impl HistoryView {
                                 .justify_between()
                                 .child(
                                     div()
-                                        .text_size(px(TEXT_CAPTION))
+                                        .text_size(px(TEXT_SMALL))
                                         .font_weight(FontWeight::MEDIUM)
                                         .text_color(p.muted_foreground)
-                                        .child(
-                                            t("controlPanel.history.rawTranscript").to_uppercase(),
-                                        ),
+                                        .child(t("controlPanel.history.rawTranscript")),
                                 )
                                 .child(
                                     div()
                                         .id(("copy-raw", id as usize))
-                                        .size(px(20.))
+                                        .size(px(24.))
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .rounded(px(2.))
+                                        .rounded(px(RADIUS_MD))
                                         .cursor_pointer()
-                                        .hover(|s| s.bg(p.foreground.opacity(0.1)))
-                                        .child(icon("copy", 10., p.muted_foreground))
+                                        .hover(|s| s.bg(p.hover_wash(0.06)))
+                                        .child(icon("copy", 12., p.muted_foreground))
                                         .on_click(move |_, _, cx| {
                                             copy_with_toast(copy_raw.clone(), cx)
                                         }),
@@ -350,10 +348,10 @@ impl HistoryView {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_full()
+                .rounded(px(RADIUS_LG))
                 .cursor_pointer()
                 .hover(move |s| s.bg(p.hover_wash(0.06)))
-                .child(icon(name, 13., p.muted_foreground.opacity(0.7)))
+                .child(icon(name, 14., p.muted_foreground))
         };
 
         // Row actions surface on hover in 120 ms and leave in 60 ms.
@@ -435,14 +433,14 @@ impl HistoryView {
             }))
             .flex()
             .gap(px(12.))
-            .rounded(px(12.))
+            .rounded(px(RADIUS_LG))
             .px(px(12.))
             .py(px(10.))
             .hover(move |s| {
                 s.bg(if p.dark {
                     p.white.opacity(0.03)
                 } else {
-                    p.muted.opacity(0.3)
+                    p.foreground.opacity(0.025)
                 })
             })
             .when(route_translation, |d| {
@@ -453,8 +451,9 @@ impl HistoryView {
                     .w(px(56.))
                     .flex_none()
                     .pt(px(4.))
-                    .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.65))
+                    .text_size(px(TEXT_SMALL))
+                    .font_features(tabular_nums())
+                    .text_color(p.muted_foreground.opacity(0.8))
                     .child(format_time(item)),
             )
             .child(div().flex_1().min_w_0().child(body).children(raw_section))
@@ -478,7 +477,7 @@ impl HistoryView {
         div()
             .flex()
             .gap(px(12.))
-            .rounded(px(12.))
+            .rounded(px(RADIUS_XL))
             .px(px(12.))
             .py(px(10.))
             .overflow_hidden()
@@ -589,7 +588,7 @@ impl HistoryView {
             .p(px(4.))
             .flex()
             .flex_col()
-            .rounded(px(8.))
+            .rounded(px(RADIUS_LG))
             .border_1()
             .border_color(if p.dark {
                 p.border_hover
@@ -616,7 +615,7 @@ impl HistoryView {
                     .gap(px(10.))
                     .px(px(8.))
                     .py(px(6.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_MD))
                     .text_size(px(TEXT_BODY))
                     .text_color(color)
                     .cursor_pointer()
@@ -687,7 +686,7 @@ impl Render for HistoryView {
                     .gap(px(10.))
                     .px(px(14.))
                     .py(px(10.))
-                    .rounded(px(8.))
+                    .rounded(px(RADIUS_LG))
                     .border_1()
                     .border_color(p.amber_border)
                     .bg(p.amber_bg)
@@ -751,27 +750,27 @@ impl Render for HistoryView {
                     }));
             let show_controls = self.hovering_list;
             for (index, (label, items)) in groups.into_iter().enumerate() {
+                // Day label, a hairline to the edge, then the day's count.
                 let mut header = div()
                     .relative()
                     .flex()
                     .items_center()
-                    .gap(px(12.))
-                    .pt(px(8.))
-                    .pb(px(8.))
+                    .gap(px(8.))
+                    .h(px(32.))
+                    .mb(px(4.))
                     .bg(p.background)
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.muted_foreground)
+                    .child(div().flex_none().child(label))
+                    .child(div().h(px(1.)).flex_1().bg(p.border.opacity(0.5)))
                     .child(
                         div()
                             .flex_none()
-                            .text_size(px(TEXT_SMALL))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(if p.dark {
-                                p.foreground.opacity(0.75)
-                            } else {
-                                p.muted_foreground
-                            })
-                            .child(label),
-                    )
-                    .child(div().h(px(1.)).flex_1().bg(p.border.opacity(0.7)));
+                            .font_features(tabular_nums())
+                            .text_color(p.muted_foreground.opacity(0.8))
+                            .child(items.len().to_string()),
+                    );
                 if index == 0 {
                     header = header.child(
                         div()
@@ -791,14 +790,14 @@ impl Render for HistoryView {
                                     .gap(px(4.))
                                     .px(px(6.))
                                     .py(px(2.))
-                                    .rounded(px(4.))
-                                    .text_size(px(TEXT_CAPTION))
-                                    .text_color(p.muted_foreground.opacity(0.7))
+                                    .rounded(px(RADIUS_SM))
+                                    .text_size(px(TEXT_SMALL))
+                                    .text_color(p.muted_foreground)
                                     .cursor_pointer()
                                     .hover(move |s| {
                                         s.text_color(p.destructive).bg(p.destructive.opacity(0.08))
                                     })
-                                    .child(icon("trash2", 11., p.muted_foreground.opacity(0.7)))
+                                    .child(icon("trash2", 12., p.muted_foreground))
                                     .child(t("controlPanel.history.clearAll"))
                                     .on_click(|_, _, cx| Self::clear_all(cx)),
                             ),
@@ -815,7 +814,7 @@ impl Render for HistoryView {
                 }
                 list = list.child(
                     div()
-                        .when(index > 0, |d| d.mt(px(32.)))
+                        .when(index > 0, |d| d.mt(px(28.)))
                         .child(header)
                         .child(rows),
                 );
@@ -823,7 +822,7 @@ impl Render for HistoryView {
             content = content.child(list);
         }
 
-        div().px(px(20.)).pt(px(20.)).pb(px(32.)).child(
+        div().px(px(24.)).pt(px(16.)).pb(px(48.)).child(
             div()
                 .mx_auto()
                 .max_w(px(READING_MAX_WIDTH))
@@ -846,100 +845,61 @@ fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
 
 fn empty_card(keys: Div, p: &Palette) -> AnyElement {
     div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .min_h(px(256.))
+        .px(px(40.))
+        .py(px(48.))
         .child(
             div()
-                .pt(px(8.))
-                .pb(px(10.))
-                .text_size(px(TEXT_BODY))
-                .text_color(p.muted_foreground)
-                .child(t("controlPanel.history.sectionTitle")),
+                .size(px(36.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(RADIUS_MD))
+                .border_1()
+                .border_color(p.border)
+                .bg(p.card)
+                .shadow(vec![drop(0., 1., 2., 0.05)])
+                .child(icon("mic", 16., p.muted_foreground)),
         )
         .child(
             div()
+                .mt(px(16.))
+                .text_size(px(17.))
+                .line_height(px(24.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.foreground)
+                .child(t("controlPanel.history.empty")),
+        )
+        .child(
+            div()
+                .mt(px(4.))
+                .max_w(px(320.))
+                .text_center()
+                .text_size(px(13.))
+                .line_height(px(18.))
+                .text_color(p.muted_foreground)
+                .child(t("controlPanel.history.emptyDescription")),
+        )
+        .child(
+            div()
+                .mt(px(20.))
+                .h(px(32.))
                 .flex()
-                .flex_col()
                 .items_center()
-                .rounded(px(16.))
+                .gap(px(6.))
+                .px(px(12.))
+                .rounded(px(RADIUS_LG))
                 .border_1()
-                .border_color(if p.dark {
-                    p.white.opacity(0.1)
-                } else {
-                    p.border.opacity(0.7)
-                })
-                .bg(if p.dark {
-                    p.surface_2.opacity(0.6)
-                } else {
-                    p.card.opacity(0.5)
-                })
-                .px(px(24.))
-                .py(px(40.))
-                .child(
-                    div()
-                        .size(px(44.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(12.))
-                        .bg(p.surface_3)
-                        .child(icon("mic", 20., p.foreground.opacity(0.7))),
-                )
-                .child(
-                    div()
-                        .mt(px(16.))
-                        .text_size(px(TEXT_TITLE))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.foreground)
-                        .child(t("controlPanel.history.empty")),
-                )
-                .child(
-                    div()
-                        .mt(px(4.))
-                        .max_w(px(320.))
-                        .text_center()
-                        .text_size(px(TEXT_BODY))
-                        .line_height(px(21.))
-                        .text_color(p.foreground.opacity(0.7))
-                        .child(t("controlPanel.history.emptyDescription")),
-                )
-                .child(
-                    div()
-                        .mt(px(20.))
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(
-                            div()
-                                .w(px(224.))
-                                .mb(px(4.))
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .children([1.0f32, 0.8, 0.6].map(|w| {
-                                    div().h(px(8.)).w(relative(w)).rounded_full().bg(if p.dark {
-                                        p.white.opacity(0.08)
-                                    } else {
-                                        p.foreground.opacity(0.06)
-                                    })
-                                })),
-                        )
-                        .child(
-                            div()
-                                .h(px(30.))
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .px(px(12.))
-                                .rounded_full()
-                                .bg(p.surface_3)
-                                .text_size(px(TEXT_SMALL))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.foreground.opacity(0.7))
-                                .child(t("controlPanel.history.press"))
-                                .child(keys)
-                                .child(t("controlPanel.history.toStart")),
-                        ),
-                ),
+                .border_color(p.border)
+                .text_size(px(TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.muted_foreground)
+                .child(t("controlPanel.history.press"))
+                .child(keys)
+                .child(t("controlPanel.history.toStart")),
         )
         .into_any_element()
 }

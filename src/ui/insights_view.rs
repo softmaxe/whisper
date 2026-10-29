@@ -10,9 +10,10 @@ use crate::i18n::{self, Language, t, t_with};
 
 use crate::app_state::{AppEvent, AppState};
 
-use super::components::{icon, spinner};
+use super::components::{Button, ButtonSize, ButtonVariant, drop, icon, spinner};
 use super::theme::{
-    Palette, PaletteExt, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE,
+    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE,
+    TEXT_SMALL, TEXT_TITLE, tabular_nums,
 };
 
 const CHART_HEIGHT: f32 = 200.;
@@ -193,8 +194,8 @@ impl InsightsView {
         let mut picker = div()
             .flex()
             .p(px(2.))
-            .rounded(px(7.))
-            .bg(p.foreground.opacity(0.06));
+            .rounded(px(RADIUS_LG))
+            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }));
         for (index, range) in [Range::Week, Range::Month, Range::AllTime]
             .into_iter()
             .enumerate()
@@ -203,13 +204,22 @@ impl InsightsView {
             picker = picker.child(
                 div()
                     .id(("insights-range", index))
+                    .flex()
+                    .items_center()
+                    .h(px(24.))
                     .px(px(10.))
-                    .py(px(3.))
-                    .rounded(px(5.))
+                    .rounded(px(RADIUS_MD))
                     .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
                     .cursor_pointer()
                     .when(active, |d| {
-                        d.bg(p.foreground.opacity(0.12)).text_color(p.foreground)
+                        d.text_color(p.foreground).map(|d| {
+                            if p.dark {
+                                d.bg(p.white.opacity(0.1))
+                            } else {
+                                d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
+                            }
+                        })
                     })
                     .when(!active, |d| {
                         d.text_color(p.muted_foreground)
@@ -251,6 +261,7 @@ impl InsightsView {
                     .mt(px(10.))
                     .text_size(px(TEXT_FIGURE))
                     .font_weight(FontWeight::MEDIUM)
+                    .font_features(tabular_nums())
                     .line_height(px(40.))
                     .text_color(p.foreground)
                     .child(value),
@@ -260,8 +271,9 @@ impl InsightsView {
                     .mt(px(4.))
                     .flex()
                     .gap(px(4.))
-                    .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_size(px(TEXT_SMALL))
+                    .font_features(tabular_nums())
+                    .text_color(p.muted_foreground)
                     .children(change.map(|c| {
                         div()
                             .flex_none()
@@ -414,7 +426,8 @@ impl InsightsView {
                         .flex()
                         .justify_end()
                         .text_size(px(TEXT_CAPTION))
-                        .text_color(p.muted_foreground.opacity(0.7))
+                        .font_features(tabular_nums())
+                        .text_color(p.muted_foreground.opacity(0.8))
                         .child(compact_number(tick as i64)),
                 );
             tick += step;
@@ -533,7 +546,8 @@ impl InsightsView {
         }
         let labels = labels
             .text_size(px(TEXT_CAPTION))
-            .text_color(p.muted_foreground.opacity(0.7));
+            .font_features(tabular_nums())
+            .text_color(p.muted_foreground.opacity(0.8));
 
         let points: Vec<Option<(f32, f32)>> = bars
             .iter()
@@ -636,12 +650,14 @@ impl Render for TextTooltip {
         div()
             .px(px(8.))
             .py(px(4.))
-            .rounded(px(6.))
-            .bg(p.toast_surface)
+            .rounded(px(RADIUS_MD))
+            .bg(p.popover)
             .border_1()
-            .border_color(p.toast_border)
-            .text_size(px(TEXT_CAPTION))
-            .text_color(hsla(0., 0., 0.96, 1.))
+            .border_color(p.border)
+            .shadow(vec![drop(0., 4., 12., if p.dark { 0.4 } else { 0.08 })])
+            .text_size(px(TEXT_SMALL))
+            .font_features(tabular_nums())
+            .text_color(p.foreground)
             .child(self.0.clone())
     }
 }
@@ -657,10 +673,10 @@ impl Render for InsightsView {
                 .is_some_and(|s| s.total_dictations > 0);
         let card = || {
             div()
-                .rounded(px(8.))
+                .rounded(px(RADIUS_XL))
                 .border_1()
-                .border_color(p.border)
-                .bg(p.card.opacity(if p.dark { 0.6 } else { 0.5 }))
+                .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
+                .bg(p.card.opacity(0.4))
         };
 
         let body: AnyElement = if self.load_failed {
@@ -680,18 +696,10 @@ impl Render for InsightsView {
                                 .child(t("insights.loadError")),
                         )
                         .child(
-                            div()
-                                .id("insights-retry")
-                                .px(px(12.))
-                                .py(px(6.))
-                                .rounded(px(6.))
-                                .border_1()
-                                .border_color(p.border)
-                                .text_size(px(TEXT_SMALL))
-                                .font_weight(FontWeight::MEDIUM)
-                                .cursor_pointer()
-                                .hover(|s| s.bg(p.muted))
-                                .child(t("common.retry"))
+                            Button::new("insights-retry")
+                                .label(t("common.retry"))
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Sm)
                                 .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                         ),
                 )
@@ -707,7 +715,7 @@ impl Render for InsightsView {
                         .gap(px(10.))
                         .px(px(14.))
                         .py(px(10.))
-                        .rounded(px(8.))
+                        .rounded(px(RADIUS_LG))
                         .border_1()
                         .border_color(p.amber_border)
                         .bg(p.amber_bg)
@@ -814,7 +822,7 @@ impl Render for InsightsView {
                     .child(
                         div()
                             .text_size(px(TEXT_TITLE))
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_color(p.foreground)
                             .child(t("insights.yourUsage")),
                     )
@@ -825,8 +833,8 @@ impl Render for InsightsView {
                 div()
                     .pt(px(32.))
                     .text_center()
-                    .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(p.muted_foreground.opacity(0.8))
                     .child(t("insights.onDevicePrivacy")),
             )
     }

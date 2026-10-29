@@ -18,7 +18,9 @@ use crate::text::hotkeys::{
 
 use super::components::{Button, ButtonSize, ButtonVariant, icon};
 use super::overlays::{Toast, ToastVariant, show_toast};
-use super::theme::{FONT_MONO, PaletteExt, TEXT_BODY, TEXT_SMALL, TEXT_TITLE};
+use super::theme::{
+    FONT_MONO, PaletteExt, RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_SMALL, TEXT_TITLE,
+};
 
 const MODIFIER_ONLY_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 const WARNING_TIMEOUT: Duration = Duration::from_secs(4);
@@ -382,7 +384,7 @@ impl HotkeyListInput {
             .group("hotkey-row")
             .relative()
             .overflow_hidden()
-            .rounded(px(6.))
+            .rounded(px(RADIUS_MD))
             .border_1()
             .cursor_pointer()
             .map(|d| {
@@ -479,7 +481,7 @@ impl HotkeyListInput {
                                     div()
                                         .px(px(8.))
                                         .py(px(2.))
-                                        .rounded(px(4.))
+                                        .rounded(px(RADIUS_SM))
                                         .border_1()
                                         .border_color(p.primary.opacity(0.2))
                                         .bg(p.primary.opacity(0.1))
@@ -511,7 +513,7 @@ impl HotkeyListInput {
                             .gap(px(6.))
                             .px(px(12.))
                             .py(px(6.))
-                            .rounded(px(6.))
+                            .rounded(px(RADIUS_MD))
                             .border_1()
                             .border_color(p.warning.opacity(if p.dark { 0.25 } else { 0.2 }))
                             .bg(p.warning.opacity(if p.dark { 0.12 } else { 0.08 }))
@@ -550,7 +552,7 @@ impl HotkeyListInput {
                         div()
                             .px(px(8.))
                             .py(px(2.))
-                            .rounded(px(4.))
+                            .rounded(px(RADIUS_SM))
                             .border_1()
                             .border_color(p.border)
                             .bg(p.surface_raised)
@@ -633,7 +635,7 @@ fn key_chip(text: String, p: &super::theme::Palette) -> Div {
     div()
         .px(px(8.))
         .py(px(2.))
-        .rounded(px(4.))
+        .rounded(px(RADIUS_SM))
         .border_1()
         .border_color(p.border)
         .bg(p.surface_raised)

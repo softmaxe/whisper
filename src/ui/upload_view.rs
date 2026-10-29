@@ -18,11 +18,12 @@ use crate::services::upload::{
 
 use crate::app_state::AppState;
 
-use super::components::{Button, ButtonSize, ButtonVariant, f32_tx, icon, spinner};
+use super::components::{Button, ButtonSize, ButtonVariant, drop, f32_tx, icon, spinner};
 use super::history_view::copy_with_toast;
 use super::theme::{
-    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, Palette, PaletteExt, TEXT_BODY,
-    TEXT_CAPTION, TEXT_DISPLAY, TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out,
+    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, Palette, PaletteExt, RADIUS_MD,
+    RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_DISPLAY, TEXT_READING, TEXT_SMALL, TEXT_TITLE,
+    ease_out,
 };
 
 pub enum UploadEvent {
@@ -437,10 +438,11 @@ impl UploadView {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .rounded(px(12.))
+            .rounded(px(RADIUS_XL))
             .border_1()
             .border_color(panel_border(&p))
             .bg(p.card)
+            .shadow(vec![drop(0., 1., 2., 0.04)])
             .when(wide, |d| d.flex_grow(1.7).flex_basis(px(0.)).min_w_0())
             .when(!wide, |d| d.w_full().min_h(px(340.)))
             .when(accepts_drop, |d| {
@@ -604,7 +606,7 @@ impl UploadView {
                             .id("selected-clear")
                             .flex_none()
                             .p(px(6.))
-                            .rounded(px(6.))
+                            .rounded(px(RADIUS_MD))
                             .cursor_pointer()
                             .hover(|s| s.bg(p.hover_wash(0.06)))
                             .child(icon("x", 12., p.muted_foreground))
@@ -898,9 +900,10 @@ impl UploadView {
             .group("upload-settings")
             .flex_none()
             .pb(px(10.))
-            .rounded(px(12.))
+            .rounded(px(RADIUS_XL))
             .border_1()
             .border_color(panel_border(&p))
+            .bg(p.card.opacity(0.4))
             .cursor_pointer()
             .hover(|s| s.bg(p.hover_wash(0.02)))
             .on_click(
@@ -913,7 +916,8 @@ impl UploadView {
                 t("upload.settingsTitle"),
                 Some(
                     div()
-                        .text_size(px(TEXT_CAPTION))
+                        .text_size(px(TEXT_SMALL))
+                        .font_weight(FontWeight::MEDIUM)
                         .text_color(p.muted_foreground)
                         .group_hover("upload-settings", |s| s.text_color(p.foreground))
                         .child(t("upload.changeModel"))
@@ -1051,7 +1055,7 @@ impl UploadView {
                     .gap(px(8.))
                     .px(px(8.))
                     .py(px(6.))
-                    .rounded(px(6.))
+                    .rounded(px(RADIUS_MD))
                     .text_size(px(TEXT_SMALL))
                     .child(div().flex_none().child(status_icon))
                     .child(
@@ -1122,7 +1126,7 @@ impl UploadView {
         div()
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(px(RADIUS_XL))
             .border_1()
             .border_color(panel_border(&p))
             .when(wide && total > 0, |d| d.flex_1().min_h_0())
@@ -1247,11 +1251,7 @@ const WAVE: [f32; 56] = [
 ];
 
 fn panel_border(p: &Palette) -> Hsla {
-    if p.dark {
-        p.white.opacity(0.08)
-    } else {
-        p.border
-    }
+    p.border.opacity(if p.dark { 1. } else { 0.8 })
 }
 
 /// The stage panel's padded column: the waveform fills the space above and
@@ -1309,11 +1309,11 @@ fn file_badge(p: &Palette) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(8.))
+        .rounded(px(RADIUS_MD))
         .border_1()
         .border_color(panel_border(p))
-        .bg(p.hover_wash(0.04))
-        .child(icon("file-audio", 15., p.foreground.opacity(0.7)))
+        .bg(p.card)
+        .child(icon("file-audio", 16., p.muted_foreground))
 }
 
 /// Title row of a side-column card, with an optional trailing control.
@@ -1330,7 +1330,7 @@ fn side_header(p: &Palette, title: String, trailing: Option<AnyElement>) -> Div 
             div()
                 .min_w_0()
                 .truncate()
-                .text_size(px(TEXT_CAPTION))
+                .text_size(px(TEXT_SMALL))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(p.muted_foreground)
                 .child(title),

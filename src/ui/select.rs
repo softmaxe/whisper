@@ -6,8 +6,11 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{f32_tx, icon};
-use super::theme::{DUR_BASE, DUR_SNAP, PaletteExt, TEXT_BODY, TEXT_SMALL, ease_out, ease_snap};
+use super::components::{drop, f32_tx, icon};
+use super::theme::{
+    CONTROL_HEIGHT, DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY,
+    TEXT_SMALL, ease_out, ease_snap,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectOption {
@@ -42,7 +45,7 @@ impl SelectOption {
 pub enum SelectStyle {
     /// h-7 compact trigger (plain select / language picker).
     Compact,
-    /// h-10 rounded-xl trigger (field select).
+    /// h-8 rounded-lg trigger (field select), styled like a text input.
     Field,
 }
 
@@ -269,14 +272,19 @@ impl Render for Select {
             cx,
         );
 
-        let trigger_border = if open {
-            if p.dark { p.ring } else { p.primary }
-        } else if compact {
-            p.border.opacity(0.7)
+        let trigger_border = if open { p.ring } else { p.input_border };
+        let trigger_shadow = if open {
+            vec![BoxShadow {
+                color: p.ring.opacity(0.24),
+                offset: point(px(0.), px(0.)),
+                blur_radius: px(0.),
+                spread_radius: px(3.),
+                inset: false,
+            }]
         } else if p.dark {
-            p.border_subtle
+            Vec::new()
         } else {
-            p.border
+            vec![drop(0., 1., 2., 0.05)]
         };
         let trigger = div()
             .id("select-trigger")
@@ -286,21 +294,17 @@ impl Render for Select {
             .gap(px(8.))
             .when_some(self.width, |d, w| d.w(w))
             .when(self.width.is_none(), |d| d.w_full())
-            .h(px(if compact { 28. } else { 40. }))
-            .px(px(if compact { 10. } else { 14. }))
-            .rounded(px(if compact { 4. } else { 12. }))
+            .h(px(if compact { 28. } else { CONTROL_HEIGHT }))
+            .px(px(if compact { 10. } else { 11. }))
+            .rounded(px(if compact { RADIUS_MD } else { RADIUS_LG }))
             .border_1()
             .border_color(trigger_border)
-            .bg(if compact {
-                if open {
-                    p.surface_2.opacity(0.9)
-                } else {
-                    p.surface_1.opacity(0.8)
-                }
+            .bg(if p.dark {
+                p.white.opacity(0.035)
             } else {
-                p.surface_1
+                p.popover
             })
-            .when(compact, |d| d.shadow_sm())
+            .when(!trigger_shadow.is_empty(), |d| d.shadow(trigger_shadow))
             .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
             .when(compact, |d| d.font_weight(FontWeight::MEDIUM))
             .text_color(
@@ -312,8 +316,17 @@ impl Render for Select {
             )
             .when(self.disabled, |d| d.opacity(0.5))
             .when(!self.disabled, |d| {
-                d.cursor_pointer()
-                    .hover(|s| s.border_color(if open { trigger_border } else { p.border_hover }))
+                d.cursor_pointer().hover(|s| {
+                    if open {
+                        s
+                    } else {
+                        s.bg(if p.dark {
+                            p.white.opacity(0.06)
+                        } else {
+                            p.muted.opacity(0.6)
+                        })
+                    }
+                })
             })
             .child(
                 div()
@@ -329,7 +342,7 @@ impl Render for Select {
                 icon(
                     "chevron-down",
                     if compact { 14. } else { 16. },
-                    if open { p.primary } else { p.muted_foreground },
+                    p.muted_foreground,
                 )
                 .with_transformation(Transformation::rotate(radians(
                     chevron_turn * std::f32::consts::PI,
@@ -377,17 +390,7 @@ impl Select {
             let is_selected = Some(&option.value) == selected.as_ref();
             let is_highlighted = index == highlighted;
             let value = option.value.clone();
-            let row_bg = if is_selected && compact {
-                Some(p.primary.opacity(0.15))
-            } else if is_highlighted {
-                Some(if p.dark {
-                    p.primary.opacity(0.08)
-                } else {
-                    p.muted.opacity(0.7)
-                })
-            } else {
-                None
-            };
+            let row_bg = is_highlighted.then(|| p.foreground.opacity(0.08));
             list = list.child(
                 div()
                     .id(("option", index))
@@ -395,27 +398,16 @@ impl Select {
                     .items_center()
                     .justify_between()
                     .gap(px(8.))
-                    .h(px(if compact { 28. } else { 36. }))
-                    .px(px(if compact { 10. } else { 12. }))
-                    .rounded(px(if compact { 4. } else { 8. }))
+                    .h(px(28.))
+                    .px(px(8.))
+                    .rounded(px(RADIUS_SM))
                     .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
-                    .when(compact, |d| d.font_weight(FontWeight::MEDIUM))
-                    .text_color(if is_selected && compact {
-                        p.primary
-                    } else {
-                        p.foreground
-                    })
+                    .text_color(p.foreground)
                     .when_some(row_bg, |d, bg| d.bg(bg))
                     .when(option.disabled, |d| d.opacity(0.5))
                     .when(!option.disabled, |d| {
                         d.cursor_pointer()
-                            .hover(|s| {
-                                s.bg(if p.dark {
-                                    p.primary.opacity(0.08)
-                                } else {
-                                    p.muted
-                                })
-                            })
+                            .hover(|s| s.bg(p.foreground.opacity(0.08)))
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.choose(value.clone(), cx)),
                             )
@@ -429,13 +421,7 @@ impl Select {
                             .when_some(option.prefix.clone(), |d, prefix| d.child(prefix))
                             .child(div().truncate().child(option.label.clone())),
                     )
-                    .when(is_selected, |d| {
-                        d.child(icon(
-                            "check",
-                            if compact { 12. } else { 16. },
-                            if compact { p.primary } else { p.foreground },
-                        ))
-                    }),
+                    .when(is_selected, |d| d.child(icon("check", 14., p.foreground))),
             );
         }
 
@@ -445,10 +431,10 @@ impl Select {
                 .items_center()
                 .gap(px(6.))
                 .px(px(8.))
-                .h(px(36.))
+                .h(px(34.))
                 .border_b_1()
-                .border_color(p.border.opacity(0.7))
-                .child(icon("search", 12., p.muted_foreground))
+                .border_color(p.border)
+                .child(icon("search", 14., p.muted_foreground))
                 .child(
                     div()
                         .flex_1()
@@ -465,15 +451,17 @@ impl Select {
             .when_some(self.width, |d, w| d.w(w.max(self.menu_min_width)))
             .flex()
             .flex_col()
-            .rounded(px(if compact { 6. } else { 12. }))
+            .rounded(px(RADIUS_LG))
             .border_1()
-            .border_color(if p.dark {
-                p.border_hover
-            } else {
-                p.border.opacity(0.7)
-            })
-            .bg(if p.dark { p.surface_3 } else { p.popover })
-            .shadow_xl()
+            .border_color(p.foreground.opacity(0.1))
+            .bg(p.popover)
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., if p.dark { 0.55 } else { 0.22 }),
+                offset: point(px(0.), px(16.)),
+                blur_radius: px(40.),
+                spread_radius: px(-18.),
+                inset: false,
+            }])
             .overflow_hidden()
             .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close(cx)))
             .when_some(search, |d, s| d.child(s))
