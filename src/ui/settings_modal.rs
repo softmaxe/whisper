@@ -17,8 +17,9 @@ use crate::app_state::AppState;
 use crate::backend::{self, AutoStartState, MicDeviceInfo, ModelOption};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, Toggle, backdrop, dialog_shadow, drop, icon, nav_row,
-    panel_row, section_header, settings_field, settings_field_tagged, settings_panel, settings_row,
+    Button, ButtonSize, ButtonVariant, NavSurface, Toggle, backdrop, dialog_shadow, drop, icon,
+    nav_row, panel_row, section_header, settings_field, settings_field_tagged, settings_panel,
+    settings_row,
 };
 use super::hotkey_input::HotkeyListInput;
 use super::overlays::{DialogRequest, Toast, show_dialog, show_toast};
@@ -948,6 +949,7 @@ impl SettingsModal {
                         section.icon(),
                         t(&format!("settings.sections.{}.label", section.key())),
                         active,
+                        NavSurface::Settings,
                         &p,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.set_section(section, cx))),
@@ -2780,7 +2782,7 @@ impl Render for SettingsModal {
                     .h_full()
                     .border_r_1()
                     .border_color(p.border)
-                    .bg(p.surface_window)
+                    .bg(p.settings_sidebar)
                     .child(nav),
             )
             .child(
