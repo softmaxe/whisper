@@ -50,7 +50,6 @@ pub struct HotkeyListInput {
     capture: Capture,
     warning: Option<String>,
     warning_task: Option<Task<()>>,
-    registering: bool,
     focus: FocusHandle,
     _raw_keys: Option<Task<()>>,
 }
@@ -64,11 +63,11 @@ const MODIFIERS: [Modifier; 4] = [
 ];
 
 impl HotkeyListInput {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let items = parse_hotkey_list(&AppState::settings(cx).effective_dictation_key());
         let state = AppState::global(cx);
         cx.observe(&state, |this: &mut Self, state, cx| {
-            if this.capturing.is_none() && !this.registering {
+            if this.capturing.is_none() {
                 let incoming =
                     parse_hotkey_list(&state.read(cx).settings.effective_dictation_key());
                 if incoming != this.items {
@@ -97,16 +96,12 @@ impl HotkeyListInput {
             capture: Capture::default(),
             warning: None,
             warning_task: None,
-            registering: false,
             focus: cx.focus_handle(),
             _raw_keys: raw_keys,
         }
     }
 
     fn start_capture(&mut self, slot: Slot, window: &mut Window, cx: &mut Context<Self>) {
-        if self.registering {
-            return;
-        }
         self.capturing = Some(slot);
         self.capture = Capture::default();
         self.warning = None;
@@ -183,8 +178,6 @@ impl HotkeyListInput {
     fn commit(&mut self, next: Vec<Hotkey>, cx: &mut Context<Self>) {
         let previous = std::mem::replace(&mut self.items, next.clone());
         let list = serialize_hotkey_list(&next);
-        self.registering = true;
-        cx.notify();
         match backend::register_hotkeys(&list, cx) {
             Ok(active) => {
                 AppState::global(cx).update(cx, |s, cx| {
@@ -204,7 +197,6 @@ impl HotkeyListInput {
                 );
             }
         }
-        self.registering = false;
         cx.notify();
     }
 
@@ -249,7 +241,7 @@ impl HotkeyListInput {
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.capturing.is_none() || self.registering || event.is_held {
+        if self.capturing.is_none() || event.is_held {
             return;
         }
         cx.stop_propagation();
@@ -374,7 +366,6 @@ impl HotkeyListInput {
     ) -> AnyElement {
         let p = cx.palette();
         let capturing = self.capturing == Some(slot);
-        let disabled = self.registering;
         let id: SharedString = match slot {
             Slot::Existing(i) => format!("hotkey-row-{i}").into(),
             Slot::New => "hotkey-row-new".into(),
@@ -388,11 +379,7 @@ impl HotkeyListInput {
             .border_1()
             .cursor_pointer()
             .map(|d| {
-                if disabled {
-                    d.bg(p.muted.opacity(0.3))
-                        .border_color(p.border)
-                        .opacity(0.5)
-                } else if capturing {
+                if capturing {
                     d.bg(p.primary.opacity(0.05))
                         .border_color(p.primary.opacity(0.3))
                         .shadow(vec![BoxShadow {
@@ -528,6 +515,10 @@ impl HotkeyListInput {
                 })
                 .into_any_element()
         } else if let Some(value) = value {
+            let removable = match slot {
+                Slot::Existing(i) if can_remove => Some(i),
+                _ => None,
+            };
             let parts = value.label_parts();
             let keys = if parts.len() > 1 {
                 let mut keys = div().flex().items_center().gap(px(4.));
@@ -595,11 +586,7 @@ impl HotkeyListInput {
                                 .text_color(p.muted_foreground.opacity(0.7))
                                 .child(t("hotkeyInput.clickToChangeLower")),
                         )
-                        .when(can_remove && !disabled, |d| {
-                            let index = match slot {
-                                Slot::Existing(i) => i,
-                                Slot::New => 0,
-                            };
+                        .when_some(removable, |d, index| {
                             d.child(
                                 div()
                                     .id(("remove-hotkey", index))
@@ -681,7 +668,6 @@ impl Render for HotkeyListInput {
                             .label(t("hotkeyInput.addAnother"))
                             .variant(ButtonVariant::OutlineFlat)
                             .size(ButtonSize::Sm)
-                            .disabled(self.registering)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.adding = true;
                                 this.start_capture(Slot::New, window, cx);

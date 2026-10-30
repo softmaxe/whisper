@@ -6,10 +6,9 @@ use std::sync::{Arc, LazyLock};
 use fancy_regex::Regex as FancyRegex;
 use parking_lot::Mutex;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Snippet {
     pub trigger: String,
     pub replacement: String,

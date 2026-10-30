@@ -119,7 +119,7 @@ impl AppState {
 impl AppState {
     /// Loads the newest rows. Failed and discarded rows stay hidden.
     pub fn load_history(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
-        let result = self.db.get_transcriptions(HISTORY_LIMIT, false);
+        let result = self.db.get_transcriptions(HISTORY_LIMIT);
         self.history_loaded = true;
         match result {
             Ok(items) => {

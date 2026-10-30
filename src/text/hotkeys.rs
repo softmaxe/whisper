@@ -495,8 +495,7 @@ pub fn format_hotkey_list_label(value: &str) -> String {
 // ---------------------------------------------------------------------------
 // Validation
 
-/// Why a hotkey was rejected. `message_key()` is an i18n key for the UI and
-/// `default_message()` the English text.
+/// Why a hotkey was rejected. `message_key()` is an i18n key for the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HotkeyValidationError {
     FnCombinationUnsupported,
@@ -522,38 +521,14 @@ impl HotkeyValidationError {
             Self::Reserved => "hotkey.validation.reserved",
         }
     }
-
-    pub fn default_message(self) -> &'static str {
-        match self {
-            Self::FnCombinationUnsupported => "The Globe/Fn key can only be used by itself.",
-            Self::MouseButtonCombination => {
-                "Mouse button hotkeys cannot be combined with other keys."
-            }
-            Self::TooManyKeys => "Shortcuts are limited to three keys.",
-            Self::LeftRightMix => {
-                "Do not mix left and right versions of the same modifier in one shortcut."
-            }
-            Self::NoModifierOrSpecial => {
-                "Shortcuts must include a modifier or a non-alphanumeric key (like arrows, space, or function keys)."
-            }
-            Self::ModifierOnlyUnsupported => {
-                "Two-modifier shortcuts are not supported on macOS. Use a right-side modifier on its own (e.g. RightOption), or add a regular key."
-            }
-            Self::LeftModifierOnly => {
-                "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space)."
-            }
-            Self::Reserved => "That shortcut is reserved by your system.",
-        }
-    }
 }
 
 /// A user-facing validation message: i18n `key` with interpolation `params`
-/// (`{{name}}` style), plus the English text as a fallback.
+/// (`{{name}}` style).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidationMessage {
     pub key: &'static str,
     pub params: Vec<(&'static str, String)>,
-    pub default_text: String,
 }
 
 const SPECIAL_KEYS: [&str; 18] = [
@@ -688,14 +663,12 @@ impl Hotkey {
             let label = self.label();
             return Some(ValidationMessage {
                 key: "hotkey.validation.reservedNamed",
-                default_text: format!("{label} is reserved by the system"),
                 params: vec![("label", label)],
             });
         }
         Some(ValidationMessage {
             key: err.message_key(),
             params: Vec::new(),
-            default_text: err.default_message().to_string(),
         })
     }
 }
@@ -1052,9 +1025,29 @@ mod tests {
     fn validation_messages() {
         assert_eq!(hk("F8").validation_message(), None);
         let reserved = hk("Command+C").validation_message().unwrap();
-        assert_eq!(reserved.default_text, "Cmd+C is reserved by the system");
+        assert_eq!(reserved.key, "hotkey.validation.reservedNamed");
         assert_eq!(reserved.params, vec![("label", "Cmd+C".to_string())]);
         let fn_combo = hk("Fn+A").validation_message().unwrap();
         assert_eq!(fn_combo.key, "hotkey.errors.fnCombinationUnsupported");
+    }
+
+    #[test]
+    fn validation_keys_have_english_text() {
+        use HotkeyValidationError as E;
+        let keys = [
+            E::FnCombinationUnsupported,
+            E::MouseButtonCombination,
+            E::TooManyKeys,
+            E::LeftRightMix,
+            E::NoModifierOrSpecial,
+            E::ModifierOnlyUnsupported,
+            E::LeftModifierOnly,
+            E::Reserved,
+        ]
+        .map(E::message_key);
+        for key in keys.into_iter().chain(["hotkey.validation.reservedNamed"]) {
+            let text = crate::i18n::t_in(crate::i18n::Language::En, key, &[]);
+            assert_ne!(text, key, "missing English text for {key}");
+        }
     }
 }

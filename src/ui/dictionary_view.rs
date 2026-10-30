@@ -15,15 +15,18 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::command_search::relative_time_label;
-use super::components::{Button, ButtonSize, ButtonVariant, drop, icon};
+use super::components::{
+    Button, ButtonSize, ButtonVariant, empty_state_icon, icon, segment, segmented_track,
+    surface_card,
+};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
 };
-use super::text_input::{FieldKind, text_field, text_field_sized, textarea_field};
+use super::text_input::{text_field, text_field_small, textarea_field};
 use super::theme::{
-    DUR_BASE, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
-    RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, tabular_nums,
+    DUR_BASE, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_MD, RADIUS_SM, TEXT_BODY,
+    TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
@@ -108,10 +111,6 @@ fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
             log::warn!("failed to update the dictionary: {err}");
         }
     });
-}
-
-fn agent_name() -> String {
-    crate::text::DEFAULT_AGENT_NAME.to_string()
 }
 
 impl DictionaryView {
@@ -374,13 +373,7 @@ impl DictionaryView {
     }
 
     fn list_frame(p: &Palette) -> Div {
-        div()
-            .rounded(px(RADIUS_XL))
-            .border_1()
-            .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
-            .bg(p.card.opacity(0.4))
-            .px(px(16.))
-            .py(px(12.))
+        surface_card(p).px(px(16.)).py(px(12.))
     }
 
     fn list_heading(title: String, p: &Palette) -> Div {
@@ -449,15 +442,11 @@ impl DictionaryView {
             .iter()
             .filter(|e| e.source == DictionarySource::Learned)
             .count();
-        let mut seg = div()
+        let mut seg = segmented_track(&p)
             .flex_none()
-            .flex()
             .items_center()
             .h(px(32.))
-            .p(px(2.))
-            .gap(px(2.))
-            .rounded(px(RADIUS_LG))
-            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }));
+            .gap(px(2.));
         for (filter, key, count) in [
             (SourceFilter::All, "dictionary.filterAll", entries.len()),
             (
@@ -469,30 +458,9 @@ impl DictionaryView {
         ] {
             let active = self.filter == filter;
             seg = seg.child(
-                div()
-                    .id(SharedString::from(key))
+                segment(SharedString::from(key), active, &p)
                     .h_full()
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
                     .gap(px(6.))
-                    .rounded(px(RADIUS_MD))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .when(active, |d| {
-                        d.text_color(p.foreground).map(|d| {
-                            if p.dark {
-                                d.bg(p.white.opacity(0.1))
-                            } else {
-                                d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
-                            }
-                        })
-                    })
-                    .when(!active, |d| {
-                        d.text_color(p.muted_foreground)
-                            .hover(|s| s.text_color(p.foreground))
-                    })
                     .child(t(key))
                     .child(
                         div()
@@ -608,10 +576,7 @@ impl DictionaryView {
                 div()
                     .flex_1()
                     .relative()
-                    .child(
-                        text_field_sized(&self.add_input, 12., FieldKind::Line, false, window, cx)
-                            .pr(px(64.)),
-                    )
+                    .child(text_field_small(&self.add_input, false, window, cx).pr(px(64.)))
                     .child(
                         div()
                             .id("dict-add")
@@ -881,10 +846,10 @@ impl DictionaryView {
         let learned = entry.source == DictionarySource::Learned;
         let muted = p.muted_foreground;
         let word_cell = if editing {
-            div().flex_1().pr(px(12.)).child(
-                text_field_sized(&self.edit_input, 12., FieldKind::Line, false, window, cx)
-                    .h(px(28.)),
-            )
+            div()
+                .flex_1()
+                .pr(px(12.))
+                .child(text_field_small(&self.edit_input, false, window, cx).h(px(28.)))
         } else {
             div()
                 .flex_1()
@@ -1005,20 +970,7 @@ impl DictionaryView {
             .flex_col()
             .items_center()
             .py(px(32.))
-            .child(
-                div()
-                    .size(px(36.))
-                    .mb(px(16.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(RADIUS_MD))
-                    .border_1()
-                    .border_color(p.border)
-                    .bg(p.card)
-                    .shadow(vec![drop(0., 1., 2., 0.05)])
-                    .child(icon("book-open", 16., p.muted_foreground)),
-            )
+            .child(empty_state_icon("book-open", p).mb(px(16.)))
             .child(
                 div()
                     .mb(px(4.))
@@ -1037,7 +989,7 @@ impl DictionaryView {
                     .text_color(p.muted_foreground)
                     .child(t_with(
                         "dictionary.emptyDescription",
-                        &[("agentName", &agent_name())],
+                        &[("agentName", crate::text::DEFAULT_AGENT_NAME)],
                     )),
             )
             .child(
@@ -1095,17 +1047,7 @@ impl DictionaryView {
             .child(
                 div()
                     .relative()
-                    .child(
-                        text_field_sized(
-                            &self.trigger_input,
-                            12.,
-                            FieldKind::Line,
-                            false,
-                            window,
-                            cx,
-                        )
-                        .pr(px(64.)),
-                    )
+                    .child(text_field_small(&self.trigger_input, false, window, cx).pr(px(64.)))
                     .child(
                         div()
                             .id("snippet-add")
@@ -1521,13 +1463,7 @@ impl Render for SnippetEditor {
                     .flex_col()
                     .gap(px(6.))
                     .child(label(t("dictionary.snippets.triggerLabel")))
-                    .child(text_field(
-                        &self.trigger,
-                        FieldKind::Line,
-                        false,
-                        window,
-                        cx,
-                    ))
+                    .child(text_field(&self.trigger, false, window, cx))
                     .when(duplicate, |d| {
                         d.child(
                             div()

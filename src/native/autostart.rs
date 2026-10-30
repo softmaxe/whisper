@@ -6,6 +6,8 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject};
 use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager, NSBundle, NSError};
 
+use super::fourcc;
+
 #[link(name = "ServiceManagement", kind = "framework")]
 unsafe extern "C" {}
 
@@ -87,10 +89,6 @@ pub fn set_auto_start_enabled(enabled: bool) -> Result<(), String> {
         unsafe { msg_send![&*service, unregisterAndReturnError: _] }
     };
     result.map_err(|error| error.localizedDescription().to_string())
-}
-
-const fn fourcc(code: &[u8; 4]) -> u32 {
-    ((code[0] as u32) << 24) | ((code[1] as u32) << 16) | ((code[2] as u32) << 8) | code[3] as u32
 }
 
 /// Whether the session started this process (a login item launch) rather

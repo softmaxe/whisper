@@ -8,11 +8,10 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use tokio_util::sync::CancellationToken;
 
-static CACHED_PATH: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
+static CACHED_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 const SYSTEM_CANDIDATES: &[&str] = &["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
 
@@ -43,17 +42,10 @@ fn stderr_suffix(stderr: &str) -> String {
 }
 
 fn is_executable(path: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::metadata(path)
-            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        path.is_file()
-    }
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 /// Resolves the FFmpeg binary; found paths are cached.
@@ -90,8 +82,15 @@ fn stderr_tail(stderr: &[u8]) -> String {
     chars[start..].iter().collect::<String>().trim().to_string()
 }
 
-/// Runs FFmpeg with `args`; fails on a non-zero exit.
-async fn run(args: Vec<OsString>, cancel: &CancellationToken) -> Result<(), FfmpegError> {
+/// Runs a one-shot FFmpeg conversion that must leave a non-empty `output`;
+/// fails on a non-zero exit.
+async fn run_conversion(
+    mut args: Vec<OsString>,
+    output: &Path,
+    cancel: &CancellationToken,
+) -> Result<(), FfmpegError> {
+    args.push("-y".into());
+    args.push(output.as_os_str().to_owned());
     if cancel.is_cancelled() {
         return Err(FfmpegError::Cancelled);
     }
@@ -105,31 +104,19 @@ async fn run(args: Vec<OsString>, cancel: &CancellationToken) -> Result<(), Ffmp
         .spawn()
         .map_err(|e| FfmpegError::Process(e.to_string()))?;
     // Dropping the wait future on cancel kills the child (kill_on_drop).
-    let output = tokio::select! {
+    let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => return Err(FfmpegError::Cancelled),
-        output = child.wait_with_output() => output.map_err(|e| FfmpegError::Process(e.to_string()))?,
+        result = child.wait_with_output() => result.map_err(|e| FfmpegError::Process(e.to_string()))?,
     };
-    if !output.status.success() {
-        let stderr = stderr_tail(&output.stderr);
+    if !result.status.success() {
+        let stderr = stderr_tail(&result.stderr);
         log::debug!("FFmpeg failed: {stderr}");
         return Err(FfmpegError::Failed {
-            code: output.status.code().unwrap_or(-1),
+            code: result.status.code().unwrap_or(-1),
             stderr,
         });
     }
-    Ok(())
-}
-
-/// One-shot conversion that must leave a non-empty `output`.
-async fn run_conversion(
-    mut args: Vec<OsString>,
-    output: &Path,
-    cancel: &CancellationToken,
-) -> Result<(), FfmpegError> {
-    args.push("-y".into());
-    args.push(output.as_os_str().to_owned());
-    run(args, cancel).await?;
     match std::fs::metadata(output) {
         Err(_) => Err(FfmpegError::NoOutput),
         Ok(meta) if meta.len() == 0 => Err(FfmpegError::EmptyOutput),
@@ -141,11 +128,10 @@ fn os_args(args: &[&str]) -> Vec<OsString> {
     args.iter().map(OsString::from).collect()
 }
 
-/// Mono 16 kHz MP3 with any video stream dropped (default bitrate "64k").
+/// Mono 16 kHz 64 kbps MP3 with any video stream dropped.
 pub async fn convert_to_mp3(
     input: &Path,
     output: &Path,
-    audio_bitrate: &str,
     cancel: &CancellationToken,
 ) -> Result<(), FfmpegError> {
     let mut args = vec![OsString::from("-i"), input.as_os_str().to_owned()];
@@ -154,7 +140,7 @@ pub async fn convert_to_mp3(
         "-c:a",
         "libmp3lame",
         "-b:a",
-        audio_bitrate,
+        "64k",
         "-ar",
         "16000",
         "-ac",
@@ -186,14 +172,13 @@ mod tests {
         ]);
         block(run_conversion(args, &wav, &CancellationToken::new())).unwrap();
         let mp3 = dir.path().join("tone.mp3");
-        block(convert_to_mp3(&wav, &mp3, "64k", &CancellationToken::new())).unwrap();
+        block(convert_to_mp3(&wav, &mp3, &CancellationToken::new())).unwrap();
         assert!(std::fs::metadata(&mp3).unwrap().len() > 0);
 
         let missing = dir.path().join("missing.wav");
         let err = block(convert_to_mp3(
             &missing,
             &dir.path().join("o.mp3"),
-            "64k",
             &CancellationToken::new(),
         ))
         .unwrap_err();
@@ -201,7 +186,7 @@ mod tests {
 
         let cancel = CancellationToken::new();
         cancel.cancel();
-        let err = block(convert_to_mp3(&wav, &mp3, "64k", &cancel)).unwrap_err();
+        let err = block(convert_to_mp3(&wav, &mp3, &cancel)).unwrap_err();
         assert_eq!(err, FfmpegError::Cancelled);
     }
 }

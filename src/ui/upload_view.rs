@@ -9,17 +9,19 @@ use std::time::Duration;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use tokio_util::sync::CancellationToken;
 
 use crate::i18n::{t, t_with};
+use crate::services::transcription::CUSTOM_ENDPOINT_INVALID_CODE;
 use crate::services::upload::{
-    FileTranscriptionRequest, UploadError, cancel_upload_transcription, is_supported_upload_file,
-    transcribe_audio_file,
+    FileTranscriptionRequest, UploadError, is_supported_upload_file, transcribe_audio_file,
 };
 
 use crate::app_state::AppState;
 
 use super::components::{Button, ButtonSize, ButtonVariant, drop, f32_tx, icon, spinner};
 use super::history_view::copy_with_toast;
+use super::settings_modal::SettingsSection;
 use super::theme::{
     DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, Palette, PaletteExt, RADIUS_MD,
     RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_DISPLAY, TEXT_READING, TEXT_SMALL, TEXT_TITLE,
@@ -28,7 +30,7 @@ use super::theme::{
 
 pub enum UploadEvent {
     OpenHistory,
-    OpenSettings(&'static str),
+    OpenSettings(SettingsSection),
 }
 
 #[derive(Clone)]
@@ -74,12 +76,12 @@ pub struct UploadView {
     stage: Stage,
     file: Option<SelectedFile>,
     run_id: u64,
-    active_request: Option<String>,
+    active_request: Option<CancellationToken>,
     skipped_notice: Option<String>,
     queue: Vec<QueueItem>,
     batch_processing: bool,
     batch_run: u64,
-    batch_request: Option<String>,
+    batch_request: Option<CancellationToken>,
 }
 
 impl EventEmitter<UploadEvent> for UploadView {}
@@ -101,7 +103,7 @@ fn file_name(path: &std::path::Path) -> String {
 }
 
 fn error_text(err: &UploadError) -> String {
-    if err.code.as_deref() == Some("CUSTOM_ENDPOINT_INVALID") {
+    if err.code.as_deref() == Some(CUSTOM_ENDPOINT_INVALID_CODE) {
         return t("upload.customEndpointInvalid");
     }
     if let Some(key) = &err.message_key
@@ -116,16 +118,13 @@ fn error_text(err: &UploadError) -> String {
     }
 }
 
-fn build_request(path: PathBuf, request_id: String, cx: &App) -> FileTranscriptionRequest {
+fn build_request(path: PathBuf, cx: &App) -> FileTranscriptionRequest {
     let s = AppState::settings(cx);
     FileTranscriptionRequest {
         file_path: path,
-        language: crate::text::language::get_base_language_code(&s.preferred_language)
-            .unwrap_or_default()
-            .to_string(),
+        preferred_language: s.preferred_language.clone(),
         remote_transcription_url: s.remote_transcription_url.clone(),
         remote_transcription_model: s.remote_transcription_model.clone(),
-        request_id: Some(request_id),
     }
 }
 
@@ -142,8 +141,9 @@ fn save_upload(text: &str, cx: &mut App) -> Result<Option<i64>, String> {
 
 fn run_transcription(
     request: FileTranscriptionRequest,
+    cancel: CancellationToken,
 ) -> impl std::future::Future<Output = Result<String, UploadError>> {
-    let handle = crate::services::runtime::spawn(transcribe_audio_file(request));
+    let handle = crate::services::runtime::spawn(transcribe_audio_file(request, cancel));
     async move {
         handle.await.unwrap_or_else(|err| {
             Err(UploadError {
@@ -252,21 +252,21 @@ impl UploadView {
         }
         self.run_id += 1;
         let run = self.run_id;
-        let request_id = uuid::Uuid::new_v4().to_string();
-        self.active_request = Some(request_id.clone());
+        let cancel = CancellationToken::new();
+        self.active_request = Some(cancel.clone());
         self.stage = Stage::Transcribing;
         cx.notify();
-        let request = build_request(file.path.clone(), request_id.clone(), cx);
-        let task = run_transcription(request);
+        let request = build_request(file.path.clone(), cx);
+        let task = run_transcription(request, cancel);
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |this, cx| {
-                if this.active_request.as_deref() == Some(request_id.as_str()) {
-                    this.active_request = None;
-                }
+                // Every new run or cancel bumps `run_id`, so a stale run no
+                // longer owns `active_request`.
                 if run != this.run_id {
                     return;
                 }
+                this.active_request = None;
                 this.stage = match result {
                     Ok(text) if !text.trim().is_empty() => match save_upload(&text, cx) {
                         Ok(id) => Stage::Complete {
@@ -290,8 +290,8 @@ impl UploadView {
     }
 
     fn cancel_transcription(&mut self, cx: &mut Context<Self>) {
-        if let Some(id) = self.active_request.take() {
-            cancel_upload_transcription(&id);
+        if let Some(cancel) = self.active_request.take() {
+            cancel.cancel();
         }
         self.run_id += 1;
         self.reset(cx);
@@ -320,18 +320,20 @@ impl UploadView {
                             i.status == ItemStatus::Queued && !processed.contains(&i.id)
                         })?;
                         item.status = ItemStatus::Transcribing;
-                        let request_id = uuid::Uuid::new_v4().to_string();
-                        let request = build_request(item.path.clone(), request_id.clone(), cx);
+                        let request = build_request(item.path.clone(), cx);
                         let id = item.id.clone();
-                        this.batch_request = Some(request_id);
+                        let cancel = CancellationToken::new();
+                        this.batch_request = Some(cancel.clone());
                         cx.notify();
-                        Some((id, request))
+                        Some((id, request, cancel))
                     })
                     .ok()
                     .flatten();
-                let Some((id, request)) = next else { break };
+                let Some((id, request, cancel)) = next else {
+                    break;
+                };
                 processed.insert(id.clone());
-                let result = run_transcription(request).await;
+                let result = run_transcription(request, cancel).await;
                 let still_current = this
                     .update(cx, |this, cx| {
                         this.batch_request = None;
@@ -384,8 +386,8 @@ impl UploadView {
 
     fn cancel_batch(&mut self, cx: &mut Context<Self>) {
         self.batch_run += 1;
-        if let Some(id) = self.batch_request.take() {
-            cancel_upload_transcription(&id);
+        if let Some(cancel) = self.batch_request.take() {
+            cancel.cancel();
         }
         self.batch_processing = false;
         for item in &mut self.queue {
@@ -406,12 +408,7 @@ impl UploadView {
 
     // ---- Rendering -------------------------------------------------------------------------
 
-    fn render_stage_panel(
-        &mut self,
-        wide: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_stage_panel(&mut self, wide: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let ready = Self::provider_ready(cx);
         let stage = self.stage.clone();
@@ -430,7 +427,6 @@ impl UploadView {
             Stage::Error(error) => self.render_error(error, cx),
         };
         let notice = self.skipped_notice.clone();
-        let _ = window;
 
         div()
             .id("upload-stage")
@@ -559,7 +555,7 @@ impl UploadView {
                         .label(t("upload.noProviderAction"))
                         .size(ButtonSize::Sm)
                         .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(UploadEvent::OpenSettings("uploadTranscription"))
+                            cx.emit(UploadEvent::OpenSettings(SettingsSection::SpeechToText))
                         })),
                 ),
             )
@@ -698,13 +694,13 @@ impl UploadView {
         let p = cx.palette();
         let file_name = self.file.as_ref().map(|f| f.name.clone());
         let copy_text = text.clone();
-        let status = match (&save_error, transcription_id) {
-            (Some(err), _) => Some((err.clone(), p.destructive.opacity(0.8))),
-            (None, Some(_)) => Some((t("upload.savedToHistory"), p.muted_foreground)),
-            (None, None) => Some((
+        let (status, status_color) = match (&save_error, transcription_id) {
+            (Some(err), _) => (err.clone(), p.destructive.opacity(0.8)),
+            (None, Some(_)) => (t("upload.savedToHistory"), p.muted_foreground),
+            (None, None) => (
                 t("controlPanel.history.dataRetentionDisabled"),
                 p.muted_foreground,
-            )),
+            ),
         };
         div()
             .flex_1()
@@ -739,17 +735,15 @@ impl UploadView {
                             .text_color(p.muted_foreground)
                             .when_some(file_name, |d, name| d.child(name)),
                     )
-                    .when_some(status, |d, (status, color)| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .max_w(px(220.))
-                                .truncate()
-                                .text_size(px(TEXT_CAPTION))
-                                .text_color(color)
-                                .child(status),
-                        )
-                    }),
+                    .child(
+                        div()
+                            .flex_none()
+                            .max_w(px(220.))
+                            .truncate()
+                            .text_size(px(TEXT_CAPTION))
+                            .text_color(status_color)
+                            .child(status),
+                    ),
             )
             .child(
                 div()
@@ -906,11 +900,9 @@ impl UploadView {
             .bg(p.card.opacity(0.4))
             .cursor_pointer()
             .hover(|s| s.bg(p.hover_wash(0.02)))
-            .on_click(
-                cx.listener(|_, _, _, cx| {
-                    cx.emit(UploadEvent::OpenSettings("uploadTranscription"))
-                }),
-            )
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(UploadEvent::OpenSettings(SettingsSection::SpeechToText))
+            }))
             .child(side_header(
                 &p,
                 t("upload.settingsTitle"),
@@ -1202,7 +1194,7 @@ impl Render for UploadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let viewport = window.viewport_size();
         let wide = viewport.width >= px(WIDE_MIN_WIDTH);
-        let stage = self.render_stage_panel(wide, window, cx);
+        let stage = self.render_stage_panel(wide, cx);
         let settings = self.render_settings(cx);
         let queue = self.render_queue(wide, window, cx);
 

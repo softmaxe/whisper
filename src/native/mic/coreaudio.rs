@@ -7,6 +7,7 @@ use core_foundation::base::TCFType;
 use core_foundation::string::{CFString, CFStringRef};
 
 use super::MicDevice;
+use crate::native::fourcc;
 
 pub type AudioObjectId = u32;
 
@@ -34,10 +35,6 @@ unsafe extern "C" {
         size: *mut u32,
         data: *mut c_void,
     ) -> i32;
-}
-
-const fn fourcc(code: &[u8; 4]) -> u32 {
-    ((code[0] as u32) << 24) | ((code[1] as u32) << 16) | ((code[2] as u32) << 8) | code[3] as u32
 }
 
 const SYSTEM_OBJECT: AudioObjectId = 1;

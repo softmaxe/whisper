@@ -9,7 +9,7 @@ use crate::settings::ActivationMode;
 use crate::text::hotkeys::ListenerKey;
 
 use super::super::timer::{TimerId, Timers, lock};
-use super::{ForceStopReason, HotkeyCommand};
+use super::HotkeyCommand;
 
 pub const HOLD_THRESHOLD_MS: u64 = 150;
 pub const TAP_MAX_HOLD_MS: u64 = 300;
@@ -211,9 +211,7 @@ impl HotkeyGesture {
             current.map(|c| c.kind),
             Some(PressKind::Stop | PressKind::Held)
         ) {
-            inner.env.emit(HotkeyCommand::ForceStop {
-                reason: ForceStopReason::ListenerLost,
-            });
+            inner.env.emit(HotkeyCommand::ForceStop);
             inner.env.emit(HotkeyCommand::Stop);
         }
     }
@@ -334,7 +332,7 @@ mod tests {
                     lock(&self.commands).push("cancel");
                     *lock(&self.active) = false;
                 }
-                HotkeyCommand::ForceStop { .. } => lock(&self.commands).push("forceStop"),
+                HotkeyCommand::ForceStop => lock(&self.commands).push("forceStop"),
                 HotkeyCommand::Prepare => lock(&self.preparation).push("prepare"),
                 HotkeyCommand::CancelPreparation => lock(&self.preparation).push("cancel"),
                 HotkeyCommand::UnusedPress { mode } => lock(&self.hints).push(mode),

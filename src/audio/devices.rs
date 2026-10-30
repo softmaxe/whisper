@@ -4,7 +4,8 @@
 use super::AudioError;
 use cpal::traits::{DeviceTrait, HostTrait};
 
-fn device_name(device: &cpal::Device) -> String {
+/// The device's display name, as used in logs and for name selectors.
+pub(crate) fn device_name(device: &cpal::Device) -> String {
     device
         .description()
         .map(|d| d.name().to_string())
@@ -40,8 +41,4 @@ pub(crate) fn find_input_device(
         .or_else(|| devices.iter().find(|d| device_name(d) == selector))
         .cloned()
         .ok_or_else(|| AudioError::DeviceNotFound(selector.to_string()))
-}
-
-pub(crate) fn describe(device: &cpal::Device) -> String {
-    device_name(device)
 }

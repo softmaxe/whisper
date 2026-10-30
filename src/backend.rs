@@ -4,35 +4,11 @@
 
 use std::path::PathBuf;
 
+pub use crate::native::autostart::AutoStartState;
 use crate::native::permissions::SettingsPane;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct MicDeviceInfo {
-    pub id: String,
-    pub label: String,
-    pub is_built_in: bool,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ModelOption {
-    pub value: String,
-    pub label: String,
-    pub description: Option<String>,
-    pub owner: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AutoStartState {
-    pub enabled: bool,
-    pub requires_approval: bool,
-}
-
 pub fn auto_start_state() -> AutoStartState {
-    let state = crate::native::autostart::auto_start_state();
-    AutoStartState {
-        enabled: state.enabled,
-        requires_approval: state.requires_approval,
-    }
+    crate::native::autostart::auto_start_state()
 }
 
 pub fn set_auto_start(enabled: bool) -> anyhow::Result<()> {
@@ -43,15 +19,15 @@ pub fn open_login_items_settings() {
     open_url(SettingsPane::LoginItems.url());
 }
 
-pub fn open_microphone_privacy_settings() {
+fn open_microphone_privacy_settings() {
     open_url(SettingsPane::Microphone.url());
 }
 
-pub fn open_accessibility_settings() {
+fn open_accessibility_settings() {
     open_url(SettingsPane::Accessibility.url());
 }
 
-pub fn open_url(url: &str) {
+fn open_url(url: &str) {
     let _ = std::process::Command::new("open").arg(url).spawn();
 }
 
@@ -62,19 +38,12 @@ pub fn reveal_in_finder(path: &PathBuf) {
         .spawn();
 }
 
-pub fn list_microphones() -> Vec<MicDeviceInfo> {
+pub fn list_microphones() -> Vec<crate::native::mic::MicDevice> {
     crate::native::mic::list_input_devices()
-        .into_iter()
-        .map(|d| MicDeviceInfo {
-            id: d.id,
-            label: d.label,
-            is_built_in: d.is_built_in,
-        })
-        .collect()
 }
 
 pub fn system_default_microphone() -> Option<String> {
-    crate::native::mic::system_default_microphone().map(|d| d.name)
+    crate::native::mic::system_default_microphone()
 }
 
 pub fn lid_closed() -> Option<bool> {
@@ -125,30 +94,6 @@ pub fn set_cleanup_api_key(key: &str) {
     }
 }
 
-/// Transcription languages as (code, label, flag) for the language selector.
-pub fn languages() -> Vec<(String, String, String)> {
-    crate::text::language::languages()
-        .iter()
-        .map(|l| (l.code.to_string(), l.label.to_string(), l.flag.to_string()))
-        .collect()
-}
-
-pub fn default_cleanup_prompt(ui_language: &str) -> String {
-    crate::text::prompts::default_cleanup_prompt(ui_language).to_string()
-}
-
-pub fn normalize_base_url(value: &str) -> String {
-    crate::text::url::normalize_base_url(value)
-}
-
-pub fn build_api_url(base: &str, path: &str) -> Option<String> {
-    crate::text::url::build_api_url(base, path)
-}
-
-pub fn format_bytes(bytes: u64) -> String {
-    crate::text::format::format_bytes(bytes as f64, 2)
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct HotkeyModeInfo {
     pub push_disabled_reason: Option<String>,
@@ -158,38 +103,25 @@ pub fn hotkey_mode_info(hotkeys_list: &str) -> HotkeyModeInfo {
     let Some(manager) = hotkeys() else {
         return HotkeyModeInfo::default();
     };
-    let info = manager.mode_info(hotkeys_list);
     HotkeyModeInfo {
-        push_disabled_reason: (!info.supports_push_to_talk).then(|| {
-            info.push_to_talk_unavailable_reason
-                .map(|key| crate::i18n::t(&key))
-                .unwrap_or_else(|| crate::i18n::t("hotkey.errors.holdUnavailable"))
-        }),
+        push_disabled_reason: (!manager.supports_hold(hotkeys_list))
+            .then(|| crate::i18n::t("hotkey.errors.holdNeedsReleaseKey")),
     }
 }
 
 pub fn list_models(
     base: String,
     api_key: String,
-) -> impl std::future::Future<Output = Result<(String, Vec<ModelOption>), String>> + 'static {
+) -> impl std::future::Future<
+    Output = Result<(String, Vec<crate::services::cleanup::ModelOption>), String>,
+> + 'static {
     let handle = crate::services::runtime::spawn(async move {
         let key = (!api_key.is_empty()).then_some(api_key.as_str());
         crate::services::cleanup::list_models(&base, key).await
     });
     async move {
         match handle.await {
-            Ok(Ok((resolved, models))) => Ok((
-                resolved,
-                models
-                    .into_iter()
-                    .map(|m| ModelOption {
-                        description: m.description,
-                        owner: m.owned_by,
-                        value: m.value,
-                        label: m.label,
-                    })
-                    .collect(),
-            )),
+            Ok(Ok(listed)) => Ok(listed),
             Ok(Err(err)) => Err(err.message_key.map(crate::i18n::t).unwrap_or(err.message)),
             Err(err) => Err(err.to_string()),
         }
@@ -207,26 +139,20 @@ pub fn run_cleanup_test(
     use crate::text::{chinese_script, prompts};
     let system_prompt = prompts::resolve_prompt_template(
         &template,
-        Some(crate::text::DEFAULT_AGENT_NAME),
         &chinese_script::resolve_cleanup_language(&settings.preferred_language),
         &dictionary_hints,
         &settings.ui_language,
     );
-    let config = crate::services::cleanup::CleanupRequestConfig {
-        base_url: settings.cleanup_remote_url.trim().to_string(),
-        api_key: (!api_key.trim().is_empty()).then(|| api_key.trim().to_string()),
-        model: settings.cleanup_model.trim().to_string(),
-        system_prompt,
-        wrap_transcript: false,
-        disable_thinking: Some(settings.cleanup_disable_thinking),
-        temperature: Some(0.0),
-        require_complete_output: true,
-        max_tokens: None,
-    };
-    let text = prompts::wrap_cleanup_transcript(&input);
+    let config = crate::services::cleanup::CleanupRequestConfig::dictation(
+        settings.cleanup_remote_url.trim(),
+        Some(api_key.trim()).filter(|k| !k.is_empty()),
+        settings.cleanup_model.trim(),
+        &system_prompt,
+        settings.cleanup_disable_thinking,
+    );
     let handle = crate::services::runtime::spawn(async move {
         let cancel = tokio_util::sync::CancellationToken::new();
-        crate::services::cleanup::process_text(&text, &config, &cancel).await
+        crate::services::cleanup::process_text(&input, &config, &cancel).await
     });
     async move {
         match handle.await {
@@ -250,14 +176,6 @@ pub fn set_hotkey_listening_mode(enabled: bool) {
     }
 }
 
-/// The hotkeys of a stored list, in their stored spelling.
-pub fn parse_hotkey_list(value: &str) -> Vec<String> {
-    crate::text::hotkeys::parse_hotkey_list(value)
-        .iter()
-        .map(ToString::to_string)
-        .collect()
-}
-
 /// The user-facing reason a captured hotkey is rejected, if any.
 pub fn validate_hotkey(hotkey: &crate::text::hotkeys::Hotkey) -> Option<String> {
     let message = hotkey.validation_message()?;
@@ -266,17 +184,7 @@ pub fn validate_hotkey(hotkey: &crate::text::hotkeys::Hotkey) -> Option<String> 
         .iter()
         .map(|(k, v)| (*k, v.as_str()))
         .collect();
-    Some(
-        crate::i18n::try_t(message.key)
-            .map(|_| crate::i18n::t_with(message.key, &params))
-            .unwrap_or(message.default_text),
-    )
-}
-
-/// User-facing label for a stored hotkey or hotkey list; empty shows the
-/// default hotkey.
-pub fn format_hotkey_label(hotkeys: &str) -> String {
-    crate::text::hotkeys::format_hotkey_list_label(hotkeys)
+    Some(crate::i18n::t_with(message.key, &params))
 }
 
 /// Registers the global Dictation hotkeys; returns the list actually active.
@@ -288,7 +196,10 @@ pub fn register_hotkeys(list: &str, cx: &mut gpui_kit::App) -> Result<String, St
     manager.register(list, mode).map_err(|err| {
         let message = crate::i18n::t_with(
             err.message_key(),
-            &[("hotkey", &format_hotkey_label(&err.hotkey))],
+            &[(
+                "hotkey",
+                &crate::text::hotkeys::format_hotkey_list_label(&err.hotkey),
+            )],
         );
         if err.suggestions.is_empty() {
             message
@@ -305,8 +216,8 @@ pub fn register_hotkeys(list: &str, cx: &mut gpui_kit::App) -> Result<String, St
 }
 // ---- Hotkeys ------------------------------------------------------------------------------
 
-static HOTKEYS: once_cell::sync::OnceCell<crate::native::hotkeys::HotkeyManager> =
-    once_cell::sync::OnceCell::new();
+static HOTKEYS: std::sync::OnceLock<crate::native::hotkeys::HotkeyManager> =
+    std::sync::OnceLock::new();
 
 /// Installs the hotkey manager; call once on the main thread at startup.
 pub fn install_hotkeys(manager: crate::native::hotkeys::HotkeyManager) {
@@ -360,14 +271,12 @@ pub fn resume_media() {
 
 /// The cpal device name for the configured microphone, `None` for the system default.
 pub fn preferred_input_device(settings: &crate::settings::Settings) -> Option<String> {
-    crate::native::mic::resolve_preferred_microphone(settings)
-        .device
-        .map(|d| d.label)
+    crate::native::mic::resolve_preferred_microphone(settings).map(|d| d.label)
 }
 
 /// The Target app at the hotkey press.
 pub fn capture_target_pid() -> Option<i32> {
-    crate::native::paste::capture_frontmost_pid()
+    crate::native::text_monitor::TextEditMonitor::shared().capture_target_pid()
 }
 
 pub fn write_clipboard(text: &str) -> bool {
@@ -387,7 +296,6 @@ pub fn paste_text(
             crate::native::paste::PasteOptions {
                 target_pid,
                 restore_clipboard,
-                allow_clipboard_fallback: false,
             },
         );
         if let Some(failure) = &outcome.failure {

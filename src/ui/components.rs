@@ -8,8 +8,8 @@ use gpui_kit::*;
 
 use super::theme::{
     CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE,
-    NAV_ROW_HEIGHT, Palette, PaletteExt, RADIUS_LG, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION,
-    TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
+    NAV_ROW_HEIGHT, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY,
+    TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -168,7 +168,6 @@ pub struct Button {
     size: ButtonSize,
     disabled: bool,
     full_width: bool,
-    height: Option<f32>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -182,7 +181,6 @@ impl Button {
             size: ButtonSize::Default,
             disabled: false,
             full_width: false,
-            height: None,
             on_click: None,
         }
     }
@@ -214,11 +212,6 @@ impl Button {
 
     pub fn full_width(mut self) -> Self {
         self.full_width = true;
-        self
-    }
-
-    pub fn h(mut self, height: f32) -> Self {
-        self.height = Some(height);
         self
     }
 
@@ -260,7 +253,6 @@ impl RenderOnce for Button {
             ButtonSize::Default => (CONTROL_HEIGHT, 12., TEXT_BODY),
             ButtonSize::Sm => (28., 10., TEXT_SMALL),
         };
-        let height = self.height.unwrap_or(height);
         let style = variant_style(&p, self.variant);
         let disabled = self.disabled;
         let (pressed, depth) = press_depth(&self.id, window, cx);
@@ -490,16 +482,22 @@ pub fn section_header(
         })
 }
 
-/// `SettingsPanel`: a bordered group whose rows are separated by hairlines.
-pub fn settings_panel(rows: Vec<AnyElement>, p: &Palette) -> Div {
-    let divider = p.border.opacity(0.5);
-    let mut panel = div()
-        .flex()
-        .flex_col()
+/// A rounded card with a soft border on a faint fill: the frame shared by
+/// settings panels, the dictionary list and the Insights cards.
+pub fn surface_card(p: &Palette) -> Div {
+    div()
         .rounded(px(RADIUS_XL))
         .border_1()
         .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
         .bg(p.card.opacity(0.4))
+}
+
+/// `SettingsPanel`: a bordered group whose rows are separated by hairlines.
+pub fn settings_panel(rows: Vec<AnyElement>, p: &Palette) -> Div {
+    let divider = p.border.opacity(0.5);
+    let mut panel = surface_card(p)
+        .flex()
+        .flex_col()
         .shadow(vec![drop(0., 1., 2., 0.05)]);
     for (index, row) in rows.into_iter().enumerate() {
         panel = panel.child(
@@ -509,6 +507,18 @@ pub fn settings_panel(rows: Vec<AnyElement>, p: &Palette) -> Div {
         );
     }
     panel
+}
+
+/// A titled settings group: a `section_header` over a `settings_panel`.
+pub fn settings_section(
+    title: impl Into<SharedString>,
+    description: Option<SharedString>,
+    rows: Vec<AnyElement>,
+    p: &Palette,
+) -> Div {
+    div()
+        .child(section_header(title, description, p))
+        .child(settings_panel(rows, p))
 }
 
 /// `SettingsPanelRow` padding.
@@ -710,6 +720,91 @@ pub fn nav_row(
         })
         .child(icon(icon_name, 16., icon_color))
         .child(div().flex_1().min_w_0().truncate().child(label.into()))
+}
+
+/// The track of a segmented control: a 2 px inset on a faint wash. Callers
+/// add their own height, gap and alignment.
+pub fn segmented_track(p: &Palette) -> Div {
+    div()
+        .flex()
+        .p(px(2.))
+        .rounded(px(RADIUS_LG))
+        .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }))
+}
+
+/// One option in a `segmented_track`: raised with foreground text when
+/// active, muted until hovered otherwise. Callers add height, padding on the
+/// vertical axis, gap, children and the click handler.
+pub fn segment(id: impl Into<ElementId>, active: bool, p: &Palette) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .px(px(10.))
+        .rounded(px(RADIUS_MD))
+        .text_size(px(TEXT_SMALL))
+        .font_weight(FontWeight::MEDIUM)
+        .cursor_pointer()
+        .when(active, |d| {
+            d.text_color(p.foreground).map(|d| {
+                if p.dark {
+                    d.bg(p.white.opacity(0.1))
+                } else {
+                    d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
+                }
+            })
+        })
+        .when(!active, |d| {
+            d.text_color(p.muted_foreground)
+                .hover(|s| s.text_color(p.foreground))
+        })
+}
+
+/// The amber notice shown while data retention is off. `line_height` pins
+/// the message's line height; `None` keeps the inherited one.
+pub fn retention_banner(
+    message: impl Into<SharedString>,
+    line_height: Option<f32>,
+    p: &Palette,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .px(px(14.))
+        .py(px(10.))
+        .rounded(px(RADIUS_LG))
+        .border_1()
+        .border_color(p.amber_border)
+        .bg(p.amber_bg)
+        .child(
+            div()
+                .text_size(px(TEXT_BODY))
+                .text_color(p.amber_icon)
+                .child("⊘"),
+        )
+        .child(
+            div()
+                .text_size(px(TEXT_SMALL))
+                .when_some(line_height, |d, h| d.line_height(px(h)))
+                .text_color(p.amber_text)
+                .child(message.into()),
+        )
+}
+
+/// The 36 px raised tile that holds an empty state's icon.
+pub fn empty_state_icon(name: &str, p: &Palette) -> Div {
+    div()
+        .size(px(36.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(RADIUS_MD))
+        .border_1()
+        .border_color(p.border)
+        .bg(p.card)
+        .shadow(vec![drop(0., 1., 2., 0.05)])
+        .child(icon(name, 16., p.muted_foreground))
 }
 
 /// A `<kbd>` chip: a flat 20 px tint, no border or shadow.

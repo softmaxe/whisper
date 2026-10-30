@@ -101,6 +101,8 @@ impl Toast {
 struct ActiveToast {
     id: u64,
     toast: Toast,
+    /// The toast's duration with the variant default applied.
+    duration: Duration,
     shown_at: Instant,
     closing: bool,
 }
@@ -241,7 +243,7 @@ pub fn modal_frame(
         )
 }
 
-pub fn show_toast(mut toast: Toast, cx: &mut App) {
+pub fn show_toast(toast: Toast, cx: &mut App) {
     let duration = toast.duration.unwrap_or(Duration::from_millis(
         if toast.variant == ToastVariant::Destructive {
             6000
@@ -249,13 +251,13 @@ pub fn show_toast(mut toast: Toast, cx: &mut App) {
             3500
         },
     ));
-    toast.duration = Some(duration);
     Overlays::global(cx).update(cx, |o, cx| {
         let id = o.next_id;
         o.next_id += 1;
         o.toasts.push(ActiveToast {
             id,
             toast,
+            duration,
             shown_at: Instant::now(),
             closing: false,
         });
@@ -273,11 +275,10 @@ pub fn show_toast(mut toast: Toast, cx: &mut App) {
 }
 
 /// Renders the dialog backdrop and card, or nothing.
-pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
     let request = overlays.read(cx).dialog.clone()?;
     let p = cx.palette();
-    let _ = window;
     let close = {
         let overlays = overlays.clone();
         move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -441,10 +442,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             ),
         };
         let elapsed = active.shown_at.elapsed().as_secs_f32();
-        let total = toast
-            .duration
-            .unwrap_or(Duration::from_millis(3500))
-            .as_secs_f32();
+        let total = active.duration.as_secs_f32();
         let remaining = (1. - elapsed / total).clamp(0., 1.);
         let (message, detail) = match &toast.description {
             Some(desc) if !toast.title.is_empty() => (toast.title.clone(), Some(desc.clone())),

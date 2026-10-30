@@ -27,7 +27,7 @@ pub mod repeat_gate;
 pub mod slots;
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 
 use global_hotkey::HotKeyState;
@@ -50,20 +50,6 @@ use slots::{
     CANCEL_SLOT, DICTATION_SLOT, ListenerConfig, ShortcutBackend, ShortcutTarget, SlotRegistry,
 };
 
-static CANCEL_KEY: LazyLock<Hotkey> =
-    LazyLock::new(|| Hotkey::parse("Escape").expect("static hotkey"));
-
-/// Why a Dictation was stopped without a physical release of its hotkey.
-/// The trigger keys may still be down, so the transcript must be kept
-/// (offered for copy) instead of pasted into the held modifiers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForceStopReason {
-    /// The native listener went away while a hold was in progress.
-    ListenerLost,
-    /// The five-minute Hold mode safety ceiling.
-    Timeout,
-}
-
 /// What the integrator should do with the Dictation and the hotkey UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HotkeyCommand {
@@ -78,11 +64,10 @@ pub enum HotkeyCommand {
     /// The hold turned out to be a shortcut: discard the Dictation.
     Cancel,
     /// Notification that the following `Stop`/`CancelPreparation` happens
-    /// without a physical release; do not paste. Always followed by one of
-    /// those two.
-    ForceStop {
-        reason: ForceStopReason,
-    },
+    /// without a physical release (the native listener went away, or the
+    /// five-minute Hold mode safety ceiling). The trigger keys may still be
+    /// down, so do not paste. Always followed by one of those two.
+    ForceStop,
     /// The cancel hotkey (Escape) was pressed.
     CancelKeyPressed,
     /// A clean press that did nothing; hint how `mode` starts Dictation.
@@ -95,8 +80,6 @@ pub enum HotkeyCommand {
         hotkey: String,
         message_key: String,
     },
-    /// The comma-separated list of hotkeys now active.
-    ActiveHotkeyChanged(String),
     /// The Globe listener failed (missing binary, crash loop, no event tap).
     ListenerError {
         message: String,
@@ -130,12 +113,10 @@ pub enum HotkeyFailureReason {
     },
     /// Hold mode needs a key whose release macOS reports.
     HoldNeedsReleaseKey,
-    /// The cancel binding is held by another owner with a different key.
-    CancelKeyInUse,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{}", self.english_message())]
+#[error("{reason:?}: \"{hotkey}\"")]
 pub struct HotkeyError {
     pub hotkey: String,
     pub reason: HotkeyFailureReason,
@@ -148,9 +129,7 @@ impl HotkeyError {
     pub fn message_key(&self) -> &'static str {
         match self.reason {
             HotkeyFailureReason::AlreadyRegistered => "hotkey.errors.alreadyRegistered",
-            HotkeyFailureReason::RegistrationFailed | HotkeyFailureReason::CancelKeyInUse => {
-                "hotkey.errors.registrationFailed"
-            }
+            HotkeyFailureReason::RegistrationFailed => "hotkey.errors.registrationFailed",
             HotkeyFailureReason::FnCombinationUnsupported => {
                 "hotkey.errors.fnCombinationUnsupported"
             }
@@ -158,40 +137,6 @@ impl HotkeyError {
             HotkeyFailureReason::HoldNeedsReleaseKey => "hotkey.errors.holdNeedsReleaseKey",
         }
     }
-
-    fn english_message(&self) -> String {
-        let hotkey = &self.hotkey;
-        let base = match &self.reason {
-            HotkeyFailureReason::AlreadyRegistered => {
-                format!("\"{hotkey}\" is already registered by another application.")
-            }
-            HotkeyFailureReason::RegistrationFailed => format!(
-                "Could not register \"{hotkey}\". It may be in use by another application."
-            ),
-            HotkeyFailureReason::FnCombinationUnsupported => {
-                "The Globe/Fn key can only be used by itself.".to_string()
-            }
-            HotkeyFailureReason::SlotConflict { slot } => {
-                format!("This hotkey is already used for {slot}.")
-            }
-            HotkeyFailureReason::HoldNeedsReleaseKey => "Hold-to-talk needs a key macOS can see you release: Globe, a right-side key like Right Option, or a shortcut with a modifier. Tap works with any key.".to_string(),
-            HotkeyFailureReason::CancelKeyInUse => {
-                "Cancel hotkey is in use with a different key".to_string()
-            }
-        };
-        if self.suggestions.is_empty() {
-            base
-        } else {
-            format!("{base} Try: {}", self.suggestions.join(", "))
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HotkeyModeInfo {
-    pub supports_push_to_talk: bool,
-    /// Locale key explaining why Hold mode is unavailable.
-    pub push_to_talk_unavailable_reason: Option<String>,
 }
 
 /// Result of [`HotkeyManager::register_saved`].
@@ -416,8 +361,6 @@ impl HotkeyManager {
         let joined = serialize_hotkey_list(&hotkeys);
         self.inner.mode.store(mode_to_u8(mode), Ordering::SeqCst);
         self.inner.after_hotkey_change();
-        self.inner
-            .send(HotkeyCommand::ActiveHotkeyChanged(joined.clone()));
         Ok(joined)
     }
 
@@ -471,8 +414,6 @@ impl HotkeyManager {
         let active = serialize_hotkey_list(&active);
         self.inner.mode.store(mode_to_u8(mode), Ordering::SeqCst);
         self.inner.after_hotkey_change();
-        self.inner
-            .send(HotkeyCommand::ActiveHotkeyChanged(active.clone()));
         StartupRegistration { active, mode }
     }
 
@@ -558,7 +499,7 @@ impl HotkeyManager {
     pub fn register_cancel_hotkey_for(&self, owner: CancelHotkeyOwner) -> Result<(), HotkeyError> {
         let mut state = lock(&self.inner.state);
         let State { slots, cancel } = &mut *state;
-        cancel.register(slots, self.inner.backend.as_ref(), owner, &CANCEL_KEY)
+        cancel.register(slots, self.inner.backend.as_ref(), owner)
     }
 
     pub fn unregister_cancel_hotkey_for(&self, owner: CancelHotkeyOwner) {
@@ -569,17 +510,12 @@ impl HotkeyManager {
 
     /// Whether Hold mode works for the first hotkey of `hotkey_list` (or the
     /// active primary hotkey when the list is empty).
-    pub fn mode_info(&self, hotkey_list: &str) -> HotkeyModeInfo {
-        let hotkey = parse_hotkey_list(hotkey_list)
+    pub fn supports_hold(&self, hotkey_list: &str) -> bool {
+        parse_hotkey_list(hotkey_list)
             .into_iter()
             .next()
-            .or_else(|| self.primary_hotkey());
-        let supports = hotkey.is_none_or(|hotkey| hotkey.supports_hold());
-        HotkeyModeInfo {
-            supports_push_to_talk: supports,
-            push_to_talk_unavailable_reason: (!supports)
-                .then(|| "hotkey.errors.holdNeedsReleaseKey".to_string()),
-        }
+            .or_else(|| self.primary_hotkey())
+            .is_none_or(|hotkey| hotkey.supports_hold())
     }
 
     /// The active Dictation hotkeys.
@@ -648,7 +584,7 @@ impl Inner {
                 }
                 self.requested.store(false, Ordering::SeqCst);
             }
-            HotkeyCommand::CancelPreparation | HotkeyCommand::ForceStop { .. } => {
+            HotkeyCommand::CancelPreparation | HotkeyCommand::ForceStop => {
                 self.requested.store(false, Ordering::SeqCst);
             }
             _ => {}
@@ -675,9 +611,7 @@ impl Inner {
                 suppress_globe_action: true,
             }
         } else {
-            lock(&self.state)
-                .slots
-                .native_listener_config(&[DICTATION_SLOT])
+            lock(&self.state).slots.native_listener_config()
         };
         self.globe.set_configuration(config);
     }
@@ -737,7 +671,7 @@ impl Inner {
             }
             GlobeEvent::ListenerStopped => {
                 self.gesture.release_lost();
-                self.push.force_stop(ForceStopReason::ListenerLost);
+                self.push.force_stop();
             }
             GlobeEvent::Error(message) => self.send(HotkeyCommand::ListenerError { message }),
         }
@@ -773,9 +707,9 @@ impl Inner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native::hotkeys::globe::ChildEvent;
     use crate::native::hotkeys::globe::tests::FakeSpawner;
     use crate::native::hotkeys::slots::tests::FakeBackend;
+    use crate::native::supervised_child::ChildEvent;
     use crate::native::timer::FakeTimers;
     use std::path::PathBuf;
     use std::time::Duration;
@@ -873,10 +807,7 @@ mod tests {
         let h = harness();
         h.manager.register("GLOBE", ActivationMode::Tap).unwrap();
         h.start_listener();
-        assert_eq!(
-            h.drain(),
-            vec![HotkeyCommand::ActiveHotkeyChanged("GLOBE".into())]
-        );
+        assert!(h.drain().is_empty());
         // The listener was told to keep the macOS Globe action down.
         assert!(
             h.spawner
@@ -922,9 +853,7 @@ mod tests {
             [
                 HotkeyCommand::Prepare,
                 HotkeyCommand::Start,
-                HotkeyCommand::ForceStop {
-                    reason: ForceStopReason::ListenerLost
-                },
+                HotkeyCommand::ForceStop,
                 HotkeyCommand::Stop,
             ]
         );
@@ -1025,9 +954,8 @@ mod tests {
             HotkeyCommand::RegistrationFailed { message_key, .. }
                 if message_key == "hotkey.errors.holdNeedsReleaseKey"
         )));
-        let info = h.manager.mode_info("");
-        assert!(!info.supports_push_to_talk);
-        assert!(h.manager.mode_info("GLOBE,F8").supports_push_to_talk);
+        assert!(!h.manager.supports_hold(""));
+        assert!(h.manager.supports_hold("GLOBE,F8"));
     }
 
     #[test]

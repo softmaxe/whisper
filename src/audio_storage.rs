@@ -14,17 +14,16 @@ use crate::db::{Database, timestamp::parse_db_timestamp};
 use crate::paths;
 use crate::settings::Settings;
 
-/// Extensions treated as saved recordings when listing the audio directory.
-pub const AUDIO_EXTENSIONS: &[&str] = &["wav"];
+/// Extension of saved recordings; other files in the audio directory are
+/// ignored.
+const AUDIO_EXTENSION: &str = "wav";
 
 const DAY: Duration = Duration::from_secs(86_400);
 
-fn audio_extension(path: &Path) -> Option<&str> {
-    let ext = path.extension()?.to_str()?;
-    AUDIO_EXTENSIONS
-        .iter()
-        .any(|known| known.eq_ignore_ascii_case(ext))
-        .then_some(ext)
+fn is_audio_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(AUDIO_EXTENSION))
 }
 
 /// The transcription id a saved file belongs to: the part after the last `-`
@@ -70,47 +69,37 @@ impl AudioStorage {
 
     /// File name for a recording, named in the user's local wall clock. The
     /// stored timestamp is resolved first: a bare SQLite value is UTC.
-    pub fn build_filename(
-        transcription_id: i64,
-        timestamp: Option<&str>,
-        extension: &str,
-    ) -> String {
-        Self::build_filename_in(transcription_id, timestamp, extension, &Local)
+    fn build_filename(transcription_id: i64, timestamp: &str) -> String {
+        Self::build_filename_in(transcription_id, timestamp, &Local)
     }
 
-    fn build_filename_in<Tz: TimeZone>(
-        transcription_id: i64,
-        timestamp: Option<&str>,
-        extension: &str,
-        tz: &Tz,
-    ) -> String
+    fn build_filename_in<Tz: TimeZone>(transcription_id: i64, timestamp: &str, tz: &Tz) -> String
     where
         Tz::Offset: std::fmt::Display,
     {
-        match timestamp.and_then(parse_db_timestamp) {
+        match parse_db_timestamp(timestamp) {
             Some(instant) => {
                 let local = instant.with_timezone(tz);
                 format!(
-                    "Whisper-{}-{transcription_id}.{extension}",
+                    "Whisper-{}-{transcription_id}.{AUDIO_EXTENSION}",
                     local.format("%Y-%m-%d-%H-%M-%S")
                 )
             }
-            None => format!("Whisper-{transcription_id}.{extension}"),
+            None => format!("Whisper-{transcription_id}.{AUDIO_EXTENSION}"),
         }
     }
 
-    /// Writes a recording for a transcription. `timestamp` is the row's
-    /// stored `timestamp`; `extension` is e.g. "wav".
+    /// Writes a WAV recording for a transcription. `timestamp` is the row's
+    /// stored `timestamp`.
     pub fn save_audio(
         &self,
         transcription_id: i64,
         bytes: &[u8],
-        timestamp: Option<&str>,
-        extension: &str,
+        timestamp: &str,
     ) -> anyhow::Result<PathBuf> {
         let path = self
             .dir
-            .join(Self::build_filename(transcription_id, timestamp, extension));
+            .join(Self::build_filename(transcription_id, timestamp));
         fs::create_dir_all(&self.dir)?;
         fs::write(&path, bytes)?;
         log::debug!("Audio saved: id={transcription_id} size={}", bytes.len());
@@ -121,7 +110,7 @@ impl AudioStorage {
         let mut files = Vec::new();
         for entry in fs::read_dir(&self.dir)? {
             let path = entry?.path();
-            if path.is_file() && audio_extension(&path).is_some() {
+            if path.is_file() && is_audio_file(&path) {
                 files.push(path);
             }
         }
@@ -163,11 +152,7 @@ impl AudioStorage {
 
     /// Deletes recordings older than `retention_days` (by file mtime) and
     /// clears their rows' `has_audio` flags.
-    pub fn cleanup_expired_audio(
-        &self,
-        retention_days: u32,
-        db: Option<&Database>,
-    ) -> AudioCleanup {
+    pub fn cleanup_expired_audio(&self, retention_days: u32, db: &Database) -> AudioCleanup {
         let cutoff = SystemTime::now()
             .checked_sub(DAY * retention_days)
             .unwrap_or(SystemTime::UNIX_EPOCH);
@@ -205,7 +190,7 @@ impl AudioStorage {
                 expired_ids.push(id);
             }
         }
-        if let Some(db) = db.filter(|_| !expired_ids.is_empty())
+        if !expired_ids.is_empty()
             && let Err(err) = db.clear_audio_flags(&expired_ids)
         {
             log::error!("Failed to clear audio flags after cleanup: {err:#}");
@@ -324,7 +309,7 @@ pub fn run_retention_cleanup(
         }
     }
     if settings.audio_retention_days > 0 {
-        report.audio = storage.cleanup_expired_audio(settings.audio_retention_days, Some(db));
+        report.audio = storage.cleanup_expired_audio(settings.audio_retention_days, db);
     }
     report
 }
@@ -332,7 +317,7 @@ pub fn run_retention_cleanup(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionStatus};
+    use crate::db::TranscriptionAudioUpdate;
     use chrono::FixedOffset;
 
     fn storage() -> (tempfile::TempDir, AudioStorage) {
@@ -353,7 +338,7 @@ mod tests {
         let la = FixedOffset::west_opt(7 * 3600).unwrap();
         for ts in ["2026-09-10 12:00:00.000Z", "2026-09-10 12:00:00"] {
             assert_eq!(
-                AudioStorage::build_filename_in(42, Some(ts), "wav", &la),
+                AudioStorage::build_filename_in(42, ts, &la),
                 "Whisper-2026-09-10-05-00-00-42.wav"
             );
         }
@@ -361,12 +346,9 @@ mod tests {
 
     #[test]
     fn falls_back_to_the_bare_name() {
+        assert_eq!(AudioStorage::build_filename(42, ""), "Whisper-42.wav");
         assert_eq!(
-            AudioStorage::build_filename(42, None, "wav"),
-            "Whisper-42.wav"
-        );
-        assert_eq!(
-            AudioStorage::build_filename(42, Some("not a date"), "wav"),
+            AudioStorage::build_filename(42, "not a date"),
             "Whisper-42.wav"
         );
     }
@@ -375,9 +357,9 @@ mod tests {
     fn finds_audio_by_trailing_id() {
         let (_tmp, storage) = storage();
         let wav = storage
-            .save_audio(42, b"RIFF", Some("2026-09-10 12:00:00"), "wav")
+            .save_audio(42, b"RIFF", "2026-09-10 12:00:00")
             .unwrap();
-        let bare = storage.save_audio(7, b"bare", None, "wav").unwrap();
+        let bare = storage.save_audio(7, b"bare", "").unwrap();
         fs::write(storage.dir().join("142.wav"), b"x").unwrap();
         fs::write(storage.dir().join("notes-42.txt"), b"not audio").unwrap();
 
@@ -412,9 +394,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let mut ids = Vec::new();
         for text in ["old", "new"] {
-            let row = db
-                .save_transcription(text, None, SaveTranscriptionOptions::default())
-                .unwrap();
+            let row = db.save_transcription(text, None, None).unwrap();
             db.update_transcription_audio(
                 row.id,
                 &TranscriptionAudioUpdate {
@@ -423,15 +403,13 @@ mod tests {
                 },
             )
             .unwrap();
-            storage
-                .save_audio(row.id, b"data", Some(&row.timestamp), "wav")
-                .unwrap();
+            storage.save_audio(row.id, b"data", &row.timestamp).unwrap();
             ids.push(row.id);
         }
         let old_path = storage.audio_path(ids[0]).unwrap();
         set_mtime_days_ago(&old_path, 10);
 
-        let result = storage.cleanup_expired_audio(7, Some(&db));
+        let result = storage.cleanup_expired_audio(7, &db);
         assert_eq!(
             result,
             AudioCleanup {
@@ -458,20 +436,18 @@ mod tests {
     fn retention_sweep_removes_expired_transcripts_with_their_audio() {
         let (_tmp, storage) = storage();
         let db = Database::open_in_memory().unwrap();
-        let old = db
-            .save_transcription("old", None, SaveTranscriptionOptions::default())
-            .unwrap();
+        let old = db.save_transcription("old", None, None).unwrap();
         db.lock()
             .execute(
                 "UPDATE transcriptions SET created_at = datetime('now', '-5 days') WHERE id = ?",
                 [old.id],
             )
             .unwrap();
-        let fresh = db
-            .save_transcription("fresh", None, SaveTranscriptionOptions::default())
+        let fresh = db.save_transcription("fresh", None, None).unwrap();
+        storage.save_audio(old.id, b"a", &old.timestamp).unwrap();
+        storage
+            .save_audio(fresh.id, b"b", &fresh.timestamp)
             .unwrap();
-        storage.save_audio(old.id, b"a", None, "wav").unwrap();
-        storage.save_audio(fresh.id, b"b", None, "wav").unwrap();
 
         let disabled = run_retention_cleanup(
             &db,
@@ -508,27 +484,23 @@ mod tests {
     fn retention_sweep_removes_failed_and_discarded_rows_with_their_audio() {
         let (_tmp, storage) = storage();
         let db = Database::open_in_memory().unwrap();
-        let hidden: Vec<i64> = [TranscriptionStatus::Failed, TranscriptionStatus::Discarded]
+        // Older versions wrote failed and discarded rows.
+        let hidden: Vec<i64> = ["failed", "discarded"]
             .into_iter()
             .map(|status| {
-                let row = db
-                    .save_transcription(
-                        "",
-                        None,
-                        SaveTranscriptionOptions {
-                            status,
-                            ..Default::default()
-                        },
+                let row = db.save_transcription("", None, None).unwrap();
+                db.lock()
+                    .execute(
+                        "UPDATE transcriptions SET status = ? WHERE id = ?",
+                        rusqlite::params![status, row.id],
                     )
                     .unwrap();
-                storage.save_audio(row.id, b"a", None, "wav").unwrap();
+                storage.save_audio(row.id, b"a", &row.timestamp).unwrap();
                 row.id
             })
             .collect();
-        let kept = db
-            .save_transcription("kept", None, SaveTranscriptionOptions::default())
-            .unwrap();
-        storage.save_audio(kept.id, b"b", None, "wav").unwrap();
+        let kept = db.save_transcription("kept", None, None).unwrap();
+        storage.save_audio(kept.id, b"b", &kept.timestamp).unwrap();
 
         let report = run_retention_cleanup(
             &db,
@@ -541,16 +513,22 @@ mod tests {
         assert_eq!(report.deleted_transcription_ids, hidden);
         assert!(hidden.iter().all(|id| storage.audio_path(*id).is_none()));
         assert!(storage.audio_path(kept.id).is_some());
-        assert_eq!(db.get_transcriptions(10, true).unwrap(), [kept]);
+        let remaining: Vec<i64> = db
+            .lock()
+            .prepare("SELECT id FROM transcriptions")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(remaining, [kept.id]);
     }
 
     #[test]
     fn delete_all_audio_clears_every_flag() {
         let (_tmp, storage) = storage();
         let db = Database::open_in_memory().unwrap();
-        let row = db
-            .save_transcription("x", None, SaveTranscriptionOptions::default())
-            .unwrap();
+        let row = db.save_transcription("x", None, None).unwrap();
         db.update_transcription_audio(
             row.id,
             &TranscriptionAudioUpdate {
@@ -559,7 +537,7 @@ mod tests {
             },
         )
         .unwrap();
-        storage.save_audio(row.id, b"a", None, "wav").unwrap();
+        storage.save_audio(row.id, b"a", &row.timestamp).unwrap();
         assert_eq!(storage.delete_all_audio_and_flags(&db), 1);
         assert!(
             !db.get_transcription_by_id(row.id)

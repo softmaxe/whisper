@@ -10,7 +10,8 @@ use rusqlite::{Connection, params};
 
 use super::Database;
 use crate::analytics::{
-    AnalyticsDayTotals, AnalyticsEventInput, AnalyticsSummary, summarize_analytics_days, today_key,
+    AnalyticsDailyBucket, AnalyticsEventInput, AnalyticsSummary, summarize_analytics_days,
+    today_key,
 };
 
 /// Retention for counters, on the transcript cutoff. Returns how many
@@ -32,15 +33,13 @@ impl Database {
         let spoken = input.spoken_duration_ms.filter(|ms| *ms > 0);
         self.lock().execute(
             "INSERT INTO analytics_events (
-               occurred_at, local_date, word_count, spoken_duration_ms, provider, model
-             ) VALUES (?, ?, ?, ?, ?, ?)",
+               occurred_at, local_date, word_count, spoken_duration_ms
+             ) VALUES (?, ?, ?, ?)",
             params![
                 input.occurred_at,
                 input.local_date,
                 input.word_count,
-                spoken,
-                input.provider,
-                input.model
+                spoken
             ],
         )?;
         Ok(true)
@@ -66,7 +65,7 @@ impl Database {
                  GROUP BY local_date",
             )?
             .query_map([], |row| {
-                Ok(AnalyticsDayTotals {
+                Ok(AnalyticsDailyBucket {
                     date: row.get(0)?,
                     words: row.get(1)?,
                     dictations: row.get(2)?,

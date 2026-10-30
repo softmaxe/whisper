@@ -133,7 +133,6 @@ struct Inner {
     // PIDs whose AX tree never yields a focused element this session.
     unsupported_pids: Mutex<HashSet<i32>>,
     debounce: Mutex<Debounce>,
-    debounce_delay: Duration,
     subscribers: Mutex<Vec<async_channel::Sender<TextEdit>>>,
     this: Weak<Inner>,
 }
@@ -153,10 +152,10 @@ impl TextEditMonitor {
     }
 
     pub fn with_hooks(hooks: MonitorHooks) -> Self {
-        Self::build(hooks, RealTimers::shared(), EDIT_DEBOUNCE)
+        Self::build(hooks, RealTimers::shared())
     }
 
-    fn build(hooks: MonitorHooks, timers: Arc<dyn Timers>, debounce_delay: Duration) -> Self {
+    fn build(hooks: MonitorHooks, timers: Arc<dyn Timers>) -> Self {
         Self {
             inner: Arc::new_cyclic(|this| Inner {
                 hooks,
@@ -166,7 +165,6 @@ impl TextEditMonitor {
                 generation: AtomicU64::new(0),
                 unsupported_pids: Mutex::new(HashSet::new()),
                 debounce: Mutex::new(Debounce::default()),
-                debounce_delay,
                 subscribers: Mutex::new(Vec::new()),
                 this: this.clone(),
             }),
@@ -322,11 +320,10 @@ impl TextEditMonitor {
 
         let weak = inner.this.clone();
         inner.arm_timeout(generation, timeout);
-        let text = original_text.to_string();
         std::thread::spawn(move || {
             let Some(inner) = weak.upgrade() else { return };
             match helper {
-                Some(helper) => inner.run_native(generation, &text, pid, helper),
+                Some(helper) => inner.run_native(generation, pid, helper),
                 None => inner.run_polling(generation, pid),
             }
         });
@@ -416,7 +413,7 @@ impl Inner {
         }
         let weak = self.this.clone();
         debounce.timer = Some(self.timers.schedule(
-            self.debounce_delay,
+            EDIT_DEBOUNCE,
             Box::new(move || {
                 if let Some(inner) = weak.upgrade() {
                     inner.flush_edit();
@@ -467,7 +464,7 @@ impl Inner {
     }
 
     /// Event-based monitoring through the helper's AXObserver.
-    fn run_native(&self, generation: u64, original_text: &str, pid: i32, helper: HelperCommand) {
+    fn run_native(&self, generation: u64, pid: i32, helper: HelperCommand) {
         std::thread::sleep(INITIAL_QUERY_DELAY);
         let program = helper.program;
         let mut args = helper.args;
@@ -484,7 +481,6 @@ impl Inner {
                 max_line: MAX_LINE_BYTES,
             },
             EditWatch {
-                original_text: original_text.to_string(),
                 args,
                 stderr: String::new(),
                 no_element: false,
@@ -570,10 +566,9 @@ enum WatchEvent {
     Unavailable,
 }
 
-/// One `macos-text-monitor <pid>` run: sends the pasted text, forwards the
-/// helper's lines and judges its diagnostics when it ends.
+/// One `macos-text-monitor <pid>` run: forwards the helper's lines and
+/// judges its diagnostics when it ends.
 struct EditWatch {
-    original_text: String,
     args: Vec<String>,
     stderr: String,
     no_element: bool,
@@ -584,10 +579,6 @@ impl Protocol for EditWatch {
 
     fn args(&self) -> Vec<String> {
         self.args.clone()
-    }
-
-    fn on_start(&mut self, cx: &mut Control<'_, WatchEvent>) {
-        cx.write_line(&self.original_text);
     }
 
     fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, WatchEvent>) {
@@ -904,7 +895,7 @@ mod tests {
             ("NOT_PASTEABLE", Some(false)),
             ("UNKNOWN", None),
             ("NO_ELEMENT", None),
-            ("INITIAL_VALUE:stale", None),
+            ("CHANGED:stale", None),
         ] {
             let monitor = TextEditMonitor::with_hooks(hooks(
                 sh(&format!("echo '{output}'")),
@@ -997,21 +988,14 @@ mod tests {
     fn edits_are_reported_debounced_with_the_pasted_text() {
         let timers = FakeTimers::new();
         let spawner = Arc::new(FakeSpawner::default());
-        let monitor = TextEditMonitor::build(
-            fake_hooks(&spawner),
-            timers.clone(),
-            Duration::from_millis(1500),
-        );
+        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
         let edits = monitor.subscribe();
         monitor.start_monitoring("hello world", Duration::from_secs(30), Some(42));
         wait_for_spawn(&spawner);
         spawner.emit(
             0,
-            ChildEvent::Stdout(
-                "INITIAL_VALUE:x\nCHANGED:hello wrld\nCHANGED_B64:aGVsbG8Kd29ybGQ=\n".into(),
-            ),
+            ChildEvent::Stdout("CHANGED:hello wrld\nCHANGED_B64:aGVsbG8Kd29ybGQ=\n".into()),
         );
-        assert_eq!(lock(&spawner.child(0)).writes, vec!["hello world\n"]);
         timers.advance(1500);
         let edit = edits.try_recv().expect("debounced edit");
         assert_eq!(
@@ -1030,11 +1014,8 @@ mod tests {
 
     #[test]
     fn a_new_subscriber_closes_the_previous_one() {
-        let monitor = TextEditMonitor::build(
-            hooks(sh("sleep 1"), Arc::new(|| None)),
-            FakeTimers::new(),
-            Duration::from_millis(1500),
-        );
+        let monitor =
+            TextEditMonitor::build(hooks(sh("sleep 1"), Arc::new(|| None)), FakeTimers::new());
         let first = monitor.subscribe();
         let _second = monitor.subscribe();
         assert!(first.is_closed());

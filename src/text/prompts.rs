@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
+use crate::text::DEFAULT_AGENT_NAME;
 use crate::text::language::get_language_instruction;
 
 // ---------------------------------------------------------------------------
@@ -92,20 +93,15 @@ pub fn append_dictionary_suffix<S: AsRef<str>>(
     )
 }
 
-/// Fill `{{agentName}}` (default "Assistant"), append the language
-/// instruction for `language` (none when empty) and the dictionary suffix.
+/// Fill `{{agentName}}`, append the language instruction for `language`
+/// (none when empty) and the dictionary suffix.
 pub fn resolve_prompt_template<S: AsRef<str>>(
     template: &str,
-    agent_name: Option<&str>,
     language: &str,
     custom_dictionary: &[S],
     ui_language: &str,
 ) -> String {
-    let name = agent_name
-        .map(str::trim)
-        .filter(|n| !n.is_empty())
-        .unwrap_or("Assistant");
-    let mut prompt = template.replace("{{agentName}}", name);
+    let mut prompt = template.replace("{{agentName}}", DEFAULT_AGENT_NAME);
     let instruction = get_language_instruction(language);
     if !instruction.is_empty() {
         prompt.push_str("\n\n");
@@ -118,7 +114,6 @@ pub fn resolve_prompt_template<S: AsRef<str>>(
 /// else the default for the UI language.
 pub fn resolve_cleanup_prompt<S: AsRef<str>>(
     custom_prompt: &str,
-    agent_name: Option<&str>,
     language: &str,
     custom_dictionary: &[S],
     ui_language: &str,
@@ -127,13 +122,7 @@ pub fn resolve_cleanup_prompt<S: AsRef<str>>(
         "" => default_cleanup_prompt(ui_language),
         custom => custom,
     };
-    resolve_prompt_template(
-        template,
-        agent_name,
-        language,
-        custom_dictionary,
-        ui_language,
-    )
+    resolve_prompt_template(template, language, custom_dictionary, ui_language)
 }
 
 /// The user message: the cleanup prompt says input arrives between
@@ -146,12 +135,6 @@ pub fn wrap_cleanup_transcript(text: &str) -> String {
 // Model families and thinking suppression
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModelFamily {
-    GptOss,
-    Qwen,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReasoningEffortConstraint {
     /// Value that best approximates "thinking off" for reasoning effort.
     pub suppress_value: &'static str,
@@ -161,7 +144,6 @@ pub struct ReasoningEffortConstraint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelFamilyConstraints {
-    pub family: ModelFamily,
     pub reasoning_effort: Option<ReasoningEffortConstraint>,
 }
 
@@ -169,7 +151,6 @@ const FAMILIES: [(&str, ModelFamilyConstraints); 2] = [
     (
         "gpt-oss",
         ModelFamilyConstraints {
-            family: ModelFamily::GptOss,
             // gpt-oss accepts low|medium|high only; it has no off switch. Low
             // also cuts hidden reasoning and answering-instead-of-cleaning.
             reasoning_effort: Some(ReasoningEffortConstraint {
@@ -181,7 +162,6 @@ const FAMILIES: [(&str, ModelFamilyConstraints); 2] = [
     (
         "qwen",
         ModelFamilyConstraints {
-            family: ModelFamily::Qwen,
             reasoning_effort: Some(ReasoningEffortConstraint {
                 suppress_value: "none",
                 cleanup_value: None,
@@ -219,48 +199,28 @@ pub fn suppress_thinking(body: &mut Map<String, Value>, model: &str) {
 // ---------------------------------------------------------------------------
 // Chat-completions request shaping
 
-/// The reasoning settings that shape request params.
-#[derive(Debug, Clone, Default)]
-pub struct ChatParamsConfig {
-    /// A caller-supplied system prompt (anything other than default cleanup).
-    pub system_prompt_override: bool,
-    pub temperature: Option<f64>,
-    pub disable_thinking: Option<bool>,
-    pub require_complete_output: bool,
-}
-
-/// Set `max_tokens`, `temperature`, family `reasoning_effort` and thinking
-/// suppression on a chat-completions body. Self-hosted servers speak the
-/// classic shape: always `max_tokens`, always `temperature`. Callers own
-/// `model`, `messages` and `stream`.
+/// Set `max_tokens`, zero `temperature` (cleanup is a deterministic
+/// transform), family `reasoning_effort` and thinking suppression on a
+/// chat-completions body. Self-hosted servers speak the classic shape: always
+/// `max_tokens`, always `temperature`. Callers own `model`, `messages` and
+/// `stream`.
 pub fn apply_chat_completions_params(
     body: &mut Map<String, Value>,
     model: &str,
-    config: &ChatParamsConfig,
+    disable_thinking: bool,
     max_tokens: u32,
 ) {
-    // Default cleanup is a deterministic transform, so zero temperature.
-    let default_temperature = if config.system_prompt_override {
-        0.3
-    } else {
-        0.0
-    };
     body.insert("max_tokens".into(), json!(max_tokens));
-    body.insert(
-        "temperature".into(),
-        json!(config.temperature.unwrap_or(default_temperature)),
-    );
+    body.insert("temperature".into(), json!(0.0));
 
     let cleanup_effort = get_model_family_constraints(model)
         .and_then(|c| c.reasoning_effort)
         .and_then(|e| e.cleanup_value);
-    if let Some(effort) = cleanup_effort
-        && (!config.system_prompt_override || config.require_complete_output)
-    {
+    if let Some(effort) = cleanup_effort {
         body.insert("reasoning_effort".into(), json!(effort));
     }
 
-    if config.disable_thinking == Some(true) {
+    if disable_thinking {
         suppress_thinking(body, model);
     }
 }
@@ -272,13 +232,8 @@ pub fn is_truncated_finish_reason(reason: Option<&str>) -> bool {
 
 /// Shaped params a backend may reject by name with a 400/422. Only params the
 /// shaping layer added are strippable, never `messages` or `model`.
-pub const STRIPPABLE_SHAPED_PARAMS: &[&str] = &[
-    "reasoning_effort",
-    "chat_template_kwargs",
-    "thinking",
-    "think",
-    "temperature",
-];
+pub const STRIPPABLE_SHAPED_PARAMS: &[&str] =
+    &["reasoning_effort", "chat_template_kwargs", "temperature"];
 
 #[cfg(test)]
 mod tests {
@@ -308,17 +263,9 @@ mod tests {
 
     #[test]
     fn template_resolution() {
-        let p = resolve_prompt_template(
-            "Hi {{agentName}}, {{agentName}}.",
-            Some(" Bob "),
-            "",
-            &NONE,
-            "en",
-        );
-        assert_eq!(p, "Hi Bob, Bob.");
-        let p = resolve_prompt_template("Hi {{agentName}}", None, "", &NONE, "en");
-        assert_eq!(p, "Hi Assistant");
-        let p = resolve_prompt_template("X", Some("A"), "ar", &["Quokka", "Zed"], "en");
+        let p = resolve_prompt_template("Hi {{agentName}}, {{agentName}}.", "", &NONE, "en");
+        assert_eq!(p, "Hi Whisper, Whisper.");
+        let p = resolve_prompt_template("X", "ar", &["Quokka", "Zed"], "en");
         assert!(p.starts_with("X\n\nLANGUAGE CONTEXT"));
         assert!(
             p.ends_with("use these exact spellings when they appear in the text): Quokka, Zed")
@@ -328,10 +275,10 @@ mod tests {
     #[test]
     fn cleanup_prompt_uses_custom_or_default() {
         assert_eq!(
-            resolve_cleanup_prompt("Saved prompt", None, "", &NONE, "en"),
+            resolve_cleanup_prompt("Saved prompt", "", &NONE, "en"),
             "Saved prompt"
         );
-        let default = resolve_cleanup_prompt("", Some("Whisper"), "", &NONE, "en");
+        let default = resolve_cleanup_prompt("", "", &NONE, "en");
         assert!(default.contains("\"Whisper\""));
     }
 
@@ -345,21 +292,24 @@ mod tests {
 
     #[test]
     fn family_lookup() {
-        let f = |m| get_model_family_constraints(m).map(|c| c.family);
-        assert_eq!(f("openai/GPT-OSS-120b"), Some(ModelFamily::GptOss));
-        assert_eq!(f("gpt-oss-safeguard-120b"), Some(ModelFamily::GptOss));
-        assert_eq!(f("qwen/qwen3-32b"), Some(ModelFamily::Qwen));
-        assert_eq!(f("gpt-4o"), None);
-        assert_eq!(f(""), None);
+        let effort = |m| get_model_family_constraints(m).and_then(|c| c.reasoning_effort);
         assert_eq!(
-            get_model_family_constraints("gpt-oss-120b")
-                .unwrap()
-                .reasoning_effort,
+            effort("openai/GPT-OSS-120b"),
             Some(ReasoningEffortConstraint {
                 suppress_value: "low",
                 cleanup_value: Some("low")
             })
         );
+        assert!(effort("gpt-oss-safeguard-120b").is_some());
+        assert_eq!(
+            effort("qwen/qwen3-32b"),
+            Some(ReasoningEffortConstraint {
+                suppress_value: "none",
+                cleanup_value: None
+            })
+        );
+        assert_eq!(effort("gpt-4o"), None);
+        assert_eq!(effort(""), None);
     }
 
     #[test]
@@ -382,40 +332,17 @@ mod tests {
     #[test]
     fn chat_params_for_cleanup() {
         let mut body = Map::new();
-        let config = ChatParamsConfig {
-            disable_thinking: Some(true),
-            ..Default::default()
-        };
-        apply_chat_completions_params(&mut body, "gpt-oss-20b", &config, 2048);
+        apply_chat_completions_params(&mut body, "gpt-oss-20b", true, 2048);
         assert_eq!(body["max_tokens"], 2048);
         assert_eq!(body["temperature"], 0.0);
         assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["reasoning"]["effort"], "low");
         assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
-    }
 
-    #[test]
-    fn chat_params_for_prompted_tasks() {
         let mut body = Map::new();
-        let config = ChatParamsConfig {
-            system_prompt_override: true,
-            ..Default::default()
-        };
-        apply_chat_completions_params(&mut body, "gpt-oss-20b", &config, 512);
-        assert_eq!(body["temperature"], 0.3);
+        apply_chat_completions_params(&mut body, "qwen3-8b", false, 2048);
         assert!(!body.contains_key("reasoning_effort"));
         assert!(!body.contains_key("reasoning"));
-
-        let mut body = Map::new();
-        let config = ChatParamsConfig {
-            system_prompt_override: true,
-            require_complete_output: true,
-            temperature: Some(0.7),
-            disable_thinking: Some(false),
-        };
-        apply_chat_completions_params(&mut body, "gpt-oss-20b", &config, 512);
-        assert_eq!(body["temperature"], 0.7);
-        assert_eq!(body["reasoning_effort"], "low");
         assert!(!body.contains_key("chat_template_kwargs"));
     }
 

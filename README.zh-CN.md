@@ -10,7 +10,7 @@
 </p>
 
 一款用 Rust 和 [GPUI](https://www.gpui.rs) 编写的 macOS 原生语音输入应用。
-按下快捷键说话，Whisper 会调用你自己的 OpenAI 兼容语音识别服务完成转写，
+按下快捷键说话，Whisper 会调用你自己的 OpenAI 兼容语音识别服务完成转录，
 可选地用 chat-completions 模型整理文字，再把结果粘贴到你正在输入的应用中。
 
 ![按下快捷键、开口说话，整理后的文字会粘贴到光标处](docs/images/zh/flow.png)
@@ -21,13 +21,13 @@
   单键双击进入免手持录音（组合键按一次即开始或结束），或按住说话。录音时会出现
   悬浮条，显示实时波形；点击悬浮条结束录音，悬停时可点取消按钮，按 Esc 取消。
 - **自托管模型。** 语音识别请求发送到你自己的 `/audio/transcriptions` 接口；可选的
-  文字整理请求发送到 `/chat/completions` 接口，提示词可编辑，并可在 Prompt Studio
+  文本整理请求发送到 `/chat/completions` 接口，提示词可编辑，并可在 Prompt Studio
   中测试。
 - **越用越准。** 词典为识别提供拼写提示；粘贴后立即做出的修改会被自动学习；
   片段（Snippets）可以把短语展开为更长的文本。
-- **历史记录。** 用 Cmd+K 搜索、查看原始转写、用保存的音频重试，并设置音频和转写的
+- **历史记录。** 用 Cmd+K 搜索、查看原始转录、用保存的音频重试，并设置音频和转录的
   保留时长。
-- **文件转写。** 可转写单个音频或视频文件，也可批量转写。
+- **文件转录。** 可转录单个音频或视频文件，也可批量转录。
 - **统计。** 最近 7 天、30 天或全部时间的字数、听写次数、每分钟字数和连续天数，
   每项都与上一周期对比，并附带每日趋势图和 7 日均线，全部在本机计算。
 - **融入 macOS。** 菜单栏图标、标准应用菜单、开机启动（macOS 13+）、可选在录音时暂停媒体播放、
@@ -89,14 +89,14 @@ Rust 版应用包的 95 MB（0.0.6 实测）中包含一个 43 MB 的静态 `ffm
 - CPU 来自 `top`，取 30 秒空闲和 10 秒录音（双击快捷键，然后按 Esc）的平均值。
 - 每个稳态测试对每个应用重复两次，结果一致。
 
-未对比转写延迟：两个版本调用同一个服务器，端到端耗时主要取决于服务器。
+未对比转录延迟：两个版本调用同一个服务器，端到端耗时主要取决于服务器。
 
 ## 环境要求
 
 - Apple Silicon Mac，macOS 12 或更高版本
 - Rust（版本固定在 `rust-toolchain.toml` 中），以及 Xcode 命令行工具（`swiftc`、
   `clang`），用于编译 `build.rs` 输出到 `resources/bin` 的原生辅助程序
-- 一个可访问的语音识别服务；文字整理服务可选
+- 一个可访问的语音识别服务；文本整理服务可选
 
 ## 构建与运行
 
@@ -107,9 +107,8 @@ scripts/bundle-macos.sh      # release build -> dist/Whisper.app (ad-hoc signed)
 ```
 
 内置 ffmpeg 是可选的。只有上传视频，或 MP3、WAV、M4A、WebM、Ogg/Opus、FLAC、AAC 以外的音频时才需要；未内置时会使用 Homebrew 或 `PATH` 中的 ffmpeg。
-`scripts/download-ffmpeg.sh` 下载发布版使用的固定静态构建，
-`scripts/fetch-ffmpeg.sh [path-to-ffmpeg]` 把本地的 ffmpeg 复制到 `resources/bin`。
-请在运行打包脚本之前执行其中一个。
+`scripts/download-ffmpeg.sh` 把发布版使用的固定静态构建下载到 `resources/bin`，
+请在运行打包脚本之前执行。
 
 发布签名和发布流程见 [docs/macos-signing.md](docs/macos-signing.md) 和
 [docs/testing.md](docs/testing.md)。
@@ -122,18 +121,19 @@ scripts/bundle-macos.sh      # release build -> dist/Whisper.app (ad-hoc signed)
 | --- | --- |
 | `WHISPER_USER_DATA_DIR` | 使用其他数据目录（测试、并行运行） |
 | `WHISPER_HELPERS_DIR` | 从其他目录加载原生辅助程序 |
+| `WHISPER_SKIP_NATIVE_BUILD` | 跳过 `build.rs` 中的原生辅助程序构建 |
 | `RUST_LOG` | 日志过滤，例如 `info,whisper::native=debug` |
 
 ## 目录结构
 
-- `src/`：设置、数据库、音频采集、转写和整理服务、文本处理、macOS 原生集成
+- `src/`：设置、数据库、音频采集、转录和整理服务、文本处理、macOS 原生集成
 - `src/app.rs`、`src/ui/`、`src/dictation.rs`：GPUI 应用；`src/main.rs` 只调用
   `whisper::run()`
 - `resources/native/`：Swift 辅助程序源码；`resources/mediaremote-adapter/`：
   内置的 MediaRemoteAdapter
 - `locales/`：界面文案和整理提示词
 - `packaging/`、`scripts/`：应用包元数据、签名和构建脚本
-- `docs/`：签名、测试和维护说明
+- `docs/`：签名和测试说明
 
 ## 许可证
 

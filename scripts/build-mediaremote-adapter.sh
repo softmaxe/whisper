@@ -3,10 +3,10 @@
 # ungive/mediaremote-adapter sources under resources/mediaremote-adapter/.
 #
 # The framework is loaded at runtime by /usr/bin/perl, the only path that can
-# talk to MediaRemote on macOS 15.4+ (see src/native/media.rs). Invoked by
-# build.rs.
+# talk to MediaRemote on macOS 15.4+ (see src/native/media.rs). Only the `get`
+# and `send` commands the app uses are vendored and built. Invoked by build.rs.
 #
-# Usage: scripts/build-mediaremote-adapter.sh [--arch arm64|x64]
+# Usage: scripts/build-mediaremote-adapter.sh
 
 set -euo pipefail
 
@@ -14,50 +14,20 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 0
 fi
 
-arch="${TARGET_ARCH:-}"
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --arch)
-      arch="${2:-}"
-      shift 2
-      ;;
-    *)
-      shift
-      ;;
-  esac
-done
-if [[ -z "$arch" ]]; then
-  case "$(uname -m)" in
-    arm64) arch="arm64" ;;
-    *) arch="x64" ;;
-  esac
-fi
-
-case "$arch" in
-  arm64)
-    clang_target="arm64-apple-macos11.0"
-    cpu_hex="0c000001" # CPU_TYPE_ARM64, little-endian bytes 4..7
-    ;;
-  x64)
-    clang_target="x86_64-apple-macos10.15"
-    cpu_hex="07000001" # CPU_TYPE_X86_64
-    ;;
-  *)
-    echo "[mra] Unsupported architecture: $arch" >&2
-    exit 1
-    ;;
-esac
+clang_target="arm64-apple-macos11.0"
+cpu_hex="0c000001" # CPU_TYPE_ARM64, little-endian bytes 4..7
 
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+script_path="$project_root/scripts/$(basename "${BASH_SOURCE[0]}")"
 source_root="$project_root/resources/mediaremote-adapter"
 output_dir="$project_root/resources/bin"
 framework_root="$output_dir/MediaRemoteAdapter.framework"
-hash_file="$output_dir/.MediaRemoteAdapter.$arch.hash"
+hash_file="$output_dir/.MediaRemoteAdapter.hash"
 
 framework_name="MediaRemoteAdapter"
 framework_version="A"
 bundle_identifier="com.softmaxe.whisper.MediaRemoteAdapter"
-short_version="0.7.6"
+short_version="$(sed 's/^v//' "$source_root/VERSION")"
 
 sources=(
   "src/adapter/env.m"
@@ -65,14 +35,8 @@ sources=(
   "src/adapter/globals.m"
   "src/adapter/keys.m"
   "src/adapter/now_playing.m"
-  "src/adapter/repeat.m"
-  "src/adapter/seek.m"
   "src/adapter/send.m"
-  "src/adapter/shuffle.m"
-  "src/adapter/speed.m"
-  "src/adapter/stream.m"
   "src/private/MediaRemote.m"
-  "src/utility/Debounce.m"
   "src/utility/helpers.m"
 )
 public_header="include/MediaRemoteAdapter.h"
@@ -81,13 +45,15 @@ log() {
   echo "[mra] $*"
 }
 
-# Hash every source, the public header and all private headers, plus the arch.
+# Hash this script, VERSION, every source, the public header and all private
+# headers, so a change to any of them, including the bundle metadata above,
+# triggers a rebuild.
 hash_sources() {
   (
     cd "$source_root"
     {
-      echo "$arch"
-      for rel in $(printf '%s\n' "${sources[@]}" "$public_header" | sort); do
+      cat "$script_path"
+      for rel in $(printf '%s\n' "${sources[@]}" "$public_header" VERSION | sort); do
         echo "$rel"
         cat "$rel"
       done
@@ -180,7 +146,7 @@ clang_args=(
   -o "$version_root/$framework_name"
 )
 
-log "Building $framework_name.framework for $arch"
+log "Building $framework_name.framework"
 if ! xcrun clang "${clang_args[@]}"; then
   if ! clang "${clang_args[@]}"; then
     echo "[mra] Failed to compile MediaRemoteAdapter framework." >&2
@@ -189,7 +155,7 @@ if ! xcrun clang "${clang_args[@]}"; then
 fi
 
 if ! verify_arch "$version_root/$framework_name"; then
-  echo "[mra] FATAL: Compiled dylib architecture does not match target ($arch)." >&2
+  echo "[mra] FATAL: Compiled dylib is not arm64." >&2
   exit 1
 fi
 
@@ -201,4 +167,4 @@ if ! codesign --force --sign - --timestamp=none "$framework_root"; then
 fi
 
 printf '%s' "$current_hash" >"$hash_file"
-log "Built MediaRemoteAdapter.framework ($arch)"
+log "Built MediaRemoteAdapter.framework"

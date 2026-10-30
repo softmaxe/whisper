@@ -13,10 +13,9 @@ use std::time::Duration;
 use serde::Serialize;
 
 use super::super::helper::{arch_mismatch, resolve_helper};
-pub(super) use super::super::supervised_child::ChildEvent;
 use super::super::supervised_child::{
-    BinaryResolver, ChildOptions, ChildSink, Control, Down, HelperSpawner, ProcessSpawner,
-    Protocol, Recovery, RestartPolicy, SupervisedChild,
+    BinaryResolver, ChildEvent, ChildOptions, ChildSink, Control, Down, HelperSpawner,
+    ProcessSpawner, Protocol, Recovery, RestartPolicy, SupervisedChild,
 };
 use super::super::timer::{Timers, lock};
 use super::slots::ListenerConfig;
@@ -251,21 +250,11 @@ impl GlobeListener {
         self.child.stop();
     }
 
-    /// Replaces the listener's whole state. A running listener is reconfigured
-    /// over stdin rather than restarted: a restart drops events and briefly
-    /// hands the Globe key back to macOS.
-    pub fn set_configuration(&self, config: ListenerConfig) {
-        let mut buttons: Vec<String> = config
-            .mouse_buttons
-            .into_iter()
-            .filter(|b| b == "MouseButton4" || b == "MouseButton5")
-            .collect();
-        buttons.sort();
-        buttons.dedup();
-        let next = ListenerConfig {
-            mouse_buttons: buttons,
-            suppress_globe_action: config.suppress_globe_action,
-        };
+    /// Replaces the listener's whole state (normalized as
+    /// [`super::slots::SlotRegistry::native_listener_config`] builds it). A
+    /// running listener is reconfigured over stdin rather than restarted: a
+    /// restart drops events and briefly hands the Globe key back to macOS.
+    pub fn set_configuration(&self, next: ListenerConfig) {
         let stdin_lost = self.child.update(|listener, cx| {
             if listener.config == next {
                 return false;
@@ -519,11 +508,7 @@ pub(crate) mod tests {
     fn spawn_args_include_buttons_spaced_path_and_suppression() {
         let h = harness(true, true);
         h.listener.set_configuration(ListenerConfig {
-            mouse_buttons: vec![
-                "MouseButton5".into(),
-                "MouseButton4".into(),
-                "MouseButton4".into(),
-            ],
+            mouse_buttons: vec!["MouseButton4".into(), "MouseButton5".into()],
             suppress_globe_action: true,
         });
         h.listener.start();

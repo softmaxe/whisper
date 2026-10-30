@@ -187,8 +187,7 @@
       "holdNeedsReleaseKey": "Hold-to-talk needs a key macOS can see you release: Globe, a right-side key like Right Option, or a shortcut with a modifier. Tap works with any key.",
       "registrationFailed": "Could not register \"{{hotkey}}\". It may be in use by another application.",
       "trySuggestions": "Try: {{suggestions}}",
-      "slotConflict": "This hotkey is already used for {{slot}}.",
-      "holdUnavailable": "Hold-to-talk isn't available for this hotkey."
+      "slotConflict": "This hotkey is already used for {{slot}}."
     },
     "validation": {
       "mouseButtonCombination": "Mouse button hotkeys cannot be combined with other keys.",
@@ -205,12 +204,10 @@
     "retry": "Retry",
     "refresh": "Refresh",
     "cancel": "Cancel",
-    "active": "Active",
     "model": "Model",
     "loading": "Loading...",
     "hold": "Hold",
     "tap": "Double-tap",
-    "close": "Close",
     "save": "Save"
   },
   "controlPanel": {
@@ -250,10 +247,8 @@
       "clearAllDescriptionDevice": "All transcriptions, audio files, and Insights counters will be permanently removed from this device.",
       "clearAllSuccess": "History cleared",
       "clearAllErrorTitle": "Couldn't clear history",
-      "clearAllErrorDescription": "Something went wrong. Please try again.",
-      "retryTranslationMode": "Translation Mode"
-    },
-    "loading": "Loading..."
+      "clearAllErrorDescription": "Something went wrong. Please try again."
+    }
   },
   "reasoning": {
     "custom": {

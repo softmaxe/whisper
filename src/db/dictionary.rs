@@ -1,16 +1,15 @@
 //! Custom dictionary storage and STT-prompt priority.
 //!
-//! Every mutation rule lives in one place so the whole-list and delta write
-//! paths cannot drift apart. Words are unique case-insensitively.
+//! Every edit goes through one delta path ([`Database::apply_dictionary_changes`]),
+//! which touches only the words it names. Words are unique case-insensitively.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use once_cell::sync::Lazy;
 use regex::Regex;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
-use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
 use super::Database;
@@ -18,8 +17,7 @@ use super::timestamp::{now_db_timestamp, parse_db_timestamp};
 use crate::analytics::trim_text;
 
 /// Who added a dictionary word. Manual words outrank learned ones.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DictionarySource {
     #[default]
     Manual,
@@ -54,7 +52,7 @@ pub struct DictionaryEntry {
 }
 
 /// How many words a delta actually changed (not how many were requested).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DictionaryChangeCounts {
     pub added: usize,
     pub removed: usize,
@@ -66,7 +64,7 @@ const FRESHNESS_TIER_LIMITS_MS: [i64; 2] = [DAY_MS, 14 * DAY_MS];
 
 /// Scripts written without spaces, where a term sits inside a longer run of
 /// letters and a word-boundary match would never find it.
-static UNSPACED_SCRIPT: Lazy<Regex> = Lazy::new(|| {
+static UNSPACED_SCRIPT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]").expect("valid regex")
 });
 
@@ -167,30 +165,30 @@ fn normalize_words<S: AsRef<str>>(words: &[S]) -> Vec<(String, String)> {
     out
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct ExistingRow {
     id: i64,
     word: String,
     source: String,
 }
 
-/// All rows, plus an index by lowercase word.
-fn dictionary_rows(conn: &Connection) -> Result<(Vec<ExistingRow>, HashMap<String, ExistingRow>)> {
-    let rows: Vec<ExistingRow> = conn
+/// All rows, indexed by lowercase word.
+fn dictionary_rows(conn: &Connection) -> Result<HashMap<String, ExistingRow>> {
+    let rows = conn
         .prepare("SELECT id, word, source FROM custom_dictionary")?
         .query_map([], |row| {
-            Ok(ExistingRow {
-                id: row.get(0)?,
-                word: row.get(1)?,
-                source: row.get(2)?,
-            })
+            let word: String = row.get(1)?;
+            Ok((
+                word.to_lowercase(),
+                ExistingRow {
+                    id: row.get(0)?,
+                    word,
+                    source: row.get(2)?,
+                },
+            ))
         })?
         .collect::<rusqlite::Result<_>>()?;
-    let by_lower = rows
-        .iter()
-        .map(|r| (r.word.to_lowercase(), r.clone()))
-        .collect();
-    Ok((rows, by_lower))
+    Ok(rows)
 }
 
 /// Returns true when the word became present, so callers report how many
@@ -333,7 +331,7 @@ impl Database {
         }
 
         let mut conn = self.lock();
-        let (_, by_lower) = dictionary_rows(&conn)?;
+        let by_lower = dictionary_rows(&conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut counts = DictionaryChangeCounts::default();
         for (lower, _) in &removals {
@@ -348,38 +346,6 @@ impl Database {
         }
         tx.commit()?;
         Ok(counts)
-    }
-
-    /// Replaces the entire dictionary: anything absent from `words` is
-    /// deleted. Diff-based, so unchanged rows keep their source, usage and
-    /// `created_at`.
-    #[cfg(test)]
-    pub fn set_dictionary<S: AsRef<str>>(
-        &self,
-        words: &[S],
-        source_for_new_words: DictionarySource,
-    ) -> Result<()> {
-        let incoming = normalize_words(words);
-        let incoming_keys: HashSet<&str> = incoming.iter().map(|(l, _)| l.as_str()).collect();
-        let mut conn = self.lock();
-        let (rows, by_lower) = dictionary_rows(&conn)?;
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        for existing in &rows {
-            if incoming_keys.contains(existing.word.to_lowercase().as_str()) {
-                continue;
-            }
-            delete_row(&tx, Some(existing))?;
-        }
-        for (lower, word) in &incoming {
-            upsert_word(
-                &tx,
-                word,
-                by_lower.get(lower),
-                source_for_new_words.as_str(),
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     /// The stored source of a word, if present.
@@ -433,19 +399,9 @@ mod tests {
     }
 
     #[test]
-    fn set_dictionary_replaces_the_full_list() {
-        let db = db();
-        db.set_dictionary(&["Whisper", "Alice", "Bob"], manual())
-            .unwrap();
-        assert_eq!(db.get_dictionary().unwrap(), ["Whisper", "Alice", "Bob"]);
-        db.set_dictionary(&["Whisper"], manual()).unwrap();
-        assert_eq!(db.get_dictionary().unwrap(), ["Whisper"]);
-    }
-
-    #[test]
     fn adding_words_leaves_other_rows_untouched() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice", "Bob"], manual())
+        db.apply_dictionary_changes(&["Whisper", "Alice", "Bob"], NONE, manual())
             .unwrap();
         let result = db
             .apply_dictionary_changes(&["Carol"], NONE, manual())
@@ -460,8 +416,12 @@ mod tests {
     #[test]
     fn a_stale_one_word_view_cannot_delete_anything() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice", "Bob", "Imported Term"], manual())
-            .unwrap();
+        db.apply_dictionary_changes(
+            &["Whisper", "Alice", "Bob", "Imported Term"],
+            NONE,
+            manual(),
+        )
+        .unwrap();
         db.apply_dictionary_changes(&["Whisper"], NONE, manual())
             .unwrap();
         assert_eq!(
@@ -490,7 +450,7 @@ mod tests {
     #[test]
     fn an_edit_is_a_remove_plus_an_add() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Kubernets", "Alice"], manual())
+        db.apply_dictionary_changes(&["Whisper", "Kubernets", "Alice"], NONE, manual())
             .unwrap();
         db.apply_dictionary_changes(&["Kubernetes"], &["Kubernets"], manual())
             .unwrap();
@@ -503,7 +463,8 @@ mod tests {
     #[test]
     fn a_word_on_both_sides_is_kept() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice"], manual()).unwrap();
+        db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
+            .unwrap();
         let result = db
             .apply_dictionary_changes(&["Alice"], &["Alice"], manual())
             .unwrap();
@@ -527,7 +488,8 @@ mod tests {
     #[test]
     fn counts_report_words_that_changed() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice"], manual()).unwrap();
+        db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
+            .unwrap();
         assert_eq!(
             db.apply_dictionary_changes(&["Alice"], NONE, manual())
                 .unwrap()
@@ -555,7 +517,8 @@ mod tests {
     #[test]
     fn an_empty_delta_touches_nothing() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice"], manual()).unwrap();
+        db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
+            .unwrap();
         let snapshot = |db: &Database| -> Vec<(i64, String, Option<String>)> {
             db.lock()
                 .prepare("SELECT id, word, updated_at FROM custom_dictionary ORDER BY id")
@@ -576,7 +539,8 @@ mod tests {
     #[test]
     fn case_variant_adds_do_not_duplicate_rows() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice"], manual()).unwrap();
+        db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
+            .unwrap();
         db.apply_dictionary_changes(&["alice", "ALICE"], NONE, manual())
             .unwrap();
         let count: i64 = db
@@ -593,7 +557,8 @@ mod tests {
     #[test]
     fn a_case_only_respelling_updates_the_word() {
         let db = db();
-        db.set_dictionary(&["github"], manual()).unwrap();
+        db.apply_dictionary_changes(&["github"], NONE, manual())
+            .unwrap();
         db.apply_dictionary_changes(&["GitHub"], NONE, manual())
             .unwrap();
         assert_eq!(db.get_dictionary().unwrap(), ["GitHub"]);
@@ -602,7 +567,8 @@ mod tests {
     #[test]
     fn a_removed_word_can_be_added_again() {
         let db = db();
-        db.set_dictionary(&["Alice"], manual()).unwrap();
+        db.apply_dictionary_changes(&["Alice"], NONE, manual())
+            .unwrap();
         db.apply_dictionary_changes(NONE, &["alice"], manual())
             .unwrap();
         assert!(db.get_dictionary().unwrap().is_empty());
@@ -623,7 +589,7 @@ mod tests {
     #[test]
     fn recording_usage_is_not_an_edit() {
         let db = db();
-        db.set_dictionary(&["Whisper", "Alice", "Bob"], manual())
+        db.apply_dictionary_changes(&["Whisper", "Alice", "Bob"], NONE, manual())
             .unwrap();
         let updated_at = |db: &Database| -> Vec<Option<String>> {
             db.lock()
@@ -667,7 +633,7 @@ mod tests {
     #[test]
     fn priority_favors_manual_recent_words_and_skips_deleted() {
         let db = db();
-        db.set_dictionary(&["Stale", "Busy", "Gone"], manual())
+        db.apply_dictionary_changes(&["Stale", "Busy", "Gone"], NONE, manual())
             .unwrap();
         db.apply_dictionary_changes(&["Learned"], NONE, DictionarySource::Learned)
             .unwrap();

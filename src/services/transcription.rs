@@ -26,8 +26,6 @@ pub const REQUEST_TIMEOUT_CODE: &str = "TRANSCRIPTION_REQUEST_TIMEOUT";
 pub const REQUEST_TIMEOUT_MESSAGE_KEY: &str = "dictation.errorDescriptions.transcriptionTimeout";
 pub const RATE_LIMITED_CODE: &str = "PROVIDER_RATE_LIMITED";
 pub const RATE_LIMITED_MESSAGE_KEY: &str = "dictation.errorDescriptions.providerRateLimited";
-pub const INVALID_KEY_CODE: &str = "INVALID_KEY";
-pub const SERVER_ERROR_CODE: &str = "SERVER_ERROR";
 
 /// Reachability deadline for the HEAD probe.
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(3);
@@ -69,21 +67,16 @@ pub fn resolve_transcription_route(settings: &Settings) -> Result<Route, RouteEr
         &settings.remote_transcription_url,
         &settings.remote_transcription_model,
         &settings.preferred_language,
-        None,
     )
 }
 
-/// Resolves a route; `effective_language` (when non-empty) wins over the preference.
+/// Resolves a route; the language is the base code of `preferred_language`.
 pub fn resolve_route(
     url: &str,
     model: &str,
     preferred_language: &str,
-    effective_language: Option<&str>,
 ) -> Result<Route, RouteError> {
-    let language = match effective_language.filter(|l| !l.is_empty()) {
-        Some(lang) => Some(lang.to_string()),
-        None => get_base_language_code(preferred_language.trim()).map(str::to_string),
-    };
+    let language = get_base_language_code(preferred_language.trim()).map(str::to_string);
     // Fail closed: without a usable server URL no audio leaves the device.
     let raw = url.trim();
     if raw.is_empty() {
@@ -196,15 +189,13 @@ pub enum TranscriptionError {
 }
 
 impl TranscriptionError {
-    /// Error code stored with failed History rows and used by the UI.
+    /// Error code the UI uses to pick the failure toast title.
     pub fn code(&self) -> Option<&'static str> {
         match self {
             Self::Route(e) => Some(e.code),
             Self::ConnectionFailed => Some(CONNECTION_FAILED_CODE),
             Self::RequestTimeout => Some(REQUEST_TIMEOUT_CODE),
-            Self::Http { status: 401, .. } => Some(INVALID_KEY_CODE),
             Self::Http { status: 429, .. } => Some(RATE_LIMITED_CODE),
-            Self::Http { status, .. } if *status >= 500 => Some(SERVER_ERROR_CODE),
             _ => None,
         }
     }
@@ -378,10 +369,8 @@ mod tests {
         );
         assert_eq!(route.language, None);
 
-        let route = resolve_route("http://localhost:8000/v1", " ", "de-DE", Some("ja")).unwrap();
+        let route = resolve_route("http://localhost:8000/v1", " ", "de-DE").unwrap();
         assert_eq!(route.model, None);
-        assert_eq!(route.language.as_deref(), Some("ja"));
-        let route = resolve_route("http://localhost:8000/v1", "", "de-DE", None).unwrap();
         assert_eq!(route.language.as_deref(), Some("de"));
     }
 
@@ -409,7 +398,7 @@ mod tests {
     }
 
     fn request_for(server: &MockServer) -> TranscriptionRequest {
-        let route = resolve_route(&server.url("/v1"), "self-hosted-model", "zh-CN", None).unwrap();
+        let route = resolve_route(&server.url("/v1"), "self-hosted-model", "zh-CN").unwrap();
         TranscriptionRequest::new(
             &route,
             vec![1, 2, 3, 4],
@@ -458,7 +447,7 @@ mod tests {
     fn omits_empty_optional_fields() {
         run(async {
             let server = MockServer::start(|_| Reply::json(200, r#"{"text":"ok"}"#));
-            let route = resolve_route(&server.url("/v1"), "", "auto", None).unwrap();
+            let route = resolve_route(&server.url("/v1"), "", "auto").unwrap();
             let request =
                 TranscriptionRequest::new(&route, vec![0; 8], "audio/webm", Some(String::new()));
             transcribe(request, CancellationToken::new()).await.unwrap();
@@ -479,8 +468,7 @@ mod tests {
                 .local_addr()
                 .unwrap()
                 .port();
-            let route =
-                resolve_route(&format!("http://127.0.0.1:{port}/v1"), "", "", None).unwrap();
+            let route = resolve_route(&format!("http://127.0.0.1:{port}/v1"), "", "").unwrap();
             let request = TranscriptionRequest::new(&route, vec![1], "audio/wav", None);
             let err = transcribe(request, CancellationToken::new())
                 .await
@@ -559,9 +547,9 @@ mod tests {
     fn maps_http_errors_and_empty_text() {
         run(async {
             for (status, body, code) in [
-                (401, "{}", Some("INVALID_KEY")),
+                (401, "{}", None),
                 (429, "slow down", Some("PROVIDER_RATE_LIMITED")),
-                (502, "bad gateway", Some("SERVER_ERROR")),
+                (502, "bad gateway", None),
                 (400, "bad", None),
             ] {
                 let server = MockServer::start(move |_| Reply::json(status, body));

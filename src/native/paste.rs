@@ -21,11 +21,9 @@ use objc2_app_kit::{
 use objc2_foundation::{NSArray, NSData, NSString};
 
 use super::helper::{RunOutput, resolve_helper, run_with_timeout};
-use super::permissions::{SettingsPane, open_settings};
+use super::permissions::{SettingsPane, is_accessibility_trusted, open_settings};
 use super::text_monitor::TextEditMonitor;
 use super::timer::lock;
-
-pub use super::permissions::is_accessibility_trusted;
 
 const PASTE_DELAY: Duration = Duration::from_millis(120);
 const RESTORE_DELAY: Duration = Duration::from_millis(450);
@@ -182,19 +180,6 @@ pub struct PasteOptions {
     pub target_pid: Option<i32>,
     /// Put the previous clipboard back after pasting.
     pub restore_clipboard: bool,
-    /// Without Accessibility, leave the text on the clipboard instead of
-    /// failing (and do not show the permission dialog).
-    pub allow_clipboard_fallback: bool,
-}
-
-impl Default for PasteOptions {
-    fn default() -> Self {
-        Self {
-            target_pid: None,
-            restore_clipboard: true,
-            allow_clipboard_fallback: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,7 +191,7 @@ pub enum PasteFailure {
 }
 
 /// `pasted: false` with no failure means the text was left on the clipboard
-/// for a manual paste (unconfirmed target or clipboard fallback).
+/// for a manual paste (unconfirmed target).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PasteOutcome {
     pub pasted: bool,
@@ -232,7 +217,7 @@ pub struct PasteHooks {
     pub run: CommandRunner,
     pub resolve_fast_paste: Arc<dyn Fn() -> Option<PathBuf> + Send + Sync>,
     pub accessibility_trusted: Arc<dyn Fn() -> bool + Send + Sync>,
-    /// Shows the "grant Accessibility" dialog (non-silent denial).
+    /// Shows the "grant Accessibility" dialog on denial.
     pub show_accessibility_dialog: Arc<dyn Fn() + Send + Sync>,
     pub activate_target: Arc<dyn Fn(Option<i32>) -> bool + Send + Sync>,
     /// Paste-target verdict for the pid (see `TextEditMonitor`).
@@ -366,11 +351,8 @@ impl Paster {
         let original = options.restore_clipboard.then(|| pasteboard.snapshot());
         pasteboard.write_text(text);
 
-        if !self.check_accessibility(options.allow_clipboard_fallback) {
+        if !self.check_accessibility() {
             log::info!("[paste] no Accessibility permission, text left on the clipboard");
-            if options.allow_clipboard_fallback {
-                return (PasteOutcome::clipboard_only(), None);
-            }
             return (
                 PasteOutcome {
                     pasted: false,
@@ -463,21 +445,17 @@ impl Paster {
         Err(PasteFailure::CommandFailed(detail))
     }
 
-    /// A non-silent check caches the answer for 5 s and shows the permission
-    /// dialog on denial.
-    fn check_accessibility(&self, silent: bool) -> bool {
-        if !silent
-            && let Some((value, at)) = lock(&self.caches).accessibility
+    /// Caches the answer for 5 s and shows the permission dialog on denial.
+    fn check_accessibility(&self) -> bool {
+        if let Some((value, at)) = lock(&self.caches).accessibility
             && at.elapsed() < ACCESSIBILITY_CHECK_TTL
         {
             return value;
         }
         let allowed = (self.hooks.accessibility_trusted)();
-        if !silent {
-            lock(&self.caches).accessibility = Some((allowed, Instant::now()));
-            if !allowed {
-                (self.hooks.show_accessibility_dialog)();
-            }
+        lock(&self.caches).accessibility = Some((allowed, Instant::now()));
+        if !allowed {
+            (self.hooks.show_accessibility_dialog)();
         }
         allowed
     }
@@ -503,11 +481,6 @@ fn restore_after_delay(
 /// `TextEditMonitor::shared().start_monitoring_after_paste` for auto-learn.
 pub fn paste_text(text: &str, options: PasteOptions) -> PasteOutcome {
     Paster::shared().paste_text(text, options)
-}
-
-/// The Target app: the app holding keyboard focus (frontmost as fallback).
-pub fn capture_frontmost_pid() -> Option<i32> {
-    TextEditMonitor::shared().capture_target_pid()
 }
 
 /// Explains the missing Accessibility permission and offers to open the
@@ -666,7 +639,7 @@ mod tests {
     fn opts(pid: Option<i32>) -> PasteOptions {
         PasteOptions {
             target_pid: pid,
-            ..Default::default()
+            restore_clipboard: true,
         }
     }
 
@@ -815,30 +788,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_accessibility_fails_or_falls_back() {
+    fn missing_accessibility_fails_and_shows_the_dialog() {
         let f = fixture(true, false);
         let outcome = f.paster.paste_text("dictated", opts(Some(42)));
         assert_eq!(outcome.failure, Some(PasteFailure::AccessibilityRequired));
         assert_eq!(f.dialogs.load(Ordering::SeqCst), 1);
-        let fallback = f.paster.paste_text(
-            "dictated",
-            PasteOptions {
-                allow_clipboard_fallback: true,
-                ..opts(Some(42))
-            },
-        );
-        assert_eq!(
-            fallback,
-            PasteOutcome {
-                pasted: false,
-                failure: None
-            }
-        );
-        assert_eq!(
-            f.dialogs.load(Ordering::SeqCst),
-            1,
-            "silent check shows no dialog"
-        );
+        assert_eq!(f.pasteboard.read_text().as_deref(), Some("dictated "));
         assert!(lock(&f.runs).is_empty());
     }
 

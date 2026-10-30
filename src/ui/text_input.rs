@@ -12,7 +12,7 @@ use super::theme::{
 };
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum FieldKind {
+enum FieldKind {
     /// `h-8 rounded-lg` single-line input.
     Line,
     /// Multi-line textarea (`rounded-xl px-3.5 py-3`).
@@ -21,18 +21,26 @@ pub enum FieldKind {
 
 pub fn text_field(
     state: &Entity<InputState>,
-    kind: FieldKind,
     mono: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Stateful<Div> {
-    text_field_sized(state, TEXT_BODY, kind, mono, window, cx)
+    line_field(state, TEXT_BODY, mono, window, cx)
 }
 
-pub fn text_field_sized(
+/// A single-line field with small (12 px) text.
+pub fn text_field_small(
+    state: &Entity<InputState>,
+    mono: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    line_field(state, TEXT_SMALL, mono, window, cx)
+}
+
+fn line_field(
     state: &Entity<InputState>,
     text_size: f32,
-    kind: FieldKind,
     mono: bool,
     window: &mut Window,
     cx: &mut App,
@@ -46,7 +54,7 @@ pub fn text_field_sized(
     field_frame(
         id,
         focused,
-        kind,
+        FieldKind::Line,
         mono,
         input.into_any_element(),
         window,

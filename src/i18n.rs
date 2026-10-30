@@ -4,13 +4,12 @@
 //! `_one`/`_other` plurals selected by a `count` parameter, and English
 //! fallback for keys missing from a locale.
 
-use std::sync::RwLock;
+use std::sync::{LazyLock, RwLock};
 
-use once_cell::sync::Lazy;
 use serde_json::Value;
 
-static EN: Lazy<Value> = Lazy::new(|| parse(include_str!("../locales/en.json")));
-static ZH_CN: Lazy<Value> = Lazy::new(|| parse(include_str!("../locales/zh-CN.json")));
+static EN: LazyLock<Value> = LazyLock::new(|| parse(include_str!("../locales/en.json")));
+static ZH_CN: LazyLock<Value> = LazyLock::new(|| parse(include_str!("../locales/zh-CN.json")));
 static CURRENT: RwLock<Language> = RwLock::new(Language::En);
 
 fn parse(raw: &str) -> Value {

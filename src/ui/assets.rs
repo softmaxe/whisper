@@ -13,7 +13,7 @@ use super::theme::{FONT_MONO, FONT_UI, FONT_VOICE};
 #[folder = "assets"]
 #[include = "icons/*.svg"]
 #[include = "fonts/*.ttf"]
-#[include = "*.png"]
+#[include = "iconTemplate@3x.png"]
 struct Embedded;
 
 pub struct Assets;
@@ -101,7 +101,7 @@ mod tests {
     fn bundled_mono_has_the_faces_the_ui_uses() {
         let have: BTreeSet<(String, u16, bool)> =
             faces().into_iter().map(|(f, w, i, _)| (f, w, i)).collect();
-        for weight in [400, 500, 600, 700] {
+        for weight in [400, 500, 600] {
             assert!(
                 have.contains(&("JetBrainsMono NFM".to_string(), weight, false)),
                 "missing {FONT_MONO} {weight}; have {have:?}"

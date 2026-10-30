@@ -32,66 +32,14 @@ pub fn list_input_devices() -> Vec<MicDevice> {
     coreaudio::input_devices()
 }
 
-/// The system default input (name and CoreAudio UID).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SystemDefaultMicrophone {
-    pub name: String,
-    pub native_id: Option<String>,
-}
-
-/// Reads the system default input in-process.
-pub fn system_default_microphone() -> Option<SystemDefaultMicrophone> {
+/// The system default input's name, read in-process.
+pub fn system_default_microphone() -> Option<String> {
     let id = coreaudio::default_input()?;
-    Some(SystemDefaultMicrophone {
-        name: coreaudio::device_name(id)?.trim().to_string(),
-        native_id: coreaudio::device_uid(id).filter(|uid| !uid.is_empty()),
-    })
+    Some(coreaudio::device_name(id)?.trim().to_string())
 }
 
 // ---------------------------------------------------------------------------
 // Selection policy
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicSelectionMode {
-    Auto,
-    BuiltIn,
-    Specific,
-}
-
-impl MicSelectionMode {
-    pub fn from_settings(mode: MicrophoneSelectionMode) -> Self {
-        match mode {
-            MicrophoneSelectionMode::Auto => Self::Auto,
-            MicrophoneSelectionMode::BuiltIn => Self::BuiltIn,
-            MicrophoneSelectionMode::Specific => Self::Specific,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MicStatus {
-    AutoBuiltIn,
-    AutoExternal,
-    NativeExact,
-    NativeCompatible,
-    NativeUnmatched,
-    Unavailable,
-    BuiltIn,
-    Exact,
-    Remapped,
-    Missing,
-    Ambiguous,
-    Default,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MicResolution {
-    pub mode: MicSelectionMode,
-    /// `None` means "use the system default input".
-    pub device: Option<MicDevice>,
-    pub status: MicStatus,
-    pub lid_closed: Option<bool>,
-}
 
 /// Lowercased, NFKC, without "Default - " / "(Built-in)" decorations.
 pub fn normalize_microphone_label(label: &str) -> String {
@@ -171,7 +119,7 @@ fn auto_built_in_label(label: &str) -> bool {
 pub fn resolve_system_default_device(
     devices: &[MicDevice],
     system_default_name: Option<&str>,
-) -> (Option<MicDevice>, MicStatus) {
+) -> Option<MicDevice> {
     let native = system_default_name.map(str::trim).filter(|n| !n.is_empty());
 
     if let Some(name) = native {
@@ -181,7 +129,7 @@ pub fn resolve_system_default_device(
             .filter(|d| !target.is_empty() && comparable_label(&d.label) == target)
             .collect();
         if exact.len() == 1 {
-            return (Some(exact[0].clone()), MicStatus::NativeExact);
+            return Some(exact[0].clone());
         }
         let contained: Vec<_> = devices
             .iter()
@@ -193,20 +141,12 @@ pub fn resolve_system_default_device(
             })
             .collect();
         if contained.len() == 1 {
-            return (Some(contained[0].clone()), MicStatus::NativeCompatible);
+            return Some(contained[0].clone());
         }
     }
 
     // CoreAudio flags the default directly.
-    if let Some(device) = devices.iter().find(|d| d.is_default) {
-        return (Some(device.clone()), MicStatus::NativeExact);
-    }
-    let status = if native.is_some() {
-        MicStatus::NativeUnmatched
-    } else {
-        MicStatus::Unavailable
-    };
-    (None, status)
+    devices.iter().find(|d| d.is_default).cloned()
 }
 
 /// The saved id while it exists, else a unique label match.
@@ -214,63 +154,39 @@ pub fn resolve_mic_device_selection(
     devices: &[MicDevice],
     selected_id: &str,
     selected_label: &str,
-) -> (Option<MicDevice>, MicStatus) {
+) -> Option<MicDevice> {
     if selected_id.is_empty() {
-        return (None, MicStatus::Default);
+        return None;
     }
     if let Some(device) = devices.iter().find(|d| d.id == selected_id) {
-        return (Some(device.clone()), MicStatus::Exact);
+        return Some(device.clone());
     }
     if selected_label.is_empty() {
-        return (None, MicStatus::Missing);
+        return None;
     }
     let matches: Vec<_> = devices
         .iter()
         .filter(|d| d.label == selected_label)
         .collect();
-    match matches.len() {
-        1 => (Some(matches[0].clone()), MicStatus::Remapped),
-        0 => (None, MicStatus::Missing),
-        _ => (None, MicStatus::Ambiguous),
+    // An ambiguous label picks nothing.
+    match matches[..] {
+        [device] => Some(device.clone()),
+        _ => None,
     }
 }
 
-/// Saved preference inputs for [`resolve_microphone_selection`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MicPreference {
-    pub mode: MicSelectionMode,
-    pub selected_id: String,
-    pub selected_label: String,
-}
-
-impl MicPreference {
-    pub fn from_settings(settings: &Settings) -> Self {
-        Self {
-            mode: MicSelectionMode::from_settings(settings.microphone_selection_mode),
-            selected_id: settings.selected_mic_device_id.clone(),
-            selected_label: settings.selected_mic_device_label.clone(),
-        }
-    }
-}
-
-/// Auto prefers the built-in input, unless the lid is closed, where it prefers
-/// a phone (Continuity), then any other external input; with neither it
-/// follows the system default.
+/// The microphone `settings` select; `None` means "use the system default
+/// input". Auto prefers the built-in input, unless the lid is closed, where it
+/// prefers a phone (Continuity), then any other external input; with neither
+/// it follows the system default.
 pub fn resolve_microphone_selection(
     devices: &[MicDevice],
-    preference: &MicPreference,
+    settings: &Settings,
     system_default_name: Option<&str>,
     lid_closed: Option<bool>,
-) -> MicResolution {
-    let mode = preference.mode;
-    let resolution = |(device, status): (Option<MicDevice>, MicStatus)| MicResolution {
-        mode,
-        device,
-        status,
-        lid_closed: None,
-    };
-    match mode {
-        MicSelectionMode::Auto => {
+) -> Option<MicDevice> {
+    match settings.microphone_selection_mode {
+        MicrophoneSelectionMode::Auto => {
             let physical: Vec<&MicDevice> = devices.iter().filter(|d| !d.id.is_empty()).collect();
             // macOS names its internal input explicitly; the generic
             // "Microphone" heuristic also matches custom-named external mics.
@@ -293,40 +209,19 @@ pub fn resolve_microphone_selection(
             } else {
                 built_in.first().copied()
             };
-            if let Some(device) = device {
-                return MicResolution {
-                    mode,
-                    device: Some(device.clone()),
-                    status: if lid_closed == Some(true) {
-                        MicStatus::AutoExternal
-                    } else {
-                        MicStatus::AutoBuiltIn
-                    },
-                    lid_closed,
-                };
-            }
-            MicResolution {
-                lid_closed,
-                ..resolution(resolve_system_default_device(devices, system_default_name))
-            }
+            device
+                .cloned()
+                .or_else(|| resolve_system_default_device(devices, system_default_name))
         }
-        MicSelectionMode::BuiltIn => {
-            let device = devices
-                .iter()
-                .find(|d| is_built_in_microphone(&d.label))
-                .cloned();
-            let status = if device.is_some() {
-                MicStatus::BuiltIn
-            } else {
-                MicStatus::Unavailable
-            };
-            resolution((device, status))
-        }
-        MicSelectionMode::Specific => resolution(resolve_mic_device_selection(
+        MicrophoneSelectionMode::BuiltIn => devices
+            .iter()
+            .find(|d| is_built_in_microphone(&d.label))
+            .cloned(),
+        MicrophoneSelectionMode::Specific => resolve_mic_device_selection(
             devices,
-            &preference.selected_id,
-            &preference.selected_label,
-        )),
+            &settings.selected_mic_device_id,
+            &settings.selected_mic_device_label,
+        ),
     }
 }
 
@@ -342,21 +237,12 @@ pub fn watch_laptop_lid() {
 /// latest sample without waiting; an unknown state (before the first sample,
 /// while the helper restarts, or on a Mac without a lid) counts as open, so
 /// Auto keeps the built-in microphone.
-pub fn resolve_preferred_microphone(settings: &Settings) -> MicResolution {
-    let preference = MicPreference::from_settings(settings);
+pub fn resolve_preferred_microphone(settings: &Settings) -> Option<MicDevice> {
     let devices = list_input_devices();
-    let lid_closed = (preference.mode == MicSelectionMode::Auto)
-        .then(|| LaptopLidMonitor::shared().state())
-        .flatten();
-    let system_default = (preference.mode == MicSelectionMode::Auto)
-        .then(system_default_microphone)
-        .flatten();
-    resolve_microphone_selection(
-        &devices,
-        &preference,
-        system_default.as_ref().map(|d| d.name.as_str()),
-        lid_closed,
-    )
+    let auto = settings.microphone_selection_mode == MicrophoneSelectionMode::Auto;
+    let lid_closed = auto.then(|| LaptopLidMonitor::shared().state()).flatten();
+    let system_default = auto.then(system_default_microphone).flatten();
+    resolve_microphone_selection(&devices, settings, system_default.as_deref(), lid_closed)
 }
 
 #[cfg(test)]
@@ -373,11 +259,19 @@ mod tests {
         }
     }
 
-    fn pref(mode: MicSelectionMode) -> MicPreference {
-        MicPreference {
-            mode,
-            selected_id: String::new(),
-            selected_label: String::new(),
+    fn pref(mode: MicrophoneSelectionMode) -> Settings {
+        Settings {
+            microphone_selection_mode: mode,
+            ..Settings::default()
+        }
+    }
+
+    fn specific(selected_id: &str, selected_label: &str) -> Settings {
+        Settings {
+            microphone_selection_mode: MicrophoneSelectionMode::Specific,
+            selected_mic_device_id: selected_id.into(),
+            selected_mic_device_label: selected_label.into(),
+            ..Settings::default()
         }
     }
 
@@ -390,14 +284,11 @@ mod tests {
         for lid in [false, true, false, true] {
             let result = resolve_microphone_selection(
                 &devices,
-                &pref(MicSelectionMode::Auto),
+                &pref(MicrophoneSelectionMode::Auto),
                 Some(&phone.label),
                 Some(lid),
             );
-            assert_eq!(
-                result.device.as_ref(),
-                Some(if lid { &phone } else { &built_in })
-            );
+            assert_eq!(result.as_ref(), Some(if lid { &phone } else { &built_in }));
         }
     }
 
@@ -407,8 +298,12 @@ mod tests {
         let phone = mic("iphone", "Rui's iPhone Microphone");
         let external = mic("usb", "Studio Microphone");
         let resolve = |devices: Vec<MicDevice>| {
-            resolve_microphone_selection(&devices, &pref(MicSelectionMode::Auto), None, Some(true))
-                .device
+            resolve_microphone_selection(
+                &devices,
+                &pref(MicrophoneSelectionMode::Auto),
+                None,
+                Some(true),
+            )
         };
         assert_eq!(
             resolve(vec![built_in.clone(), external.clone()]),
@@ -431,12 +326,11 @@ mod tests {
         built_in.is_default = true;
         let result = resolve_microphone_selection(
             std::slice::from_ref(&built_in),
-            &pref(MicSelectionMode::Auto),
+            &pref(MicrophoneSelectionMode::Auto),
             None,
             Some(true),
         );
-        assert_eq!(result.device, Some(built_in));
-        assert_eq!(result.status, MicStatus::NativeExact);
+        assert_eq!(result, Some(built_in));
     }
 
     #[test]
@@ -444,11 +338,11 @@ mod tests {
         let built_in = mic("macbook", "MacBook Pro Microphone");
         let result = resolve_microphone_selection(
             &[mic("continuity", "Joshua P Microphone"), built_in.clone()],
-            &pref(MicSelectionMode::Auto),
+            &pref(MicrophoneSelectionMode::Auto),
             None,
             None,
         );
-        assert_eq!(result.device, Some(built_in));
+        assert_eq!(result, Some(built_in));
     }
 
     #[test]
@@ -458,29 +352,24 @@ mod tests {
         for lid in [true, false] {
             let result = resolve_microphone_selection(
                 &[built_in.clone(), phone.clone()],
-                &MicPreference {
-                    mode: MicSelectionMode::Specific,
-                    selected_id: "iphone".into(),
-                    selected_label: String::new(),
-                },
+                &specific("iphone", ""),
                 None,
                 Some(lid),
             );
-            assert_eq!(result.device, Some(phone.clone()));
+            assert_eq!(result, Some(phone.clone()));
         }
     }
 
     #[test]
     fn system_default_mapping() {
         let expected = mic("macbook", "MacBook Pro Microphone (Built-in)");
-        let (device, status) = resolve_system_default_device(
+        let device = resolve_system_default_device(
             &[mic("usb", "USB Microphone"), expected.clone()],
             Some("MacBook Pro Microphone"),
         );
         assert_eq!(device, Some(expected));
-        assert_eq!(status, MicStatus::NativeExact);
 
-        let (device, _) = resolve_system_default_device(
+        let device = resolve_system_default_device(
             &[
                 mic("continuity", "Joshua P Microphone"),
                 mic("usb", "USB Microphone"),
@@ -489,7 +378,7 @@ mod tests {
         );
         assert!(device.is_some_and(|d| !d.id.is_empty()));
 
-        let (device, status) = resolve_system_default_device(
+        let device = resolve_system_default_device(
             &[
                 mic("continuity", "Joshua P Microphone"),
                 mic("usb", "USB Microphone"),
@@ -497,10 +386,10 @@ mod tests {
             Some("Missing System Microphone"),
         );
         assert_eq!(device, None);
-        assert_eq!(status, MicStatus::NativeUnmatched);
 
+        // A unique containing label matches.
         let expected = mic("7a1b", "Jabra Evolve2 65 Microphone");
-        let (device, status) = resolve_system_default_device(
+        let device = resolve_system_default_device(
             &[
                 mic("macbook", "MacBook Pro Microphone (Built-in)"),
                 expected.clone(),
@@ -508,15 +397,13 @@ mod tests {
             Some("Jabra Evolve2 65"),
         );
         assert_eq!(device, Some(expected));
-        assert_eq!(status, MicStatus::NativeCompatible);
     }
 
     #[test]
     fn coreaudio_default_flag_is_used() {
         let mut default = mic("uid-1", "Desk Microphone");
         default.is_default = true;
-        let (device, _) =
-            resolve_system_default_device(&[mic("uid-2", "Other"), default.clone()], None);
+        let device = resolve_system_default_device(&[mic("uid-2", "Other"), default.clone()], None);
         assert_eq!(device, Some(default));
     }
 
@@ -525,12 +412,20 @@ mod tests {
         let expected = mic("macbook", "MacBook Pro Microphone (Built-in)");
         let result = resolve_microphone_selection(
             &[expected.clone(), mic("7a1b", "Jabra Evolve2 65")],
-            &pref(MicSelectionMode::BuiltIn),
+            &pref(MicrophoneSelectionMode::BuiltIn),
             None,
             None,
         );
-        assert_eq!(result.device, Some(expected));
-        assert_eq!(result.status, MicStatus::BuiltIn);
+        assert_eq!(result, Some(expected));
+        assert_eq!(
+            resolve_microphone_selection(
+                &[mic("7a1b", "Jabra Evolve2 65")],
+                &pref(MicrophoneSelectionMode::BuiltIn),
+                None,
+                None,
+            ),
+            None
+        );
     }
 
     #[test]
@@ -538,12 +433,12 @@ mod tests {
         let device = mic("saved-id", "Studio Mic");
         assert_eq!(
             resolve_mic_device_selection(std::slice::from_ref(&device), "saved-id", "Studio Mic"),
-            (Some(device), MicStatus::Exact)
+            Some(device)
         );
         let device = mic("new-id", "Studio Mic");
         assert_eq!(
             resolve_mic_device_selection(std::slice::from_ref(&device), "old-id", "Studio Mic"),
-            (Some(device.clone()), MicStatus::Remapped)
+            Some(device.clone())
         );
         assert_eq!(
             resolve_mic_device_selection(
@@ -551,20 +446,18 @@ mod tests {
                 "old-id",
                 "USB Audio"
             ),
-            (None, MicStatus::Ambiguous)
+            None,
+            "an ambiguous label picks nothing"
         );
         assert_eq!(
             resolve_mic_device_selection(&[], "old-id", "Studio Mic"),
-            (None, MicStatus::Missing)
+            None
         );
         assert_eq!(
             resolve_mic_device_selection(std::slice::from_ref(&device), "old-id", ""),
-            (None, MicStatus::Missing)
+            None
         );
-        assert_eq!(
-            resolve_mic_device_selection(&[device], "", ""),
-            (None, MicStatus::Default)
-        );
+        assert_eq!(resolve_mic_device_selection(&[device], "", ""), None);
     }
 
     #[test]
@@ -586,16 +479,11 @@ mod tests {
     fn stale_id_is_remapped_by_label() {
         let result = resolve_microphone_selection(
             &[mic("new-id", "Studio Mic")],
-            &MicPreference {
-                mode: MicSelectionMode::Specific,
-                selected_id: "old-id".into(),
-                selected_label: "Studio Mic".into(),
-            },
+            &specific("old-id", "Studio Mic"),
             None,
             None,
         );
-        assert_eq!(result.status, MicStatus::Remapped);
-        assert_eq!(result.device.map(|d| d.id).as_deref(), Some("new-id"));
+        assert_eq!(result.map(|d| d.id).as_deref(), Some("new-id"));
     }
 
     #[test]

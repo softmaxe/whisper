@@ -8,8 +8,9 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::db::TranscriptionItem;
+use crate::db::timestamp::parse_db_timestamp;
 use crate::i18n::{self, Language, t, t_with};
-use crate::text::format::{RelativeTime, normalize_db_date, relative_time};
+use crate::text::format::{RelativeTime, relative_time};
 
 use crate::app_state::AppState;
 
@@ -31,12 +32,7 @@ pub struct CommandSearch {
 impl EventEmitter<CommandSearchEvent> for CommandSearch {}
 
 fn relative_label(item: &TranscriptionItem) -> String {
-    let source = if item.created_at.is_empty() {
-        &item.timestamp
-    } else {
-        &item.created_at
-    };
-    normalize_db_date(source)
+    parse_db_timestamp(&item.created_at)
         .map(relative_time_label)
         .unwrap_or_default()
 }

@@ -46,21 +46,10 @@ pub struct DockManager {
 }
 
 impl DockManager {
-    /// At startup, before any window. A launch that opens the control panel
+    /// Reported by every path that shows or hides the control panel, and once
+    /// at startup before any window: a launch that opens the control panel
     /// keeps the icon macOS already shows (dropping to Accessory and back
     /// would hand focus to the previous app); tray-only launches hide it.
-    pub fn init(
-        &mut self,
-        policy: &dyn ActivationPolicy,
-        control_panel_visible: bool,
-        now: Instant,
-    ) {
-        self.control_panel_visible = control_panel_visible;
-        self.last_shown_at = None;
-        self.apply(policy, now);
-    }
-
-    /// Reported by every path that shows or hides the control panel.
     pub fn set_control_panel_visible(
         &mut self,
         policy: &dyn ActivationPolicy,
@@ -107,11 +96,6 @@ fn with_policy(f: impl FnOnce(&dyn ActivationPolicy)) {
     }
 }
 
-/// Startup: `control_panel_visible` is false for tray-only launches.
-pub fn init(control_panel_visible: bool) {
-    with_policy(|policy| lock(shared()).init(policy, control_panel_visible, Instant::now()));
-}
-
 /// Shows the Dock icon while the control panel is visible, hides it otherwise.
 pub fn set_control_panel_visible(visible: bool) {
     with_policy(|policy| lock(shared()).set_control_panel_visible(policy, visible, Instant::now()));
@@ -156,7 +140,7 @@ mod tests {
         let policy = FakePolicy::new(true);
         let mut dock = DockManager::default();
         let now = Instant::now();
-        dock.init(&policy, true, now);
+        dock.set_control_panel_visible(&policy, true, now);
         dock.set_control_panel_visible(&policy, true, now);
         assert!(policy.calls().is_empty());
         assert!(policy.is_regular());
@@ -165,7 +149,7 @@ mod tests {
     #[test]
     fn tray_only_launch_hides_the_icon() {
         let policy = FakePolicy::new(true);
-        DockManager::default().init(&policy, false, Instant::now());
+        DockManager::default().set_control_panel_visible(&policy, false, Instant::now());
         assert_eq!(policy.calls(), ["accessory"]);
     }
 
@@ -174,7 +158,7 @@ mod tests {
         let policy = FakePolicy::new(false);
         let mut dock = DockManager::default();
         let now = Instant::now();
-        dock.init(&policy, false, now);
+        dock.set_control_panel_visible(&policy, false, now);
         dock.set_control_panel_visible(&policy, true, now);
         assert_eq!(policy.calls(), ["regular"]);
     }
@@ -184,7 +168,7 @@ mod tests {
         let policy = FakePolicy::new(true);
         let mut dock = DockManager::default();
         let now = Instant::now();
-        dock.init(&policy, true, now);
+        dock.set_control_panel_visible(&policy, true, now);
         dock.set_control_panel_visible(&policy, true, now);
         dock.set_control_panel_visible(&policy, true, now);
         assert!(policy.calls().is_empty());
@@ -195,7 +179,7 @@ mod tests {
         let policy = FakePolicy::new(false);
         let mut dock = DockManager::default();
         let start = Instant::now();
-        dock.init(&policy, false, start);
+        dock.set_control_panel_visible(&policy, false, start);
         dock.set_control_panel_visible(&policy, true, start);
         policy.calls.borrow_mut().clear();
         dock.set_control_panel_visible(&policy, false, start);

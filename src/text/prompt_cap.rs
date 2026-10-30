@@ -10,21 +10,15 @@ pub const WHISPER_PROMPT_CHARS: usize = 900;
 /// UI, not to trim.
 pub const WHISPER_DECODER_PROMPT_CHARS: usize = 550;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FittedPrompt {
-    pub prompt: Option<String>,
-    pub omitted: usize,
-}
-
 /// Fills the budget from `priority_words` (most important first), skipping any
 /// entry that would overflow so none is sent half-spelled, then joins the
 /// picked entries least important first: decoders keep the tail of a long
-/// prompt. Lengths are UTF-16 units. Callers must
+/// prompt. Lengths are UTF-16 units; `None` when no word fits. Callers must
 /// classify dictionary echoes against the returned prompt.
 pub fn fit_dictionary_prompt<S: AsRef<str>>(
     priority_words: &[S],
     max_chars: usize,
-) -> FittedPrompt {
+) -> Option<String> {
     let mut picked: Vec<&str> = Vec::new();
     let mut length = 0usize;
     for word in priority_words {
@@ -39,12 +33,8 @@ pub fn fit_dictionary_prompt<S: AsRef<str>>(
         picked.push(word);
         length += cost;
     }
-    let omitted = priority_words.len() - picked.len();
     picked.reverse();
-    FittedPrompt {
-        prompt: (!picked.is_empty()).then(|| picked.join(", ")),
-        omitted,
-    }
+    (!picked.is_empty()).then(|| picked.join(", "))
 }
 
 #[cfg(test)]
@@ -54,36 +44,21 @@ mod tests {
     #[test]
     fn most_important_word_last() {
         assert_eq!(
-            fit_dictionary_prompt(&["first", "second", "third"], 900),
-            FittedPrompt {
-                prompt: Some("third, second, first".into()),
-                omitted: 0
-            }
+            fit_dictionary_prompt(&["first", "second", "third"], 900).as_deref(),
+            Some("third, second, first")
         );
     }
 
     #[test]
     fn drops_overflowing_words_whole() {
         let result = fit_dictionary_prompt(&["alpha", "beta", "gamma-long", "pi"], 15);
-        assert_eq!(
-            result,
-            FittedPrompt {
-                prompt: Some("pi, beta, alpha".into()),
-                omitted: 1
-            }
-        );
-        assert!(result.prompt.unwrap().len() <= 15);
+        assert_eq!(result.as_deref(), Some("pi, beta, alpha"));
+        assert!(result.unwrap().len() <= 15);
     }
 
     #[test]
     fn no_words_no_prompt() {
         let empty: [&str; 0] = [];
-        assert_eq!(
-            fit_dictionary_prompt(&empty, 900),
-            FittedPrompt {
-                prompt: None,
-                omitted: 0
-            }
-        );
+        assert_eq!(fit_dictionary_prompt(&empty, 900), None);
     }
 }

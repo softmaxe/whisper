@@ -18,8 +18,6 @@ fn event(occurred_at: &str) -> AnalyticsEventInput {
         occurred_at: occurred_at.into(),
         local_date: occurred_at[..10].into(),
         spoken_duration_ms: Some(2_000),
-        provider: Some("self-hosted".into()),
-        model: Some("whisper-1".into()),
     }
 }
 
@@ -34,15 +32,20 @@ fn days_ago(days: i64) -> String {
 }
 
 fn save(db: &Database, text: &str, occurred: &str) -> TranscriptionItem {
-    db.save_transcription(
-        text,
-        None,
-        SaveTranscriptionOptions {
-            occurred_at: Some(at(occurred)),
-            ..Default::default()
-        },
-    )
-    .unwrap()
+    db.save_transcription(text, None, Some(at(occurred)))
+        .unwrap()
+}
+
+/// A row with `status`, as older versions wrote failed and discarded rows.
+fn save_with_status(db: &Database, text: &str, status: &str) -> TranscriptionItem {
+    let row = db.save_transcription(text, None, None).unwrap();
+    db.lock()
+        .execute(
+            "UPDATE transcriptions SET status = ? WHERE id = ?",
+            params![status, row.id],
+        )
+        .unwrap();
+    db.get_transcription_by_id(row.id).unwrap().unwrap()
 }
 
 // ---- transcriptions ----
@@ -52,33 +55,26 @@ fn saves_and_lists_transcriptions_newest_first() {
     let db = db();
     let first = save(&db, "first", "2026-09-01T10:00:00.000Z");
     let second = save(&db, "second", "2026-09-02T10:00:00.000Z");
-    let failed = db
-        .save_transcription(
-            "oops",
-            Some("oops raw"),
-            SaveTranscriptionOptions {
-                status: TranscriptionStatus::Failed,
-                error_message: Some("boom".into()),
-                error_code: Some("NETWORK".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
+    assert_eq!(first.status, TranscriptionStatus::Completed);
+    let failed = save_with_status(&db, "oops", "failed");
     assert_eq!(failed.status, TranscriptionStatus::Failed);
-    assert_eq!(failed.error_code.as_deref(), Some("NETWORK"));
-    assert_eq!(failed.raw_text.as_deref(), Some("oops raw"));
+    let discarded = save_with_status(&db, "", "discarded");
+    assert_eq!(discarded.status, TranscriptionStatus::Discarded);
 
     let visible: Vec<i64> = db
-        .get_transcriptions(50, false)
+        .get_transcriptions(50)
         .unwrap()
         .iter()
         .map(|t| t.id)
         .collect();
     assert_eq!(visible, [second.id, first.id]);
-    let all = db.get_transcriptions(50, true).unwrap();
-    assert_eq!(all.len(), 3);
-    assert_eq!(all[0].id, failed.id, "saved without a time means now");
-    assert_eq!(db.get_transcriptions(1, false).unwrap()[0].id, second.id);
+    assert_eq!(db.get_transcriptions(1).unwrap()[0].id, second.id);
+    let now = db.save_transcription("now", None, None).unwrap();
+    assert_eq!(
+        db.get_transcriptions(1).unwrap()[0].id,
+        now.id,
+        "saved without a time means now"
+    );
 }
 
 #[test]
@@ -87,32 +83,11 @@ fn rows_store_timestamps_in_one_shape() {
     let row = save(&db, "saved words", "2026-09-01T09:58:00.000Z");
     assert_eq!(row.timestamp, "2026-09-01 09:58:00.000Z");
     assert_eq!(row.occurred_at(), Some(at("2026-09-01T09:58:00Z")));
-    let plain = db
-        .save_transcription("x", None, SaveTranscriptionOptions::default())
-        .unwrap();
+    let plain = db.save_transcription("x", None, None).unwrap();
     for value in [&plain.timestamp, &plain.created_at] {
         let parsed = timestamp::parse_db_timestamp(value).unwrap();
         assert_eq!(&timestamp::format_db_timestamp(&parsed), value);
     }
-}
-
-#[test]
-fn upload_rows_list_with_their_route() {
-    let db = db();
-    let upload = db
-        .save_transcription(
-            "Imported audio transcript",
-            None,
-            SaveTranscriptionOptions {
-                route_kind: Some("upload".into()),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let rows = db.get_transcriptions(50, false).unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].id, upload.id);
-    assert_eq!(rows[0].route_kind.as_deref(), Some("upload"));
 }
 
 #[test]
@@ -126,8 +101,6 @@ fn updates_text_and_audio() {
         &TranscriptionAudioUpdate {
             has_audio: true,
             audio_duration_ms: Some(1234),
-            provider: Some("self-hosted".into()),
-            model: Some("whisper-1".into()),
         },
     )
     .unwrap();
@@ -138,7 +111,6 @@ fn updates_text_and_audio() {
     );
     assert!(got.has_audio);
     assert_eq!(got.audio_duration_ms, Some(1234));
-    assert_eq!(got.provider.as_deref(), Some("self-hosted"));
 
     assert_eq!(db.clear_all_audio_flags().unwrap(), 1);
     assert!(
@@ -163,9 +135,7 @@ fn deletes_rows() {
 // ---- transcript retention ----
 
 fn insert_aged(db: &Database, text: &str, age_days: i64) -> i64 {
-    let row = db
-        .save_transcription(text, None, SaveTranscriptionOptions::default())
-        .unwrap();
+    let row = db.save_transcription(text, None, None).unwrap();
     db.lock()
         .execute(
             "UPDATE transcriptions SET created_at = ? WHERE id = ?",
@@ -253,7 +223,7 @@ fn clearing_history_erases_transcriptions_and_counters() {
     let summary = db.get_analytics_summary().unwrap();
     assert_eq!((summary.total_words, summary.total_dictations), (0, 0));
     assert_eq!(count(&db, "SELECT COUNT(*) FROM analytics_events"), 0);
-    assert!(db.get_transcriptions(50, true).unwrap().is_empty());
+    assert!(db.get_transcriptions(50).unwrap().is_empty());
     assert!(
         db.record_analytics_event(&event("2026-08-31 10:00:00.000Z"))
             .unwrap()
@@ -356,10 +326,10 @@ fn a_reopened_database_keeps_its_rows() {
         save(&db, "persist me", "2026-09-01T10:00:00.000Z");
         db.record_analytics_event(&event("2026-09-01 10:00:00.000Z"))
             .unwrap();
-        db.get_transcriptions(10, true).unwrap()
+        db.get_transcriptions(10).unwrap()
     };
     let reopened = Database::open(&path).unwrap();
-    assert_eq!(reopened.get_transcriptions(10, true).unwrap(), rows);
+    assert_eq!(reopened.get_transcriptions(10).unwrap(), rows);
     assert_eq!(
         reopened.get_analytics_summary().unwrap().total_dictations,
         1

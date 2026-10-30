@@ -23,12 +23,9 @@ use futures::future::BoxFuture;
 use parking_lot::Mutex;
 
 use super::AudioError;
-use super::devices::{describe, find_input_device};
-use super::gate::{
-    ANALYSER_WINDOW, GATE_INTERVAL_MS, SpeechGateDecision, SpeechGateState, gate_decision,
-    window_metrics,
-};
-use super::validation::{RecordingCheck, evaluate_finished_recording};
+use super::devices::{device_name, find_input_device};
+use super::gate::{ANALYSER_WINDOW, GATE_INTERVAL_MS, SpeechGate, window_rms};
+use super::validation::is_usable_recording;
 use super::wav::encode_wav_16k;
 
 /// A prepared capture nobody takes within this window is closed, so a
@@ -57,8 +54,7 @@ fn level_rms(samples: &[f32]) -> f32 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureEvent {
     /// The device errored or vanished mid-recording. The recording is
-    /// cancelled and "Microphone unavailable" is shown
-    /// ([`super::MICROPHONE_CAPTURE_ERROR_CODE`]).
+    /// cancelled and "Microphone unavailable" is shown.
     DeviceLost { message: String },
 }
 
@@ -72,8 +68,8 @@ pub struct RecordedAudio {
     pub sample_rate: u32,
     /// Whether any audio frame was captured.
     pub received_audio_data: bool,
-    /// Speech-gate decision; `Unavailable` (fail open) when pre-roll was adopted.
-    pub speech_gate: SpeechGateDecision,
+    /// Speech-gate measurements; no windows (fail open) when pre-roll was adopted.
+    pub speech_gate: SpeechGate,
 }
 
 impl RecordedAudio {
@@ -91,9 +87,9 @@ impl RecordedAudio {
         encode_wav_16k(&self.samples, self.sample_rate)
     }
 
-    /// Validates the recording against the encoded WAV size.
-    pub fn check(&self, encoded_len: usize) -> RecordingCheck {
-        evaluate_finished_recording(Some(encoded_len), self.received_audio_data)
+    /// Whether the recording is worth transcribing, given its encoded WAV size.
+    pub fn is_usable(&self, encoded_len: usize) -> bool {
+        is_usable_recording(encoded_len, self.received_audio_data)
     }
 }
 
@@ -113,7 +109,7 @@ struct CoreState {
     phase: Phase,
     samples: Vec<f32>,
     pre_roll_stale: bool,
-    gate: Option<SpeechGateState>,
+    gate: Option<SpeechGate>,
     frames_since_window: usize,
     first_audio_at: Option<Instant>,
     last_frames_at: Option<Instant>,
@@ -214,8 +210,7 @@ impl Core {
             st.frames_since_window += frames;
             while st.frames_since_window >= window_frames {
                 st.frames_since_window -= window_frames;
-                let (rms, peak) = window_metrics(&st.samples, ANALYSER_WINDOW);
-                gate.record_window(rms, peak);
+                gate.record_window(window_rms(&st.samples, ANALYSER_WINDOW));
             }
         }
         self.level_bits
@@ -252,7 +247,7 @@ impl Core {
             st.gate = None;
         } else {
             st.samples.clear();
-            st.gate = Some(SpeechGateState::default());
+            st.gate = Some(SpeechGate::default());
         }
         st.frames_since_window = 0;
         st.phase = Phase::Recording;
@@ -348,7 +343,7 @@ impl Core {
             received_audio_data: !samples.is_empty(),
             samples,
             sample_rate: st.sample_rate,
-            speech_gate: gate_decision(st.gate.as_ref()),
+            speech_gate: st.gate.unwrap_or_default(),
         }
     }
 
@@ -517,7 +512,7 @@ fn open_stream(selector: Option<&str>, core: &Arc<Core>) -> Result<cpal::Stream,
     stream.play().map_err(map_open_error)?;
     log::info!(
         "recording stream opened: device={} rate={} channels={} format={:?}",
-        describe(&device),
+        device_name(&device),
         config.sample_rate,
         config.channels,
         supported.sample_format()
@@ -721,7 +716,6 @@ impl Recorder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audio::gate::GateReason;
     use futures::executor::block_on;
 
     fn make_core(rate: u32, channels: u16, opened_at: Instant) -> Core {
@@ -758,8 +752,8 @@ mod tests {
         core.push(tone(4800, 0.3).into_iter(), t0 + Duration::from_millis(600));
         let audio = core.finish();
         assert_eq!(audio.samples.len(), 9600);
-        assert_eq!(audio.speech_gate.reason, GateReason::Unavailable);
-        assert!(!audio.speech_gate.skip);
+        assert_eq!(audio.speech_gate.window_count, 0);
+        assert!(!audio.speech_gate.is_silence());
         assert!(audio.received_audio_data);
     }
 
@@ -782,7 +776,7 @@ mod tests {
         assert_eq!(audio.samples.len(), 48_000);
         // Ten 100 ms windows of digital silence.
         assert!(audio.speech_gate.is_silence());
-        assert_eq!(audio.speech_gate.metrics.unwrap().window_count, 10);
+        assert_eq!(audio.speech_gate.window_count, 10);
     }
 
     #[test]
@@ -800,8 +794,8 @@ mod tests {
         assert!(level > 0.1 && level < 0.2, "level {level}");
         let audio = core.finish();
         assert_eq!(audio.samples.len(), 48_000);
-        assert_eq!(audio.speech_gate.reason, GateReason::SpeechDetected);
-        assert_eq!(audio.speech_gate.metrics.unwrap().window_count, 10);
+        assert!(!audio.speech_gate.is_silence());
+        assert_eq!(audio.speech_gate.window_count, 10);
         assert_eq!(core.level(), None, "level rests after stop");
     }
 
@@ -900,13 +894,13 @@ mod tests {
             samples: vec![0.1; 48_000],
             sample_rate: 48_000,
             received_audio_data: true,
-            speech_gate: SpeechGateDecision::unavailable(),
+            speech_gate: SpeechGate::default(),
         };
         assert_eq!(audio.audio_duration(), Duration::from_secs(1));
         let wav = audio.to_wav_16k();
         assert!(crate::audio::wav::is_pcm16_mono_16k_wav(&wav));
-        assert!(audio.check(wav.len()).usable);
-        assert!(!audio.check(44).usable);
+        assert!(audio.is_usable(wav.len()));
+        assert!(!audio.is_usable(44));
     }
 
     #[test]
@@ -939,7 +933,7 @@ mod tests {
             "captured {:?} at {} Hz, gate {:?}",
             audio.audio_duration(),
             audio.sample_rate,
-            audio.speech_gate.reason
+            audio.speech_gate
         );
     }
 }

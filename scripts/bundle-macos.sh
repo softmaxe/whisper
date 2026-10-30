@@ -1,9 +1,8 @@
 #!/bin/bash
 # Builds dist/Whisper.app: the release binary, Info.plist, icons, the Swift
 # helpers and MediaRemoteAdapter from resources/bin, and ffmpeg when present
-# (see scripts/fetch-ffmpeg.sh and scripts/download-ffmpeg.sh). Signs ad hoc
-# (identity "-"), or with --release, with the persistent release identity
-# (see docs/macos-signing.md).
+# (see scripts/download-ffmpeg.sh). Signs ad hoc (identity "-"), or with
+# --release, with the persistent release identity (see docs/macos-signing.md).
 #
 # Usage: scripts/bundle-macos.sh [--release] [--skip-build]
 
