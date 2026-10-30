@@ -7,11 +7,12 @@
 //! play/pause media key, which cannot know whether anything was playing.
 //!
 //! Pause, resume and toggle run one at a time: a quick tap could otherwise
-//! run the resume before the pause recorded what it paused. All calls block
-//! (helper deadlines of 3 s); call them off the main thread.
+//! run the resume before the pause recorded what it paused. [`MediaPlayer`]
+//! calls block (helper deadlines of 3 s); [`pause_media`] and
+//! [`resume_media`] queue them on one worker thread, in call order.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 use crate::paths;
@@ -100,11 +101,6 @@ impl MediaPlayer {
             hooks,
             state: Mutex::new(State::default()),
         }
-    }
-
-    pub fn shared() -> &'static MediaPlayer {
-        static SHARED: OnceLock<MediaPlayer> = OnceLock::new();
-        SHARED.get_or_init(|| MediaPlayer::new(MediaHooks::default()))
     }
 
     /// Pauses playing media. True if a pause was sent.
@@ -211,14 +207,52 @@ impl MediaPlayer {
     }
 }
 
-/// Pauses media via the shared player.
-pub fn pause_media() -> bool {
-    MediaPlayer::shared().pause_media()
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaCommand {
+    Pause,
+    Resume,
 }
 
-/// Resumes media paused by [`pause_media`].
-pub fn resume_media() -> bool {
-    MediaPlayer::shared().resume_media()
+/// Runs commands on one worker thread in the order they were sent, so a
+/// resume never overtakes the pause it undoes.
+pub struct MediaQueue {
+    commands: mpsc::Sender<MediaCommand>,
+}
+
+impl MediaQueue {
+    pub fn spawn(player: Arc<MediaPlayer>) -> Self {
+        let (commands, received) = mpsc::channel();
+        std::thread::spawn(move || {
+            for command in received {
+                match command {
+                    MediaCommand::Pause => player.pause_media(),
+                    MediaCommand::Resume => player.resume_media(),
+                };
+            }
+        });
+        Self { commands }
+    }
+
+    pub fn shared() -> &'static MediaQueue {
+        static SHARED: OnceLock<MediaQueue> = OnceLock::new();
+        SHARED.get_or_init(|| MediaQueue::spawn(Arc::new(MediaPlayer::new(MediaHooks::default()))))
+    }
+
+    pub fn send(&self, command: MediaCommand) {
+        if self.commands.send(command).is_err() {
+            log::warn!("[media] worker stopped; dropped {command:?}");
+        }
+    }
+}
+
+/// Queues a pause on the shared player.
+pub fn pause_media() {
+    MediaQueue::shared().send(MediaCommand::Pause);
+}
+
+/// Queues a resume of what [`pause_media`] paused.
+pub fn resume_media() {
+    MediaQueue::shared().send(MediaCommand::Resume);
 }
 
 #[cfg(test)]
@@ -313,6 +347,24 @@ mod tests {
         f.results.send(output(0, "")).unwrap();
         assert!(resuming.join().unwrap());
         assert!(!lock(&f.player.state).did_pause);
+    }
+
+    #[test]
+    fn queued_resume_runs_after_the_pause_it_follows() {
+        let f = fixture(true, true);
+        let queue = MediaQueue::spawn(Arc::clone(&f.player));
+        queue.send(MediaCommand::Pause);
+        queue.send(MediaCommand::Resume);
+
+        let probe = wait_for_call(&f.calls, 0);
+        assert_eq!(tail(&probe), ["get", "--no-artwork"]);
+        f.results.send(output(0, "{\"playing\":true}")).unwrap();
+        let pause = wait_for_call(&f.calls, 1);
+        assert_eq!(tail(&pause), ["send", "1"]);
+        f.results.send(output(0, "")).unwrap();
+        let play = wait_for_call(&f.calls, 2);
+        assert_eq!(tail(&play), ["send", "0"]);
+        f.results.send(output(0, "")).unwrap();
     }
 
     #[test]

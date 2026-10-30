@@ -351,11 +351,11 @@ pub fn clear_hotkey_start_request() {
 // ---- Dictation side effects ----------------------------------------------------------------
 
 pub fn pause_media() {
-    std::thread::spawn(crate::native::media::pause_media);
+    crate::native::media::pause_media();
 }
 
 pub fn resume_media() {
-    std::thread::spawn(crate::native::media::resume_media);
+    crate::native::media::resume_media();
 }
 
 /// The cpal device name for the configured microphone, `None` for the system default.
