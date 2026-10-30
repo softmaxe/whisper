@@ -1,8 +1,7 @@
 #!/bin/bash
 # Downloads the pinned static ffmpeg build (ffmpeg-static b6.1.1, arm64) and
 # its license into resources/bin, checking both against known SHA-256 digests.
-# Release builds bundle this binary; scripts/fetch-ffmpeg.sh copies a local
-# ffmpeg instead.
+# Release builds bundle this binary.
 
 set -euo pipefail
 

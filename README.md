@@ -129,8 +129,7 @@ Bundling ffmpeg is optional. Uploads need it only for video and for audio
 other than MP3, WAV, M4A, WebM, Ogg/Opus, FLAC and AAC; without a bundled copy
 the app uses an ffmpeg from Homebrew or `PATH`.
 `scripts/download-ffmpeg.sh` fetches the pinned static build that releases
-ship, and `scripts/fetch-ffmpeg.sh [path-to-ffmpeg]` copies a local one into
-`resources/bin`. Run either before the bundle script.
+ship into `resources/bin`. Run it before the bundle script.
 
 Release signing and publishing are described in
 [docs/macos-signing.md](docs/macos-signing.md) and
@@ -145,6 +144,7 @@ Accessibility access for automatic paste and the Globe/modifier listeners.
 | --- | --- |
 | `WHISPER_USER_DATA_DIR` | Use another data directory (tests, side-by-side runs) |
 | `WHISPER_HELPERS_DIR` | Load the native helpers from another directory |
+| `WHISPER_SKIP_NATIVE_BUILD` | Skip building the native helpers in `build.rs` |
 | `RUST_LOG` | Log filter, for example `info,whisper::native=debug` |
 
 ## Layout
@@ -157,7 +157,7 @@ Accessibility access for automatic paste and the Globe/modifier listeners.
   vendored MediaRemoteAdapter
 - `locales/`: UI strings and cleanup prompts
 - `packaging/`, `scripts/`: app bundle metadata, signing and build scripts
-- `docs/`: signing, testing and maintenance notes
+- `docs/`: signing and testing notes
 
 ## License
 
