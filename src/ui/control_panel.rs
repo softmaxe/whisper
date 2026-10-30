@@ -89,6 +89,10 @@ impl ControlPanel {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        // Closing an overlay drops the input that held focus. Without a focused
+        // element, actions never reach this view's listeners, so take focus back.
+        cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
+            .detach();
         let overlays = Overlays::global(cx);
         cx.observe(&overlays, |_, _, cx| cx.notify()).detach();
         let history = cx.new(HistoryView::new);
