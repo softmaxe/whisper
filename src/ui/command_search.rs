@@ -93,7 +93,6 @@ impl CommandSearch {
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(item) = self.results(cx).get(index) {
             cx.emit(CommandSearchEvent::Selected(item.id));
-            close_custom(cx);
         }
     }
 

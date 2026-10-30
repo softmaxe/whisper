@@ -153,7 +153,10 @@ impl ControlPanel {
         cx.subscribe(
             &search,
             |this, _, event: &CommandSearchEvent, cx| match event {
+                // Closed here, not by the palette: dropping it before the event
+                // is delivered would drop this listener with it.
                 CommandSearchEvent::Selected(id) => {
+                    super::overlays::close_custom(cx);
                     this.set_view(PanelView::Home, cx);
                     let id = *id;
                     this.history.update(cx, |h, cx| h.highlight(id, cx));
