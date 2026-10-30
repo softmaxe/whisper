@@ -23,8 +23,13 @@ use super::theme::{
     TEXT_CAPTION, TEXT_READING, TEXT_SMALL, ease_out, ease_snap, progress, tabular_nums,
 };
 
-/// How long a new or picked row stays tinted.
+/// How long a new row stays tinted.
 const FLASH: Duration = Duration::from_millis(1600);
+/// How long the rest of the list stays dimmed around a row picked in the
+/// search palette, fades included.
+const SPOTLIGHT: Duration = Duration::from_millis(2300);
+/// How much of each other row's opacity the spotlight takes away.
+const SPOTLIGHT_DIM: f32 = 0.72;
 
 /// The placeholder row shown while a Dictation is transcribing.
 struct PendingRow {
@@ -34,9 +39,27 @@ struct PendingRow {
     arrived: bool,
 }
 
+/// A row picked in the search palette, held in focus until the spotlight ends.
+struct Spotlight {
+    id: i64,
+    since: Instant,
+    /// The row's bounds are unknown until it is laid out, so centering waits
+    /// for its prepaint.
+    center_pending: bool,
+}
+
+/// The panel's eased scroll to a picked row.
+struct Glide {
+    from: Pixels,
+    to: Pixels,
+    since: Instant,
+}
+
 pub struct HistoryView {
-    /// A row picked in the search palette flashes briefly so it is easy to find.
-    highlighted: Option<(i64, Instant)>,
+    /// The control panel's scroll area, which holds this view.
+    scroll: ScrollHandle,
+    spotlight: Option<Spotlight>,
+    glide: Option<Glide>,
     expanded: HashSet<i64>,
     retrying: HashSet<i64>,
     open_menu: Option<i64>,
@@ -91,7 +114,7 @@ pub fn format_date_group(date: NaiveDate) -> String {
 }
 
 impl HistoryView {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(scroll: ScrollHandle, cx: &mut Context<Self>) -> Self {
         let state = AppState::global(cx);
         // Dictation phase changes drive the transcribing placeholder. Tracked
         // here rather than in render so it starts before the transcript is
@@ -108,7 +131,9 @@ impl HistoryView {
             Self::reload(cx);
         }
         Self {
-            highlighted: None,
+            scroll,
+            spotlight: None,
+            glide: None,
             expanded: HashSet::new(),
             retrying: HashSet::new(),
             open_menu: None,
@@ -120,8 +145,56 @@ impl HistoryView {
     }
 
     pub fn highlight(&mut self, id: i64, cx: &mut Context<Self>) {
-        self.highlighted = Some((id, Instant::now()));
+        self.spotlight = Some(Spotlight {
+            id,
+            since: Instant::now(),
+            center_pending: true,
+        });
         cx.notify();
+    }
+
+    /// Starts the scroll that centers a picked row in the panel. Runs during
+    /// prepaint, where the panel's scroll bounds are current.
+    fn center_row(&mut self, row: Bounds<Pixels>, reduce_motion: bool) {
+        let Some(spotlight) = self.spotlight.as_mut() else {
+            return;
+        };
+        spotlight.center_pending = false;
+        let offset = self.scroll.offset();
+        let shift = self.scroll.bounds().center().y - row.center().y;
+        let to = (offset.y + shift).clamp(-self.scroll.max_offset().y, px(0.));
+        if reduce_motion {
+            self.scroll.set_offset(point(offset.x, to));
+        } else {
+            self.glide = Some(Glide {
+                from: offset.y,
+                to,
+                since: Instant::now(),
+            });
+        }
+    }
+
+    fn advance_glide(&mut self) {
+        let Some(glide) = &self.glide else {
+            return;
+        };
+        let t = ease_out(progress(glide.since.elapsed(), DUR_SHEET));
+        let y = glide.from + (glide.to - glide.from) * t;
+        self.scroll.set_offset(point(self.scroll.offset().x, y));
+        if t >= 1. {
+            self.glide = None;
+        }
+    }
+
+    /// A click ends the spotlight early, through its normal fade.
+    fn release_spotlight(&mut self, cx: &mut Context<Self>) {
+        let fade = Duration::from_millis(DUR_BASE);
+        if let Some(spotlight) = self.spotlight.as_mut()
+            && spotlight.since.elapsed() < SPOTLIGHT - fade
+        {
+            spotlight.since = Instant::now() - (SPOTLIGHT - fade);
+            cx.notify();
+        }
     }
 
     fn reload(cx: &mut App) {
@@ -408,19 +481,49 @@ impl HistoryView {
                     .when(menu_open, |d| d.child(self.render_menu(item, cx))),
             );
 
-        let picked = self
-            .highlighted
-            .filter(|(hid, at)| *hid == id && at.elapsed() < FLASH)
-            .map(|(_, at)| 0.12 * (1. - progress(at.elapsed(), FLASH.as_millis() as u64)));
         // A new transcript tints in and eases out over the flash.
         let landed = arrived.map(|e| 0.09 * (1. - ease_out(progress(e, FLASH.as_millis() as u64))));
-        let flash = picked.or(landed);
-        if flash.is_some() {
+        if landed.is_some() {
             window.request_animation_frame();
         }
+        let reduce_motion = cx.reduce_motion();
+        let spotlight = self.spotlight.as_ref().map(|s| {
+            (
+                s.id == id,
+                spotlight_level(s.since.elapsed(), reduce_motion),
+            )
+        });
+        let center = self
+            .spotlight
+            .as_ref()
+            .is_some_and(|s| s.id == id && s.center_pending);
+        let this = cx.weak_entity();
         div()
             .id(("history-row", id as usize))
-            .when_some(flash, |d, f| d.bg(p.primary.opacity(f)))
+            .relative()
+            .when_some(landed, |d, f| d.bg(p.primary.opacity(f)))
+            // The picked row keeps the palette's selection tint; the rest recede.
+            .when_some(spotlight, |d, (picked, level)| {
+                if picked {
+                    d.bg(p.foreground.opacity(0.09 * level))
+                } else {
+                    d.opacity(1. - SPOTLIGHT_DIM * level)
+                }
+            })
+            .when(center, |d| {
+                d.child(
+                    canvas(
+                        move |bounds, _, cx| {
+                            let _ = this.update(cx, |this, _| {
+                                this.center_row(bounds, reduce_motion);
+                            });
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.hovered_row = Some(id);
@@ -652,6 +755,12 @@ impl HistoryView {
 impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
+        self.spotlight.take_if(|s| s.since.elapsed() >= SPOTLIGHT);
+        self.advance_glide();
+        if self.spotlight.is_some() || self.glide.is_some() {
+            window.request_animation_frame();
+        }
+        let spotlit = self.spotlight.is_some();
         let state = AppState::global(cx);
         let (history, retention, hotkey) = {
             let s = state.read(cx);
@@ -779,14 +888,36 @@ impl Render for HistoryView {
             content = content.child(list);
         }
 
-        div().px(px(24.)).pt(px(16.)).pb(px(48.)).child(
-            div()
-                .mx_auto()
-                .max_w(px(READING_MAX_WIDTH))
-                .flex()
-                .child(content),
-        )
+        div()
+            .px(px(24.))
+            .pt(px(16.))
+            .pb(px(48.))
+            .when(spotlit, |d| {
+                d.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _, _, cx| this.release_spotlight(cx)),
+                )
+            })
+            .child(
+                div()
+                    .mx_auto()
+                    .max_w(px(READING_MAX_WIDTH))
+                    .flex()
+                    .child(content),
+            )
     }
+}
+
+/// How strong the spotlight is after `elapsed`: it fades in, holds, and fades
+/// out before [`SPOTLIGHT`] ends. Reduced motion holds it without the fades.
+fn spotlight_level(elapsed: Duration, reduce_motion: bool) -> f32 {
+    if reduce_motion {
+        return 1.;
+    }
+    let fade = Duration::from_millis(DUR_BASE);
+    let fade_in = ease_out(progress(elapsed, DUR_BASE));
+    let fade_out = ease_out(progress(elapsed.saturating_sub(SPOTLIGHT - fade), DUR_BASE));
+    fade_in * (1. - fade_out)
 }
 
 fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
@@ -853,4 +984,21 @@ fn empty_card(keys: Div, p: &Palette) -> AnyElement {
                 .child(t("controlPanel.history.toStart")),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Duration, SPOTLIGHT, spotlight_level};
+
+    #[test]
+    fn spotlight_fades_in_holds_and_fades_out() {
+        assert_eq!(spotlight_level(Duration::ZERO, false), 0.);
+        assert_eq!(spotlight_level(SPOTLIGHT / 2, false), 1.);
+        assert_eq!(spotlight_level(SPOTLIGHT, false), 0.);
+    }
+
+    #[test]
+    fn spotlight_skips_the_fades_with_reduced_motion() {
+        assert_eq!(spotlight_level(Duration::ZERO, true), 1.);
+    }
 }

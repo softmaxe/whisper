@@ -95,7 +95,11 @@ impl ControlPanel {
             .detach();
         let overlays = Overlays::global(cx);
         cx.observe(&overlays, |_, _, cx| cx.notify()).detach();
-        let history = cx.new(HistoryView::new);
+        let scroll = ScrollHandle::new();
+        let history = {
+            let scroll = scroll.clone();
+            cx.new(|cx| HistoryView::new(scroll, cx))
+        };
         let upload = cx.new(UploadView::new);
         cx.subscribe_in(
             &upload,
@@ -120,7 +124,7 @@ impl ControlPanel {
             dictionary: None,
             upload,
             settings: None,
-            scroll: ScrollHandle::new(),
+            scroll,
         }
     }
 
