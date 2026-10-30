@@ -23,7 +23,7 @@ use crate::text::url::{build_api_url, normalize_base_url};
 use super::components::{
     Button, ButtonSize, ButtonVariant, NavSurface, Toggle, backdrop, dialog_shadow, icon, nav_row,
     panel_row, section_header, segment, segmented_track, settings_field, settings_field_tagged,
-    settings_panel, settings_row, settings_section,
+    settings_panel, settings_row, settings_section, status_label,
 };
 use super::hotkey_input::HotkeyListInput;
 use super::overlays::{DialogRequest, Toast, show_dialog, show_toast};
@@ -944,6 +944,16 @@ impl SettingsModal {
         let p = cx.palette();
         let s = settings(cx);
 
+        let mut microphone_rows = vec![
+            panel_row()
+                .child(self.render_microphone(cx))
+                .into_any_element(),
+        ];
+        if let Some((label, device)) = self.microphone_status(cx) {
+            microphone_rows
+                .push(settings_row(label, None, status_label(device, &p), &p).into_any_element());
+        }
+
         let theme_switch = {
             let mut track = segmented_track(&p).items_center().gap(px(2.));
             for (value, icon_name, key) in [
@@ -1204,11 +1214,7 @@ impl SettingsModal {
             .child(settings_section(
                 t("settings.general.microphone.title"),
                 Some(t("settings.general.microphone.description").into()),
-                vec![
-                    panel_row()
-                        .child(self.render_microphone(cx))
-                        .into_any_element(),
-                ],
+                microphone_rows,
                 &p,
             ))
             .child(settings_section(
@@ -1234,113 +1240,79 @@ impl SettingsModal {
         let p = cx.palette();
         let s = settings(cx);
         let is_auto = s.microphone_selection_mode == MicrophoneSelectionMode::Auto;
-        let built_in = self.mic_devices.iter().find(|d| d.is_built_in).cloned();
-        let resolved_label = if is_auto {
-            let lid_closed = backend::lid_closed().unwrap_or(false);
-            if !lid_closed {
-                built_in.as_ref().map(|d| d.label.clone())
-            } else {
-                None
-            }
-            .or_else(|| self.mic_default.clone())
-            .unwrap_or_else(|| t("microphoneSettings.systemDefault"))
-        } else {
-            String::new()
-        };
-        let show_success = is_auto
-            || (s.microphone_selection_mode == MicrophoneSelectionMode::BuiltIn
-                && built_in.is_some());
 
         div()
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .gap(px(12.))
             .child(
                 div()
                     .flex()
-                    .flex_col()
-                    .gap(px(12.))
+                    .items_center()
+                    .gap(px(8.))
                     .child(
                         div()
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.foreground)
+                            .child(t("microphoneSettings.inputDevice")),
+                    )
+                    .child(
+                        div()
+                            .id("refresh-mics")
+                            .size(px(28.))
                             .flex()
                             .items_center()
-                            .gap(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(TEXT_BODY))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(p.foreground)
-                                    .child(t("microphoneSettings.inputDevice")),
-                            )
-                            .child(
-                                div()
-                                    .id("refresh-mics")
-                                    .size(px(28.))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded(px(RADIUS_SM))
-                                    .cursor_pointer()
-                                    .hover(|s| {
-                                        s.bg(if p.dark {
-                                            p.white.opacity(0.08)
-                                        } else {
-                                            p.muted
-                                        })
-                                    })
-                                    .child(icon("refresh-cw", 14., p.foreground))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.reload_microphones(cx)),
-                                    ),
-                            ),
-                    )
-                    .child(self.microphone.clone())
-                    .child(
-                        div()
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.muted_foreground)
-                            .child(t("microphoneSettings.auto.description")),
-                    )
-                    .when(!is_auto, |d| {
-                        d.child(
-                            div()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground)
-                                .child(t("microphoneSettings.helpText")),
-                        )
-                    }),
+                            .justify_center()
+                            .rounded(px(RADIUS_SM))
+                            .cursor_pointer()
+                            .hover(|s| {
+                                s.bg(if p.dark {
+                                    p.white.opacity(0.08)
+                                } else {
+                                    p.muted
+                                })
+                            })
+                            .child(icon("refresh-cw", 14., p.foreground))
+                            .on_click(cx.listener(|this, _, _, cx| this.reload_microphones(cx))),
+                    ),
             )
-            .when(show_success, |d| {
-                let label = if is_auto {
-                    t_with(
-                        "microphoneSettings.auto.preferredDevice",
-                        &[("device", &resolved_label)],
-                    )
-                } else {
-                    t_with(
-                        "microphoneSettings.using",
-                        &[("device", &built_in.map(|b| b.label).unwrap_or_default())],
-                    )
-                };
+            .child(self.microphone.clone())
+            .child(
+                div()
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(p.muted_foreground)
+                    .child(t("microphoneSettings.auto.description")),
+            )
+            .when(!is_auto, |d| {
                 d.child(
                     div()
-                        .p(px(12.))
-                        .rounded(px(RADIUS_LG))
-                        .border_1()
-                        .border_color(p.success.opacity(0.3))
-                        .bg(p.success.opacity(if p.dark { 0.2 } else { 0.1 }))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(icon("mic", 16., p.success))
-                        .child(
-                            div()
-                                .text_size(px(TEXT_BODY))
-                                .text_color(p.success)
-                                .child(label),
-                        ),
+                        .text_size(px(TEXT_SMALL))
+                        .text_color(p.muted_foreground)
+                        .child(t("microphoneSettings.helpText")),
                 )
             })
+    }
+
+    /// The row label and device name to report under the picker, when the
+    /// selection resolves to a device without the user reading the dropdown.
+    fn microphone_status(&self, cx: &App) -> Option<(String, String)> {
+        let built_in = self.mic_devices.iter().find(|d| d.is_built_in);
+        match settings(cx).microphone_selection_mode {
+            MicrophoneSelectionMode::Auto => {
+                let lid_closed = backend::lid_closed().unwrap_or(false);
+                let device = built_in
+                    .filter(|_| !lid_closed)
+                    .map(|d| d.label.clone())
+                    .or_else(|| self.mic_default.clone())
+                    .unwrap_or_else(|| t("microphoneSettings.systemDefault"));
+                Some((t("microphoneSettings.auto.preferredDevice"), device))
+            }
+            MicrophoneSelectionMode::BuiltIn => {
+                built_in.map(|d| (t("microphoneSettings.using"), d.label.clone()))
+            }
+            MicrophoneSelectionMode::Specific => None,
+        }
     }
 
     fn render_hotkeys(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -2153,46 +2125,37 @@ impl SettingsModal {
                 ],
                 &p,
             ))))
-            .child(block(
-                div()
-                    .child(section_header(
-                        t("settings.permissions.title"),
-                        Some(t("settings.permissions.description").into()),
+            .child(block(settings_section(
+                t("settings.permissions.title"),
+                Some(t("settings.permissions.description").into()),
+                vec![
+                    permission_row(
+                        "perm-mic",
+                        t("settings.permissions.microphoneTitle"),
+                        t("settings.permissions.microphoneDescription"),
+                        self.mic_permission,
+                        cx.listener(|this, _, _, cx| {
+                            backend::request_microphone_permission();
+                            this.mic_permission = backend::microphone_permission_granted();
+                            cx.notify();
+                        }),
                         &p,
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .child(permission_card(
-                                "perm-mic",
-                                "mic",
-                                t("settings.permissions.microphoneTitle"),
-                                t("settings.permissions.microphoneDescription"),
-                                self.mic_permission,
-                                cx.listener(|this, _, _, cx| {
-                                    backend::request_microphone_permission();
-                                    this.mic_permission = backend::microphone_permission_granted();
-                                    cx.notify();
-                                }),
-                                &p,
-                            ))
-                            .child(permission_card(
-                                "perm-ax",
-                                "shield",
-                                t("settings.permissions.accessibilityTitle"),
-                                t("settings.permissions.accessibilityDescription"),
-                                self.accessibility_permission,
-                                cx.listener(|this, _, _, cx| {
-                                    backend::request_accessibility_permission();
-                                    this.accessibility_permission = backend::accessibility_granted();
-                                    cx.notify();
-                                }),
-                                &p,
-                            )),
                     ),
-            ))
+                    permission_row(
+                        "perm-ax",
+                        t("settings.permissions.accessibilityTitle"),
+                        t("settings.permissions.accessibilityDescription"),
+                        self.accessibility_permission,
+                        cx.listener(|this, _, _, cx| {
+                            backend::request_accessibility_permission();
+                            this.accessibility_permission = backend::accessibility_granted();
+                            cx.notify();
+                        }),
+                        &p,
+                    ),
+                ],
+                &p,
+            )))
             .child(block(
                 settings_section(
                     t("settings.permissions.troubleshootingTitle"),
@@ -2490,76 +2453,24 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
     table.into_any_element()
 }
 
-fn permission_card(
+fn permission_row(
     id: &'static str,
-    icon_name: &'static str,
     title: String,
     description: String,
     granted: bool,
     on_request: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     p: &Palette,
-) -> impl IntoElement {
-    div()
-        .p(px(12.))
-        .rounded(px(RADIUS_MD))
-        .border_1()
-        .when(granted, |d| {
-            d.bg(p.success.opacity(0.05))
-                .border_color(p.success.opacity(if p.dark { 0.15 } else { 0.2 }))
-        })
-        .when(!granted, |d| d.bg(p.surface_1).border_color(p.border))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .size(px(32.))
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(RADIUS_MD))
-                        .bg(if granted {
-                            p.success.opacity(if p.dark { 0.15 } else { 0.1 })
-                        } else {
-                            p.primary.opacity(if p.dark { 0.15 } else { 0.1 })
-                        })
-                        .child(if granted {
-                            icon("check", 16., p.success)
-                        } else {
-                            icon(icon_name, 16., p.primary)
-                        }),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .text_size(px(TEXT_SMALL))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.foreground)
-                                .child(title),
-                        )
-                        .child(
-                            div()
-                                .mt(px(2.))
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground)
-                                .child(description),
-                        ),
-                )
-                .when(!granted, |d| {
-                    d.child(
-                        Button::new(id)
-                            .label(t("settings.permissions.grantAccess"))
-                            .size(ButtonSize::Sm)
-                            .on_click(on_request),
-                    )
-                }),
-        )
+) -> AnyElement {
+    let control = if granted {
+        status_label(t("settings.permissions.granted"), p).into_any_element()
+    } else {
+        Button::new(id)
+            .label(t("settings.permissions.grantAccess"))
+            .size(ButtonSize::Sm)
+            .on_click(on_request)
+            .into_any_element()
+    };
+    settings_row(title, Some(description.into()), control, p).into_any_element()
 }
 
 impl Focusable for SettingsModal {
