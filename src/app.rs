@@ -51,6 +51,7 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<AnyWindowHandle> {
             crate::native::dock::set_control_panel_visible(false);
             true
         });
+        ui::theme::follow_system_appearance(window);
         cx.new(|cx| ControlPanel::new(window, cx))
     })?;
     Ok(handle)
@@ -119,7 +120,10 @@ fn open_pill_window(cx: &mut App) -> anyhow::Result<()> {
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     };
-    cx.open_window(options, |window, cx| cx.new(|cx| PillView::new(window, cx)))?;
+    cx.open_window(options, |window, cx| {
+        ui::theme::follow_system_appearance(window);
+        cx.new(|cx| PillView::new(window, cx))
+    })?;
     Ok(())
 }
 

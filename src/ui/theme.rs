@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use gpui_kit::{App, FontFeatures, Global, Hsla, WindowAppearance, rgb};
+use gpui_kit::{App, FontFeatures, Global, Hsla, Window, WindowAppearance, rgb};
 
 use crate::settings::ThemePreference;
 
@@ -143,6 +143,8 @@ impl Palette {
 /// The resolved theme, kept as a GPUI global.
 pub struct Theme {
     pub preference: ThemePreference,
+    /// Whether `palette` is the dark one.
+    pub dark: bool,
     pub palette: Palette,
 }
 
@@ -163,6 +165,7 @@ pub fn init(preference: ThemePreference, cx: &mut App) {
     let dark = resolve_dark(preference, cx.window_appearance());
     cx.set_global(Theme {
         preference,
+        dark,
         palette: if dark {
             Palette::dark()
         } else {
@@ -176,12 +179,29 @@ pub fn apply(preference: ThemePreference, cx: &mut App) {
     let dark = resolve_dark(preference, cx.window_appearance());
     let theme = cx.global_mut::<Theme>();
     theme.preference = preference;
+    theme.dark = dark;
     theme.palette = if dark {
         Palette::dark()
     } else {
         Palette::light()
     };
     cx.refresh_windows();
+}
+
+/// Keeps an Auto theme in step with the system appearance while `window`
+/// lives. Every app window registers, so a change lands even when the
+/// control panel is closed.
+pub fn follow_system_appearance(window: &Window) {
+    window
+        .observe_window_appearance(|_, cx| {
+            let theme = cx.global::<Theme>();
+            let preference = theme.preference;
+            let dark = resolve_dark(preference, cx.window_appearance());
+            if preference == ThemePreference::Auto && dark != theme.dark {
+                apply(preference, cx);
+            }
+        })
+        .detach();
 }
 
 pub trait PaletteExt {
