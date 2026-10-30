@@ -571,6 +571,20 @@ pub fn label_block(
         })
 }
 
+/// A healthy state: a small success dot beside a muted label. Filled banners
+/// stay reserved for states that need the user's attention.
+pub fn status_label(label: impl Into<SharedString>, p: &Palette) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .text_size(px(TEXT_SMALL))
+        .line_height(px(LINE_SMALL))
+        .text_color(p.muted_foreground)
+        .child(div().size(px(6.)).flex_none().rounded_full().bg(p.success))
+        .child(label.into())
+}
+
 /// `SettingsField`: a label above a full-width control.
 pub fn settings_field(
     label: impl Into<SharedString>,

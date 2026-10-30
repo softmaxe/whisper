@@ -117,6 +117,7 @@
         "title": "Reset Accessibility Permissions"
       },
       "grantAccess": "Grant Access",
+      "granted": "Granted",
       "title": "Permissions",
       "troubleshoot": "Troubleshoot",
       "troubleshootingTitle": "Troubleshooting"
@@ -328,11 +329,11 @@
     "selectPlaceholder": "Select a microphone",
     "systemDefault": "System Default",
     "unknownDevice": "Unknown Device",
-    "using": "Using: {{device}}",
+    "using": "Current device",
     "auto": {
       "label": "Auto",
       "description": "Auto uses the built-in microphone with the lid open. When closed, it prefers iPhone, then another external microphone. If none is available, it uses the system default.",
-      "preferredDevice": "Preferred: {{device}}"
+      "preferredDevice": "Preferred device"
     },
     "builtInDevice": "Built-in Microphone",
     "unavailableDevice": "{{device}} (Unavailable)"
