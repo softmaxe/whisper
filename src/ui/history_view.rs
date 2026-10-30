@@ -315,7 +315,8 @@ impl HistoryView {
     ) -> AnyElement {
         let p = cx.palette();
         let id = item.id;
-        let raw_text = item.raw_text.clone();
+        // A raw transcript identical to the text has nothing to reveal.
+        let raw_text = item.raw_text.clone().filter(|raw| *raw != item.text);
         let expanded = self.expanded.contains(&id);
         let retrying = self.retrying.contains(&id);
         let menu_open = self.open_menu == Some(id);
@@ -347,69 +348,77 @@ impl HistoryView {
             .child(item.text.clone())
             .into_any_element();
 
-        let raw_section = (raw_text.is_some() && raw_progress > 0.001).then(|| {
-            let raw = raw_text.clone().unwrap_or_default();
-            let same = raw == item.text;
+        // The toggle stays in place so the same click opens and closes the panel.
+        let raw_toggle = raw_text.as_ref().map(|raw| {
             let copy_raw = raw.clone();
+            div()
+                .mt(px(4.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .id(("raw-toggle", id as usize))
+                        .h(px(24.))
+                        .ml(px(-6.))
+                        .px(px(6.))
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .rounded(px(RADIUS_MD))
+                        .text_size(px(TEXT_SMALL))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.muted_foreground)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(p.hover_wash(0.06)).text_color(p.foreground))
+                        .child(t("controlPanel.history.rawTranscript"))
+                        .child(
+                            icon("chevron-down", 10., p.muted_foreground).with_transformation(
+                                Transformation::rotate(radians(
+                                    raw_progress * std::f32::consts::PI,
+                                )),
+                            ),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.expanded.remove(&id) {
+                                this.expanded.insert(id);
+                            }
+                            cx.notify();
+                        })),
+                )
+                .when(raw_progress > 0.001, |d| {
+                    d.child(
+                        div()
+                            .id(("copy-raw", id as usize))
+                            .size(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(RADIUS_MD))
+                            .opacity(raw_progress)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(p.hover_wash(0.06)))
+                            .child(icon("copy", 12., p.muted_foreground))
+                            .on_click(move |_, _, cx| copy_with_toast(copy_raw.clone(), cx)),
+                    )
+                })
+        });
+
+        let raw_section = raw_text.filter(|_| raw_progress > 0.001).map(|raw| {
             div()
                 .overflow_hidden()
                 .opacity(raw_progress)
-                .max_h(px(400. * raw_progress))
+                // The cap only animates the height; a settled panel fits its text.
+                .when(raw_progress < 0.999, |d| d.max_h(px(400. * raw_progress)))
                 .child(
                     div()
                         .relative()
                         .top(px(3. * (1. - raw_progress)))
-                        .mt(px(8.))
-                        .pt(px(8.))
-                        .border_t_1()
-                        .border_color(p.border.opacity(0.7))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(
-                                    div()
-                                        .text_size(px(TEXT_SMALL))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(p.muted_foreground)
-                                        .child(t("controlPanel.history.rawTranscript")),
-                                )
-                                .child(
-                                    div()
-                                        .id(("copy-raw", id as usize))
-                                        .size(px(24.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(px(RADIUS_MD))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(p.hover_wash(0.06)))
-                                        .child(icon("copy", 12., p.muted_foreground))
-                                        .on_click(move |_, _, cx| {
-                                            copy_with_toast(copy_raw.clone(), cx)
-                                        }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .mt(px(4.))
-                                .font_family(FONT_VOICE)
-                                .text_size(px(TEXT_BODY))
-                                .line_height(px(20.))
-                                .text_color(p.muted_foreground.opacity(0.8))
-                                .child(raw),
-                        )
-                        .when(same, |d| {
-                            d.child(
-                                div()
-                                    .mt(px(4.))
-                                    .text_size(px(TEXT_CAPTION))
-                                    .italic()
-                                    .text_color(p.muted_foreground.opacity(0.7))
-                                    .child(t("controlPanel.history.noAiProcessing")),
-                            )
-                        }),
+                        .font_family(FONT_VOICE)
+                        .text_size(px(TEXT_BODY))
+                        .line_height(px(20.))
+                        .text_color(p.muted_foreground.opacity(0.8))
+                        .child(raw),
                 )
         });
 
@@ -554,7 +563,14 @@ impl HistoryView {
                     .text_color(p.muted_foreground.opacity(0.8))
                     .child(format_time(item)),
             )
-            .child(div().flex_1().min_w_0().child(body).children(raw_section))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(body)
+                    .children(raw_toggle)
+                    .children(raw_section),
+            )
             .child(actions)
             .into_any_element()
     }
@@ -657,23 +673,15 @@ impl HistoryView {
                 false,
             ));
         }
-        if item.raw_text.is_some() {
-            entries.push((
-                "file-text",
-                t("controlPanel.history.viewRawTranscript"),
-                1,
-                false,
-            ));
-        }
         if item.has_audio {
             entries.push((
                 "folder-open",
                 t("controlPanel.history.showInFolder"),
-                2,
+                1,
                 false,
             ));
         }
-        entries.push(("trash2", t("controlPanel.history.deleteItem"), 3, true));
+        entries.push(("trash2", t("controlPanel.history.deleteItem"), 2, true));
 
         let mut menu = div()
             .id(("row-menu", id as usize))
@@ -729,12 +737,7 @@ impl HistoryView {
                         this.open_menu = None;
                         match action {
                             0 => this.retry(id, cx),
-                            1 => {
-                                if !this.expanded.remove(&id) {
-                                    this.expanded.insert(id);
-                                }
-                            }
-                            2 => Self::show_in_folder(id, cx),
+                            1 => Self::show_in_folder(id, cx),
                             _ => Self::delete(id, cx),
                         }
                         cx.notify();

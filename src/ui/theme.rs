@@ -163,15 +163,24 @@ pub fn resolve_dark(preference: ThemePreference, appearance: WindowAppearance) -
 
 pub fn init(preference: ThemePreference, cx: &mut App) {
     let dark = resolve_dark(preference, cx.window_appearance());
+    let palette = if dark {
+        Palette::dark()
+    } else {
+        Palette::light()
+    };
     cx.set_global(Theme {
         preference,
         dark,
-        palette: if dark {
-            Palette::dark()
-        } else {
-            Palette::light()
-        },
+        palette,
     });
+    sync_component_theme(&palette, cx);
+}
+
+/// GPUI Kit keeps its own theme, which stays on its light default and paints
+/// the input caret near-black. Point the caret at this palette's text color.
+fn sync_component_theme(palette: &Palette, cx: &mut App) {
+    let caret = palette.foreground;
+    gpui_kit::component::Theme::update(cx, |theme| theme.caret = caret);
 }
 
 /// Re-resolves the palette after a preference or system appearance change.
@@ -185,6 +194,8 @@ pub fn apply(preference: ThemePreference, cx: &mut App) {
     } else {
         Palette::light()
     };
+    let palette = theme.palette;
+    sync_component_theme(&palette, cx);
     cx.refresh_windows();
 }
 
