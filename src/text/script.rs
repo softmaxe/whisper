@@ -13,6 +13,11 @@ pub(crate) fn is_han(c: char) -> bool {
         | '\u{30000}'..='\u{323AF}')
 }
 
+/// Scripts written without spaces between words.
+pub(crate) fn is_unspaced_script(c: char) -> bool {
+    is_han(c) || is_hiragana(c) || is_katakana(c)
+}
+
 pub(crate) fn is_hiragana(c: char) -> bool {
     matches!(c,
         '\u{3041}'..='\u{3096}' | '\u{309D}'..='\u{309F}' | '\u{1B001}'..='\u{1B11F}'

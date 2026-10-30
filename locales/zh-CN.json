@@ -41,7 +41,7 @@
     },
     "dictionary": {
       "autoLearnTitle": "从纠正中自动学习",
-      "autoLearnDescription": "当你在目标应用中纠正转录时，纠正后的词语会自动添加到你的词典中。"
+      "autoLearnDescription": "当你在目标应用中纠正转录时，Whisper 会记住这个词以及它被误听成了什么，并自动修正重复出现的错误。"
     },
     "general": {
       "appearance": {

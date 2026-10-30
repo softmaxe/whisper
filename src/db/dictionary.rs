@@ -4,17 +4,17 @@
 //! which touches only the words it names. Words are unique case-insensitively.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use regex::Regex;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 use unicode_normalization::UnicodeNormalization;
 
 use super::Database;
 use super::timestamp::{now_db_timestamp, parse_db_timestamp};
 use crate::analytics::trim_text;
+use crate::text::correction_learner::{Correction, KnownCorrection};
+use crate::text::term_match::find_term;
 
 /// Who added a dictionary word. Manual words outrank learned ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,12 +62,6 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Freshness tiers by last use: within a day, within two weeks, older.
 const FRESHNESS_TIER_LIMITS_MS: [i64; 2] = [DAY_MS, 14 * DAY_MS];
 
-/// Scripts written without spaces, where a term sits inside a longer run of
-/// letters and a word-boundary match would never find it.
-static UNSPACED_SCRIPT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]").expect("valid regex")
-});
-
 /// Case-insensitive occurrences of each dictionary word in `text`, keyed by
 /// the word as given and in input order; words that do not occur are omitted.
 pub fn count_dictionary_word_uses<S: AsRef<str>>(words: &[S], text: &str) -> Vec<(String, usize)> {
@@ -82,16 +76,7 @@ pub fn count_dictionary_word_uses<S: AsRef<str>>(words: &[S], text: &str) -> Vec
         if needle.is_empty() {
             continue;
         }
-        let escaped = fancy_regex::escape(&needle);
-        let pattern = if UNSPACED_SCRIPT.is_match(&needle) {
-            escaped.into_owned()
-        } else {
-            format!(r"(?<![\p{{L}}\p{{N}}_]){escaped}(?![\p{{L}}\p{{N}}_])")
-        };
-        let Ok(re) = fancy_regex::Regex::new(&pattern) else {
-            continue;
-        };
-        let count = re.find_iter(&haystack).filter(|m| m.is_ok()).count();
+        let count = find_term(&haystack, &needle).len();
         if count == 0 {
             continue;
         }
@@ -225,7 +210,35 @@ fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<bo
     let deleted = tx
         .prepare_cached("DELETE FROM custom_dictionary WHERE id = ?")?
         .execute([existing.id])?;
-    Ok(deleted > 0)
+    if deleted == 0 {
+        return Ok(false);
+    }
+    // What the user took out stays out, and its mishearings stop applying.
+    tx.prepare_cached("DELETE FROM dictionary_corrections WHERE term = ?")?
+        .execute([&existing.word])?;
+    tx.prepare_cached("INSERT OR IGNORE INTO dictionary_rejected_words (word) VALUES (?)")?
+        .execute([&existing.word])?;
+    Ok(true)
+}
+
+/// Counts one sighting of `correction` and returns the sightings of its term.
+/// A correction that reverses a stored one replaces it.
+fn record_correction(tx: &Transaction<'_>, correction: &Correction) -> Result<i64> {
+    let Correction { misheard, term, .. } = correction;
+    if misheard.to_lowercase() != term.to_lowercase() {
+        tx.prepare_cached("DELETE FROM dictionary_corrections WHERE misheard = ? AND term = ?")?
+            .execute(params![term, misheard])?;
+    }
+    tx.prepare_cached(
+        "INSERT INTO dictionary_corrections (misheard, term) VALUES (?, ?)
+         ON CONFLICT (misheard, term) DO UPDATE SET
+           count = count + 1, term = excluded.term, updated_at = excluded.updated_at",
+    )?
+    .execute(params![misheard, term])?;
+    let sightings = tx
+        .prepare_cached("SELECT SUM(count) FROM dictionary_corrections WHERE term = ?")?
+        .query_row([term], |row| row.get(0))?;
+    Ok(sightings)
 }
 
 impl Database {
@@ -340,12 +353,125 @@ impl Database {
             }
         }
         for (lower, word) in &additions {
+            if source == DictionarySource::Manual {
+                tx.prepare_cached("DELETE FROM dictionary_rejected_words WHERE word = ?")?
+                    .execute([word])?;
+            }
             if upsert_word(&tx, word, by_lower.get(lower), source.as_str())? {
                 counts.added += 1;
             }
         }
         tx.commit()?;
         Ok(counts)
+    }
+
+    /// Stores what the user corrected and adds the terms that earned a place
+    /// in the Dictionary: a strong one at once, a weak one on its second
+    /// sighting. Words the user removed are ignored. A term already in the
+    /// Dictionary only takes the capitalization the user just gave it.
+    /// Returns the words added.
+    pub fn record_corrections(&self, corrections: &[Correction]) -> Result<Vec<String>> {
+        let mut conn = self.lock();
+        let by_lower = dictionary_rows(&conn)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut added: Vec<String> = Vec::new();
+        for correction in corrections {
+            let term = trim_text(&correction.term);
+            let rejected: bool = tx
+                .prepare_cached(
+                    "SELECT EXISTS (SELECT 1 FROM dictionary_rejected_words WHERE word = ?)",
+                )?
+                .query_row([term], |row| row.get(0))?;
+            if term.is_empty() || rejected {
+                continue;
+            }
+            let sightings = record_correction(&tx, correction)?;
+            let lower = term.to_lowercase();
+            let source = DictionarySource::Learned.as_str();
+            if let Some(existing) = by_lower.get(&lower) {
+                if correction.misheard.to_lowercase() == lower {
+                    upsert_word(&tx, term, Some(existing), source)?;
+                }
+                continue;
+            }
+            let earned = !correction.needs_repeat || sightings >= 2;
+            let is_new = !added.iter().any(|word| word.to_lowercase() == lower);
+            if earned && is_new {
+                upsert_word(&tx, term, None, source)?;
+                added.push(term.to_string());
+            }
+        }
+        tx.commit()?;
+        Ok(added)
+    }
+
+    /// Corrections to terms in the Dictionary, most repeated first. A mishearing
+    /// that is itself a Dictionary word is not a mishearing, so it is left out.
+    pub fn get_known_corrections(&self) -> Result<Vec<KnownCorrection>> {
+        let conn = self.lock();
+        let corrections = conn
+            .prepare(
+                "SELECT c.misheard, d.word, c.count
+                 FROM dictionary_corrections c
+                 JOIN custom_dictionary d ON d.word = c.term
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM custom_dictionary other
+                   WHERE other.word = c.misheard AND other.id != d.id
+                 )
+                 ORDER BY c.count DESC, c.updated_at DESC, c.id DESC",
+            )?
+            .query_map([], |row| {
+                Ok(KnownCorrection {
+                    misheard: row.get(0)?,
+                    term: row.get(1)?,
+                    count: row.get(2)?,
+                })
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        Ok(corrections)
+    }
+
+    /// Empties the Dictionary and everything learned about it. A fresh start,
+    /// so unlike removing words it leaves auto-learn free to add them again.
+    pub fn clear_dictionary(&self) -> Result<()> {
+        self.lock().execute_batch(
+            "BEGIN IMMEDIATE;
+             DELETE FROM custom_dictionary;
+             DELETE FROM dictionary_corrections;
+             DELETE FROM dictionary_rejected_words;
+             COMMIT;",
+        )?;
+        Ok(())
+    }
+
+    /// Forgets one mishearing of `term`.
+    pub fn remove_correction(&self, misheard: &str, term: &str) -> Result<()> {
+        self.lock().execute(
+            "DELETE FROM dictionary_corrections WHERE misheard = ? AND term = ?",
+            params![misheard, term],
+        )?;
+        Ok(())
+    }
+
+    /// Counts one finished auto-learn session for `app`.
+    pub fn record_auto_learn_session(
+        &self,
+        app: &str,
+        readable: bool,
+        edited: bool,
+        learned: usize,
+    ) -> Result<()> {
+        self.lock().execute(
+            "INSERT INTO auto_learn_stats (app, sessions, readable, edited, learned)
+             VALUES (?1, 1, ?2, ?3, ?4)
+             ON CONFLICT (app) DO UPDATE SET
+               sessions = sessions + 1,
+               readable = readable + ?2,
+               edited = edited + ?3,
+               learned = learned + ?4",
+            params![app, readable, edited, learned as i64],
+        )?;
+        Ok(())
     }
 
     /// The stored source of a word, if present.
@@ -654,6 +780,200 @@ mod tests {
         );
     }
 
+    fn correction(misheard: &str, term: &str, needs_repeat: bool) -> Correction {
+        Correction {
+            misheard: misheard.into(),
+            term: term.into(),
+            needs_repeat,
+        }
+    }
+
+    #[test]
+    fn a_strong_correction_adds_its_term_at_once() {
+        let db = db();
+        let added = db
+            .record_corrections(&[correction("Shunade", "Sinead", false)])
+            .unwrap();
+        assert_eq!(added, ["Sinead"]);
+        assert_eq!(
+            db.dictionary_word_source("Sinead").unwrap().as_deref(),
+            Some("learned")
+        );
+        assert_eq!(
+            db.get_known_corrections().unwrap(),
+            [KnownCorrection {
+                misheard: "Shunade".into(),
+                term: "Sinead".into(),
+                count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn a_weak_correction_needs_a_second_sighting_of_its_term() {
+        let db = db();
+        let weak = correction("affect", "effect", true);
+        assert!(
+            db.record_corrections(std::slice::from_ref(&weak))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db.get_dictionary().unwrap().is_empty());
+        assert!(db.get_known_corrections().unwrap().is_empty());
+        assert_eq!(db.record_corrections(&[weak]).unwrap(), ["effect"]);
+    }
+
+    #[test]
+    fn different_mishearings_of_a_term_add_up() {
+        let db = db();
+        db.record_corrections(&[correction("克劳", "Claude", true)])
+            .unwrap();
+        assert_eq!(
+            db.record_corrections(&[correction("cloud", "Claude", true)])
+                .unwrap(),
+            ["Claude"]
+        );
+    }
+
+    #[test]
+    fn repeating_a_correction_counts_for_terms_already_in_the_dictionary() {
+        let db = db();
+        db.apply_dictionary_changes(&["Claude"], NONE, manual())
+            .unwrap();
+        for _ in 0..2 {
+            assert!(
+                db.record_corrections(&[correction("cloud", "Claude", false)])
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert_eq!(db.get_known_corrections().unwrap()[0].count, 2);
+        assert_eq!(
+            db.dictionary_word_source("Claude").unwrap().as_deref(),
+            Some("manual")
+        );
+    }
+
+    #[test]
+    fn one_batch_can_name_a_term_twice() {
+        let db = db();
+        let added = db
+            .record_corrections(&[
+                correction("cloud", "Claude", false),
+                correction("克劳德", "Claude", false),
+            ])
+            .unwrap();
+        assert_eq!(added, ["Claude"]);
+        assert_eq!(db.get_known_corrections().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_capitalization_fix_respells_the_stored_word() {
+        let db = db();
+        db.apply_dictionary_changes(&["github"], NONE, manual())
+            .unwrap();
+        db.record_corrections(&[correction("github", "GitHub", false)])
+            .unwrap();
+        assert_eq!(db.get_dictionary().unwrap(), ["GitHub"]);
+
+        db.record_corrections(&[correction("gethub", "github", false)])
+            .unwrap();
+        assert_eq!(
+            db.get_dictionary().unwrap(),
+            ["GitHub"],
+            "a correction from another spelling leaves it alone"
+        );
+    }
+
+    #[test]
+    fn a_reversed_correction_replaces_the_old_one() {
+        let db = db();
+        db.apply_dictionary_changes(&["Alpha", "Beta"], NONE, manual())
+            .unwrap();
+        db.record_corrections(&[correction("Alpha", "Beta", false)])
+            .unwrap();
+        db.record_corrections(&[correction("Beta", "Alpha", false)])
+            .unwrap();
+        let rows: i64 = db
+            .lock()
+            .query_row("SELECT COUNT(*) FROM dictionary_corrections", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
+
+    #[test]
+    fn a_removed_word_is_not_learned_again_until_added_by_hand() {
+        let db = db();
+        let learn = correction("Shunade", "Sinead", false);
+        db.record_corrections(std::slice::from_ref(&learn)).unwrap();
+        db.apply_dictionary_changes(NONE, &["sinead"], manual())
+            .unwrap();
+        assert!(db.get_known_corrections().unwrap().is_empty());
+
+        assert!(
+            db.record_corrections(std::slice::from_ref(&learn))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db.get_dictionary().unwrap().is_empty());
+
+        db.apply_dictionary_changes(&["Sinead"], NONE, manual())
+            .unwrap();
+        db.record_corrections(&[learn]).unwrap();
+        assert_eq!(db.get_known_corrections().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clearing_the_dictionary_is_a_fresh_start() {
+        let db = db();
+        let learn = correction("Shunade", "Sinead", false);
+        db.record_corrections(std::slice::from_ref(&learn)).unwrap();
+        db.apply_dictionary_changes(NONE, &["Sinead"], manual())
+            .unwrap();
+        db.clear_dictionary().unwrap();
+        assert_eq!(db.record_corrections(&[learn]).unwrap(), ["Sinead"]);
+    }
+
+    #[test]
+    fn a_removed_mishearing_is_forgotten_and_its_word_stays() {
+        let db = db();
+        db.record_corrections(&[correction("Shunade", "Sinead", false)])
+            .unwrap();
+        db.remove_correction("shunade", "SINEAD").unwrap();
+        assert!(db.get_known_corrections().unwrap().is_empty());
+        assert_eq!(db.get_dictionary().unwrap(), ["Sinead"]);
+    }
+
+    #[test]
+    fn a_mishearing_that_is_a_dictionary_word_is_not_applied() {
+        let db = db();
+        db.record_corrections(&[correction("cloud", "Claude", false)])
+            .unwrap();
+        db.apply_dictionary_changes(&["Cloud"], NONE, manual())
+            .unwrap();
+        assert!(db.get_known_corrections().unwrap().is_empty());
+    }
+
+    #[test]
+    fn auto_learn_sessions_add_up_per_app() {
+        let db = db();
+        db.record_auto_learn_session("com.apple.Notes", true, true, 2)
+            .unwrap();
+        db.record_auto_learn_session("com.apple.Notes", false, false, 0)
+            .unwrap();
+        let row: (i64, i64, i64, i64) = db
+            .lock()
+            .query_row(
+                "SELECT sessions, readable, edited, learned FROM auto_learn_stats",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (2, 1, 1, 2));
+    }
+
     // Priority ranking
 
     const NOW: &str = "2026-10-12T12:00:00Z";
@@ -698,6 +1018,12 @@ mod tests {
             "请把文件发给张珊，张珊会转给クロード。",
         );
         assert_eq!(counts, [("张珊".into(), 2), ("クロード".into(), 1)]);
+    }
+
+    #[test]
+    fn counts_latin_terms_next_to_chinese() {
+        let counts = count_dictionary_word_uses(&["Claude"], "用Claude写代码");
+        assert_eq!(counts, [("Claude".into(), 1)]);
     }
 
     #[test]

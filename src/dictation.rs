@@ -386,6 +386,11 @@ impl Dictation {
             settings: state.settings.clone(),
             dictionary: state.dictionary.clone(),
             dictionary_priority: state.db.get_dictionary_by_priority().unwrap_or_default(),
+            known_corrections: if state.settings.auto_learn_corrections {
+                state.known_corrections.clone()
+            } else {
+                Vec::new()
+            },
             snippets: state.snippets.clone(),
             cleanup_api_key: Some(backend::cleanup_api_key()).filter(|k| !k.is_empty()),
         }

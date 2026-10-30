@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::text::DEFAULT_AGENT_NAME;
+use crate::text::correction_learner::KnownCorrection;
 use crate::text::language::get_language_instruction;
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,7 @@ use crate::text::language::get_language_instruction;
 struct PromptBundle {
     cleanup_prompt: String,
     dictionary_suffix: String,
+    corrections_suffix: String,
 }
 
 fn load_bundle(raw: &str, name: &str) -> PromptBundle {
@@ -91,6 +93,32 @@ pub fn append_dictionary_suffix<S: AsRef<str>>(
         dictionary_suffix(ui_language),
         words.join(", ")
     )
+}
+
+/// The most corrections listed in a cleanup prompt.
+const MAX_PROMPT_CORRECTIONS: usize = 30;
+
+/// Appends mishearings for the model to judge in context.
+pub fn append_corrections_suffix(
+    prompt: &str,
+    corrections: &[&KnownCorrection],
+    ui_language: &str,
+) -> String {
+    if corrections.is_empty() {
+        return prompt.to_string();
+    }
+    let text = &bundle(ui_language).corrections_suffix;
+    let suffix = if text.is_empty() {
+        &EN_PROMPTS.corrections_suffix
+    } else {
+        text
+    };
+    let pairs: Vec<String> = corrections
+        .iter()
+        .take(MAX_PROMPT_CORRECTIONS)
+        .map(|c| format!("{} → {}", c.misheard, c.term))
+        .collect();
+    format!("{prompt}{suffix}{}", pairs.join("; "))
 }
 
 /// Fill `{{agentName}}`, append the language instruction for `language`
@@ -267,9 +295,23 @@ mod tests {
         assert_eq!(p, "Hi Whisper, Whisper.");
         let p = resolve_prompt_template("X", "ar", &["Quokka", "Zed"], "en");
         assert!(p.starts_with("X\n\nLANGUAGE CONTEXT"));
-        assert!(
-            p.ends_with("use these exact spellings when they appear in the text): Quokka, Zed")
-        );
+        assert!(p.ends_with("use the dictionary spelling): Quokka, Zed"));
+    }
+
+    #[test]
+    fn corrections_are_listed_after_the_prompt_and_capped() {
+        assert_eq!(append_corrections_suffix("X", &[], "en"), "X");
+        let correction = KnownCorrection {
+            misheard: "cloud".into(),
+            term: "Claude".into(),
+            count: 1,
+        };
+        let p = append_corrections_suffix("X", &[&correction], "zh-CN");
+        assert!(p.starts_with("X\n\n已知误识别"));
+        assert!(p.ends_with("cloud → Claude"));
+        let many = vec![&correction; MAX_PROMPT_CORRECTIONS + 5];
+        let p = append_corrections_suffix("X", &many, "en");
+        assert_eq!(p.matches("→").count(), MAX_PROMPT_CORRECTIONS);
     }
 
     #[test]

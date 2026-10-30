@@ -15,11 +15,10 @@ use crate::text::chinese_script::{
     apply_chinese_script, merge_whisper_prompt, resolve_chinese_script_target,
     resolve_cleanup_language,
 };
+use crate::text::correction_learner::{KnownCorrection, apply_known_corrections};
 use crate::text::echo_filter::matches_dictionary_prompt;
-use crate::text::prompt_cap::{WHISPER_PROMPT_CHARS, fit_dictionary_prompt};
-use crate::text::snippets::{
-    Snippet, expand_snippets, get_dictionary_hint_words, get_prioritized_dictionary_hint_words,
-};
+use crate::text::prompt_cap::{CLEANUP_PROMPT_CHARS, WHISPER_PROMPT_CHARS, fit_dictionary_prompt};
+use crate::text::snippets::{Snippet, expand_snippets, get_prioritized_dictionary_hint_words};
 
 /// Everything the pipeline needs, captured when the recording stops so a
 /// settings change mid-request cannot mix two configurations.
@@ -31,6 +30,8 @@ pub struct PipelineInput {
     pub dictionary: Vec<String>,
     /// Dictionary words most-used first.
     pub dictionary_priority: Vec<String>,
+    /// What the user has corrected before, most repeated first.
+    pub known_corrections: Vec<KnownCorrection>,
     pub snippets: Vec<Snippet>,
     pub cleanup_api_key: Option<String>,
 }
@@ -108,13 +109,25 @@ pub fn cleanup_enabled(settings: &Settings) -> bool {
 
 pub fn cleanup_system_prompt(input: &PipelineInput) -> String {
     let s = &input.settings;
-    let hints = get_dictionary_hint_words(&input.dictionary, &input.snippets);
-    crate::text::prompts::resolve_cleanup_prompt(
+    let words = get_prioritized_dictionary_hint_words(
+        &input.dictionary,
+        &input.snippets,
+        &input.dictionary_priority,
+    );
+    let hints = fit_dictionary_prompt(&words, CLEANUP_PROMPT_CHARS);
+    let prompt = crate::text::prompts::resolve_cleanup_prompt(
         &s.custom_prompt_cleanup,
         &resolve_cleanup_language(&s.preferred_language),
-        &hints,
+        hints.as_slice(),
         &s.ui_language,
-    )
+    );
+    // Corrections that apply automatically never reach the model as a question.
+    let judged: Vec<&KnownCorrection> = input
+        .known_corrections
+        .iter()
+        .filter(|c| !c.applies_automatically())
+        .collect();
+    crate::text::prompts::append_corrections_suffix(&prompt, &judged, &s.ui_language)
 }
 
 /// Cleans a transcript. A failure or blank reply keeps the transcript and
@@ -153,7 +166,7 @@ fn cleanup_failure(err: &CleanupError) -> CleanupFailure {
     }
 }
 
-/// The deterministic Chinese script pass, run last on the delivered text.
+/// The deterministic Chinese script pass, run on the cleaned text.
 pub fn finalize_script(text: &str, settings: &Settings) -> String {
     let target = resolve_chinese_script_target(
         &settings.preferred_language,
@@ -205,7 +218,11 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let spoken_text = finalize_script(&cleaned, &input.settings);
+    // Mishearings were learned from delivered text, so they match it here.
+    let spoken_text = apply_known_corrections(
+        &finalize_script(&cleaned, &input.settings),
+        &input.known_corrections,
+    );
     if spoken_text.trim().is_empty() {
         return PipelineOutcome::NoAudio;
     }
@@ -230,6 +247,7 @@ mod tests {
             settings: Settings::default(),
             dictionary: dictionary.iter().map(|s| s.to_string()).collect(),
             dictionary_priority: Vec::new(),
+            known_corrections: Vec::new(),
             snippets: Vec::new(),
             cleanup_api_key: None,
         }
@@ -324,6 +342,46 @@ mod tests {
         assert_eq!(t.spoken_text, "The 软件 sig.");
         assert_eq!(t.text, "The 软件 Best regards.");
         assert_eq!(t.cleanup_failure, None);
+    }
+
+    fn corrections() -> Vec<KnownCorrection> {
+        [("克劳德", "Claude", 2), ("cloud", "Claude", 5)]
+            .map(|(misheard, term, count)| KnownCorrection {
+                misheard: misheard.into(),
+                term: term.into(),
+                count,
+            })
+            .to_vec()
+    }
+
+    #[test]
+    fn delivered_text_carries_known_corrections_and_raw_text_does_not() {
+        let asr = asr("我用克劳德写 cloud 代码");
+        let mut i = served(&asr, None);
+        i.known_corrections = corrections();
+        let t = transcribed(run_test(run(i, CancellationToken::new())));
+        assert_eq!(t.raw_text, "我用克劳德写 cloud 代码");
+        assert_eq!(t.text, "我用Claude写 cloud 代码");
+    }
+
+    #[test]
+    fn the_cleanup_prompt_lists_only_corrections_that_need_context() {
+        let mut i = input(&["Claude"]);
+        i.known_corrections = corrections();
+        let prompt = cleanup_system_prompt(&i);
+        assert!(prompt.contains("cloud → Claude"));
+        assert!(!prompt.contains("克劳德 →"));
+    }
+
+    #[test]
+    fn the_cleanup_prompt_keeps_the_most_important_words_of_a_long_dictionary() {
+        let mut i = input(&[]);
+        i.dictionary = (0..1000).map(|n| format!("filler-term-{n}")).collect();
+        i.dictionary_priority = i.dictionary.iter().rev().cloned().collect();
+        let prompt = cleanup_system_prompt(&i);
+        assert!(prompt.contains("filler-term-999"));
+        assert!(!prompt.contains("filler-term-500"));
+        assert!(prompt.len() < 12_000);
     }
 
     #[test]

@@ -12,7 +12,9 @@ use crate::audio_storage::{AudioStorage, RetentionCleanupReport};
 use crate::db::{Database, DictionaryEntry, DictionarySource, Snippet, TranscriptionItem};
 use crate::history::{HistoryStore, Recorded};
 use crate::i18n::{self, Language};
+use crate::native::text_monitor::{SessionReport, TextEdit};
 use crate::settings::Settings;
+use crate::text::correction_learner::KnownCorrection;
 
 use crate::ui::theme;
 
@@ -52,6 +54,7 @@ pub struct AppState {
     pub dictionary: Vec<String>,
     /// The same words as `dictionary`, with source and usage.
     pub dictionary_entries: Vec<DictionaryEntry>,
+    pub known_corrections: Vec<KnownCorrection>,
     pub snippets: Vec<Snippet>,
 }
 
@@ -67,6 +70,7 @@ impl AppState {
         theme::init(settings.theme, cx);
         let dictionary_entries = db.get_dictionary_entries().unwrap_or_default();
         let dictionary = dictionary_entries.iter().map(|e| e.word.clone()).collect();
+        let known_corrections = db.get_known_corrections().unwrap_or_default();
         let snippets = db.get_snippets().unwrap_or_default();
         let audio = Arc::new(AudioStorage::default());
         let state = cx.new(|_| AppState {
@@ -79,6 +83,7 @@ impl AppState {
             history_loaded: false,
             dictionary,
             dictionary_entries,
+            known_corrections,
             snippets,
         });
         cx.set_global(AppStateGlobal(state.clone()));
@@ -242,30 +247,66 @@ impl AppState {
         result.map(|_| ())
     }
 
-    /// Learns corrections from an edit the user made right after a paste.
-    /// Returns the words added to the Dictionary.
-    pub fn learn_corrections(
+    /// Forgets one way `term` was misheard.
+    pub fn remove_correction(&mut self, misheard: &str, term: &str, cx: &mut Context<Self>) {
+        if let Err(err) = self.db.remove_correction(misheard, term) {
+            log::warn!("failed to remove a correction: {err}");
+        }
+        self.reload_dictionary(cx);
+    }
+
+    /// Empties the Dictionary and what auto-learn knows about it.
+    pub fn clear_dictionary(&mut self, cx: &mut Context<Self>) {
+        if let Err(err) = self.db.clear_dictionary() {
+            log::warn!("failed to clear the dictionary: {err}");
+        }
+        self.reload_dictionary(cx);
+    }
+
+    /// Learns from a finished post-paste session. Returns the words added to
+    /// the Dictionary.
+    pub fn learn_from_session(
         &mut self,
-        original: &str,
-        edited: &str,
+        report: SessionReport,
         cx: &mut Context<Self>,
     ) -> Vec<String> {
-        let learned = crate::text::correction_learner::extract_corrections(
-            original,
-            edited,
-            &self.dictionary,
+        let SessionReport {
+            app,
+            readable,
+            edit,
+        } = report;
+        let edited = edit.is_some();
+        let learned = edit.map_or_else(Vec::new, |edit| self.learn_corrections(&edit, cx));
+        log::info!(
+            "[auto-learn] app={app:?} readable={readable} edited={edited} learned={}",
+            learned.len()
         );
-        if learned.is_empty() {
-            return learned;
+        if let Some(app) = app
+            && let Err(err) =
+                self.db
+                    .record_auto_learn_session(&app, readable, edited, learned.len())
+        {
+            log::warn!("failed to save auto-learn stats: {err}");
         }
-        let none: [&str; 0] = [];
-        match self.change_dictionary(&learned, &none, DictionarySource::Learned, cx) {
-            Ok(()) => learned,
-            Err(err) => {
-                log::warn!("failed to save learned words: {err}");
-                Vec::new()
-            }
+        learned
+    }
+
+    fn learn_corrections(&mut self, edit: &TextEdit, cx: &mut Context<Self>) -> Vec<String> {
+        let corrections = crate::text::correction_learner::extract_corrections(
+            &edit.baseline,
+            &edit.edited,
+            &edit.pasted,
+        );
+        if corrections.is_empty() {
+            return Vec::new();
         }
+        let learned = self
+            .db
+            .record_corrections(&corrections)
+            .inspect_err(|err| log::warn!("failed to save learned words: {err}"))
+            .unwrap_or_default();
+        self.reload_dictionary(cx);
+        learned
     }
 
     fn reload_dictionary(&mut self, cx: &mut Context<Self>) {
@@ -275,6 +316,7 @@ impl AppState {
             .iter()
             .map(|e| e.word.clone())
             .collect();
+        self.known_corrections = self.db.get_known_corrections().unwrap_or_default();
         cx.emit(AppEvent::DictionaryChanged);
         cx.notify();
     }

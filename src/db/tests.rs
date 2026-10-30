@@ -299,6 +299,15 @@ fn schema_matches_the_expected_layout() {
         ]
     );
     assert_eq!(
+        column_names(&db, "dictionary_corrections"),
+        ["id", "misheard", "term", "count", "updated_at"]
+    );
+    assert_eq!(column_names(&db, "dictionary_rejected_words"), ["word"]);
+    assert_eq!(
+        column_names(&db, "auto_learn_stats"),
+        ["app", "sessions", "readable", "edited", "learned"]
+    );
+    assert_eq!(
         column_names(&db, "snippets"),
         ["id", "trigger", "replacement", "created_at"]
     );
@@ -314,7 +323,7 @@ fn schema_matches_the_expected_layout() {
             "model",
         ]
     );
-    assert_eq!(count(&db, "PRAGMA user_version"), 1);
+    assert_eq!(count(&db, "PRAGMA user_version"), 2);
 }
 
 #[test]
