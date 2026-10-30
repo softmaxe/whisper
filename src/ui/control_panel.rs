@@ -89,9 +89,17 @@ impl ControlPanel {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        // Closing an overlay drops the input that held focus. Without a focused
+        // element, actions never reach this view's listeners, so take focus back.
+        cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
+            .detach();
         let overlays = Overlays::global(cx);
         cx.observe(&overlays, |_, _, cx| cx.notify()).detach();
-        let history = cx.new(HistoryView::new);
+        let scroll = ScrollHandle::new();
+        let history = {
+            let scroll = scroll.clone();
+            cx.new(|cx| HistoryView::new(scroll, cx))
+        };
         let upload = cx.new(UploadView::new);
         cx.subscribe_in(
             &upload,
@@ -116,7 +124,7 @@ impl ControlPanel {
             dictionary: None,
             upload,
             settings: None,
-            scroll: ScrollHandle::new(),
+            scroll,
         }
     }
 
@@ -153,7 +161,10 @@ impl ControlPanel {
         cx.subscribe(
             &search,
             |this, _, event: &CommandSearchEvent, cx| match event {
+                // Closed here, not by the palette: dropping it before the event
+                // is delivered would drop this listener with it.
                 CommandSearchEvent::Selected(id) => {
+                    super::overlays::close_custom(cx);
                     this.set_view(PanelView::Home, cx);
                     let id = *id;
                     this.history.update(cx, |h, cx| h.highlight(id, cx));
