@@ -1,6 +1,6 @@
 [package]
 name = "whisper"
-version = "0.0.13"
+version = "0.0.14"
 edition = "2024"
 description = "macOS dictation with self-hosted speech recognition and text cleanup (Rust + GPUI)"
 license = "AGPL-3.0-only"
