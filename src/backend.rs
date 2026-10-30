@@ -291,6 +291,7 @@ pub fn paste_text(
 ) -> impl std::future::Future<Output = bool> + 'static {
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
+        crate::native::text_monitor::TextEditMonitor::shared().stop_monitoring();
         let outcome = crate::native::paste::paste_text(
             &text,
             crate::native::paste::PasteOptions {
@@ -307,24 +308,22 @@ pub fn paste_text(
 }
 
 /// Watches the target field after an automatic paste and adds learned
-/// corrections to the Dictionary (auto-learn). Resolves to the words added,
-/// or nothing when a later paste replaces this one.
+/// corrections to the Dictionary (auto-learn). Resolves to the words added
+/// once the session ends.
 pub fn monitor_corrections(
     text: String,
     target_pid: Option<i32>,
     cx: &mut gpui_kit::App,
 ) -> gpui_kit::Task<Vec<String>> {
-    let monitor = crate::native::text_monitor::TextEditMonitor::shared();
-    let edits = monitor.subscribe();
-    monitor.start_monitoring_after_paste(&text, target_pid);
+    let reports = crate::native::text_monitor::TextEditMonitor::shared()
+        .start_monitoring_after_paste(&text, target_pid);
     cx.spawn(async move |cx| {
-        let Ok(edit) = edits.recv().await else {
+        let Ok(report) = reports.recv().await else {
             return Vec::new();
         };
         cx.update(|cx| {
-            crate::app_state::AppState::global(cx).update(cx, |s, cx| {
-                s.learn_corrections(&edit.original_text, &edit.edited_text, cx)
-            })
+            crate::app_state::AppState::global(cx)
+                .update(cx, |s, cx| s.learn_from_session(report, cx))
         })
     })
 }

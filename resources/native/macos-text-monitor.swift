@@ -2,7 +2,6 @@ import Cocoa
 import Foundation
 import Darwin
 
-let TIMEOUT_SECONDS: Double = 30.0
 let MAX_OUTPUT_BYTES = 10240
 let MAX_BASE64_SOURCE_CHARS = 7000
 
@@ -333,12 +332,26 @@ func observerCallback(
     _ notification: CFString,
     _ refcon: UnsafeMutableRawPointer?
 ) {
+    if (notification as String) == kAXFocusedUIElementChangedNotification {
+        // The user moved on from the field; the session is over.
+        var focused: AnyObject?
+        if AXUIElementCopyAttributeValue(
+            AXUIElementCreateApplication(monitoredPid),
+            kAXFocusedUIElementAttribute as CFString,
+            &focused
+        ) == .success, let element = pasteTargetElement(focused),
+           let monitored = monitoredElement, !CFEqual(element, monitored) {
+            writeError("Focus left the monitored element")
+            CFRunLoopStop(CFRunLoopGetCurrent())
+        }
+        return
+    }
     if let value = readCurrentValue() {
         writeTextOutput("CHANGED", value)
     }
 }
 
-// Usage: macos-text-monitor <pid>
+// Usage: macos-text-monitor <pid> <timeout seconds>
 //        macos-text-monitor --paste-target <pid>
 //        macos-text-monitor --focused-app
 let pasteTargetMode = CommandLine.arguments.count >= 2 &&
@@ -379,6 +392,13 @@ if pasteTargetMode {
 
 // Target the specific application by PID (passed from the app, which captures
 // it BEFORE the overlay steals focus).
+guard CommandLine.arguments.count > 2,
+      let timeoutSeconds = Double(CommandLine.arguments[2]) else {
+    writeError("Usage: macos-text-monitor <pid> <timeout seconds>")
+    writeOutput("NO_ELEMENT")
+    exit(1)
+}
+
 let appElement = AXUIElementCreateApplication(monitoredPid)
 guard let resolvedElement = resolveFocusedElement(appElement, pid: monitoredPid) else {
     writeOutput("NO_ELEMENT")
@@ -419,6 +439,20 @@ if addResult != .success {
     exit(1)
 }
 
+// Best effort: without it the session just runs to its timeout.
+_ = AXObserverAddNotification(
+    obs,
+    appElement,
+    kAXFocusedUIElementChangedNotification as CFString,
+    nil
+)
+
+// Everything from here on arrives as CHANGED, so nothing falls between this
+// read and the first notification.
+if let value = readCurrentValue() {
+    writeTextOutput("BASELINE", value)
+}
+
 // Add observer to run loop
 CFRunLoopAddSource(
     CFRunLoopGetCurrent(),
@@ -427,7 +461,7 @@ CFRunLoopAddSource(
 )
 
 // Schedule auto-exit after timeout
-DispatchQueue.main.asyncAfter(deadline: .now() + TIMEOUT_SECONDS) {
+DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds) {
     CFRunLoopStop(CFRunLoopGetCurrent())
 }
 

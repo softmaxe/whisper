@@ -4,16 +4,18 @@
 //!   focus at a hotkey press (the Target app), before the overlay steals focus.
 //! - [`TextEditMonitor::activate_pid`] / [`TextEditMonitor::can_paste_at_target`]
 //!   gate automatic paste.
-//! - [`TextEditMonitor::start_monitoring`] watches the focused field for 30 s
-//!   after an automatic paste and reports the user's edits, debounced, as
-//!   [`TextEdit`]s for the correction learner.
+//! - [`TextEditMonitor::start_monitoring`] watches the focused field after an
+//!   automatic paste. The session ends when the field empties (the message was
+//!   sent), focus leaves it, another paste starts or [`MONITOR_TIMEOUT`] runs
+//!   out, and reports the field's last text as one [`SessionReport`] for the
+//!   correction learner, so half-typed fixes are never learned.
 //!
 //! Monitoring is strictly read-only: never write AX attributes such as
 //! AXEnhancedUserInterface on the target app (it blurs Chromium editors).
 //! All methods block (helper spawns, short sleeps); call them off the main
 //! thread.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
@@ -21,29 +23,27 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 
-use super::helper::{probe_first_line, resolve_helper, run_with_timeout};
+use super::helper::{probe_first_line, resolve_helper};
 use super::supervised_child::{
     ChildOptions, Control, Down, HelperSpawner, ProcessSpawner, Protocol, Recovery, RestartPolicy,
     SupervisedChild,
 };
 use super::timer::{RealTimers, TimerId, Timers, lock};
 
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
-/// Wait for the paste to settle in the target app.
-const INITIAL_QUERY_DELAY: Duration = Duration::from_millis(500);
-const INITIAL_QUERY_RETRIES: u32 = 4;
-const INITIAL_QUERY_RETRY_DELAY: Duration = Duration::from_millis(300);
 const ACTIVATE_CONFIRM_RETRIES: u32 = 6;
 const ACTIVATE_CONFIRM_DELAY: Duration = Duration::from_millis(25);
 const TARGET_PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 /// One Dictation captures its target from several call sites within a few
 /// hundred ms; reuse the result across that burst only.
 const TARGET_CAPTURE_FRESHNESS: Duration = Duration::from_millis(250);
-pub const MONITOR_TIMEOUT: Duration = Duration::from_secs(30);
-/// Delay between a paste and the start of monitoring.
-pub const MONITOR_START_DELAY: Duration = Duration::from_millis(500);
-/// Edits are reported once the field has been quiet this long.
-pub const EDIT_DEBOUNCE: Duration = Duration::from_millis(1500);
+/// Long enough to read a dictation back and fix it.
+pub const MONITOR_TIMEOUT: Duration = Duration::from_secs(90);
+/// Wait for the paste to settle in the target app before monitoring.
+pub const MONITOR_START_DELAY: Duration = Duration::from_secs(1);
+/// Dictating several times in a row and then fixing an earlier part is normal,
+/// so a session accepts edits to the app's recent pastes.
+const RECENT_PASTES: usize = 5;
+const RECENT_PASTE_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 pub const MONITOR_BINARY: &str = "macos-text-monitor";
 /// The helper caps a reported value at 10240 characters.
@@ -52,11 +52,23 @@ const MAX_LINE_BYTES: usize = 64 * 1024;
 /// [`is_persistent_ax_no_value_failure`].
 const MAX_STDERR_BYTES: usize = 16 * 1024;
 
-/// The pasted transcript and the field's text after the user edited it.
+/// The field right after the paste and its last text before the session ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextEdit {
-    pub original_text: String,
-    pub edited_text: String,
+    pub baseline: String,
+    pub edited: String,
+    /// The transcripts this session may have corrected, oldest first.
+    pub pasted: Vec<String>,
+}
+
+/// How one monitored paste went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionReport {
+    /// Bundle identifier of the target app.
+    pub app: Option<String>,
+    /// Whether the field's text could be read at all.
+    pub readable: bool,
+    pub edit: Option<TextEdit>,
 }
 
 /// How to invoke the helper; overridable for tests.
@@ -110,17 +122,91 @@ struct Capture {
     last_capture_at: Option<Instant>,
 }
 
-#[derive(Default)]
-struct Monitoring {
-    original_text: Option<String>,
-    run: Option<SupervisedChild<EditWatch>>,
-    timeout: Option<TimerId>,
+struct RecentPaste {
+    pid: Option<i32>,
+    text: String,
+    at: Instant,
+}
+
+/// One monitored paste.
+struct Session {
+    app: Option<String>,
+    pasted: Vec<String>,
+    baseline: Option<String>,
+    /// The last non-empty text after the baseline: pressing Send clears the
+    /// field right after a fix, and the fix must survive that.
+    latest: Option<String>,
+    report: async_channel::Sender<SessionReport>,
+}
+
+impl Session {
+    fn finish(self) {
+        let readable = self.baseline.is_some();
+        let edit = match (self.baseline, self.latest) {
+            (Some(baseline), Some(edited)) if baseline != edited => Some(TextEdit {
+                baseline,
+                edited,
+                pasted: self.pasted,
+            }),
+            _ => None,
+        };
+        let _ = self.report.try_send(SessionReport {
+            app: self.app,
+            readable,
+            edit,
+        });
+    }
+
+    fn on_baseline(&mut self, value: String) {
+        self.baseline.get_or_insert(value);
+    }
+
+    /// A slow app takes the paste only after the baseline was read; its text
+    /// then becomes the baseline. Returns false when the field was emptied.
+    fn on_changed(&mut self, value: String) -> bool {
+        let Some(baseline) = &self.baseline else {
+            return true;
+        };
+        if value.trim().is_empty() {
+            return baseline.trim().is_empty();
+        }
+        let paste_landed = self
+            .pasted
+            .last()
+            .is_some_and(|text| !baseline.contains(text.as_str()) && value.contains(text.as_str()));
+        if paste_landed {
+            self.baseline = Some(value);
+            self.latest = None;
+        } else {
+            self.latest = Some(value);
+        }
+        true
+    }
 }
 
 #[derive(Default)]
-struct Debounce {
-    latest: Option<TextEdit>,
-    timer: Option<TimerId>,
+struct Monitoring {
+    session: Option<Session>,
+    run: Option<SupervisedChild<EditWatch>>,
+    timeout: Option<TimerId>,
+    recent: VecDeque<RecentPaste>,
+}
+
+impl Monitoring {
+    /// Records a paste and returns the app's recent ones, oldest first.
+    fn remember_paste(&mut self, pid: Option<i32>, text: &str) -> Vec<String> {
+        self.recent
+            .retain(|paste| paste.pid == pid && paste.at.elapsed() < RECENT_PASTE_WINDOW);
+        if self.recent.len() == RECENT_PASTES {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(RecentPaste {
+            pid,
+            text: text.to_string(),
+            at: Instant::now(),
+        });
+        self.recent.iter().map(|p| p.text.clone()).collect()
+    }
 }
 
 struct Inner {
@@ -132,8 +218,6 @@ struct Inner {
     generation: AtomicU64,
     // PIDs whose AX tree never yields a focused element this session.
     unsupported_pids: Mutex<HashSet<i32>>,
-    debounce: Mutex<Debounce>,
-    subscribers: Mutex<Vec<async_channel::Sender<TextEdit>>>,
     this: Weak<Inner>,
 }
 
@@ -164,22 +248,9 @@ impl TextEditMonitor {
                 monitoring: Mutex::new(Monitoring::default()),
                 generation: AtomicU64::new(0),
                 unsupported_pids: Mutex::new(HashSet::new()),
-                debounce: Mutex::new(Debounce::default()),
-                subscribers: Mutex::new(Vec::new()),
                 this: this.clone(),
             }),
         }
-    }
-
-    /// Debounced `(original, edited)` pairs from monitoring runs. Each paste
-    /// supersedes the last, so a new subscriber replaces the previous one,
-    /// whose receiver closes.
-    pub fn subscribe(&self) -> async_channel::Receiver<TextEdit> {
-        let (tx, rx) = async_channel::unbounded();
-        let mut subscribers = lock(&self.inner.subscribers);
-        subscribers.clear();
-        subscribers.push(tx);
-        rx
     }
 
     /// The app holding keyboard focus (a floating launcher such as Raycast
@@ -283,36 +354,60 @@ impl TextEditMonitor {
     }
 
     /// Waits [`MONITOR_START_DELAY`] (on a background thread) and then
-    /// monitors, as automatic paste does after a successful paste.
-    pub fn start_monitoring_after_paste(&self, original_text: &str, target_pid: Option<i32>) {
+    /// monitors, as automatic paste does after a successful paste. The
+    /// receiver gets one report when the session ends.
+    pub fn start_monitoring_after_paste(
+        &self,
+        original_text: &str,
+        target_pid: Option<i32>,
+    ) -> async_channel::Receiver<SessionReport> {
+        let (report, receiver) = async_channel::bounded(1);
         let monitor = self.clone();
         let text = original_text.to_string();
         std::thread::spawn(move || {
             std::thread::sleep(MONITOR_START_DELAY);
-            monitor.start_monitoring(&text, MONITOR_TIMEOUT, target_pid);
+            monitor.start_monitoring(&text, MONITOR_TIMEOUT, target_pid, report);
         });
+        receiver
     }
 
-    /// Watches the focused field of `target_pid` for edits for `timeout`.
-    /// Stops any previous run first. Returns immediately.
+    /// Watches the focused field of `target_pid` for `timeout`. Ends any
+    /// previous session first. Returns immediately; `report` always receives
+    /// the outcome.
     pub fn start_monitoring(
         &self,
         original_text: &str,
         timeout: Duration,
         target_pid: Option<i32>,
+        report: async_channel::Sender<SessionReport>,
     ) {
         self.stop_monitoring();
         let inner = &self.inner;
         let generation = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        lock(&inner.monitoring).original_text = Some(original_text.to_string());
+        let app = target_pid.and_then(appkit::bundle_identifier);
+        {
+            let mut monitoring = lock(&inner.monitoring);
+            let pasted = monitoring.remember_paste(target_pid, original_text);
+            monitoring.session = Some(Session {
+                app,
+                pasted,
+                baseline: None,
+                latest: None,
+                report,
+            });
+        }
 
         let Some(pid) = target_pid.filter(|p| *p > 0) else {
             log::debug!("[text-monitor] no target pid");
             self.stop_monitoring();
             return;
         };
-        let helper = (inner.hooks.resolve_helper)();
-        if helper.is_some() && lock(&inner.unsupported_pids).contains(&pid) {
+        let Some(helper) = (inner.hooks.resolve_helper)() else {
+            log::debug!("[text-monitor] helper unavailable");
+            self.stop_monitoring();
+            return;
+        };
+        if lock(&inner.unsupported_pids).contains(&pid) {
             log::debug!("[text-monitor] AX reads unsupported for {pid} this session");
             self.stop_monitoring();
             return;
@@ -322,13 +417,12 @@ impl TextEditMonitor {
         inner.arm_timeout(generation, timeout);
         std::thread::spawn(move || {
             let Some(inner) = weak.upgrade() else { return };
-            match helper {
-                Some(helper) => inner.run_native(generation, pid, helper),
-                None => inner.run_polling(generation, pid),
-            }
+            inner.run_native(generation, pid, helper, timeout);
         });
     }
 
+    /// Ends the session, reporting what it saw. A paste ends the previous
+    /// session before it lands, so the new text is not read as an edit.
     pub fn stop_monitoring(&self) {
         self.inner.stop(None);
     }
@@ -336,7 +430,7 @@ impl TextEditMonitor {
     /// True while a monitoring run is in progress.
     #[cfg(test)]
     pub fn is_monitoring(&self) -> bool {
-        lock(&self.inner.monitoring).original_text.is_some()
+        lock(&self.inner.monitoring).session.is_some()
     }
 }
 
@@ -361,7 +455,7 @@ impl Inner {
 
     fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::SeqCst) == generation
-            && lock(&self.monitoring).original_text.is_some()
+            && lock(&self.monitoring).session.is_some()
     }
 
     /// Stops monitoring; with `Some(generation)` only if that run is current.
@@ -372,14 +466,19 @@ impl Inner {
             return;
         }
         self.generation.fetch_add(1, Ordering::SeqCst);
-        let mut monitoring = lock(&self.monitoring);
-        if let Some(timer) = monitoring.timeout.take() {
-            self.timers.cancel(timer);
+        let session = {
+            let mut monitoring = lock(&self.monitoring);
+            if let Some(timer) = monitoring.timeout.take() {
+                self.timers.cancel(timer);
+            }
+            if let Some(run) = monitoring.run.take() {
+                run.stop();
+            }
+            monitoring.session.take()
+        };
+        if let Some(session) = session {
+            session.finish();
         }
-        if let Some(run) = monitoring.run.take() {
-            run.stop();
-        }
-        monitoring.original_text = None;
     }
 
     fn arm_timeout(&self, generation: u64, timeout: Duration) {
@@ -395,54 +494,25 @@ impl Inner {
         lock(&self.monitoring).timeout = Some(timer);
     }
 
-    fn emit_edit(&self, generation: u64, value: String) {
+    fn update_session(&self, generation: u64, update: impl FnOnce(&mut Session) -> bool) {
         if self.generation.load(Ordering::SeqCst) != generation {
             return;
         }
-        let Some(original_text) = lock(&self.monitoring).original_text.clone() else {
-            return;
-        };
-        log::debug!("[text-monitor] text changed");
-        let mut debounce = lock(&self.debounce);
-        debounce.latest = Some(TextEdit {
-            original_text,
-            edited_text: value,
-        });
-        if let Some(timer) = debounce.timer.take() {
-            self.timers.cancel(timer);
-        }
-        let weak = self.this.clone();
-        debounce.timer = Some(self.timers.schedule(
-            EDIT_DEBOUNCE,
-            Box::new(move || {
-                if let Some(inner) = weak.upgrade() {
-                    inner.flush_edit();
-                }
-            }),
-        ));
-    }
-
-    fn flush_edit(&self) {
-        let edit = {
-            let mut debounce = lock(&self.debounce);
-            debounce.timer = None;
-            debounce.latest.take()
-        };
-        if let Some(edit) = edit {
-            lock(&self.subscribers).retain(|tx| tx.try_send(edit.clone()).is_ok());
+        let keep_going = lock(&self.monitoring).session.as_mut().is_none_or(update);
+        if !keep_going {
+            log::debug!("[text-monitor] field emptied");
+            self.stop(Some(generation));
         }
     }
 
     fn handle_line(&self, generation: u64, line: &str) {
-        if let Some(encoded) = line.strip_prefix("CHANGED_B64:") {
-            match base64::engine::general_purpose::STANDARD.decode(encoded.trim()) {
-                Ok(bytes) => {
-                    self.emit_edit(generation, String::from_utf8_lossy(&bytes).into_owned())
-                }
-                Err(error) => log::debug!("[text-monitor] bad base64 payload: {error}"),
-            }
-        } else if let Some(value) = line.strip_prefix("CHANGED:") {
-            self.emit_edit(generation, value.to_string());
+        if let Some(value) = payload(line, "CHANGED") {
+            self.update_session(generation, |session| session.on_changed(value));
+        } else if let Some(value) = payload(line, "BASELINE") {
+            self.update_session(generation, |session| {
+                session.on_baseline(value);
+                true
+            });
         } else if line == "NO_ELEMENT" || line == "NO_VALUE" {
             // The helper exits right after; its end stops monitoring.
             log::debug!("[text-monitor] no target element ({line})");
@@ -452,7 +522,6 @@ impl Inner {
     fn on_watch_event(&self, generation: u64, pid: i32, event: WatchEvent) {
         match event {
             WatchEvent::Line(line) => self.handle_line(generation, &line),
-            WatchEvent::Unavailable => self.poll(generation, pid),
             WatchEvent::Ended { ax_unsupported } => {
                 // NO_ELEMENT after a uniform -25212 run is terminal for this app.
                 if ax_unsupported {
@@ -464,11 +533,11 @@ impl Inner {
     }
 
     /// Event-based monitoring through the helper's AXObserver.
-    fn run_native(&self, generation: u64, pid: i32, helper: HelperCommand) {
-        std::thread::sleep(INITIAL_QUERY_DELAY);
+    fn run_native(&self, generation: u64, pid: i32, helper: HelperCommand, timeout: Duration) {
         let program = helper.program;
         let mut args = helper.args;
         args.push(pid.to_string());
+        args.push(timeout.as_secs().to_string());
         let weak = self.this.clone();
         let run = SupervisedChild::new(
             ChildOptions {
@@ -493,8 +562,7 @@ impl Inner {
         );
         {
             let mut monitoring = lock(&self.monitoring);
-            if self.generation.load(Ordering::SeqCst) != generation
-                || monitoring.original_text.is_none()
+            if self.generation.load(Ordering::SeqCst) != generation || monitoring.session.is_none()
             {
                 return;
             }
@@ -506,53 +574,6 @@ impl Inner {
             run.stop();
         }
     }
-
-    fn run_polling(&self, generation: u64, pid: i32) {
-        std::thread::sleep(INITIAL_QUERY_DELAY);
-        self.poll(generation, pid);
-    }
-
-    /// osascript polling fallback when the helper is unavailable.
-    fn poll(&self, generation: u64, pid: i32) {
-        let mut last_value = None;
-        for attempt in 1..=INITIAL_QUERY_RETRIES {
-            if !self.is_current(generation) {
-                return;
-            }
-            match query_focused_value(pid) {
-                None => {
-                    self.stop(Some(generation));
-                    return;
-                }
-                Some(value) if !value.is_empty() => {
-                    last_value = Some(value);
-                    break;
-                }
-                Some(_) if attempt < INITIAL_QUERY_RETRIES => {
-                    std::thread::sleep(INITIAL_QUERY_RETRY_DELAY)
-                }
-                Some(_) => {}
-            }
-        }
-        let Some(mut last_value) = last_value else {
-            self.stop(Some(generation));
-            return;
-        };
-        loop {
-            std::thread::sleep(POLL_INTERVAL);
-            if !self.is_current(generation) {
-                return;
-            }
-            let Some(current) = query_focused_value(pid) else {
-                self.stop(Some(generation));
-                return;
-            };
-            if current != last_value {
-                last_value = current.clone();
-                self.emit_edit(generation, current);
-            }
-        }
-    }
 }
 
 enum WatchEvent {
@@ -562,8 +583,21 @@ enum WatchEvent {
     Ended {
         ax_unsupported: bool,
     },
-    /// The helper could not be started.
-    Unavailable,
+}
+
+/// The text of a `<prefix>:` or, for multi-line text, `<prefix>_B64:` line.
+fn payload(line: &str, prefix: &str) -> Option<String> {
+    let rest = line.strip_prefix(prefix)?;
+    if let Some(encoded) = rest.strip_prefix("_B64:") {
+        return match base64::engine::general_purpose::STANDARD.decode(encoded.trim()) {
+            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(error) => {
+                log::debug!("[text-monitor] bad base64 payload: {error}");
+                None
+            }
+        };
+    }
+    rest.strip_prefix(':').map(str::to_string)
 }
 
 /// One `macos-text-monitor <pid>` run: forwards the helper's lines and
@@ -582,7 +616,7 @@ impl Protocol for EditWatch {
     }
 
     fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, WatchEvent>) {
-        if line.contains("NO_ELEMENT") {
+        if line == "NO_ELEMENT" {
             self.no_element = true;
         }
         cx.emit(WatchEvent::Line(line.to_string()));
@@ -598,8 +632,10 @@ impl Protocol for EditWatch {
         match down {
             Down::Stopped => {}
             Down::Missing | Down::NotStarted(_) => {
-                log::debug!("[text-monitor] native monitor failed ({down:?}), polling instead");
-                cx.emit(WatchEvent::Unavailable);
+                log::debug!("[text-monitor] helper failed to start ({down:?})");
+                cx.emit(WatchEvent::Ended {
+                    ax_unsupported: false,
+                });
             }
             Down::Failed(_) | Down::Exited { .. } => cx.emit(WatchEvent::Ended {
                 ax_unsupported: self.no_element && is_persistent_ax_no_value_failure(&self.stderr),
@@ -633,41 +669,6 @@ fn is_persistent_ax_no_value_failure(stderr: &str) -> bool {
     !codes.is_empty() && codes.iter().all(|code| code == "-25212")
 }
 
-/// Reads the focused field of `pid` through System Events. `None` on error.
-fn query_focused_value(pid: i32) -> Option<String> {
-    let script = format!(
-        "tell application \"System Events\"\n\
-         \tset targetProc to first application process whose unix id is {pid}\n\
-         \tset focAttr to value of attribute \"AXFocusedUIElement\" of targetProc\n\
-         \tif focAttr is missing value then return \"\"\n\
-         \ttry\n\
-         \t\tset val to value of attribute \"AXValue\" of focAttr\n\
-         \t\tif val is not missing value and val is not \"\" then return val\n\
-         \tend try\n\
-         \ttry\n\
-         \t\tset charCount to value of attribute \"AXNumberOfCharacters\" of focAttr\n\
-         \t\tif charCount is greater than 0 then\n\
-         \t\t\treturn value of attribute \"AXSelectedText\" of focAttr\n\
-         \t\tend if\n\
-         \tend try\n\
-         \treturn \"\"\n\
-         end tell"
-    );
-    let output = run_with_timeout(
-        std::path::Path::new("/usr/bin/osascript"),
-        &["-e", &script],
-        None,
-        Duration::from_secs(3),
-    );
-    output.success().then(|| {
-        output
-            .stdout
-            .strip_suffix('\n')
-            .unwrap_or(&output.stdout)
-            .to_string()
-    })
-}
-
 /// In-process AppKit lookups.
 pub(crate) mod appkit {
     use objc2_app_kit::{
@@ -681,6 +682,12 @@ pub(crate) mod appkit {
             .frontmostApplication()
             .map(|app| app.processIdentifier())
             .filter(|pid| *pid > 0)
+    }
+
+    pub fn bundle_identifier(pid: i32) -> Option<String> {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?
+            .bundleIdentifier()
+            .map(|id| id.to_string())
     }
 
     /// Activates `pid` with all its windows, unless it has no regular Dock
@@ -760,6 +767,16 @@ mod tests {
 
     fn no_helper() -> HelperResolver {
         Arc::new(|| None)
+    }
+
+    fn watch(
+        monitor: &TextEditMonitor,
+        text: &str,
+        pid: Option<i32>,
+    ) -> async_channel::Receiver<SessionReport> {
+        let (report, receiver) = async_channel::bounded(1);
+        monitor.start_monitoring(text, MONITOR_TIMEOUT, pid, report);
+        receiver
     }
 
     fn counting(values: Vec<Option<i32>>, delay: Duration) -> (PidSource, Arc<AtomicUsize>) {
@@ -937,20 +954,30 @@ mod tests {
     #[test]
     fn monitoring_without_target_or_for_cached_pid_stops_at_once() {
         let monitor = TextEditMonitor::with_hooks(hooks(sh("echo"), Arc::new(|| None)));
-        monitor.start_monitoring("pasted text", Duration::from_secs(5), None);
+        let reports = watch(&monitor, "pasted text", None);
         assert!(!monitor.is_monitoring());
+        assert!(!reports.try_recv().unwrap().readable);
         lock(&monitor.inner.unsupported_pids).insert(42);
-        monitor.start_monitoring("pasted text", Duration::from_secs(5), Some(42));
+        let reports = watch(&monitor, "pasted text", Some(42));
         assert!(!monitor.is_monitoring());
+        assert!(!reports.try_recv().unwrap().readable);
+    }
+
+    #[test]
+    fn monitoring_without_the_helper_reports_an_unreadable_field() {
+        let monitor = TextEditMonitor::with_hooks(hooks(no_helper(), Arc::new(|| None)));
+        let reports = watch(&monitor, "pasted text", Some(42));
+        assert!(!monitor.is_monitoring());
+        assert!(!reports.try_recv().unwrap().readable);
     }
 
     #[test]
     fn no_element_with_uniform_no_value_teaches_the_cache() {
         let spawner = Arc::new(FakeSpawner::default());
         let monitor = TextEditMonitor::with_hooks(fake_hooks(&spawner));
-        monitor.start_monitoring("pasted text", Duration::from_secs(4), Some(4242));
+        let _reports = watch(&monitor, "pasted text", Some(4242));
         wait_for_spawn(&spawner);
-        assert_eq!(spawner.args(0), vec!["4242".to_string()]);
+        assert_eq!(spawner.args(0), ["4242", "90"]);
         spawner.emit(
             0,
             ChildEvent::Stderr(
@@ -984,40 +1011,158 @@ mod tests {
         assert!(!is_persistent_ax_no_value_failure(""));
     }
 
-    #[test]
-    fn edits_are_reported_debounced_with_the_pasted_text() {
+    /// A session on a fake helper, with its first lines already delivered.
+    fn session(
+        lines: &str,
+    ) -> (
+        TextEditMonitor,
+        Arc<FakeSpawner>,
+        Arc<FakeTimers>,
+        async_channel::Receiver<SessionReport>,
+    ) {
         let timers = FakeTimers::new();
         let spawner = Arc::new(FakeSpawner::default());
         let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
-        let edits = monitor.subscribe();
-        monitor.start_monitoring("hello world", Duration::from_secs(30), Some(42));
+        let reports = watch(&monitor, "hello world", Some(42));
         wait_for_spawn(&spawner);
-        spawner.emit(
-            0,
-            ChildEvent::Stdout("CHANGED:hello wrld\nCHANGED_B64:aGVsbG8Kd29ybGQ=\n".into()),
-        );
-        timers.advance(1500);
-        let edit = edits.try_recv().expect("debounced edit");
-        assert_eq!(
-            edit,
-            TextEdit {
-                original_text: "hello world".into(),
-                edited_text: "hello\nworld".into()
-            }
-        );
-        assert!(
-            edits.try_recv().is_err(),
-            "only the latest edit is reported"
-        );
-        monitor.stop_monitoring();
+        spawner.emit(0, ChildEvent::Stdout(lines.into()));
+        (monitor, spawner, timers, reports)
+    }
+
+    fn edit(baseline: &str, edited: &str) -> Option<TextEdit> {
+        Some(TextEdit {
+            baseline: baseline.into(),
+            edited: edited.into(),
+            pasted: vec!["hello world".into()],
+        })
     }
 
     #[test]
-    fn a_new_subscriber_closes_the_previous_one() {
-        let monitor =
-            TextEditMonitor::build(hooks(sh("sleep 1"), Arc::new(|| None)), FakeTimers::new());
-        let first = monitor.subscribe();
-        let _second = monitor.subscribe();
-        assert!(first.is_closed());
+    fn a_session_reports_the_last_text_once_it_ends() {
+        let (monitor, _spawner, _timers, reports) =
+            session("BASELINE:hello world\nCHANGED:hello wrld\nCHANGED_B64:aGVsbG8Kd29ybGQ=\n");
+        assert!(reports.try_recv().is_err(), "nothing before the end");
+        monitor.stop_monitoring();
+        assert_eq!(
+            reports.try_recv().unwrap(),
+            SessionReport {
+                app: None,
+                readable: true,
+                edit: edit("hello world", "hello\nworld"),
+            }
+        );
+    }
+
+    #[test]
+    fn a_session_with_no_edit_reports_none() {
+        let (monitor, _spawner, _timers, reports) = session("BASELINE:hello world\n");
+        monitor.stop_monitoring();
+        let report = reports.try_recv().unwrap();
+        assert!(report.readable);
+        assert_eq!(report.edit, None);
+    }
+
+    #[test]
+    fn typing_the_text_back_is_no_edit() {
+        let (monitor, _spawner, _timers, reports) =
+            session("BASELINE:hello world\nCHANGED:hello\nCHANGED:hello world\n");
+        monitor.stop_monitoring();
+        assert_eq!(reports.try_recv().unwrap().edit, None);
+    }
+
+    #[test]
+    fn the_timeout_ends_a_session() {
+        let (monitor, _spawner, timers, reports) =
+            session("BASELINE:hello world\nCHANGED:hello there\n");
+        timers.advance(90_000);
+        assert!(!monitor.is_monitoring());
+        assert_eq!(
+            reports.try_recv().unwrap().edit,
+            edit("hello world", "hello there")
+        );
+    }
+
+    #[test]
+    fn emptying_the_field_keeps_the_fix_made_just_before() {
+        let (monitor, _spawner, _timers, reports) =
+            session("BASELINE:hello world\nCHANGED:hello there\nCHANGED:\n");
+        assert!(!monitor.is_monitoring(), "sending ends the session");
+        assert_eq!(
+            reports.try_recv().unwrap().edit,
+            edit("hello world", "hello there")
+        );
+    }
+
+    #[test]
+    fn a_paste_landing_after_the_baseline_becomes_the_baseline() {
+        let (monitor, _spawner, _timers, reports) =
+            session("BASELINE:\nCHANGED:hello world\nCHANGED:hello there\n");
+        assert!(monitor.is_monitoring());
+        monitor.stop_monitoring();
+        assert_eq!(
+            reports.try_recv().unwrap().edit,
+            edit("hello world", "hello there")
+        );
+    }
+
+    #[test]
+    fn the_helper_ending_ends_the_session() {
+        let (monitor, spawner, _timers, reports) =
+            session("BASELINE:hello world\nCHANGED:hello there\n");
+        spawner.emit(
+            0,
+            ChildEvent::Exit {
+                code: Some(0),
+                signal: None,
+            },
+        );
+        assert!(!monitor.is_monitoring());
+        assert!(reports.try_recv().unwrap().edit.is_some());
+    }
+
+    #[test]
+    fn a_new_session_ends_the_last_and_remembers_its_paste() {
+        let (monitor, spawner, _timers, first) =
+            session("BASELINE:hello world\nCHANGED:hello there\n");
+        let second = watch(&monitor, "next part", Some(42));
+        assert!(first.try_recv().unwrap().edit.is_some());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while spawner.count() < 2 {
+            assert!(Instant::now() < deadline, "monitor never spawned");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        spawner.emit(
+            1,
+            ChildEvent::Stdout(
+                "BASELINE:hello there next part\nCHANGED:hello you next part\n".into(),
+            ),
+        );
+        monitor.stop_monitoring();
+        let report = second.try_recv().unwrap();
+        assert_eq!(report.edit.unwrap().pasted, ["hello world", "next part"]);
+    }
+
+    #[test]
+    fn recent_pastes_are_kept_per_app_and_capped() {
+        let mut monitoring = Monitoring::default();
+        for i in 0..7 {
+            monitoring.remember_paste(Some(1), &i.to_string());
+        }
+        assert_eq!(
+            monitoring.remember_paste(Some(1), "7"),
+            ["3", "4", "5", "6", "7"]
+        );
+        assert_eq!(monitoring.remember_paste(Some(2), "other"), ["other"]);
+    }
+
+    #[test]
+    fn payloads_decode_plain_and_base64_lines() {
+        assert_eq!(payload("CHANGED:a: b", "CHANGED").as_deref(), Some("a: b"));
+        assert_eq!(
+            payload("BASELINE_B64:aGVsbG8Kd29ybGQ=", "BASELINE").as_deref(),
+            Some("hello\nworld")
+        );
+        assert_eq!(payload("CHANGED_B64:not base64!", "CHANGED"), None);
+        assert_eq!(payload("OTHER:x", "CHANGED"), None);
     }
 }

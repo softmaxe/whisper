@@ -105,6 +105,9 @@ pub struct DictionaryView {
     panel_open: bool,
 }
 
+/// Mishearings shown on a Dictionary row.
+const MAX_ROW_CORRECTIONS: usize = 3;
+
 fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
     AppState::global(cx).update(cx, |s, cx| {
         if let Err(err) = s.change_dictionary(&add, &remove, DictionarySource::Manual, cx) {
@@ -788,14 +791,14 @@ impl DictionaryView {
                                 &p,
                             )
                             .on_click(move |_, _, cx| {
-                                let words = AppState::global(cx).read(cx).dictionary.clone();
                                 show_dialog(
                                     DialogRequest::confirm(
                                         t("dictionary.clearTitle"),
                                         Some(t("dictionary.clearDescription").into()),
                                         true,
                                         move |_, cx| {
-                                            update_dictionary(Vec::new(), words.clone(), cx)
+                                            AppState::global(cx)
+                                                .update(cx, |s, cx| s.clear_dictionary(cx))
                                         },
                                     ),
                                     cx,
@@ -831,6 +834,37 @@ impl DictionaryView {
             .into_any_element()
     }
 
+    /// A way the word was misheard; clicking it forgets that mapping.
+    fn misheard_chip(
+        id: (&'static str, usize),
+        misheard: String,
+        word: String,
+        group: SharedString,
+        p: &Palette,
+    ) -> impl IntoElement {
+        let muted = p.muted_foreground;
+        div()
+            .id(id)
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .text_size(px(TEXT_SMALL))
+            .text_color(muted)
+            .cursor_pointer()
+            .hover(|s| s.text_color(p.foreground))
+            .child(format!("← {misheard}"))
+            .child(
+                div()
+                    .opacity(0.)
+                    .group_hover(group, |s| s.opacity(1.))
+                    .child(icon("x", 10., muted)),
+            )
+            .on_click(move |_, _, cx| {
+                AppState::global(cx).update(cx, |s, cx| s.remove_correction(&misheard, &word, cx))
+            })
+    }
+
     fn render_row(
         &mut self,
         index: usize,
@@ -851,15 +885,35 @@ impl DictionaryView {
                 .pr(px(12.))
                 .child(text_field_small(&self.edit_input, false, window, cx).h(px(28.)))
         } else {
+            let misheard: Vec<String> = AppState::global(cx)
+                .read(cx)
+                .known_corrections
+                .iter()
+                .filter(|c| c.term == entry.word)
+                .take(MAX_ROW_CORRECTIONS)
+                .map(|c| c.misheard.clone())
+                .collect();
+            let chips = misheard.into_iter().enumerate().map(|(i, misheard)| {
+                let id = ("dict-misheard", index * MAX_ROW_CORRECTIONS + i);
+                Self::misheard_chip(id, misheard, entry.word.clone(), group.clone(), &p)
+            });
             div()
                 .flex_1()
                 .min_w_0()
                 .pr(px(12.))
-                .truncate()
-                .text_size(px(TEXT_BODY))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(p.foreground)
-                .child(entry.word.clone())
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(TEXT_BODY))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.foreground)
+                        .child(entry.word.clone()),
+                )
+                .children(chips)
         };
         let bar = if max_uses > 0 {
             USE_BAR_MAX * entry.use_count as f32 / max_uses as f32

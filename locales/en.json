@@ -41,7 +41,7 @@
     },
     "dictionary": {
       "autoLearnTitle": "Auto-learn from corrections",
-      "autoLearnDescription": "When you correct a transcription in the target app, the corrected word is automatically added to your dictionary."
+      "autoLearnDescription": "When you correct a transcription in the target app, Whisper remembers the word and how it was misheard, and fixes repeated mistakes for you."
     },
     "general": {
       "appearance": {

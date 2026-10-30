@@ -13,6 +13,7 @@ pub mod prompts;
 mod script;
 pub mod snippets;
 pub mod strip_thinking;
+pub mod term_match;
 pub mod url;
 mod word_segment;
 

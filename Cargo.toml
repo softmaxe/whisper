@@ -57,6 +57,7 @@ cpal = "0.18"
 # Text
 ferrous-opencc = "0.4"
 # Dictionary-based CJK word breaks.
+pinyin = { version = "0.11", default-features = false, features = ["plain"] }
 icu_segmenter = "2"
 icu_collections = "2"
 icu_provider = "2"

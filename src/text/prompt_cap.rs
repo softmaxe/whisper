@@ -10,6 +10,10 @@ pub const WHISPER_PROMPT_CHARS: usize = 900;
 /// UI, not to trim.
 pub const WHISPER_DECODER_PROMPT_CHARS: usize = 550;
 
+/// Dictionary hints in the cleanup prompt. Every dictation sends them, so a
+/// long Dictionary must not grow each request without bound.
+pub const CLEANUP_PROMPT_CHARS: usize = 2000;
+
 /// Fills the budget from `priority_words` (most important first), skipping any
 /// entry that would overflow so none is sent half-spelled, then joins the
 /// picked entries least important first: decoders keep the tail of a long

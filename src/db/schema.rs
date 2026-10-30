@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use super::timestamp::SQL_NOW;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 pub(super) fn init(conn: &Connection) -> Result<()> {
     // Wait briefly rather than fail when another connection holds the lock.
@@ -42,6 +42,30 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
           last_used_at TEXT,
           created_at TEXT NOT NULL DEFAULT ({SQL_NOW}),
           updated_at TEXT NOT NULL DEFAULT ({SQL_NOW})
+        );
+
+        -- How the user corrected delivered text: what was misheard and the term meant.
+        CREATE TABLE IF NOT EXISTS dictionary_corrections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          misheard TEXT NOT NULL COLLATE NOCASE,
+          term TEXT NOT NULL COLLATE NOCASE,
+          count INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL DEFAULT ({SQL_NOW}),
+          UNIQUE (misheard, term)
+        );
+
+        -- Words the user removed; auto-learn must not bring them back.
+        CREATE TABLE IF NOT EXISTS dictionary_rejected_words (
+          word TEXT PRIMARY KEY COLLATE NOCASE
+        );
+
+        -- Per-app auto-learn outcomes, keyed by bundle identifier: no text.
+        CREATE TABLE IF NOT EXISTS auto_learn_stats (
+          app TEXT PRIMARY KEY,
+          sessions INTEGER NOT NULL DEFAULT 0,
+          readable INTEGER NOT NULL DEFAULT 0,
+          edited INTEGER NOT NULL DEFAULT 0,
+          learned INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS snippets (
