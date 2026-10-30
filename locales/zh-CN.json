@@ -240,14 +240,12 @@
       "clearAllErrorDescription": "出了点问题，请重试。",
       "copyText": "复制文本",
       "deleteItem": "删除",
-      "viewRawTranscript": "查看原始转录",
       "showInFolder": "在访达中显示",
       "retryTranscription": "重新转录",
       "retrySuccess": "转录已更新",
       "transcribing": "正在转录",
       "retryError": "重新转录失败",
       "audioNotFound": "音频文件未找到或已过期",
-      "noAiProcessing": "此转录未应用 AI 处理",
       "rawTranscript": "原始转录"
     }
   },
