@@ -283,10 +283,15 @@ pub fn run() {
             state.audio.clone(),
             state.settings.clone(),
         );
-        cx.background_spawn(async move {
-            let report =
-                crate::audio_storage::run_retention_cleanup(&db, &storage, (&settings).into());
+        let sweep = cx.background_spawn(async move {
+            crate::audio_storage::run_retention_cleanup(&db, &storage, (&settings).into())
+        });
+        cx.spawn(async move |cx| {
+            let report = sweep.await;
             log::info!("retention cleanup: {report:?}");
+            cx.update(|cx| {
+                AppState::global(cx).update(cx, |s, cx| s.apply_retention_cleanup(&report, cx))
+            });
         })
         .detach();
     });

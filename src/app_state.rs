@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 
-use crate::audio_storage::AudioStorage;
+use crate::audio_storage::{AudioStorage, RetentionCleanupReport};
 use crate::db::{Database, DictionaryEntry, DictionarySource, Snippet, TranscriptionItem};
 use crate::history::{HistoryStore, Recorded};
 use crate::i18n::{self, Language};
@@ -197,6 +197,28 @@ impl AppState {
         cx.emit(AppEvent::AnalyticsChanged);
         cx.notify();
         Ok(())
+    }
+
+    /// Shows what a background retention sweep removed: reloads History when
+    /// rows or recordings went away, and Insights when its counters changed.
+    pub fn apply_retention_cleanup(
+        &mut self,
+        report: &RetentionCleanupReport,
+        cx: &mut Context<Self>,
+    ) {
+        let history_changed =
+            !report.deleted_transcription_ids.is_empty() || report.audio.deleted > 0;
+        // An unloaded History loads fresh rows when it opens.
+        let reloaded = history_changed
+            && self.history_loaded
+            && self
+                .load_history(cx)
+                .inspect_err(|err| log::warn!("failed to reload History: {err}"))
+                .is_ok();
+        // A History reload already refreshes Insights.
+        if !reloaded && (history_changed || report.analytics_purged > 0) {
+            cx.emit(AppEvent::AnalyticsChanged);
+        }
     }
 
     /// Deletes every stored recording, keeping the transcripts.
