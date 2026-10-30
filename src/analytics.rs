@@ -5,18 +5,17 @@
 //! lives here so there is a single owner of each figure.
 
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use chrono::{DateTime, Datelike, Days, Local, NaiveDate, TimeZone, Utc};
 use icu_segmenter::WordSegmenter;
 use icu_segmenter::options::WordBreakInvariantOptions;
-use once_cell::sync::Lazy;
 use regex::Regex;
-use serde::{Deserialize, Serialize};
 
 /// The trend chart switches from daily to weekly bars beyond this many days.
 pub const TREND_DAILY_LIMIT_DAYS: i64 = 92;
 
-static CJK_SCRIPT: Lazy<Regex> = Lazy::new(|| {
+static CJK_SCRIPT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]")
         .expect("valid CJK regex")
 });
@@ -70,8 +69,7 @@ pub fn today_key() -> String {
 }
 
 /// One dictation's counter, as recorded right after it is delivered.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticsEventInput {
     pub word_count: i64,
     /// When the dictation was spoken, in the database's timestamp shape
@@ -80,9 +78,6 @@ pub struct AnalyticsEventInput {
     /// Local `YYYY-MM-DD` of `occurred_at`.
     pub local_date: String,
     pub spoken_duration_ms: Option<i64>,
-    /// The transcription source, e.g. "self-hosted".
-    pub provider: Option<String>,
-    pub model: Option<String>,
 }
 
 impl AnalyticsEventInput {
@@ -93,8 +88,6 @@ impl AnalyticsEventInput {
         raw_text: Option<&str>,
         occurred_at: DateTime<Utc>,
         spoken_duration_ms: Option<i64>,
-        provider: Option<&str>,
-        model: Option<&str>,
     ) -> Self {
         let source = raw_text.filter(|raw| !raw.is_empty()).unwrap_or(text);
         Self {
@@ -102,25 +95,12 @@ impl AnalyticsEventInput {
             occurred_at: crate::db::timestamp::format_db_timestamp(&occurred_at),
             local_date: local_date_key(&occurred_at),
             spoken_duration_ms,
-            provider: provider.filter(|p| !p.is_empty()).map(str::to_string),
-            model: model.filter(|m| !m.is_empty()).map(str::to_string),
         }
     }
 }
 
 /// Per-day totals as grouped in SQL.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct AnalyticsDayTotals {
-    pub date: String,
-    pub words: i64,
-    pub dictations: i64,
-    pub spoken_duration_ms: i64,
-    /// Words from dictations whose spoken duration is known; the WPM basis.
-    pub covered_words: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AnalyticsDailyBucket {
     pub date: String,
     pub words: i64,
@@ -131,8 +111,7 @@ pub struct AnalyticsDailyBucket {
 }
 
 /// Everything the Insights view shows.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalyticsSummary {
     pub total_words: i64,
     pub total_dictations: i64,
@@ -147,8 +126,7 @@ pub struct AnalyticsSummary {
     pub daily: Vec<AnalyticsDailyBucket>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Streaks {
     pub current_streak_days: i64,
     pub longest_streak_days: i64,
@@ -323,7 +301,7 @@ pub fn calculate_streaks<S: AsRef<str>>(days: &[S], today: &str) -> Streaks {
 
 /// Derives the Insights summary from one row per local date.
 pub fn summarize_analytics_days(
-    mut days: Vec<AnalyticsDayTotals>,
+    mut days: Vec<AnalyticsDailyBucket>,
     today: &str,
 ) -> AnalyticsSummary {
     days.sort_by(|a, b| a.date.cmp(&b.date));
@@ -347,17 +325,7 @@ pub fn summarize_analytics_days(
     let dates: Vec<&str> = days.iter().map(|d| d.date.as_str()).collect();
     let streaks = calculate_streaks(&dates, today);
     let skip = days.len().saturating_sub(366);
-    let daily = days
-        .into_iter()
-        .skip(skip)
-        .map(|d| AnalyticsDailyBucket {
-            date: d.date,
-            words: d.words,
-            dictations: d.dictations,
-            spoken_duration_ms: d.spoken_duration_ms,
-            covered_words: d.covered_words,
-        })
-        .collect();
+    let daily = days.into_iter().skip(skip).collect();
 
     AnalyticsSummary {
         total_words,
@@ -375,8 +343,8 @@ pub fn summarize_analytics_days(
 mod tests {
     use super::*;
 
-    fn day(date: &str, words: i64, dictations: i64, ms: i64, covered: i64) -> AnalyticsDayTotals {
-        AnalyticsDayTotals {
+    fn day(date: &str, words: i64, dictations: i64, ms: i64, covered: i64) -> AnalyticsDailyBucket {
+        AnalyticsDailyBucket {
             date: date.into(),
             words,
             dictations,
@@ -487,19 +455,6 @@ mod tests {
         assert_eq!(summary.longest_streak_days, 3);
         let dates: Vec<&str> = summary.daily.iter().map(|b| b.date.as_str()).collect();
         assert_eq!(dates, ["2026-08-28", "2026-08-29", "2026-08-30"]);
-        let json = serde_json::to_value(&summary.daily[0]).unwrap();
-        let mut keys: Vec<&String> = json.as_object().unwrap().keys().collect();
-        keys.sort();
-        assert_eq!(
-            keys,
-            [
-                "coveredWords",
-                "date",
-                "dictations",
-                "spokenDurationMs",
-                "words"
-            ]
-        );
     }
 
     #[test]
@@ -540,16 +495,11 @@ mod tests {
             Some("cleaned text"),
             at,
             Some(1500),
-            Some("self-hosted"),
-            None,
         );
         assert_eq!(event.word_count, 2);
         assert_eq!(event.occurred_at, "2026-09-01 10:00:00.000Z");
-        assert_eq!(event.provider.as_deref(), Some("self-hosted"));
         assert_eq!(event.local_date, local_date_key(&at));
-        let fallback =
-            AnalyticsEventInput::for_dictation("a b c", Some(""), at, None, Some(""), None);
+        let fallback = AnalyticsEventInput::for_dictation("a b c", Some(""), at, None);
         assert_eq!(fallback.word_count, 3);
-        assert_eq!(fallback.provider, None);
     }
 }

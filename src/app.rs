@@ -29,7 +29,7 @@ impl DictationStatus for StatusAdapter {
 }
 
 /// The control panel window, kept so the tray and Dock can bring it back.
-struct ControlPanelWindow(Option<AnyWindowHandle>);
+struct ControlPanelWindow(AnyWindowHandle);
 impl Global for ControlPanelWindow {}
 
 fn open_control_panel(cx: &mut App) -> anyhow::Result<AnyWindowHandle> {
@@ -73,7 +73,7 @@ pub fn close_control_panel(cx: &mut App) {
 /// Shows the control panel and opens Settings.
 fn show_settings(cx: &mut App) {
     show_control_panel(cx);
-    if let Some(handle) = cx.try_global::<ControlPanelWindow>().and_then(|w| w.0) {
+    if let Some(handle) = cx.try_global::<ControlPanelWindow>().map(|w| w.0) {
         let _ = handle.update(cx, |_, window, _| {
             // A freshly opened panel has no rendered tree to dispatch into yet.
             window.on_next_frame(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
@@ -84,7 +84,7 @@ fn show_settings(cx: &mut App) {
 
 /// Shows the control panel, reopening it if it was closed.
 pub fn show_control_panel(cx: &mut App) {
-    let existing = cx.try_global::<ControlPanelWindow>().and_then(|w| w.0);
+    let existing = cx.try_global::<ControlPanelWindow>().map(|w| w.0);
     if let Some(handle) = existing
         && handle
             .update(cx, |_, window, _| window.activate_window())
@@ -96,7 +96,7 @@ pub fn show_control_panel(cx: &mut App) {
     }
     match open_control_panel(cx) {
         Ok(handle) => {
-            cx.set_global(ControlPanelWindow(Some(handle)));
+            cx.set_global(ControlPanelWindow(handle));
             cx.activate(true);
             crate::native::dock::set_control_panel_visible(true);
         }
@@ -140,7 +140,7 @@ fn handle_hotkey(command: HotkeyCommand, cx: &mut App) {
             d.cancel_recording(cx);
             cx.emit(DictationNotice::DismissRecovery);
         }),
-        HotkeyCommand::ForceStop { .. } => dictation.update(cx, |d, _| d.note_force_stopped()),
+        HotkeyCommand::ForceStop => dictation.update(cx, |d, _| d.note_force_stopped()),
         HotkeyCommand::UnusedPress { mode } => dictation.update(cx, |_, cx| {
             cx.emit(DictationNotice::HotkeyHint {
                 hold: mode == ActivationMode::Push,
@@ -150,7 +150,7 @@ fn handle_hotkey(command: HotkeyCommand, cx: &mut App) {
             hotkey,
             message_key,
         } => {
-            let label = backend::format_hotkey_label(&hotkey);
+            let label = crate::text::hotkeys::format_hotkey_list_label(&hotkey);
             show_toast(
                 Toast::new(crate::i18n::t("app.toasts.hotkeyUnavailable.title"))
                     .description(crate::i18n::t_with(&message_key, &[("hotkey", &label)]))
@@ -159,7 +159,6 @@ fn handle_hotkey(command: HotkeyCommand, cx: &mut App) {
             );
         }
         HotkeyCommand::ListenerError { message } => log::warn!("hotkey listener error: {message}"),
-        HotkeyCommand::ActiveHotkeyChanged(_) => {}
     }
 }
 
@@ -272,7 +271,7 @@ pub fn run() {
         cx.background_spawn(async { crate::native::mic::watch_laptop_lid() })
             .detach();
         tray::init(cx);
-        crate::native::dock::init(!start_minimized);
+        crate::native::dock::set_control_panel_visible(!start_minimized);
         if !start_minimized {
             show_control_panel(cx);
         }

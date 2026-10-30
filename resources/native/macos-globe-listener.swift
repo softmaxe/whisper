@@ -238,18 +238,12 @@ let releases: [(NSEvent.ModifierFlags, String)] = [
     (.shift, "shift"),
 ]
 
-func mouseButtonName(_ buttonNumber: Int) -> String? {
-    switch buttonNumber {
-    case 3:
-        return "MouseButton4"
-    case 4:
-        return "MouseButton5"
-    default:
-        return nil
-    }
-}
-
+// CGEvent button numbers are zero-based: button 3 is the fourth button.
 let mouseButtonNumbers: [(UInt32, String)] = [(3, "MouseButton4"), (4, "MouseButton5")]
+
+func mouseButtonName(_ buttonNumber: Int) -> String? {
+    mouseButtonNumbers.first { Int($0.0) == buttonNumber }?.1
+}
 
 // Monitors miss events while macOS does not deliver them, such as across sleep
 // or while another app holds Secure Input. A missed release would leave a key

@@ -6,10 +6,9 @@
 //! data.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-use once_cell::sync::OnceCell;
-
-static DATA_DIR: OnceCell<PathBuf> = OnceCell::new();
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Name of the data directory under `~/Library/Application Support`.
 const APP_DATA_DIR_NAME: &str = "com.softmaxe.whisper";

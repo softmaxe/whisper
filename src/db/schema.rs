@@ -23,12 +23,13 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
           created_at TEXT NOT NULL DEFAULT ({SQL_NOW}),
           has_audio INTEGER NOT NULL DEFAULT 0,
           audio_duration_ms INTEGER,
+          -- provider, model, error_message, error_code and route_kind are no
+          -- longer written; they stay so older databases keep working.
           provider TEXT,
           model TEXT,
           status TEXT NOT NULL DEFAULT 'completed',
           error_message TEXT,
           error_code TEXT,
-          -- The dictation intent (e.g. 'translation') so retry re-runs the same route.
           route_kind TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_transcriptions_timestamp ON transcriptions(timestamp);
@@ -56,6 +57,7 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
           local_date TEXT NOT NULL,
           word_count INTEGER NOT NULL CHECK (word_count > 0),
           spoken_duration_ms INTEGER CHECK (spoken_duration_ms > 0),
+          -- provider and model are no longer written.
           provider TEXT,
           model TEXT
         );

@@ -183,6 +183,20 @@ struct ErrorCard {
     duration: Duration,
 }
 
+impl ErrorCard {
+    /// A card shown from now, on screen for as long as its text needs.
+    fn new(title: String, description: String, transcript: Option<String>) -> Self {
+        let duration = error_duration(&title, &description);
+        Self {
+            title,
+            description,
+            transcript,
+            shown_at: Instant::now(),
+            duration,
+        }
+    }
+}
+
 struct Recovery {
     text: String,
     copied: bool,
@@ -449,26 +463,14 @@ impl PillView {
             DictationNotice::DismissError => self.error = None,
             DictationNotice::DismissRecovery => self.recovery = None,
             DictationNotice::Error { title, description } => {
-                let duration = error_duration(&title, &description);
-                self.error = Some(ErrorCard {
-                    title,
-                    description,
-                    transcript: None,
-                    shown_at: Instant::now(),
-                    duration,
-                });
+                self.error = Some(ErrorCard::new(title, description, None));
             }
             DictationNotice::NoAudio => {
-                let title = t("dictation.noAudio.title");
-                let description = t("dictation.noAudio.description");
-                let duration = error_duration(&title, &description);
-                self.error = Some(ErrorCard {
-                    title,
-                    description,
-                    transcript: None,
-                    shown_at: Instant::now(),
-                    duration,
-                });
+                self.error = Some(ErrorCard::new(
+                    t("dictation.noAudio.title"),
+                    t("dictation.noAudio.description"),
+                    None,
+                ));
             }
             DictationNotice::PushForceStopped {
                 kept_in_clipboard,
@@ -480,14 +482,11 @@ impl PillView {
                 } else {
                     "dictation.pushForceStopped.descriptionClipboardFailed"
                 });
-                let duration = error_duration(&title, &description);
-                self.error = Some(ErrorCard {
+                self.error = Some(ErrorCard::new(
                     title,
                     description,
-                    transcript: Some(transcript).filter(|t| !t.trim().is_empty()),
-                    shown_at: Instant::now(),
-                    duration,
-                });
+                    Some(transcript).filter(|t| !t.trim().is_empty()),
+                ));
             }
             DictationNotice::DeliveryFallback { text, copied } => {
                 self.recovery = Some(Recovery {
@@ -1263,7 +1262,9 @@ impl Render for PillView {
                 } else if snapshot.is_processing {
                     t("app.mic.processing")
                 } else {
-                    backend::format_hotkey_label(&AppState::settings(cx).effective_dictation_key())
+                    crate::text::hotkeys::format_hotkey_list_label(
+                        &AppState::settings(cx).effective_dictation_key(),
+                    )
                 };
                 root = root.child(
                     div()

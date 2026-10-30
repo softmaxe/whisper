@@ -10,10 +10,12 @@ use gpui_kit::*;
 use crate::db::TranscriptionItem;
 use crate::i18n::{self, Language, t};
 
-use crate::app_state::{AppEvent, AppState};
+use crate::app_state::AppState;
 use crate::backend;
 
-use super::components::{drop, f32_tx, icon, kbd, shimmer_text, skeleton_line, spinner};
+use super::components::{
+    empty_state_icon, f32_tx, icon, kbd, retention_banner, shimmer_text, skeleton_line, spinner,
+};
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
@@ -62,9 +64,12 @@ fn local_time(item: &TranscriptionItem) -> Option<DateTime<Local>> {
 }
 
 fn format_time(item: &TranscriptionItem) -> String {
-    let Some(time) = local_time(item) else {
-        return String::new();
-    };
+    local_time(item).map(format_clock).unwrap_or_default()
+}
+
+/// A clock time in the UI language's convention: 24-hour for Chinese,
+/// 12-hour with AM/PM for English.
+fn format_clock(time: DateTime<Local>) -> String {
     match i18n::language() {
         Language::ZhCn => time.format("%H:%M").to_string(),
         Language::En => time.format("%I:%M %p").to_string(),
@@ -97,12 +102,6 @@ impl HistoryView {
             let top = s.history.first().map(|item| item.id);
             this.sync_pending(busy, top);
             cx.notify();
-        })
-        .detach();
-        cx.subscribe(&state, |_, _, event: &AppEvent, cx| {
-            if matches!(event, AppEvent::HistoryChanged | AppEvent::SettingsChanged) {
-                cx.notify();
-            }
         })
         .detach();
         if !state.read(cx).history_loaded {
@@ -409,13 +408,12 @@ impl HistoryView {
                     .when(menu_open, |d| d.child(self.render_menu(item, cx))),
             );
 
-        let route_translation = item.route_kind.as_deref() == Some("translation");
         let picked = self
             .highlighted
             .filter(|(hid, at)| *hid == id && at.elapsed() < FLASH)
-            .map(|(_, at)| 0.12 * (1. - progress(at.elapsed(), 1600)));
+            .map(|(_, at)| 0.12 * (1. - progress(at.elapsed(), FLASH.as_millis() as u64)));
         // A new transcript tints in and eases out over the flash.
-        let landed = arrived.map(|e| 0.09 * (1. - ease_out(progress(e, 1600))));
+        let landed = arrived.map(|e| 0.09 * (1. - ease_out(progress(e, FLASH.as_millis() as u64))));
         let flash = picked.or(landed);
         if flash.is_some() {
             window.request_animation_frame();
@@ -443,9 +441,6 @@ impl HistoryView {
                     p.foreground.opacity(0.025)
                 })
             })
-            .when(route_translation, |d| {
-                d.border_l_2().border_color(p.primary.opacity(0.7))
-            })
             .child(
                 div()
                     .w(px(56.))
@@ -470,10 +465,7 @@ impl HistoryView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
-        let time = match i18n::language() {
-            Language::ZhCn => Local::now().format("%H:%M").to_string(),
-            Language::En => Local::now().format("%I:%M %p").to_string(),
-        };
+        let time = format_clock(Local::now());
         div()
             .flex()
             .gap(px(12.))
@@ -555,12 +547,12 @@ impl HistoryView {
         let id = item.id;
         let mut entries: Vec<(&'static str, String, u8, bool)> = Vec::new();
         if item.has_audio {
-            let label = if item.route_kind.as_deref() == Some("translation") {
-                t("controlPanel.history.retryTranslationMode")
-            } else {
-                t("controlPanel.history.retryTranscription")
-            };
-            entries.push(("rotate-ccw", label, 0, false));
+            entries.push((
+                "rotate-ccw",
+                t("controlPanel.history.retryTranscription"),
+                0,
+                false,
+            ));
         }
         if item.raw_text.is_some() {
             entries.push((
@@ -661,11 +653,10 @@ impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
         let state = AppState::global(cx);
-        let (history, loaded, retention, hotkey) = {
+        let (history, retention, hotkey) = {
             let s = state.read(cx);
             (
                 s.history.clone(),
-                s.history_loaded,
                 s.settings.data_retention_enabled,
                 s.settings.effective_dictation_key(),
             )
@@ -679,50 +670,16 @@ impl Render for HistoryView {
         let mut content = div().min_w_0().flex_1();
         if !retention {
             content = content.child(
-                div()
-                    .mb(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(10.))
-                    .px(px(14.))
-                    .py(px(10.))
-                    .rounded(px(RADIUS_LG))
-                    .border_1()
-                    .border_color(p.amber_border)
-                    .bg(p.amber_bg)
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .text_color(p.amber_icon)
-                            .child("⊘"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(TEXT_SMALL))
-                            .line_height(px(LINE_SMALL))
-                            .text_color(p.amber_text)
-                            .child(t("controlPanel.history.dataRetentionDisabled")),
-                    ),
+                retention_banner(
+                    t("controlPanel.history.dataRetentionDisabled"),
+                    Some(LINE_SMALL),
+                    &p,
+                )
+                .mb(px(12.)),
             );
         }
 
-        if !loaded && history.is_empty() {
-            content = content.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(8.))
-                    .py(px(40.))
-                    .child(spinner("history-loading", 14., p.primary))
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .text_color(p.muted_foreground)
-                            .child(t("controlPanel.loading")),
-                    ),
-            );
-        } else if history.is_empty() && pending.is_none() {
+        if history.is_empty() && pending.is_none() {
             content = content.child(render_empty_with_hotkey(&hotkey, &p));
         } else {
             // Group consecutive rows by local day.
@@ -834,11 +791,17 @@ impl Render for HistoryView {
 
 fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
     let mut keys = div().flex().items_center().gap(px(4.));
-    for (i, key) in backend::parse_hotkey_list(hotkey).into_iter().enumerate() {
+    for (i, key) in crate::text::hotkeys::parse_hotkey_list(hotkey)
+        .iter()
+        .enumerate()
+    {
         if i > 0 {
             keys = keys.child(div().text_color(p.foreground.opacity(0.45)).child("/"));
         }
-        keys = keys.child(kbd(backend::format_hotkey_label(&key), p));
+        keys = keys.child(kbd(
+            crate::text::hotkeys::format_hotkey_list_label(&key.to_string()),
+            p,
+        ));
     }
     empty_card(keys, p)
 }
@@ -851,19 +814,7 @@ fn empty_card(keys: Div, p: &Palette) -> AnyElement {
         .min_h(px(256.))
         .px(px(40.))
         .py(px(48.))
-        .child(
-            div()
-                .size(px(36.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(RADIUS_MD))
-                .border_1()
-                .border_color(p.border)
-                .bg(p.card)
-                .shadow(vec![drop(0., 1., 2., 0.05)])
-                .child(icon("mic", 16., p.muted_foreground)),
-        )
+        .child(empty_state_icon("mic", p))
         .child(
             div()
                 .mt(px(16.))

@@ -14,17 +14,21 @@ use crate::settings::{
 use crate::text::url::{EndpointIssue, endpoint_check};
 
 use crate::app_state::AppState;
-use crate::backend::{self, AutoStartState, MicDeviceInfo, ModelOption};
+use crate::backend::{self, AutoStartState};
+use crate::native::mic::MicDevice;
+use crate::services::cleanup::ModelOption;
+use crate::text::prompts::default_cleanup_prompt;
+use crate::text::url::{build_api_url, normalize_base_url};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, NavSurface, Toggle, backdrop, dialog_shadow, drop, icon,
-    nav_row, panel_row, section_header, settings_field, settings_field_tagged, settings_panel,
-    settings_row,
+    Button, ButtonSize, ButtonVariant, NavSurface, Toggle, backdrop, dialog_shadow, icon, nav_row,
+    panel_row, section_header, segment, segmented_track, settings_field, settings_field_tagged,
+    settings_panel, settings_row, settings_section,
 };
 use super::hotkey_input::HotkeyListInput;
 use super::overlays::{DialogRequest, Toast, show_dialog, show_toast};
 use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
-use super::text_input::{FieldKind, text_field, textarea_field};
+use super::text_input::{text_field, textarea_field};
 use super::theme::{
     DUR_BASE, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL, RADIUS_LG,
     RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, ease_out, ease_snap,
@@ -40,18 +44,6 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    /// Resolves the section names other views link to; History and Upload
-    /// link to Speech to Text as "transcription" and "uploadTranscription".
-    pub fn from_name(name: &str) -> Self {
-        match name {
-            "hotkeys" => Self::Hotkeys,
-            "speechToText" | "transcription" | "uploadTranscription" => Self::SpeechToText,
-            "llms" => Self::Llms,
-            "privacyData" => Self::PrivacyData,
-            _ => Self::General,
-        }
-    }
-
     fn key(self) -> &'static str {
         match self {
             Self::General => "general",
@@ -138,7 +130,7 @@ pub struct SettingsModal {
 
     auto_start: AutoStartState,
     auto_start_loading: bool,
-    mic_devices: Vec<MicDeviceInfo>,
+    mic_devices: Vec<MicDevice>,
     mic_default: Option<String>,
     storage_usage: (usize, u64),
     mic_permission: bool,
@@ -160,9 +152,9 @@ fn update_settings(cx: &mut App, f: impl FnOnce(&mut Settings)) {
 }
 
 fn language_options() -> Vec<SelectOption> {
-    backend::languages()
-        .into_iter()
-        .map(|(code, label, flag)| SelectOption::new(code, label).prefix(flag))
+    crate::text::language::languages()
+        .iter()
+        .map(|l| SelectOption::new(l.code.clone(), l.label.clone()).prefix(l.flag.clone()))
         .collect()
 }
 
@@ -334,26 +326,20 @@ impl SettingsModal {
 
         let api_key_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("apiKeyInput.placeholder")));
-        subscriptions.push(cx.subscribe_in(
-            &api_key_input,
-            window,
-            |this, _, e: &InputEvent, window, cx| {
-                match e {
-                    InputEvent::PressEnter { .. } => this.save_api_key(cx),
-                    InputEvent::Blur
-                        // Commit on click-away rather than discarding a pasted key.
-                        if this.api_key_editing => {
-                            this.save_api_key(cx);
-                        }
-                    _ => {}
-                }
-                let _ = window;
-            },
-        ));
+        subscriptions.push(
+            cx.subscribe(&api_key_input, |this, _, e: &InputEvent, cx| match e {
+                InputEvent::PressEnter { .. } => this.save_api_key(cx),
+                InputEvent::Blur
+                    // Commit on click-away rather than discarding a pasted key.
+                    if this.api_key_editing => {
+                        this.save_api_key(cx);
+                    }
+                _ => {}
+            }),
+        );
 
-        let default_prompt = backend::default_cleanup_prompt(&s.ui_language);
         let current_prompt = if s.custom_prompt_cleanup.is_empty() {
-            default_prompt.clone()
+            default_cleanup_prompt(&s.ui_language).to_string()
         } else {
             s.custom_prompt_cleanup.clone()
         };
@@ -498,7 +484,7 @@ impl SettingsModal {
             cx.notify();
         }));
 
-        let hotkeys = cx.new(|cx| HotkeyListInput::new(window, cx));
+        let hotkeys = cx.new(HotkeyListInput::new);
 
         let state = AppState::global(cx);
         subscriptions.push(cx.observe(&state, |this, _, cx| {
@@ -669,7 +655,7 @@ impl SettingsModal {
         });
     }
 
-    fn selected_device(&self, s: &Settings) -> Option<MicDeviceInfo> {
+    fn selected_device(&self, s: &Settings) -> Option<MicDevice> {
         match s.microphone_selection_mode {
             MicrophoneSelectionMode::BuiltIn => {
                 self.mic_devices.iter().find(|d| d.is_built_in).cloned()
@@ -734,7 +720,7 @@ impl SettingsModal {
         let normalized = if draft.is_empty() {
             draft
         } else {
-            backend::normalize_base_url(&draft)
+            normalize_base_url(&draft)
         };
         self.cleanup_url.update(cx, |input, cx| {
             input.set_value(normalized.clone(), window, cx)
@@ -759,7 +745,7 @@ impl SettingsModal {
 
     fn load_models(&mut self, base_override: Option<String>, force: bool, cx: &mut Context<Self>) {
         let raw = base_override.unwrap_or_else(|| settings(cx).cleanup_remote_url.clone());
-        let normalized = backend::normalize_base_url(&raw);
+        let normalized = normalize_base_url(&raw);
         if normalized.is_empty() {
             self.models.clear();
             self.models_error = None;
@@ -821,7 +807,7 @@ impl SettingsModal {
     // ---- Prompt Studio ----------------------------------------------------------------------
 
     fn default_prompt(cx: &App) -> String {
-        backend::default_cleanup_prompt(&settings(cx).ui_language)
+        default_cleanup_prompt(&settings(cx).ui_language).to_string()
     }
 
     fn save_prompt(&mut self, cx: &mut Context<Self>) {
@@ -878,11 +864,6 @@ impl SettingsModal {
         }
         let s = settings(cx);
         self.test_result.clear();
-        if !s.use_cleanup_model {
-            self.test_result = t("promptStudio.test.disabledReasoning");
-            cx.notify();
-            return;
-        }
         if s.cleanup_remote_url.trim().is_empty() {
             self.test_result = t("promptStudio.test.noEndpoint");
             cx.notify();
@@ -959,18 +940,12 @@ impl SettingsModal {
         nav
     }
 
-    fn render_general(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_general(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let s = settings(cx);
 
         let theme_switch = {
-            let mut track = div()
-                .flex()
-                .items_center()
-                .gap(px(2.))
-                .p(px(2.))
-                .rounded(px(RADIUS_LG))
-                .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }));
+            let mut track = segmented_track(&p).items_center().gap(px(2.));
             for (value, icon_name, key) in [
                 (
                     ThemePreference::Light,
@@ -990,30 +965,9 @@ impl SettingsModal {
             ] {
                 let selected = s.theme == value;
                 track = track.child(
-                    div()
-                        .id(SharedString::from(format!("theme-{key}")))
-                        .flex()
-                        .items_center()
+                    segment(SharedString::from(format!("theme-{key}")), selected, &p)
                         .gap(px(4.))
-                        .px(px(10.))
                         .py(px(4.))
-                        .rounded(px(RADIUS_MD))
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .cursor_pointer()
-                        .when(selected, |d| {
-                            d.text_color(p.foreground).map(|d| {
-                                if p.dark {
-                                    d.bg(p.white.opacity(0.1))
-                                } else {
-                                    d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
-                                }
-                            })
-                        })
-                        .when(!selected, |d| {
-                            d.text_color(p.muted_foreground)
-                                .hover(|s| s.text_color(p.foreground))
-                        })
                         .child(icon(
                             icon_name,
                             14.,
@@ -1146,197 +1100,137 @@ impl SettingsModal {
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.appearance.title"),
-                        Some(t("settings.general.appearance.description").into()),
+            .child(settings_section(
+                t("settings.general.appearance.title"),
+                Some(t("settings.general.appearance.description").into()),
+                vec![
+                    settings_row(
+                        t("settings.general.appearance.theme"),
+                        Some(t("settings.general.appearance.themeDescription").into()),
+                        theme_switch,
                         &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.general.appearance.theme"),
-                                Some(t("settings.general.appearance.themeDescription").into()),
-                                theme_switch,
-                                &p,
-                            )
-                            .into_any_element(),
-                            settings_row(
-                                t("settings.general.appearance.showMenuBarIcon"),
-                                Some(
-                                    t("settings.general.appearance.showMenuBarIconDescription")
-                                        .into(),
-                                ),
-                                toggle("menu-bar-icon", s.show_menu_bar_icon, |s, v| {
-                                    s.show_menu_bar_icon = v
-                                }),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
+                    )
+                    .into_any_element(),
+                    settings_row(
+                        t("settings.general.appearance.showMenuBarIcon"),
+                        Some(t("settings.general.appearance.showMenuBarIconDescription").into()),
+                        toggle("menu-bar-icon", s.show_menu_bar_icon, |s, v| {
+                            s.show_menu_bar_icon = v
+                        }),
                         &p,
-                    )),
-            )
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.soundEffects.title"),
-                        None,
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.general.soundEffects.title"),
+                None,
+                vec![
+                    settings_row(
+                        t("settings.general.soundEffects.dictationSounds"),
+                        Some(t("settings.general.soundEffects.dictationSoundsDescription").into()),
+                        toggle("audio-cues", s.audio_cues_enabled, |s, v| {
+                            s.audio_cues_enabled = v
+                        }),
                         &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.general.soundEffects.dictationSounds"),
-                                Some(
-                                    t("settings.general.soundEffects.dictationSoundsDescription")
-                                        .into(),
-                                ),
-                                toggle("audio-cues", s.audio_cues_enabled, |s, v| {
-                                    s.audio_cues_enabled = v
-                                }),
-                                &p,
-                            )
-                            .into_any_element(),
-                            settings_row(
-                                t("settings.general.soundEffects.pauseMedia"),
-                                Some(
-                                    t("settings.general.soundEffects.pauseMediaDescription").into(),
-                                ),
-                                toggle("pause-media", s.pause_media_on_dictation, |s, v| {
-                                    s.pause_media_on_dictation = v
-                                }),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
+                    )
+                    .into_any_element(),
+                    settings_row(
+                        t("settings.general.soundEffects.pauseMedia"),
+                        Some(t("settings.general.soundEffects.pauseMediaDescription").into()),
+                        toggle("pause-media", s.pause_media_on_dictation, |s, v| {
+                            s.pause_media_on_dictation = v
+                        }),
                         &p,
-                    )),
-            )
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.clipboard.title"),
-                        None,
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.general.clipboard.title"),
+                None,
+                vec![
+                    settings_row(
+                        t("settings.general.clipboard.autoPaste"),
+                        Some(t("settings.general.clipboard.autoPasteDescription").into()),
+                        toggle("auto-paste", s.auto_paste_enabled, |s, v| {
+                            s.auto_paste_enabled = v
+                        }),
                         &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.general.clipboard.autoPaste"),
-                                Some(t("settings.general.clipboard.autoPasteDescription").into()),
-                                toggle("auto-paste", s.auto_paste_enabled, |s, v| {
-                                    s.auto_paste_enabled = v
-                                }),
-                                &p,
-                            )
-                            .into_any_element(),
-                            settings_row(
-                                t("settings.general.clipboard.keepInClipboard"),
-                                Some(
-                                    t("settings.general.clipboard.keepInClipboardDescription")
-                                        .into(),
-                                ),
-                                toggle(
-                                    "keep-clipboard",
-                                    s.keep_transcription_in_clipboard,
-                                    |s, v| s.keep_transcription_in_clipboard = v,
-                                ),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
+                    )
+                    .into_any_element(),
+                    settings_row(
+                        t("settings.general.clipboard.keepInClipboard"),
+                        Some(t("settings.general.clipboard.keepInClipboardDescription").into()),
+                        toggle(
+                            "keep-clipboard",
+                            s.keep_transcription_in_clipboard,
+                            |s, v| s.keep_transcription_in_clipboard = v,
+                        ),
                         &p,
-                    )),
-            )
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.floatingIcon.title"),
-                        Some(t("settings.general.floatingIcon.description").into()),
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.general.floatingIcon.title"),
+                Some(t("settings.general.floatingIcon.description").into()),
+                vec![
+                    settings_row(
+                        t("settings.general.floatingIcon.startPosition"),
+                        Some(t("settings.general.floatingIcon.startPositionDescription").into()),
+                        self.pill_position.clone(),
                         &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.general.floatingIcon.startPosition"),
-                                Some(
-                                    t("settings.general.floatingIcon.startPositionDescription")
-                                        .into(),
-                                ),
-                                self.pill_position.clone(),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
-                        &p,
-                    )),
-            )
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.language.sectionTitle"),
-                        Some(t("settings.language.sectionDescription").into()),
-                        &p,
-                    ))
-                    .child(settings_panel(language_rows, &p)),
-            )
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.startup.title"),
-                        Some(t("settings.general.startup.description").into()),
-                        &p,
-                    ))
-                    .child(settings_panel(startup_rows, &p)),
-            )
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.microphone.title"),
-                        Some(t("settings.general.microphone.description").into()),
-                        &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            panel_row()
-                                .child(self.render_microphone(window, cx))
-                                .into_any_element(),
-                        ],
-                        &p,
-                    )),
-            )
-            .child(
-                div()
-                    .child(section_header(
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.language.sectionTitle"),
+                Some(t("settings.language.sectionDescription").into()),
+                language_rows,
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.general.startup.title"),
+                Some(t("settings.general.startup.description").into()),
+                startup_rows,
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.general.microphone.title"),
+                Some(t("settings.general.microphone.description").into()),
+                vec![
+                    panel_row()
+                        .child(self.render_microphone(cx))
+                        .into_any_element(),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.dictionary.autoLearnTitle"),
+                None,
+                vec![
+                    settings_row(
                         t("settings.dictionary.autoLearnTitle"),
-                        None,
+                        Some(t("settings.dictionary.autoLearnDescription").into()),
+                        toggle("auto-learn", s.auto_learn_corrections, |s, v| {
+                            s.auto_learn_corrections = v
+                        }),
                         &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.dictionary.autoLearnTitle"),
-                                Some(t("settings.dictionary.autoLearnDescription").into()),
-                                toggle("auto-learn", s.auto_learn_corrections, |s, v| {
-                                    s.auto_learn_corrections = v
-                                }),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
-                        &p,
-                    )),
-            )
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
             .into_any_element()
     }
 
-    fn render_microphone(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    fn render_microphone(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = cx.palette();
         let s = settings(cx);
         let is_auto = s.microphone_selection_mode == MicrophoneSelectionMode::Auto;
@@ -1459,68 +1353,58 @@ impl SettingsModal {
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(
-                div()
-                    .child(section_header(
-                        t("settings.general.hotkey.title"),
-                        Some(t("settings.general.hotkey.description").into()),
-                        &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            panel_row().child(self.hotkeys.clone()).into_any_element(),
-                            panel_row()
-                                .child(
-                                    div()
-                                        .text_size(px(TEXT_BODY))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(p.foreground)
-                                        .child(t("settings.general.hotkey.activationMode")),
-                                )
-                                .child(div().mt(px(10.)).child(selector))
-                                .into_any_element(),
-                        ],
-                        &p,
-                    )),
-            )
+            .child(settings_section(
+                t("settings.general.hotkey.title"),
+                Some(t("settings.general.hotkey.description").into()),
+                vec![
+                    panel_row().child(self.hotkeys.clone()).into_any_element(),
+                    panel_row()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(p.foreground)
+                                .child(t("settings.general.hotkey.activationMode")),
+                        )
+                        .child(div().mt(px(10.)).child(selector))
+                        .into_any_element(),
+                ],
+                &p,
+            ))
             .into_any_element()
     }
 
     fn render_speech_to_text(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        div()
-            .child(section_header(
-                t("settings.speechToText.title"),
-                Some(t("settings.speechToText.sharedDescription").into()),
-                &p,
-            ))
-            .child(settings_panel(
-                vec![
-                    settings_field_tagged(
-                        t("settings.selfHosted.serverUrl"),
-                        "OpenAI · /audio/transcriptions",
-                        Some(t("settings.speechToText.serverUrlHelp").into_any_element()),
-                        endpoint_control(
-                            text_field(&self.stt_url, FieldKind::Line, true, window, cx),
-                            self.stt_url.read(cx).value().as_ref(),
-                            "/audio/transcriptions",
-                            &p,
-                        ),
+        settings_section(
+            t("settings.speechToText.title"),
+            Some(t("settings.speechToText.sharedDescription").into()),
+            vec![
+                settings_field_tagged(
+                    t("settings.selfHosted.serverUrl"),
+                    "OpenAI · /audio/transcriptions",
+                    Some(t("settings.speechToText.serverUrlHelp").into_any_element()),
+                    endpoint_control(
+                        text_field(&self.stt_url, true, window, cx),
+                        self.stt_url.read(cx).value().as_ref(),
+                        "/audio/transcriptions",
                         &p,
-                    )
-                    .into_any_element(),
-                    settings_field(
-                        t("common.model"),
-                        None,
-                        None,
-                        text_field(&self.stt_model, FieldKind::Line, true, window, cx),
-                        &p,
-                    )
-                    .into_any_element(),
-                ],
-                &p,
-            ))
-            .into_any_element()
+                    ),
+                    &p,
+                )
+                .into_any_element(),
+                settings_field(
+                    t("common.model"),
+                    None,
+                    None,
+                    text_field(&self.stt_model, true, window, cx),
+                    &p,
+                )
+                .into_any_element(),
+            ],
+            &p,
+        )
+        .into_any_element()
     }
 
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1575,25 +1459,19 @@ impl SettingsModal {
         let s = settings(cx);
         let draft = self.cleanup_draft(cx);
         let is_dirty = draft != s.cleanup_remote_url.trim();
-        let saved_base = backend::normalize_base_url(&s.cleanup_remote_url);
+        let saved_base = normalize_base_url(&s.cleanup_remote_url);
         let has_base = !saved_base.is_empty();
         let query_base = if has_base {
             saved_base.clone()
         } else {
             "http://192.168.1.126:11434/v1".to_string()
         };
-        let query_url = backend::build_api_url(&query_base, "/models").unwrap_or_default();
+        let query_url = build_api_url(&query_base, "/models").unwrap_or_default();
 
         let api_key_control = if self.api_key_editing {
             div()
                 .relative()
-                .child(text_field(
-                    &self.api_key_input,
-                    FieldKind::Line,
-                    true,
-                    window,
-                    cx,
-                ))
+                .child(text_field(&self.api_key_input, true, window, cx))
                 .child(
                     div()
                         .absolute()
@@ -1730,92 +1608,88 @@ impl SettingsModal {
         };
         let model_list = model_card_list(&models, &s.cleanup_model, &p);
 
-        div()
-            .child(section_header(
-                t("settings.llms.server.title"),
-                Some(t("settings.llms.server.description").into()),
-                &p,
-            ))
-            .child(settings_panel(
-                vec![
-                    settings_field_tagged(
-                        t("reasoning.custom.endpointTitle"),
-                        "OpenAI · /chat/completions",
-                        Some(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(10.))
-                                .child(t("reasoning.selfHosted.endpointHelp"))
-                                .child(self.cleanup_presets(&p, cx))
-                                .into_any_element(),
-                        ),
-                        endpoint_control(
-                            text_field(&self.cleanup_url, FieldKind::Line, true, window, cx),
-                            &draft,
-                            "/chat/completions",
-                            &p,
-                        ),
-                        &p,
-                    )
-                    .into_any_element(),
-                    settings_field(
-                        t("reasoning.custom.apiKeyOptional"),
-                        Some(small(
-                            t("reasoning.custom.apiKeyHelp"),
-                            p.muted_foreground.opacity(0.8),
-                        )),
-                        None,
-                        api_key_control,
-                        &p,
-                    )
-                    .into_any_element(),
-                    settings_field(
-                        t("common.model"),
-                        Some(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(4.))
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground.opacity(0.8))
-                                .child(t("reasoning.custom.queryPrefix"))
-                                .child(div().font_family(FONT_MONO).child(query_url))
-                                .child(t("reasoning.custom.querySuffix"))
-                                .into_any_element(),
-                        ),
-                        Some(
-                            Button::new("refresh-models")
-                                .label(refresh_label)
-                                .variant(ButtonVariant::Outline)
-                                .size(ButtonSize::Sm)
-                                .disabled(self.models_loading || (draft.is_empty() && !has_base))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.refresh_models(window, cx)
-                                }))
-                                .into_any_element(),
-                        ),
+        settings_section(
+            t("settings.llms.server.title"),
+            Some(t("settings.llms.server.description").into()),
+            vec![
+                settings_field_tagged(
+                    t("reasoning.custom.endpointTitle"),
+                    "OpenAI · /chat/completions",
+                    Some(
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(8.))
-                            .children(status)
-                            .child(model_list),
+                            .gap(px(10.))
+                            .child(t("reasoning.selfHosted.endpointHelp"))
+                            .child(self.cleanup_presets(&p, cx))
+                            .into_any_element(),
+                    ),
+                    endpoint_control(
+                        text_field(&self.cleanup_url, true, window, cx),
+                        &draft,
+                        "/chat/completions",
                         &p,
-                    )
-                    .into_any_element(),
-                    settings_row(
-                        t("reasoning.disableThinking.label"),
-                        Some(t("reasoning.disableThinking.help").into()),
-                        Toggle::new("disable-thinking", s.cleanup_disable_thinking).on_change(
-                            |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
-                        ),
-                        &p,
-                    )
-                    .into_any_element(),
-                ],
-                &p,
-            ))
+                    ),
+                    &p,
+                )
+                .into_any_element(),
+                settings_field(
+                    t("reasoning.custom.apiKeyOptional"),
+                    Some(small(
+                        t("reasoning.custom.apiKeyHelp"),
+                        p.muted_foreground.opacity(0.8),
+                    )),
+                    None,
+                    api_key_control,
+                    &p,
+                )
+                .into_any_element(),
+                settings_field(
+                    t("common.model"),
+                    Some(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(4.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.muted_foreground.opacity(0.8))
+                            .child(t("reasoning.custom.queryPrefix"))
+                            .child(div().font_family(FONT_MONO).child(query_url))
+                            .child(t("reasoning.custom.querySuffix"))
+                            .into_any_element(),
+                    ),
+                    Some(
+                        Button::new("refresh-models")
+                            .label(refresh_label)
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .disabled(self.models_loading || (draft.is_empty() && !has_base))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
+                            )
+                            .into_any_element(),
+                    ),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .children(status)
+                        .child(model_list),
+                    &p,
+                )
+                .into_any_element(),
+                settings_row(
+                    t("reasoning.disableThinking.label"),
+                    Some(t("reasoning.disableThinking.help").into()),
+                    Toggle::new("disable-thinking", s.cleanup_disable_thinking).on_change(
+                        |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
+                    ),
+                    &p,
+                )
+                .into_any_element(),
+            ],
+            &p,
+        )
     }
 
     fn render_prompt_studio(
@@ -1894,7 +1768,7 @@ impl SettingsModal {
         let body = match tab {
             PromptTab::View => {
                 let copied = self.copied_prompt;
-                let text = current_prompt.replace("{{agentName}}", "Whisper");
+                let text = current_prompt.replace("{{agentName}}", crate::text::DEFAULT_AGENT_NAME);
                 let copy_text = current_prompt.clone();
                 div()
                     .px(px(20.))
@@ -1949,7 +1823,6 @@ impl SettingsModal {
                                     })
                                     .variant(ButtonVariant::Ghost)
                                     .size(ButtonSize::Sm)
-                                    .h(28.)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.copy_prompt(copy_text.clone(), cx)
                                     })),
@@ -2194,7 +2067,7 @@ impl SettingsModal {
             } else {
                 p.border.opacity(0.7)
             })
-            .bg(if p.dark { p.surface_2 } else { p.card })
+            .bg(p.card)
             .overflow_hidden()
             .child(tabs)
             .child(body)
@@ -2209,7 +2082,7 @@ impl SettingsModal {
                 "settings.privacy.audioStorageFiles",
                 &[
                     ("count", &files.to_string()),
-                    ("size", &backend::format_bytes(bytes)),
+                    ("size", &crate::text::format::format_bytes(bytes)),
                 ],
             )
         } else {
@@ -2228,42 +2101,37 @@ impl SettingsModal {
             .flex_col()
             .gap(px(24.))
             .child(block(
-                div()
-                    .child(section_header(
-                        t("settings.privacy.audioRetention"),
-                        Some(t("settings.privacy.audioRetentionDescription").into()),
-                        &p,
-                    ))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.privacy.audioRetention"),
-                                Some(t("settings.privacy.audioRetentionDescription").into()),
-                                self.audio_retention.clone(),
-                                &p,
-                            )
-                            .into_any_element(),
-                            settings_row(
-                                t("settings.privacy.audioStorageUsage"),
-                                Some(usage.into()),
-                                Button::new("clear-audio")
-                                    .label(t("settings.privacy.clearAllAudio"))
-                                    .variant(ButtonVariant::Outline)
-                                    .size(ButtonSize::Sm)
-                                    .h(28.)
-                                    .disabled(files == 0)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
-                                        this.storage_usage = (0, 0);
-                                        show_toast(Toast::new(t("settings.privacy.clearAllAudio")), cx);
-                                        cx.notify();
-                                    })),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
-                        &p,
-                    )),
+                settings_section(
+                    t("settings.privacy.audioRetention"),
+                    Some(t("settings.privacy.audioRetentionDescription").into()),
+                    vec![
+                        settings_row(
+                            t("settings.privacy.audioRetention"),
+                            Some(t("settings.privacy.audioRetentionDescription").into()),
+                            self.audio_retention.clone(),
+                            &p,
+                        )
+                        .into_any_element(),
+                        settings_row(
+                            t("settings.privacy.audioStorageUsage"),
+                            Some(usage.into()),
+                            Button::new("clear-audio")
+                                .label(t("settings.privacy.clearAllAudio"))
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Sm)
+                                .disabled(files == 0)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
+                                    this.storage_usage = (0, 0);
+                                    show_toast(Toast::new(t("settings.privacy.clearAllAudio")), cx);
+                                    cx.notify();
+                                })),
+                            &p,
+                        )
+                        .into_any_element(),
+                    ],
+                    &p,
+                ),
             ))
             .child(block(div().child(settings_panel(
                 vec![
@@ -2326,35 +2194,34 @@ impl SettingsModal {
                     ),
             ))
             .child(block(
-                div()
-                    .child(section_header(t("settings.permissions.troubleshootingTitle"), None, &p))
-                    .child(settings_panel(
-                        vec![
-                            settings_row(
-                                t("settings.permissions.resetAccessibility.label"),
-                                Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
-                                Button::new("troubleshoot-ax")
-                                    .label(t("settings.permissions.troubleshoot"))
-                                    .variant(ButtonVariant::Outline)
-                                    .size(ButtonSize::Sm)
-                                    .h(28.)
-                                    .on_click(|_, _, cx| {
-                                        show_dialog(
-                                            DialogRequest::confirm(
-                                                t("settings.permissions.resetAccessibility.title"),
-                                                Some(t("settings.permissions.resetAccessibility.description").into()),
-                                                false,
-                                                |_, _| backend::request_accessibility_permission(),
-                                            ),
-                                            cx,
-                                        )
-                                    }),
-                                &p,
-                            )
-                            .into_any_element(),
-                        ],
-                        &p,
-                    )),
+                settings_section(
+                    t("settings.permissions.troubleshootingTitle"),
+                    None,
+                    vec![
+                        settings_row(
+                            t("settings.permissions.resetAccessibility.label"),
+                            Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
+                            Button::new("troubleshoot-ax")
+                                .label(t("settings.permissions.troubleshoot"))
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Sm)
+                                .on_click(|_, _, cx| {
+                                    show_dialog(
+                                        DialogRequest::confirm(
+                                            t("settings.permissions.resetAccessibility.title"),
+                                            Some(t("settings.permissions.resetAccessibility.description").into()),
+                                            false,
+                                            |_, _| backend::request_accessibility_permission(),
+                                        ),
+                                        cx,
+                                    )
+                                }),
+                            &p,
+                        )
+                        .into_any_element(),
+                    ],
+                    &p,
+                ),
             ))
             .into_any_element()
     }
@@ -2615,7 +2482,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
                     .font_family(FONT_MONO),
                 )
                 .child(
-                    muted(model.owner.clone().unwrap_or_else(|| "—".to_string()))
+                    muted(model.owned_by.clone().unwrap_or_else(|| "—".to_string()))
                         .w(px(MODEL_OWNER_W)),
                 ),
         );
@@ -2689,7 +2556,6 @@ fn permission_card(
                         Button::new(id)
                             .label(t("settings.permissions.grantAccess"))
                             .size(ButtonSize::Sm)
-                            .h(28.)
                             .on_click(on_request),
                     )
                 }),
@@ -2707,7 +2573,7 @@ impl Render for SettingsModal {
         let p = cx.palette();
         let nav = self.render_nav(cx);
         let content = match self.section {
-            SettingsSection::General => self.render_general(window, cx),
+            SettingsSection::General => self.render_general(cx),
             SettingsSection::Hotkeys => self.render_hotkeys(cx),
             SettingsSection::SpeechToText => self.render_speech_to_text(window, cx),
             SettingsSection::Llms => self.render_llms(window, cx),

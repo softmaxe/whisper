@@ -56,7 +56,7 @@ where
     }
 }
 
-/// `createApiRetryStrategy().shouldRetry`: never the LLM deadline; network
+/// Whether an API failure is worth retrying: never the LLM deadline; network
 /// faults (no status) always; otherwise only 408, 429 and 5xx.
 pub fn api_should_retry(status: Option<u16>, code: Option<&str>) -> bool {
     if code == Some(LLM_REQUEST_TIMEOUT_CODE) {

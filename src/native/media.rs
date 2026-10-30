@@ -6,10 +6,10 @@
 //! pause/play). Without it, `macos-media-remote --media-key-toggle` posts a
 //! play/pause media key, which cannot know whether anything was playing.
 //!
-//! Pause, resume and toggle run one at a time: a quick tap could otherwise
-//! run the resume before the pause recorded what it paused. [`MediaPlayer`]
-//! calls block (helper deadlines of 3 s); [`pause_media`] and
-//! [`resume_media`] queue them on one worker thread, in call order.
+//! Pause and resume run one at a time: a quick tap could otherwise run the
+//! resume before the pause recorded what it paused. [`MediaPlayer`] calls
+//! block (helper deadlines of 3 s); [`pause_media`] and [`resume_media`] queue
+//! them on one worker thread, in call order.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
@@ -91,7 +91,7 @@ struct State {
 
 pub struct MediaPlayer {
     hooks: MediaHooks,
-    // Held for a whole operation, serializing pause/resume/toggle.
+    // Held for a whole operation, serializing pause and resume.
     state: Mutex<State>,
 }
 
@@ -380,10 +380,10 @@ mod tests {
     fn adapter_failure_falls_back_to_the_media_key_both_ways() {
         let f = fixture(true, true);
         f.results.send(output(1, "")).unwrap();
-        f.results.send(output(0, "OK")).unwrap();
+        f.results.send(output(0, "")).unwrap();
         assert!(f.player.pause_media());
         assert_eq!(lock(&f.calls)[1].1, ["--media-key-toggle"]);
-        f.results.send(output(0, "OK")).unwrap();
+        f.results.send(output(0, "")).unwrap();
         assert!(f.player.resume_media());
         assert_eq!(lock(&f.calls)[2].0, "macos-media-remote");
     }

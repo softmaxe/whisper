@@ -10,10 +10,13 @@ use crate::i18n::{self, Language, t, t_with};
 
 use crate::app_state::{AppEvent, AppState};
 
-use super::components::{Button, ButtonSize, ButtonVariant, drop, icon, spinner};
+use super::components::{
+    Button, ButtonSize, ButtonVariant, drop, icon, retention_banner, segment, segmented_track,
+    surface_card,
+};
 use super::theme::{
-    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE,
-    TEXT_SMALL, TEXT_TITLE, tabular_nums,
+    Palette, PaletteExt, RADIUS_MD, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE,
+    tabular_nums,
 };
 
 const CHART_HEIGHT: f32 = 200.;
@@ -191,40 +194,15 @@ impl InsightsView {
     }
 
     fn range_picker(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
-        let mut picker = div()
-            .flex()
-            .p(px(2.))
-            .rounded(px(RADIUS_LG))
-            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }));
+        let mut picker = segmented_track(p);
         for (index, range) in [Range::Week, Range::Month, Range::AllTime]
             .into_iter()
             .enumerate()
         {
             let active = self.range == range;
             picker = picker.child(
-                div()
-                    .id(("insights-range", index))
-                    .flex()
-                    .items_center()
+                segment(("insights-range", index), active, p)
                     .h(px(24.))
-                    .px(px(10.))
-                    .rounded(px(RADIUS_MD))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .when(active, |d| {
-                        d.text_color(p.foreground).map(|d| {
-                            if p.dark {
-                                d.bg(p.white.opacity(0.1))
-                            } else {
-                                d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
-                            }
-                        })
-                    })
-                    .when(!active, |d| {
-                        d.text_color(p.muted_foreground)
-                            .hover(|s| s.text_color(p.foreground))
-                    })
                     .child(range.label())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.range = range;
@@ -671,138 +649,94 @@ impl Render for InsightsView {
                 .summary
                 .as_ref()
                 .is_some_and(|s| s.total_dictations > 0);
-        let card = || {
-            div()
-                .rounded(px(RADIUS_XL))
-                .border_1()
-                .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
-                .bg(p.card.opacity(0.4))
-        };
+        let card = || surface_card(&p);
 
-        let body: AnyElement = if self.load_failed {
-            card()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(12.))
-                        .px(px(16.))
-                        .py(px(64.))
-                        .child(
+        // `load` runs in `new`, so a summary exists unless loading failed.
+        let body: AnyElement =
+            if let Some(summary) = self.summary.clone().filter(|_| !self.load_failed) {
+                let mut col = div().flex().flex_col();
+                if !retention {
+                    col = col.child(
+                        retention_banner(t("insights.dataRetentionDisabled"), None, &p).mb(px(20.)),
+                    );
+                }
+                if summary.total_dictations == 0 {
+                    col = col.child(
+                        card().child(
                             div()
-                                .text_size(px(TEXT_BODY))
-                                .text_color(p.muted_foreground)
-                                .child(t("insights.loadError")),
-                        )
-                        .child(
-                            Button::new("insights-retry")
-                                .label(t("common.retry"))
-                                .variant(ButtonVariant::Outline)
-                                .size(ButtonSize::Sm)
-                                .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
+                                .flex()
+                                .flex_col()
+                                .items_center()
+                                .px(px(16.))
+                                .py(px(64.))
+                                .child(div().mb(px(16.)).child(icon(
+                                    "bar-chart3",
+                                    40.,
+                                    p.foreground.opacity(0.45),
+                                )))
+                                .child(
+                                    div()
+                                        .text_size(px(TEXT_BODY))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(t("insights.emptyTitle")),
+                                )
+                                .child(
+                                    div()
+                                        .mt(px(6.))
+                                        .max_w(px(384.))
+                                        .text_center()
+                                        .text_size(px(TEXT_SMALL))
+                                        .text_color(p.muted_foreground)
+                                        .child(t("insights.emptyBody")),
+                                ),
                         ),
-                )
-                .into_any_element()
-        } else if let Some(summary) = self.summary.clone() {
-            let mut col = div().flex().flex_col();
-            if !retention {
-                col = col.child(
-                    div()
-                        .mb(px(20.))
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .px(px(14.))
-                        .py(px(10.))
-                        .rounded(px(RADIUS_LG))
-                        .border_1()
-                        .border_color(p.amber_border)
-                        .bg(p.amber_bg)
-                        .child(
-                            div()
-                                .text_size(px(TEXT_BODY))
-                                .text_color(p.amber_icon)
-                                .child("⊘"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.amber_text)
-                                .child(t("insights.dataRetentionDisabled")),
-                        ),
-                );
-            }
-            if summary.total_dictations == 0 {
-                col = col.child(
-                    card().child(
+                    );
+                } else {
+                    let wide = window.viewport_size().width > px(1024.);
+                    let today = Local::now().date_naive();
+                    let metrics = self.metrics(&summary, today, &p);
+                    let grid = if wide {
+                        div().flex().gap(px(12.)).children(metrics)
+                    } else {
+                        let [a, b, c, d] = metrics;
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(12.))
+                            .child(div().flex().gap(px(12.)).child(a).child(b))
+                            .child(div().flex().gap(px(12.)).child(c).child(d))
+                    };
+                    col = col
+                        .child(grid)
+                        .child(div().mt(px(32.)).child(self.chart(&summary, today, &p)));
+                }
+                col.into_any_element()
+            } else {
+                card()
+                    .child(
                         div()
                             .flex()
                             .flex_col()
                             .items_center()
+                            .gap(px(12.))
                             .px(px(16.))
                             .py(px(64.))
-                            .child(div().mb(px(16.)).child(icon(
-                                "bar-chart3",
-                                40.,
-                                p.foreground.opacity(0.45),
-                            )))
                             .child(
                                 div()
                                     .text_size(px(TEXT_BODY))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(t("insights.emptyTitle")),
+                                    .text_color(p.muted_foreground)
+                                    .child(t("insights.loadError")),
                             )
                             .child(
-                                div()
-                                    .mt(px(6.))
-                                    .max_w(px(384.))
-                                    .text_center()
-                                    .text_size(px(TEXT_SMALL))
-                                    .text_color(p.muted_foreground)
-                                    .child(t("insights.emptyBody")),
+                                Button::new("insights-retry")
+                                    .label(t("common.retry"))
+                                    .variant(ButtonVariant::Outline)
+                                    .size(ButtonSize::Sm)
+                                    .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
                             ),
-                    ),
-                );
-            } else {
-                let wide = window.viewport_size().width > px(1024.);
-                let today = Local::now().date_naive();
-                let metrics = self.metrics(&summary, today, &p);
-                let grid = if wide {
-                    div().flex().gap(px(12.)).children(metrics)
-                } else {
-                    let [a, b, c, d] = metrics;
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(12.))
-                        .child(div().flex().gap(px(12.)).child(a).child(b))
-                        .child(div().flex().gap(px(12.)).child(c).child(d))
-                };
-                col = col
-                    .child(grid)
-                    .child(div().mt(px(32.)).child(self.chart(&summary, today, &p)));
-            }
-            col.into_any_element()
-        } else {
-            card()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(8.))
-                        .py(px(32.))
-                        .child(spinner("insights-loading", 14., p.primary))
-                        .child(
-                            div()
-                                .text_size(px(TEXT_BODY))
-                                .text_color(p.muted_foreground)
-                                .child(t("controlPanel.loading")),
-                        ),
-                )
-                .into_any_element()
-        };
+                    )
+                    .into_any_element()
+            };
 
         div()
             .size_full()

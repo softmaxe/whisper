@@ -371,16 +371,10 @@ guard CommandLine.arguments.count > pidArgumentIndex,
 
 monitoredPid = targetPid
 
-// Dictation probing reads no stdin and does not use the monitor's retry ladder.
+// Dictation probing does not use the monitor's retry ladder.
 if pasteTargetMode {
     writeOutput(pasteTargetStatus(for: targetPid).rawValue)
     exit(0)
-}
-
-// Read the original text from stdin.
-var originalText = ""
-if let line = readLine(strippingNewline: true) {
-    originalText = line
 }
 
 // Target the specific application by PID (passed from the app, which captures
@@ -394,14 +388,12 @@ guard let resolvedElement = resolveFocusedElement(appElement, pid: monitoredPid)
 monitoredElement = resolvedElement
 writeError("Monitoring element in PID \(monitoredPid)")
 
-// Read initial value
-guard let initialValue = readCurrentValue() else {
+// Only a field with a text value can be monitored.
+guard readCurrentValue() != nil else {
     writeError("Focused element has no text value")
     writeOutput("NO_VALUE")
     exit(0)
 }
-
-writeTextOutput("INITIAL_VALUE", initialValue)
 
 // Create AXObserver for the target application's PID
 var createdObserver: AXObserver?

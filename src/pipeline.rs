@@ -21,22 +21,18 @@ use crate::text::snippets::{
     Snippet, expand_snippets, get_dictionary_hint_words, get_prioritized_dictionary_hint_words,
 };
 
-pub const SELF_HOSTED_SOURCE: &str = "self-hosted";
-
 /// Everything the pipeline needs, captured when the recording stops so a
 /// settings change mid-request cannot mix two configurations.
 #[derive(Debug, Clone)]
 pub struct PipelineInput {
-    /// Encoded audio (16 kHz WAV for dictation, the stored file for retry).
+    /// WAV audio (16 kHz for dictation, the stored recording for retry).
     pub audio: Vec<u8>,
-    pub mime_type: String,
     pub settings: Settings,
     pub dictionary: Vec<String>,
     /// Dictionary words most-used first.
     pub dictionary_priority: Vec<String>,
     pub snippets: Vec<Snippet>,
     pub cleanup_api_key: Option<String>,
-    pub agent_name: String,
 }
 
 /// Why cleanup did not run on a transcript that was still delivered raw.
@@ -57,9 +53,6 @@ pub struct Transcript {
     pub spoken_text: String,
     /// The server's transcript before cleanup.
     pub raw_text: String,
-    /// "self-hosted" or "self-hosted-reasoned", as stored with the row.
-    pub source: String,
-    pub model: Option<String>,
     pub cleanup_failure: Option<CleanupFailure>,
 }
 
@@ -102,8 +95,8 @@ pub fn build_whisper_prompt(input: &PipelineInput) -> (Option<String>, Option<St
         &input.dictionary_priority,
     );
     let fitted = fit_dictionary_prompt(&words, budget);
-    let full = merge_whisper_prompt(fitted.prompt.as_deref(), target);
-    (fitted.prompt, full)
+    let full = merge_whisper_prompt(fitted.as_deref(), target);
+    (fitted, full)
 }
 
 /// Whether cleanup is configured: enabled, with a model and a server.
@@ -118,7 +111,6 @@ pub fn cleanup_system_prompt(input: &PipelineInput) -> String {
     let hints = get_dictionary_hint_words(&input.dictionary, &input.snippets);
     crate::text::prompts::resolve_cleanup_prompt(
         &s.custom_prompt_cleanup,
-        Some(input.agent_name.as_str()),
         &resolve_cleanup_language(&s.preferred_language),
         &hints,
         &s.ui_language,
@@ -183,7 +175,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     let request = TranscriptionRequest::new(
         &route,
         input.audio.clone(),
-        &input.mime_type,
+        "audio/wav",
         whisper_prompt.clone(),
     );
     let response = match transcription::transcribe(request, cancel.clone()).await {
@@ -209,7 +201,6 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let reasoned = cleanup_enabled(&input.settings);
     let (cleaned, cleanup_failure) = clean_up(&raw, &input, &cancel).await;
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
@@ -222,12 +213,6 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         text: expand_snippets(&spoken_text, &input.snippets),
         spoken_text,
         raw_text: raw,
-        source: if reasoned {
-            format!("{SELF_HOSTED_SOURCE}-reasoned")
-        } else {
-            SELF_HOSTED_SOURCE.to_string()
-        },
-        model: route.model.clone(),
         cleanup_failure,
     })
 }
@@ -242,13 +227,11 @@ mod tests {
     fn input(dictionary: &[&str]) -> PipelineInput {
         PipelineInput {
             audio: Vec::new(),
-            mime_type: "audio/wav".into(),
             settings: Settings::default(),
             dictionary: dictionary.iter().map(|s| s.to_string()).collect(),
             dictionary_priority: Vec::new(),
             snippets: Vec::new(),
             cleanup_api_key: None,
-            agent_name: "Whisper".into(),
         }
     }
 
@@ -340,7 +323,6 @@ mod tests {
         assert_eq!(t.raw_text, "um the 軟體 sig");
         assert_eq!(t.spoken_text, "The 软件 sig.");
         assert_eq!(t.text, "The 软件 Best regards.");
-        assert_eq!(t.source, "self-hosted-reasoned");
         assert_eq!(t.cleanup_failure, None);
     }
 
@@ -354,15 +336,14 @@ mod tests {
         )));
         assert_eq!(t.text, "hello there");
         assert_eq!(t.cleanup_failure.unwrap().message, "bad key");
-        assert_eq!(t.source, "self-hosted-reasoned");
     }
 
     #[test]
-    fn without_cleanup_the_source_is_plain_self_hosted() {
+    fn without_cleanup_the_raw_transcript_is_delivered() {
         let asr = asr("hello there");
         let t = transcribed(run_test(run(served(&asr, None), CancellationToken::new())));
         assert_eq!(t.text, "hello there");
-        assert_eq!(t.source, SELF_HOSTED_SOURCE);
+        assert_eq!(t.cleanup_failure, None);
     }
 
     #[test]
@@ -395,59 +376,29 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(2));
     }
 
-    /// Live check against real servers (`WHISPER_LIVE_{ASR,LLM}_{URL,MODEL}`):
+    /// Live check against real servers (see [`crate::services::live_tests`]):
     /// `cargo test -- --ignored pipeline`.
     #[test]
     #[ignore]
     fn live_pipeline_transcribes_and_cleans() {
-        let dir = std::env::temp_dir().join("whisper-pipeline-live");
-        std::fs::create_dir_all(&dir).unwrap();
-        let aiff = dir.join("p.aiff");
-        let wav = dir.join("p.wav");
-        assert!(
-            std::process::Command::new("say")
-                .args([
-                    "-o",
-                    aiff.to_str().unwrap(),
-                    "um so please send the report by friday"
-                ])
-                .status()
-                .unwrap()
-                .success()
-        );
-        assert!(
-            std::process::Command::new("ffmpeg")
-                .args([
-                    "-loglevel",
-                    "error",
-                    "-y",
-                    "-i",
-                    aiff.to_str().unwrap(),
-                    "-ar",
-                    "16000",
-                    "-ac",
-                    "1",
-                    wav.to_str().unwrap()
-                ])
-                .status()
-                .unwrap()
-                .success()
-        );
+        use crate::audio::wav::{encode_wav_16k, read_wav_mono};
+        use crate::services::live_tests::{asr, llm, synthesize};
+
+        let dir = tempfile::tempdir().unwrap();
+        let wav = synthesize(dir.path(), "um so please send the report by friday");
+        let (spec, mono) = read_wav_mono(&std::fs::read(&wav).unwrap());
         let mut i = input(&[]);
-        i.audio = std::fs::read(&wav).unwrap();
-        let env = |name: &str| {
-            std::env::var(name).unwrap_or_else(|_| panic!("set {name} to run the live tests"))
-        };
-        i.settings.remote_transcription_url = env("WHISPER_LIVE_ASR_URL");
-        i.settings.remote_transcription_model = env("WHISPER_LIVE_ASR_MODEL");
-        i.settings.cleanup_remote_url = env("WHISPER_LIVE_LLM_URL");
-        i.settings.cleanup_model = env("WHISPER_LIVE_LLM_MODEL");
+        i.audio = encode_wav_16k(&mono, spec.sample_rate);
+        (
+            i.settings.remote_transcription_url,
+            i.settings.remote_transcription_model,
+        ) = asr();
+        (i.settings.cleanup_remote_url, i.settings.cleanup_model) = llm();
         let outcome = crate::services::runtime::block_on(run(i, CancellationToken::new()));
         match outcome {
             PipelineOutcome::Transcribed(t) => {
                 println!("raw: {}\nclean: {}", t.raw_text, t.text);
                 assert!(t.cleanup_failure.is_none(), "{:?}", t.cleanup_failure);
-                assert_eq!(t.source, "self-hosted-reasoned");
                 assert!(t.text.to_lowercase().contains("friday"));
             }
             other => panic!("unexpected outcome {other:?}"),

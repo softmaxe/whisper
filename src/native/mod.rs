@@ -2,9 +2,10 @@
 //! monitor, media pause/resume, microphone selection, permissions, launch at
 //! login and the Dock icon.
 //!
-//! The Accessibility- and CoreAudio-heavy work runs in small Swift helper
-//! processes (`resources/native/*.swift`, built by `build.rs` into
-//! `resources/bin`) driven over stdin/stdout. One-shot calls go through
+//! The Accessibility-heavy work (and the media and lid-state queries) runs in
+//! small Swift helper processes (`resources/native/*.swift`, built by
+//! `build.rs` into `resources/bin`) driven over stdin/stdout; CoreAudio device
+//! queries run in-process (`mic::coreaudio`). One-shot calls go through
 //! `helper`; the long-running ones (Globe listener, lid monitor, edit
 //! monitoring) run under `supervised_child`.
 //!
@@ -25,3 +26,8 @@ pub mod permissions;
 pub mod supervised_child;
 pub mod text_monitor;
 pub mod timer;
+
+/// A four-character code (`FourCharCode`, e.g. `b"oapp"`) as its big-endian `u32`.
+const fn fourcc(code: &[u8; 4]) -> u32 {
+    ((code[0] as u32) << 24) | ((code[1] as u32) << 16) | ((code[2] as u32) << 8) | code[3] as u32
+}

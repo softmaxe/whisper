@@ -39,7 +39,7 @@ enum Phase {
     Processing,
 }
 
-/// What happened, for the pill window to present (`onNotice`).
+/// What happened, for the pill window to present.
 #[derive(Clone, Debug)]
 pub enum DictationNotice {
     DismissError,
@@ -379,17 +379,15 @@ impl Dictation {
 
     // ---- Processing --------------------------------------------------------------------------
 
-    fn pipeline_input(audio: Vec<u8>, mime: &str, cx: &App) -> PipelineInput {
+    fn pipeline_input(audio: Vec<u8>, cx: &App) -> PipelineInput {
         let state = AppState::global(cx).read(cx);
         PipelineInput {
             audio,
-            mime_type: mime.to_string(),
             settings: state.settings.clone(),
             dictionary: state.dictionary.clone(),
             dictionary_priority: state.db.get_dictionary_by_priority().unwrap_or_default(),
             snippets: state.snippets.clone(),
             cleanup_api_key: Some(backend::cleanup_api_key()).filter(|k| !k.is_empty()),
-            agent_name: crate::text::DEFAULT_AGENT_NAME.to_string(),
         }
     }
 
@@ -401,18 +399,18 @@ impl Dictation {
             .unwrap_or_else(|| (Instant::now(), Utc::now()));
         let duration = started.elapsed();
         let wav = audio.to_wav_16k();
-        let check = audio.check(wav.len());
-        if !check.usable || audio.speech_gate.is_silence() {
+        let usable = audio.is_usable(wav.len());
+        if !usable || audio.speech_gate.is_silence() {
             log::info!(
-                "dropping recording before transcription (usable={}, gate={:?})",
-                check.usable,
-                audio.speech_gate.reason
+                "dropping recording before transcription (usable={usable}, peak_rms={:.4}, windows={})",
+                audio.speech_gate.peak_rms,
+                audio.speech_gate.window_count
             );
             self.set_phase(Phase::Idle, cx);
             cx.emit(DictationNotice::NoAudio);
             return;
         }
-        let input = Self::pipeline_input(wav.clone(), "audio/wav", cx);
+        let input = Self::pipeline_input(wav.clone(), cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
         let handle = crate::services::runtime::spawn(pipeline::run(input, cancel));
@@ -589,7 +587,7 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
         return Task::ready(Err(t("controlPanel.history.audioNotFound")));
     };
     // Saved recordings are always WAV.
-    let input = Dictation::pipeline_input(audio, "audio/wav", cx);
+    let input = Dictation::pipeline_input(audio, cx);
     let handle = crate::services::runtime::spawn(pipeline::run(input, CancellationToken::new()));
     cx.spawn(async move |cx| {
         let outcome = handle.await.map_err(|e| e.to_string())?;

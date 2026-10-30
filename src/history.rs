@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 
 use crate::analytics::AnalyticsEventInput;
 use crate::audio_storage::AudioStorage;
-use crate::db::{Database, SaveTranscriptionOptions, TranscriptionAudioUpdate, TranscriptionItem};
+use crate::db::{Database, TranscriptionAudioUpdate, TranscriptionItem};
 use crate::pipeline::Transcript;
 use crate::settings::Settings;
 
@@ -60,18 +60,12 @@ impl HistoryStore {
         }
         let insights_changed =
             self.record_insights(transcript, recording.occurred_at, recording.duration);
-        let options = SaveTranscriptionOptions {
-            occurred_at: Some(recording.occurred_at),
-            ..Default::default()
-        };
-        let item =
-            self.db
-                .save_transcription(&transcript.text, Some(&transcript.raw_text), options)?;
-        let audio = AudioMeta {
-            provider: Some(&transcript.source),
-            model: transcript.model.as_deref(),
-        };
-        if let Err(err) = self.store_audio(&item, recording, audio, settings) {
+        let item = self.db.save_transcription(
+            &transcript.text,
+            Some(&transcript.raw_text),
+            Some(recording.occurred_at),
+        )?;
+        if let Err(err) = self.store_audio(&item, recording, settings) {
             // The transcript is still useful without its recording.
             log::warn!("failed to save transcription audio: {err}");
         }
@@ -91,11 +85,7 @@ impl HistoryStore {
         if !settings.data_retention_enabled {
             return Ok(None);
         }
-        let options = SaveTranscriptionOptions {
-            route_kind: Some("upload".into()),
-            ..Default::default()
-        };
-        let item = self.db.save_transcription(text, None, options)?;
+        let item = self.db.save_transcription(text, None, None)?;
         Ok(Some(Recorded {
             item,
             insights_changed: false,
@@ -107,7 +97,7 @@ impl HistoryStore {
         self.audio.read_audio(id)
     }
 
-    /// Replaces a row's text with a retry's transcript.
+    /// Replaces a row's text with a retry's transcript; its audio is unchanged.
     pub fn apply_retry(
         &self,
         id: i64,
@@ -119,15 +109,6 @@ impl HistoryStore {
             .ok_or_else(|| anyhow!("History row {id} no longer exists"))?;
         self.db
             .update_transcription_text(id, &transcript.text, Some(&transcript.raw_text))?;
-        self.db.update_transcription_audio(
-            id,
-            &TranscriptionAudioUpdate {
-                has_audio: before.has_audio,
-                audio_duration_ms: before.audio_duration_ms,
-                provider: Some(transcript.source.clone()),
-                model: transcript.model.clone(),
-            },
-        )?;
         Ok(Some(Recorded {
             item: self.reread(before),
             insights_changed: false,
@@ -147,8 +128,6 @@ impl HistoryStore {
             Some(&transcript.raw_text),
             occurred_at,
             (duration_ms > 0).then_some(duration_ms),
-            Some(&transcript.source),
-            transcript.model.as_deref(),
         );
         match self.db.record_analytics_event(&event) {
             Ok(recorded) => recorded,
@@ -164,21 +143,18 @@ impl HistoryStore {
         &self,
         item: &TranscriptionItem,
         recording: &Recording,
-        meta: AudioMeta,
         settings: &Settings,
     ) -> anyhow::Result<()> {
         if settings.audio_retention_days == 0 {
             return Ok(());
         }
         self.audio
-            .save_audio(item.id, recording.wav, Some(&item.timestamp), "wav")?;
+            .save_audio(item.id, recording.wav, &item.timestamp)?;
         self.db.update_transcription_audio(
             item.id,
             &TranscriptionAudioUpdate {
                 has_audio: true,
                 audio_duration_ms: Some(recording.duration.as_millis() as i64),
-                provider: meta.provider.map(str::to_string),
-                model: meta.model.map(str::to_string),
             },
         )
     }
@@ -191,12 +167,6 @@ impl HistoryStore {
             .flatten()
             .unwrap_or(item)
     }
-}
-
-#[derive(Default)]
-struct AudioMeta<'a> {
-    provider: Option<&'a str>,
-    model: Option<&'a str>,
 }
 
 #[cfg(test)]
@@ -227,8 +197,6 @@ mod tests {
             text: text.into(),
             spoken_text: text.into(),
             raw_text: format!("um {text}"),
-            source: "self-hosted".into(),
-            model: Some("whisper-1".into()),
             cleanup_failure: None,
         }
     }
@@ -261,7 +229,6 @@ mod tests {
         assert_eq!(item.raw_text.as_deref(), Some("um hello"));
         assert!(item.has_audio);
         assert_eq!(item.audio_duration_ms, Some(3000));
-        assert_eq!(item.provider.as_deref(), Some("self-hosted"));
         assert_eq!(f.audio.read_audio(item.id).as_deref(), Some(WAV));
         assert_eq!(total_dictations(&f.db), 1);
     }
@@ -284,7 +251,7 @@ mod tests {
             .record_delivered(&transcript("hello"), &recording(), &settings)
             .unwrap();
         assert_eq!(delivered, None);
-        assert!(f.db.get_transcriptions(10, true).unwrap().is_empty());
+        assert!(f.db.get_transcriptions(10).unwrap().is_empty());
         assert_eq!(total_dictations(&f.db), 0);
         assert_eq!(f.db.get_dictionary_by_priority().unwrap(), vec!["hello"]);
         assert_eq!(f.store.record_upload("text", &settings).unwrap(), None);
@@ -299,7 +266,8 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(!recorded.insights_changed);
-        assert_eq!(recorded.item.route_kind.as_deref(), Some("upload"));
+        assert_eq!(recorded.item.text, "file text");
+        assert_eq!(recorded.item.raw_text, None);
         assert_eq!(total_dictations(&f.db), 0);
     }
 

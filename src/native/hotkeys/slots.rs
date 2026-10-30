@@ -102,16 +102,6 @@ impl SlotRegistry {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
-    pub fn slot_has_hotkey(&self, slot: &str, key: &str) -> bool {
-        let Some(key) = Hotkey::parse(key) else {
-            return false;
-        };
-        self.slots
-            .get(slot)
-            .is_some_and(|s| s.hotkeys.contains(&key))
-    }
-
     /// All accelerators registered with the backend, by slot.
     pub fn accelerators(&self) -> Vec<(String, Hotkey, String)> {
         self.slots
@@ -130,20 +120,20 @@ impl SlotRegistry {
             .collect()
     }
 
-    pub fn native_listener_config(&self, slots: &[&str]) -> ListenerConfig {
+    /// The listener state the Dictation hotkeys need: each side mouse button
+    /// once, sorted.
+    pub fn native_listener_config(&self) -> ListenerConfig {
         let mut config = ListenerConfig::default();
-        for slot in slots {
-            for hotkey in self.slot_hotkeys(slot) {
-                match hotkey.listener_key() {
-                    Some(key @ ListenerKey::MouseButton(_)) => {
-                        let name = key.to_string();
-                        if !config.mouse_buttons.contains(&name) {
-                            config.mouse_buttons.push(name);
-                        }
+        for hotkey in self.slot_hotkeys(DICTATION_SLOT) {
+            match hotkey.listener_key() {
+                Some(key @ ListenerKey::MouseButton(_)) => {
+                    let name = key.to_string();
+                    if !config.mouse_buttons.contains(&name) {
+                        config.mouse_buttons.push(name);
                     }
-                    Some(ListenerKey::Globe) => config.suppress_globe_action = true,
-                    _ => {}
                 }
+                Some(ListenerKey::Globe) => config.suppress_globe_action = true,
+                _ => {}
             }
         }
         config.mouse_buttons.sort();
@@ -553,7 +543,7 @@ pub(crate) mod tests {
         for hotkey in ["GLOBE", "Fn"] {
             let registry = SlotRegistry::with_slot(DICTATION_SLOT, &["Control+Shift+R", hotkey]);
             assert_eq!(
-                registry.native_listener_config(&[DICTATION_SLOT]),
+                registry.native_listener_config(),
                 ListenerConfig {
                     mouse_buttons: vec![],
                     suppress_globe_action: true
@@ -569,24 +559,22 @@ pub(crate) mod tests {
             &["MouseButton4", "MouseButton5", "MouseButton4"],
         );
         assert_eq!(
-            registry.native_listener_config(&[DICTATION_SLOT]),
+            registry.native_listener_config(),
             ListenerConfig {
                 mouse_buttons: vec!["MouseButton4".into(), "MouseButton5".into()],
                 suppress_globe_action: false
             }
         );
         let plain = SlotRegistry::with_slot(DICTATION_SLOT, &["Control+Shift+R"]);
-        assert_eq!(
-            plain.native_listener_config(&[DICTATION_SLOT]),
-            ListenerConfig::default()
-        );
+        assert_eq!(plain.native_listener_config(), ListenerConfig::default());
     }
 
     #[test]
     fn dictation_lookup_handles_primary_and_secondary() {
         let registry = SlotRegistry::with_slot(DICTATION_SLOT, &["GLOBE", "Control+Shift+R"]);
-        assert!(registry.slot_has_hotkey(DICTATION_SLOT, "Control+Shift+R"));
-        assert!(!registry.slot_has_hotkey(DICTATION_SLOT, "F12"));
+        let hotkeys = registry.slot_hotkeys(DICTATION_SLOT);
+        assert!(hotkeys.contains(&Hotkey::parse("Control+Shift+R").unwrap()));
+        assert!(!hotkeys.contains(&Hotkey::parse("F12").unwrap()));
         assert_eq!(
             names(registry.slot_hotkeys(DICTATION_SLOT)),
             ["GLOBE", "Control+Shift+R"]

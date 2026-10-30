@@ -344,7 +344,7 @@ mod tests {
         let words: Vec<String> = (0..400).map(|i| format!("term{i}")).collect();
         let bias_len = bias.encode_utf16().count();
         let fitted = fit_dictionary_prompt(&words, WHISPER_PROMPT_CHARS - bias_len - 1);
-        let prompt = merge_whisper_prompt(fitted.prompt.as_deref(), Some(Simplified)).unwrap();
+        let prompt = merge_whisper_prompt(fitted.as_deref(), Some(Simplified)).unwrap();
         assert!(prompt.starts_with(bias));
         assert!(prompt.encode_utf16().count() <= WHISPER_PROMPT_CHARS);
         assert!(prompt.ends_with("term0"));

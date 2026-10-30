@@ -9,7 +9,7 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 use crate::i18n::t;
 
-use crate::app_state::{AppEvent, AppState};
+use crate::app_state::AppState;
 use crate::dictation::Dictation;
 
 const TOGGLE: &str = "toggle-listening";
@@ -113,7 +113,5 @@ pub fn init(cx: &mut App) {
     .detach();
     let state = AppState::global(cx);
     cx.observe(&state, |_, cx| sync(cx)).detach();
-    cx.subscribe(&state, |_, _: &AppEvent, cx| sync(cx))
-        .detach();
     sync(cx);
 }

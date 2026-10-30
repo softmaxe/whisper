@@ -5,13 +5,13 @@
 //! plain `Future` that does not need a Tokio context to be polled).
 
 use std::future::Future;
+use std::sync::LazyLock;
 
-use once_cell::sync::Lazy;
 use tokio::runtime::{Builder, Runtime};
 
-static RUNTIME: Lazy<Runtime> = Lazy::new(build_runtime);
+static RUNTIME: LazyLock<Runtime> = LazyLock::new(build_runtime);
 
-static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     // Self-hosted servers live on loopback, the LAN or a tailnet; a system or
     // environment proxy would only get in the way of reaching them.
     reqwest::Client::builder()

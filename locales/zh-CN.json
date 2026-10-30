@@ -187,8 +187,7 @@
       "holdNeedsReleaseKey": "按住说话需要 macOS 能检测到松开的按键：Globe、右侧 Option 之类的右侧按键，或带修饰键的快捷键。点按可用于任何按键。",
       "registrationFailed": "无法注册 \"{{hotkey}}\"，该快捷键可能已被其他应用占用。",
       "trySuggestions": "建议尝试：{{suggestions}}",
-      "slotConflict": "此快捷键已用于{{slot}}。",
-      "holdUnavailable": "此快捷键不支持按住说话。"
+      "slotConflict": "此快捷键已用于{{slot}}。"
     },
     "validation": {
       "mouseButtonCombination": "鼠标按键快捷键不能与其他按键组合。",
@@ -205,12 +204,10 @@
     "retry": "重试",
     "refresh": "刷新",
     "cancel": "取消",
-    "active": "已激活",
     "model": "模型",
     "loading": "加载中...",
     "hold": "按住",
     "tap": "双击",
-    "close": "关闭",
     "save": "保存"
   },
   "controlPanel": {
@@ -225,8 +222,8 @@
       "couldNotDeleteDescription": "此转录记录可能已被删除。",
       "couldNotDeleteDescriptionGeneric": "出了点问题，请重试。",
       "empty": "暂无转录记录",
-      "emptyDescription": "在任意应用中按下快捷键开始说话。每条转写都会私密地保存在你的设备上。",
-      "sectionTitle": "转写记录",
+      "emptyDescription": "在任意应用中按下快捷键开始说话。每条转录都会私密地保存在你的设备上。",
+      "sectionTitle": "转录记录",
       "dataRetentionDisabled": "数据保留已关闭。转录和音频不会保存到历史记录。",
       "press": "按下",
       "toStart": "开始",
@@ -250,10 +247,8 @@
       "retryError": "重新转录失败",
       "audioNotFound": "音频文件未找到或已过期",
       "noAiProcessing": "此转录未应用 AI 处理",
-      "rawTranscript": "原始转录",
-      "retryTranslationMode": "翻译模式"
-    },
-    "loading": "加载中..."
+      "rawTranscript": "原始转录"
+    }
   },
   "reasoning": {
     "custom": {
@@ -286,8 +281,8 @@
   "dictation": {
     "errorTitles": {
       "microphoneUnavailable": "麦克风不可用",
-      "transcriptionTimeout": "转写超时",
-      "transcriptionConnectionFailed": "无法连接转写服务器",
+      "transcriptionTimeout": "转录超时",
+      "transcriptionConnectionFailed": "无法连接转录服务器",
       "providerRateLimited": "请求过于频繁"
     },
     "errorActions": {
@@ -298,11 +293,11 @@
       "description": "请检查麦克风后重试。"
     },
     "errorDescriptions": {
-      "transcriptionConnectionFailed": "3 秒内未能连接转写服务器。请确认服务器已启动且网络可达，然后重试。",
-      "transcriptionTimeout": "转写服务器未在 30 秒内完成响应。请确认服务器已启动且网络可达，然后重试。",
+      "transcriptionConnectionFailed": "3 秒内未能连接转录服务器。请确认服务器已启动且网络可达，然后重试。",
+      "transcriptionTimeout": "转录服务器未在 30 秒内完成响应。请确认服务器已启动且网络可达，然后重试。",
       "microphoneUnavailable": "所选麦克风无法采集音频。请重新连接，在系统设置中检查麦克风权限，或在设置中选择其他麦克风后重试。",
       "providerRateLimited": "转录服务器限制了请求频率。请稍候再试。",
-      "customEndpointInvalid": "自定义转写端点未配置或其 URL 无效。请在“设置 → 语音转文字”中更新。",
+      "customEndpointInvalid": "自定义转录端点未配置或其 URL 无效。请在“设置 → 语音转文字”中更新。",
       "cleanupTruncated": "AI 模型的输出长度达到上限，未能完成听写清理。",
       "cleanupEmptyReply": "AI 模型返回了空响应，没有生成清理后的文本。"
     },
@@ -420,7 +415,7 @@
     "batchCancelled": "已取消",
     "batchTranscriptionFailed": "转录失败",
     "queueFailed": "{{n}} 个失败",
-    "customEndpointInvalid": "自定义转写端点未配置或无效。请在设置中更新。",
+    "customEndpointInvalid": "自定义转录端点未配置或无效。请在设置中更新。",
     "transcribing": "正在转录",
     "completionHint": "完成后可查看并复制全文",
     "savedToHistory": "已保存到历史记录",
@@ -582,7 +577,7 @@
   },
   "transcriptionPreview": {
     "recovery": {
-      "title": "转写已完成",
+      "title": "转录已完成",
       "pasteFailed": "未能自动粘贴，请复制下方文字。",
       "pasteFailedCopied": "未能自动粘贴，文字已复制到剪贴板。",
       "copyFailed": "复制失败，请重试或选中文字后复制。",

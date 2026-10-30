@@ -99,7 +99,7 @@ impl ControlPanel {
             |this, _, event: &UploadEvent, window, cx| match event {
                 UploadEvent::OpenHistory => this.set_view(PanelView::Home, cx),
                 UploadEvent::OpenSettings(section) => {
-                    this.open_settings(Some(SettingsSection::from_name(section)), window, cx)
+                    this.open_settings(Some(*section), window, cx)
                 }
             },
         )
@@ -494,7 +494,7 @@ impl Render for ControlPanel {
         );
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();
-        let dialog = render_dialog(window, cx);
+        let dialog = render_dialog(cx);
         let toasts = render_toasts(window, cx);
 
         div()

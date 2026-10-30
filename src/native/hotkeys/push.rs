@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use super::super::timer::{TimerId, Timers, lock};
+use super::HotkeyCommand;
 use super::gesture::GestureEnv;
-use super::{ForceStopReason, HotkeyCommand};
 use crate::text::hotkeys::{Hotkey, Modifier};
 
 pub const MIN_HOLD_DURATION_MS: u64 = 150;
@@ -72,7 +72,7 @@ impl CompoundPush {
                     let active = lock(&inner.state).0.as_ref().is_some_and(|s| s.seq == seq);
                     if active {
                         log::warn!("[hotkeys] compound push safety timeout");
-                        CompoundPush { inner }.force_stop(ForceStopReason::Timeout);
+                        CompoundPush { inner }.force_stop();
                     }
                 }
             }),
@@ -125,7 +125,7 @@ impl CompoundPush {
 
     /// Ends a push without a physical release; the trigger keys may still be
     /// down, so the integrator must not paste into them.
-    pub fn force_stop(&self, reason: ForceStopReason) {
+    pub fn force_stop(&self) {
         let inner = &self.inner;
         let mut guard = lock(&inner.state);
         let Some(state) = guard.0.take() else {
@@ -133,7 +133,7 @@ impl CompoundPush {
         };
         inner.timers.cancel(state.safety_timer);
         inner.timers.cancel(state.hold_timer);
-        inner.env.emit(HotkeyCommand::ForceStop { reason });
+        inner.env.emit(HotkeyCommand::ForceStop);
         if state.is_recording {
             inner.env.emit(HotkeyCommand::Stop);
         } else {
@@ -217,9 +217,7 @@ mod tests {
             vec![
                 HotkeyCommand::Prepare,
                 HotkeyCommand::Start,
-                HotkeyCommand::ForceStop {
-                    reason: ForceStopReason::Timeout
-                },
+                HotkeyCommand::ForceStop,
                 HotkeyCommand::Stop,
             ]
         );
@@ -230,15 +228,13 @@ mod tests {
         let (push, env, timers) = setup();
         push.start(&hk("Control+Option"));
         timers.advance(100);
-        push.force_stop(ForceStopReason::Timeout);
+        push.force_stop();
         timers.advance(1000);
         assert_eq!(
             sent(&env),
             vec![
                 HotkeyCommand::Prepare,
-                HotkeyCommand::ForceStop {
-                    reason: ForceStopReason::Timeout
-                },
+                HotkeyCommand::ForceStop,
                 HotkeyCommand::CancelPreparation,
             ]
         );

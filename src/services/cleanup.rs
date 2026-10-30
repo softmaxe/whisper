@@ -9,7 +9,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -19,8 +18,8 @@ use crate::services::retry::{
 use crate::services::runtime::http_client;
 use crate::text::api_error::extract_api_error_message;
 use crate::text::prompts::{
-    ChatParamsConfig, STRIPPABLE_SHAPED_PARAMS, apply_chat_completions_params,
-    is_truncated_finish_reason, wrap_cleanup_transcript,
+    STRIPPABLE_SHAPED_PARAMS, apply_chat_completions_params, is_truncated_finish_reason,
+    wrap_cleanup_transcript,
 };
 use crate::text::strip_thinking::strip_thinking_tags;
 use crate::text::url::{
@@ -47,28 +46,20 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
 /// settings panel loading forever.
 const LIST_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// One cleanup request. The caller resolves the system prompt.
+/// One cleanup request. The caller resolves the system prompt; the text is
+/// wrapped in `<transcript>` tags and sent at temperature 0, and a truncated
+/// or empty reply fails instead of returning partial text.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CleanupRequestConfig {
     pub base_url: String,
     pub api_key: Option<String>,
     pub model: String,
     pub system_prompt: String,
-    /// True for the default dictation cleanup transform: the user text is
-    /// wrapped in `<transcript>` tags, temperature defaults to 0 and an empty
-    /// reply may fall back to the input. False for a caller-supplied prompt
-    /// (Prompt Studio), which sends the text as-is.
-    pub wrap_transcript: bool,
-    pub disable_thinking: Option<bool>,
-    pub temperature: Option<f64>,
-    /// Fail on a truncated or empty reply instead of returning partial text.
-    pub require_complete_output: bool,
-    pub max_tokens: Option<u32>,
+    pub disable_thinking: bool,
 }
 
 impl CleanupRequestConfig {
-    /// The dictation cleanup request: temperature 0, complete output required,
-    /// transcript wrapped.
+    /// The dictation cleanup request, also used by Prompt Studio's test.
     pub fn dictation(
         base_url: &str,
         api_key: Option<&str>,
@@ -81,11 +72,7 @@ impl CleanupRequestConfig {
             api_key: api_key.map(str::to_string),
             model: model.to_string(),
             system_prompt: system_prompt.to_string(),
-            wrap_transcript: true,
-            disable_thinking: Some(disable_thinking),
-            temperature: Some(0.0),
-            require_complete_output: true,
-            max_tokens: None,
+            disable_thinking,
         }
     }
 }
@@ -178,22 +165,6 @@ pub fn empty_output_error() -> CleanupError {
         "Model returned an empty response",
     )
     .with_key(EMPTY_OUTPUT_MESSAGE_KEY)
-}
-
-/// Error for a completion that produced no text.
-fn empty_response_error(config: &CleanupRequestConfig, incomplete: bool) -> CleanupError {
-    if incomplete {
-        return truncated_output_error(
-            "Model ran out of output tokens before producing a response",
-        );
-    }
-    if config.require_complete_output {
-        return empty_output_error();
-    }
-    CleanupError::new(
-        CleanupErrorKind::EmptyResponse,
-        format!("{PROVIDER_NAME} returned empty response"),
-    )
 }
 
 /// `{base}/v1`, refusing anything but HTTPS or private-network HTTP. Never
@@ -321,11 +292,7 @@ pub async fn process_text_with(
         .as_deref()
         .map(str::trim)
         .filter(|k| !k.is_empty());
-    let user_prompt = if config.wrap_transcript {
-        wrap_cleanup_transcript(text)
-    } else {
-        text.to_string()
-    };
+    let user_prompt = wrap_cleanup_transcript(text);
 
     let mut body = Map::new();
     body.insert("model".into(), json!(model));
@@ -336,17 +303,11 @@ pub async fn process_text_with(
             { "role": "user", "content": user_prompt },
         ]),
     );
-    let params = ChatParamsConfig {
-        system_prompt_override: !config.wrap_transcript,
-        temperature: config.temperature,
-        disable_thinking: config.disable_thinking,
-        require_complete_output: config.require_complete_output,
-    };
     apply_chat_completions_params(
         &mut body,
         model,
-        &params,
-        config.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+        config.disable_thinking,
+        DEFAULT_MAX_TOKENS,
     );
     log::debug!(
         "cleanup request: endpoint={endpoint} model={model} has_api_key={}",
@@ -427,8 +388,7 @@ pub async fn process_text_with(
         ));
     };
     let finish_reason = choice.get("finish_reason").and_then(Value::as_str);
-    let truncated = is_truncated_finish_reason(finish_reason);
-    if config.require_complete_output && truncated {
+    if is_truncated_finish_reason(finish_reason) {
         return Err(truncated_output_error("Model output was truncated"));
     }
     let raw = choice
@@ -438,14 +398,14 @@ pub async fn process_text_with(
         .trim();
     // Reasoning models leak <think> blocks; keep them only when the user
     // explicitly enabled thinking.
-    let text = if config.disable_thinking != Some(false) {
+    let text = if config.disable_thinking {
         strip_thinking_tags(raw)
     } else {
         raw.to_string()
     };
     if text.is_empty() {
         log::info!("cleanup returned empty response: finish_reason={finish_reason:?}");
-        return Err(empty_response_error(config, truncated));
+        return Err(empty_output_error());
     }
     Ok(text)
 }
@@ -479,7 +439,7 @@ async fn post_json(
 }
 
 /// A model offered by `/models`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelOption {
     pub value: String,
     pub label: String,
@@ -812,11 +772,7 @@ mod tests {
             api_key: Some("fixture-key".into()),
             model: "qwen3.5:9b".into(),
             system_prompt: "Clean the transcript.".into(),
-            wrap_transcript: false,
-            disable_thinking: Some(true),
-            temperature: Some(0.0),
-            require_complete_output: true,
-            max_tokens: None,
+            disable_thinking: true,
         }
     }
 
@@ -840,7 +796,10 @@ mod tests {
         let body = requests[0].json();
         assert_eq!(body["model"], "qwen3.5:9b");
         assert_eq!(body["messages"][0]["content"], "Clean the transcript.");
-        assert_eq!(body["messages"][1]["content"], "raw transcript");
+        assert_eq!(
+            body["messages"][1]["content"],
+            wrap_cleanup_transcript("raw transcript")
+        );
         assert_eq!(body["temperature"], json!(0.0));
         assert_eq!(body["max_tokens"], json!(4096));
         assert_eq!(
@@ -896,15 +855,6 @@ mod tests {
             let err = run(process("raw", &config_for(&server), &fast_tuning())).unwrap_err();
             assert_eq!(err.message_key, Some(key), "{content:?}");
         }
-        // Without the completeness requirement an empty reply has no key.
-        let server = MockServer::start(|_| Reply::json(200, &completion("", "stop")));
-        let config = CleanupRequestConfig {
-            require_complete_output: false,
-            ..config_for(&server)
-        };
-        let err = run(process("raw", &config, &fast_tuning())).unwrap_err();
-        assert_eq!(err.message, "LAN returned empty response");
-        assert_eq!(err.message_key, None);
     }
 
     #[test]
@@ -912,7 +862,7 @@ mod tests {
         let server =
             MockServer::start(|_| Reply::json(200, &completion("<think>a</think>B", "stop")));
         let config = CleanupRequestConfig {
-            disable_thinking: Some(false),
+            disable_thinking: false,
             ..config_for(&server)
         };
         let out = run(process("raw", &config, &fast_tuning())).unwrap();

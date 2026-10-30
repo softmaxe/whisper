@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::{Mutex, MutexGuard};
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
-use serde::{Deserialize, Serialize};
 
 pub use dictionary::{DictionaryEntry, DictionarySource};
 pub use snippets::Snippet;
@@ -22,33 +21,21 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TranscriptionStatus {
     #[default]
     Completed,
-    Pending,
-    /// Transcription or cleanup failed; kept so the user can retry.
+    /// Transcription or cleanup failed; only older versions wrote it.
     Failed,
-    /// A recording the user cancelled, saved only when they opted in.
+    /// A cancelled recording; only older versions wrote it.
     Discarded,
 }
 
 impl TranscriptionStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Completed => "completed",
-            Self::Pending => "pending",
-            Self::Failed => "failed",
-            Self::Discarded => "discarded",
-        }
-    }
-
     /// Unknown values read as `Completed`, the column's default, which is
     /// also how History's status filter treats them.
     pub fn parse(value: &str) -> Self {
         match value {
-            "pending" => Self::Pending,
             "failed" => Self::Failed,
             "discarded" => Self::Discarded,
             _ => Self::Completed,
@@ -57,7 +44,7 @@ impl TranscriptionStatus {
 }
 
 /// One History row.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptionItem {
     pub id: i64,
     pub text: String,
@@ -69,12 +56,7 @@ pub struct TranscriptionItem {
     pub created_at: String,
     pub has_audio: bool,
     pub audio_duration_ms: Option<i64>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
     pub status: TranscriptionStatus,
-    pub error_message: Option<String>,
-    pub error_code: Option<String>,
-    pub route_kind: Option<String>,
 }
 
 impl TranscriptionItem {
@@ -83,8 +65,8 @@ impl TranscriptionItem {
     }
 }
 
-const TRANSCRIPTION_COLUMNS: &str = "id, text, raw_text, timestamp, created_at, has_audio, \
-     audio_duration_ms, provider, model, status, error_message, error_code, route_kind";
+const TRANSCRIPTION_COLUMNS: &str =
+    "id, text, raw_text, timestamp, created_at, has_audio, audio_duration_ms, status";
 
 fn transcription_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptionItem> {
     Ok(TranscriptionItem {
@@ -95,25 +77,8 @@ fn transcription_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptionItem> 
         created_at: row.get(4)?,
         has_audio: row.get(5)?,
         audio_duration_ms: row.get(6)?,
-        provider: row.get(7)?,
-        model: row.get(8)?,
-        status: TranscriptionStatus::parse(&row.get::<_, String>(9)?),
-        error_message: row.get(10)?,
-        error_code: row.get(11)?,
-        route_kind: row.get(12)?,
+        status: TranscriptionStatus::parse(&row.get::<_, String>(7)?),
     })
-}
-
-/// Optional fields of [`Database::save_transcription`].
-#[derive(Debug, Clone, Default)]
-pub struct SaveTranscriptionOptions {
-    pub status: TranscriptionStatus,
-    pub error_message: Option<String>,
-    pub error_code: Option<String>,
-    /// Dictation intent such as "translation" or "upload".
-    pub route_kind: Option<String>,
-    /// When the dictation was spoken; `None` means now.
-    pub occurred_at: Option<DateTime<Utc>>,
 }
 
 /// Audio metadata written once a recording is stored next to its row.
@@ -121,8 +86,6 @@ pub struct SaveTranscriptionOptions {
 pub struct TranscriptionAudioUpdate {
     pub has_audio: bool,
     pub audio_duration_ms: Option<i64>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
 }
 
 /// Result of the transcript retention sweep.
@@ -160,28 +123,19 @@ impl Database {
         self.conn.lock()
     }
 
+    /// Saves a completed transcription spoken at `occurred_at` (`None` means
+    /// now). Columns it leaves out keep their defaults.
     pub fn save_transcription(
         &self,
         text: &str,
         raw_text: Option<&str>,
-        options: SaveTranscriptionOptions,
+        occurred_at: Option<DateTime<Utc>>,
     ) -> Result<TranscriptionItem> {
-        let occurred_at =
-            timestamp::format_db_timestamp(&options.occurred_at.unwrap_or_else(Utc::now));
+        let occurred_at = timestamp::format_db_timestamp(&occurred_at.unwrap_or_else(Utc::now));
         let conn = self.lock();
         conn.execute(
-            "INSERT INTO transcriptions (
-               text, raw_text, status, error_message, error_code, route_kind, timestamp
-             ) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            params![
-                text,
-                raw_text,
-                options.status.as_str(),
-                options.error_message,
-                options.error_code,
-                options.route_kind,
-                occurred_at
-            ],
+            "INSERT INTO transcriptions (text, raw_text, timestamp) VALUES (?, ?, ?)",
+            params![text, raw_text, occurred_at],
         )?;
         let id = conn.last_insert_rowid();
         Ok(conn.query_row(
@@ -191,22 +145,13 @@ impl Database {
         )?)
     }
 
-    /// Newest first. Failed and discarded rows are hidden unless
-    /// `include_discarded`.
-    pub fn get_transcriptions(
-        &self,
-        limit: usize,
-        include_discarded: bool,
-    ) -> Result<Vec<TranscriptionItem>> {
-        let status_filter = if include_discarded {
-            ""
-        } else {
-            " WHERE status NOT IN ('failed', 'discarded')"
-        };
+    /// Newest first, without failed and discarded rows.
+    pub fn get_transcriptions(&self, limit: usize) -> Result<Vec<TranscriptionItem>> {
         let conn = self.lock();
         let rows = conn
             .prepare(&format!(
-                "SELECT {TRANSCRIPTION_COLUMNS} FROM transcriptions{status_filter} ORDER BY timestamp DESC LIMIT ?"
+                "SELECT {TRANSCRIPTION_COLUMNS} FROM transcriptions \
+                 WHERE status NOT IN ('failed', 'discarded') ORDER BY timestamp DESC LIMIT ?"
             ))?
             .query_map([limit as i64], transcription_from_row)?
             .collect::<rusqlite::Result<_>>()?;
@@ -257,8 +202,9 @@ impl Database {
         })
     }
 
-    /// Deletes failed and discarded rows, which History no longer keeps.
-    /// Returns their ids so their recordings can be removed.
+    /// Deletes failed and discarded rows, which History no longer keeps; only
+    /// older versions wrote them. Returns their ids so their recordings can
+    /// be removed.
     pub fn delete_hidden_transcriptions(&self) -> Result<Vec<i64>> {
         let conn = self.lock();
         let ids = conn
@@ -284,8 +230,8 @@ impl Database {
         update: &TranscriptionAudioUpdate,
     ) -> Result<()> {
         self.lock().execute(
-            "UPDATE transcriptions SET has_audio = ?, audio_duration_ms = ?, provider = ?, model = ? WHERE id = ?",
-            params![update.has_audio, update.audio_duration_ms, update.provider, update.model, id],
+            "UPDATE transcriptions SET has_audio = ?, audio_duration_ms = ? WHERE id = ?",
+            params![update.has_audio, update.audio_duration_ms, id],
         )?;
         Ok(())
     }

@@ -45,10 +45,9 @@ func postMediaKey(keyDown: Bool) -> Bool {
     return true
 }
 
+// The caller only checks the exit status.
 guard postMediaKey(keyDown: true), postMediaKey(keyDown: false) else {
-    print("FAIL")
     exit(1)
 }
 
-print("OK")
 exit(0)

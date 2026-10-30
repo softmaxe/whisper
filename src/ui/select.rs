@@ -59,8 +59,6 @@ pub const LIST_SEARCH_THRESHOLD: usize = 12;
 pub struct Select {
     options: Vec<SelectOption>,
     selected: Option<SharedString>,
-    /// Shown on the trigger instead of the selected option's label.
-    display_override: Option<SharedString>,
     placeholder: SharedString,
     open: bool,
     style: SelectStyle,
@@ -112,7 +110,6 @@ impl Select {
         Self {
             options,
             selected,
-            display_override: None,
             placeholder: "".into(),
             open: false,
             style,
@@ -251,16 +248,11 @@ impl Render for Select {
             .iter()
             .find(|o| Some(&o.value) == self.selected.as_ref())
             .cloned();
-        let label: SharedString = self
-            .display_override
-            .clone()
-            .or_else(|| selected_option.as_ref().map(|o| o.label.clone()))
+        let label: SharedString = selected_option
+            .as_ref()
+            .map(|o| o.label.clone())
             .unwrap_or_else(|| self.placeholder.clone());
-        let prefix = if self.display_override.is_none() {
-            selected_option.as_ref().and_then(|o| o.prefix.clone())
-        } else {
-            None
-        };
+        let prefix = selected_option.as_ref().and_then(|o| o.prefix.clone());
         let open = self.open;
         let compact = self.style == SelectStyle::Compact;
         let chevron_turn = f32_tx(
@@ -307,13 +299,11 @@ impl Render for Select {
             .when(!trigger_shadow.is_empty(), |d| d.shadow(trigger_shadow))
             .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
             .when(compact, |d| d.font_weight(FontWeight::MEDIUM))
-            .text_color(
-                if selected_option.is_some() || self.display_override.is_some() {
-                    p.foreground
-                } else {
-                    p.muted_foreground
-                },
-            )
+            .text_color(if selected_option.is_some() {
+                p.foreground
+            } else {
+                p.muted_foreground
+            })
             .when(self.disabled, |d| d.opacity(0.5))
             .when(!self.disabled, |d| {
                 d.cursor_pointer().hover(|s| {

@@ -24,14 +24,14 @@ fn required_env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("set {name} to run the live tests"))
 }
 
-fn asr() -> (String, String) {
+pub(crate) fn asr() -> (String, String) {
     (
         required_env("WHISPER_LIVE_ASR_URL"),
         env_or("WHISPER_LIVE_ASR_MODEL", "Qwen/Qwen3-ASR-1.7B"),
     )
 }
 
-fn llm() -> (String, String) {
+pub(crate) fn llm() -> (String, String) {
     (
         required_env("WHISPER_LIVE_LLM_URL"),
         env_or("WHISPER_LIVE_LLM_MODEL", "qwen3.5:9b"),
@@ -40,7 +40,7 @@ fn llm() -> (String, String) {
 
 /// Speaks `text` with `say` and converts it to a 48 kHz stereo WAV, so the
 /// app's own downmix + resampler produce the uploaded 16 kHz file.
-fn synthesize(dir: &Path, text: &str) -> std::path::PathBuf {
+pub(crate) fn synthesize(dir: &Path, text: &str) -> std::path::PathBuf {
     let aiff = dir.join("speech.aiff");
     let wav = dir.join("speech-48k.wav");
     assert!(
@@ -82,7 +82,7 @@ fn live_transcribe_and_clean_up() {
     assert!(is_pcm16_mono_16k_wav(&upload));
 
     let (asr_url, asr_model) = asr();
-    let route = resolve_route(&asr_url, &asr_model, "en", None).unwrap();
+    let route = resolve_route(&asr_url, &asr_model, "en").unwrap();
     let request = TranscriptionRequest::new(&route, upload, "audio/wav", Some("Whisper".into()));
     let response = run(transcribe(request, CancellationToken::new())).unwrap();
     eprintln!("transcript: {:?}", response.text);
@@ -143,13 +143,15 @@ fn live_upload_reencodes_aiff() {
             .success()
     );
     let (asr_url, asr_model) = asr();
-    let text = run(transcribe_audio_file(FileTranscriptionRequest {
-        file_path: aiff,
-        language: "en".into(),
-        remote_transcription_url: asr_url,
-        remote_transcription_model: asr_model,
-        request_id: Some("live-upload".into()),
-    }))
+    let text = run(transcribe_audio_file(
+        FileTranscriptionRequest {
+            file_path: aiff,
+            preferred_language: "en".into(),
+            remote_transcription_url: asr_url,
+            remote_transcription_model: asr_model,
+        },
+        CancellationToken::new(),
+    ))
     .unwrap();
     eprintln!("upload transcript: {text:?}");
     assert!(words(&text).contains("upload"), "{text}");
