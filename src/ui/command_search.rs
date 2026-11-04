@@ -39,6 +39,34 @@ const RECENT_LIMIT: usize = 5;
 /// Rows listed for a query; the list scrolls past about eight.
 const RESULT_LIMIT: usize = 30;
 
+/// Characters of a result shown before its first match.
+const MATCH_LEAD: usize = 30;
+
+/// The part of `text` a result row shows: all of it when the first match is
+/// near the start, otherwise "…" and the text from just before the match,
+/// so a one-line row always shows why it matched.
+fn match_window(text: &str, query: &str) -> String {
+    let lower = text.to_lowercase();
+    let at = match (query.is_empty(), lower.len() == text.len()) {
+        (false, true) => lower.find(query),
+        _ => None,
+    };
+    let Some(at) = at else {
+        return text.to_string();
+    };
+    let chars_before = text[..at].chars().count();
+    if chars_before <= MATCH_LEAD + 10 {
+        return text.to_string();
+    }
+    let skip = chars_before - MATCH_LEAD;
+    let start = text.char_indices().nth(skip).map_or(at, |(i, _)| i);
+    // Start on a word boundary so the window never opens mid-word.
+    let start = text[start..at]
+        .find(' ')
+        .map_or(start, |space| start + space + 1);
+    format!("…{}", &text[start..])
+}
+
 /// `text` with every case-insensitive occurrence of `query` emphasized. Text
 /// whose lowercase form changes byte length (some non-ASCII) is left plain,
 /// since match offsets would not map back onto it.
@@ -277,7 +305,11 @@ impl Render for CommandSearch {
                                 } else {
                                     p.foreground.opacity(0.85)
                                 })
-                                .child(highlighted(&item.text, &needle, p.foreground)),
+                                .child(highlighted(
+                                    &match_window(&item.text, &needle),
+                                    &needle,
+                                    p.foreground,
+                                )),
                         )
                         .child(
                             div()
@@ -389,5 +421,25 @@ impl Render for CommandSearch {
                     .justify_center()
                     .child(card),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::match_window;
+
+    #[test]
+    fn keeps_short_leads_and_windows_late_matches() {
+        assert_eq!(
+            match_window("deploy the build", "build"),
+            "deploy the build"
+        );
+        let long =
+            "We should cache the dependency downloads in CI instead of the whole target directory";
+        let shown = match_window(long, "target");
+        assert!(shown.starts_with('…'));
+        assert!(shown.contains("target directory"));
+        assert!(!shown[3..].starts_with(' '));
+        assert_eq!(match_window(long, ""), long);
     }
 }

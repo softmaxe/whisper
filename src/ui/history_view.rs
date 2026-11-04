@@ -20,9 +20,12 @@ use super::components::{
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE,
-    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY,
-    TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, motion, progress, tabular_nums,
+    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING,
+    TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, motion, progress, tabular_nums,
 };
+
+/// Width of the clock column; fits "12:59 PM" so the text column never shifts.
+const TIME_COLUMN: f32 = 64.;
 
 /// How long a new row stays tinted.
 const FLASH: Duration = Duration::from_millis(1600);
@@ -352,74 +355,81 @@ impl HistoryView {
             .into_any_element();
 
         // The toggle stays in place so the same click opens and closes the panel.
-        let raw_toggle = raw_text.as_ref().map(|raw| {
-            let copy_raw = raw.clone();
-            div()
-                .mt(px(4.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .id(("raw-toggle", id as usize))
-                        .keyboard_focusable(
-                            ("history-raw", id as usize),
-                            Role::Button,
-                            t("controlPanel.history.rawTranscript"),
-                            cx,
-                        )
-                        .aria_expanded(expanded)
-                        .h(px(24.))
-                        .ml(px(-6.))
-                        .px(px(6.))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .rounded(px(RADIUS_MD))
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(p.hover_wash(0.06)).text_color(p.foreground))
-                        .child(t("controlPanel.history.rawTranscript"))
-                        .child(
-                            icon("chevron-down", 10., p.muted_foreground).with_transformation(
-                                Transformation::rotate(radians(
-                                    raw_progress * std::f32::consts::PI,
-                                )),
-                            ),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.expanded.remove(&id) {
-                                this.expanded.insert(id);
-                            }
-                            cx.notify();
-                        })),
-                )
-                .when(raw_progress > 0.001, |d| {
-                    d.child(
+        // The raw transcript opens from the row's actions; once open, its
+        // header here closes it again and copies it.
+        let has_raw = raw_text.is_some();
+        let raw_toggle = raw_text
+            .as_ref()
+            .filter(|_| raw_progress > 0.001)
+            .map(|raw| {
+                let copy_raw = raw.clone();
+                div()
+                    .mt(px(6.))
+                    .opacity(raw_progress)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
                         div()
-                            .id(("copy-raw", id as usize))
+                            .id(("raw-toggle", id as usize))
                             .keyboard_focusable(
-                                ("history-copy-raw", id as usize),
+                                ("history-raw", id as usize),
                                 Role::Button,
-                                t("controlPanel.history.copyRaw"),
+                                t("controlPanel.history.rawTranscript"),
                                 cx,
                             )
-                            .tooltip(text_tooltip(t("controlPanel.history.copyRaw")))
-                            .size(px(24.))
+                            .aria_expanded(expanded)
+                            .h(px(24.))
+                            .ml(px(-6.))
+                            .px(px(6.))
                             .flex()
                             .items_center()
-                            .justify_center()
+                            .gap(px(4.))
                             .rounded(px(RADIUS_MD))
-                            .opacity(raw_progress)
+                            .text_size(px(TEXT_SMALL))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.muted_foreground)
                             .cursor_pointer()
-                            .hover(|s| s.bg(p.hover_wash(0.06)))
-                            .child(icon("copy", 12., p.muted_foreground))
-                            .on_click(move |_, _, cx| copy_with_toast(copy_raw.clone(), cx)),
+                            .hover(|s| s.bg(p.hover_wash(0.06)).text_color(p.foreground))
+                            .child(t("controlPanel.history.rawTranscript"))
+                            .child(
+                                icon("chevron-down", 10., p.muted_foreground).with_transformation(
+                                    Transformation::rotate(radians(
+                                        raw_progress * std::f32::consts::PI,
+                                    )),
+                                ),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this.expanded.remove(&id) {
+                                    this.expanded.insert(id);
+                                }
+                                cx.notify();
+                            })),
                     )
-                })
-        });
+                    .when(raw_progress > 0.001, |d| {
+                        d.child(
+                            div()
+                                .id(("copy-raw", id as usize))
+                                .keyboard_focusable(
+                                    ("history-copy-raw", id as usize),
+                                    Role::Button,
+                                    t("controlPanel.history.copyRaw"),
+                                    cx,
+                                )
+                                .tooltip(text_tooltip(t("controlPanel.history.copyRaw")))
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(RADIUS_MD))
+                                .opacity(raw_progress)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(p.hover_wash(0.06)))
+                                .child(icon("copy", 12., p.muted_foreground))
+                                .on_click(move |_, _, cx| copy_with_toast(copy_raw.clone(), cx)),
+                        )
+                    })
+            });
 
         let raw_section = raw_text.filter(|_| raw_progress > 0.001).map(|raw| {
             div()
@@ -456,7 +466,7 @@ impl HistoryView {
 
         // Row actions surface on hover, or while one of them holds keyboard
         // focus, in 120 ms and leave in 60 ms.
-        let focus_within = ["copy-row", "more-row"]
+        let focus_within = ["raw-row", "copy-row", "more-row"]
             .iter()
             .any(|key| keyed_focus_handle((*key, id as usize).into(), cx).is_focused(window));
         let actions_shown = menu_open || self.hovered_row == Some(id) || focus_within;
@@ -479,6 +489,24 @@ impl HistoryView {
             .mt(px(-2.))
             .mr(px(-6.))
             .opacity(actions_t)
+            .when(has_raw, |d| {
+                let label = t(if expanded {
+                    "controlPanel.history.hideRaw"
+                } else {
+                    "controlPanel.history.showRaw"
+                });
+                d.child(
+                    action_btn("raw-row", "scroll-text", label, cx)
+                        .aria_expanded(expanded)
+                        .when(expanded, |d| d.bg(p.hover_wash(0.08)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.expanded.remove(&id) {
+                                this.expanded.insert(id);
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
             .child(
                 action_btn("copy-row", "copy", t("controlPanel.history.copyText"), cx)
                     .on_click(move |_, _, cx| copy_with_toast(copy_text.clone(), cx)),
@@ -581,14 +609,14 @@ impl HistoryView {
             .py(px(10.))
             .hover(move |s| {
                 s.bg(if p.dark {
-                    p.white.opacity(0.03)
+                    p.white.opacity(0.04)
                 } else {
-                    p.foreground.opacity(0.025)
+                    p.foreground.opacity(0.045)
                 })
             })
             .child(
                 div()
-                    .w(px(56.))
+                    .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
                     .text_size(px(TEXT_SMALL))
@@ -621,13 +649,13 @@ impl HistoryView {
         div()
             .flex()
             .gap(px(12.))
-            .rounded(px(RADIUS_XL))
+            .rounded(px(RADIUS_LG))
             .px(px(12.))
             .py(px(10.))
             .overflow_hidden()
             .child(
                 div()
-                    .w(px(56.))
+                    .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
                     .text_size(px(TEXT_SMALL))

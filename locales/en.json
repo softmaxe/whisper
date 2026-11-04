@@ -285,7 +285,10 @@
       "copyRaw": "Copy raw transcript",
       "moreActions": "More actions",
       "clearHistory": "Clear History…",
-      "clearHistoryConfirm": "Clear History"
+      "clearHistoryConfirm": "Clear History",
+      "showRaw": "Show raw transcript",
+      "hideRaw": "Hide raw transcript",
+      "pageActions": "History actions"
     }
   },
   "reasoning": {
