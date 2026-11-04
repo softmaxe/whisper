@@ -164,7 +164,7 @@ impl RenderOnce for Toggle {
         } else if p.dark {
             p.white.opacity(0.22)
         } else {
-            p.foreground.opacity(0.15)
+            p.foreground.opacity(0.2)
         };
         let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
@@ -204,6 +204,17 @@ impl RenderOnce for Toggle {
             .h(px(18.))
             .rounded_full()
             .bg(track)
+            // A light off track is pale against light cards; an inner edge
+            // keeps its outline at about 3:1, as WCAG 1.4.11 asks.
+            .when(!p.dark && !checked && !disabled, |d| {
+                d.shadow(vec![BoxShadow {
+                    color: p.foreground.opacity(0.22),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(1.),
+                    inset: true,
+                }])
+            })
             .when(disabled, |d| d.opacity(0.5))
             .when(!disabled, |d| d.cursor_pointer())
             .child(
@@ -214,7 +225,18 @@ impl RenderOnce for Toggle {
                     .size(px(14.))
                     .rounded_full()
                     .bg(knob)
-                    .when(!disabled, |d| d.shadow(vec![drop(0., 1., 2., 0.1)])),
+                    .when(!disabled, |d| {
+                        d.shadow(vec![
+                            drop(0., 1., 3., if p.dark { 0.3 } else { 0.25 }),
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.12),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(0.5),
+                                inset: false,
+                            },
+                        ])
+                    }),
             )
             .when_some(on_change.filter(|_| !disabled), |d, f| {
                 d.on_click(move |_, window, cx| f(!checked, window, cx))
@@ -415,10 +437,17 @@ impl RenderOnce for Button {
                     set_pressed(&up_out, false, cx)
                 });
         }
-        el.when_some(self.icon, |d, (name, size)| {
-            d.child(icon(name, size, style.icon))
-        })
-        .when_some(self.label, |d, label| d.child(label))
+        // An icon-only button shows its name as a tooltip as well.
+        let tip = self
+            .label
+            .is_none()
+            .then(|| self.aria_label.clone())
+            .flatten();
+        el.when_some(tip, |d, tip| d.tooltip(text_tooltip(tip)))
+            .when_some(self.icon, |d, (name, size)| {
+                d.child(icon(name, size, style.icon))
+            })
+            .when_some(self.label, |d, label| d.child(label))
     }
 }
 
@@ -447,7 +476,7 @@ pub fn inset(x: f32, y: f32, blur: f32, color: Hsla) -> BoxShadow {
 /// Elevation of dialogs, the settings sheet and the command palette.
 pub fn dialog_shadow(p: &Palette) -> Vec<BoxShadow> {
     let mut shadows = vec![BoxShadow {
-        color: hsla(0., 0., 0., if p.dark { 0.65 } else { 0.3 }),
+        color: hsla(0., 0., 0., if p.dark { 0.65 } else { 0.34 }),
         offset: point(px(0.), px(24.)),
         blur_radius: px(64.),
         spread_radius: px(-24.),
@@ -464,7 +493,7 @@ pub fn backdrop(p: &Palette) -> Hsla {
     if p.dark {
         hsla(0., 0., 0., 0.72)
     } else {
-        hsla(240. / 360., 0.06, 0.1, 0.32)
+        hsla(240. / 360., 0.06, 0.1, 0.2)
     }
 }
 
@@ -549,6 +578,9 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
     }
 }
 
+/// Helper text wraps at about 90 characters instead of spanning a wide card.
+const DESCRIPTION_MAX_WIDTH: f32 = 560.;
+
 /// `SectionHeader`: a semibold title with an optional description.
 pub fn section_header(
     title: impl Into<SharedString>,
@@ -557,7 +589,6 @@ pub fn section_header(
 ) -> Div {
     div()
         .mb(px(10.))
-        .px(px(4.))
         .child(
             div()
                 .text_size(px(TEXT_TITLE))
@@ -570,6 +601,7 @@ pub fn section_header(
             d.child(
                 div()
                     .mt(px(2.))
+                    .max_w(px(DESCRIPTION_MAX_WIDTH))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
                     .text_color(p.subtle_foreground)
@@ -699,6 +731,7 @@ pub fn label_block(
             d.child(
                 div()
                     .mt(px(2.))
+                    .max_w(px(DESCRIPTION_MAX_WIDTH))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
                     .text_color(p.subtle_foreground)
@@ -798,6 +831,7 @@ fn field_with_label(
                             d.child(
                                 div()
                                     .mt(px(2.))
+                                    .max_w(px(DESCRIPTION_MAX_WIDTH))
                                     .text_size(px(TEXT_SMALL))
                                     .line_height(px(LINE_SMALL))
                                     .text_color(p.subtle_foreground)
@@ -836,11 +870,11 @@ pub fn nav_row(
     } else {
         (p.muted_foreground, p.muted_foreground.opacity(0.85))
     };
-    // Dark washes: the app sidebar uses 11% / 8% white over black; settings rows
-    // use T3 Code's muted (3%) / accent (4%) white over the card tone.
+    // Dark washes (active / hover): the selected row always reads stronger
+    // than a hovered one.
     let (active_wash, hover_wash) = match surface {
-        NavSurface::App => (0.09, 0.08),
-        NavSurface::Settings => (0.03, 0.04),
+        NavSurface::App => (0.1, 0.07),
+        NavSurface::Settings => (0.08, 0.05),
     };
     let hover_bg = p.hover_wash(if p.dark { hover_wash } else { 0.04 });
     let hover_fg = p.foreground;
@@ -859,14 +893,17 @@ pub fn nav_row(
         .text_size(px(TEXT_BODY))
         .font_weight(FontWeight::MEDIUM)
         .text_color(fg)
+        // Every row carries a 1 px border, transparent unless active, so the
+        // active row's outline never shifts its label.
+        .border_1()
+        .border_color(transparent_black())
         .when(active, |d| {
             if p.dark {
                 d.bg(p.white.opacity(active_wash))
             } else {
                 d.bg(p.card)
-                    .border_1()
-                    .border_color(p.border.opacity(0.7))
-                    .shadow(vec![drop(0., 1., 2., 0.04)])
+                    .border_color(p.border_hover)
+                    .shadow(vec![drop(0., 1., 2., 0.05)])
             }
         })
         .when(!active, |d| {

@@ -63,7 +63,7 @@ impl Palette {
             primary_foreground: c(0xffffff),
             muted: c(0xf4f4f5),
             muted_foreground: c(0x62626c),
-            subtle_foreground: c(0x71717b),
+            subtle_foreground: c(0x66666f),
             destructive: c(0xfb2c36),
             border: c(0xe4e4e7),
             input: c(0xffffff),
@@ -251,13 +251,13 @@ pub const FONT_MONO: &str = "JetBrainsMono Nerd Font Mono";
 pub const TEXT_CAPTION: f32 = 11.;
 pub const TEXT_SMALL: f32 = 12.;
 pub const TEXT_BODY: f32 = 14.;
-pub const TEXT_READING: f32 = 15.5;
+pub const TEXT_READING: f32 = 15.;
 pub const TEXT_TITLE: f32 = 16.;
 pub const TEXT_FIGURE: f32 = 34.;
 
 /// Line heights paired with the scale.
 pub const LINE_SMALL: f32 = 18.;
-pub const LINE_READING: f32 = 25.;
+pub const LINE_READING: f32 = 24.;
 pub const LINE_TITLE: f32 = 24.;
 
 /// Workspace geometry. These keep the top bar, sidebar rows and settings
