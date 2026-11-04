@@ -26,23 +26,33 @@ use super::overlays::{
 use super::text_input::{text_field, text_field_small, textarea_field};
 use super::theme::{
     DUR_BASE, DUR_SNAP, LINE_SMALL, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
-    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, ease_snap, tabular_nums,
+    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, ease_snap, motion,
+    tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
 /// per row, capped at the ninth so long lists do not drag.
 /// Keyed by the row's content so a row animates once, when it first appears.
+/// With Reduce motion on, rows appear together and do not slide.
 fn stagger_in(
     row: Stateful<Div>,
     key: impl Into<SharedString>,
     index: usize,
+    cx: &App,
 ) -> AnimationElement<Stateful<Div>> {
-    let delay = 50 + index.min(8) as u64 * 30;
+    let reduced = cx.reduce_motion();
+    let delay = if reduced {
+        0
+    } else {
+        50 + index.min(8) as u64 * 30
+    };
     row.relative().with_animation(
         ElementId::Name(key.into()),
-        Animation::new(Duration::from_millis(delay + DUR_BASE))
-            .with_easing(delayed(delay, DUR_BASE, ease_out)),
-        |d, t| d.opacity(t).top(px(3. * (1. - t))),
+        motion(delay + DUR_BASE, cx).with_easing(delayed(delay, DUR_BASE, ease_out)),
+        move |d, t| {
+            let d = d.opacity(t);
+            if reduced { d } else { d.top(px(3. * (1. - t))) }
+        },
     )
 }
 
@@ -76,12 +86,17 @@ enum SortKey {
 }
 
 /// Dictionary table column widths, in px. The word column takes the rest.
-const COL_USES: f32 = 96.;
+const COL_USES: f32 = 128.;
 const COL_LAST_USED: f32 = 112.;
 /// The use count sits right-aligned in this cell so digits line up.
 const COUNT_CELL: f32 = 28.;
-/// Width of the use-count bar for the most used word.
-const USE_BAR_MAX: f32 = 48.;
+/// Every use bar sits on a track this wide; the most used word fills it, so
+/// bars compare against one scale.
+const USE_TRACK: f32 = 72.;
+/// A word used even once shows a sliver, so it never reads as unused.
+const USE_BAR_MIN: f32 = 3.;
+/// Past this many days, an age in days is harder to place than a date.
+const RELATIVE_DAYS: i64 = 30;
 /// Snippet table trigger column width, in px.
 const COL_TRIGGER: f32 = 200.;
 /// Height of the header controls: tabs, search, buttons.
@@ -105,9 +120,14 @@ fn sort_entries(entries: &mut [DictionaryEntry], key: SortKey, descending: bool)
     });
 }
 
+/// Words read A to Z; counts and dates read most first.
+fn default_descending(key: SortKey) -> bool {
+    key != SortKey::Word
+}
+
 /// When a word was last used, to the day: the table only needs to tell
-/// words in daily use from ones that went quiet. Relative for the past week,
-/// a date after that.
+/// words in daily use from ones that went quiet. Relative for the past
+/// month, so recent rows compare at a glance, and a date after that.
 #[derive(Debug, PartialEq, Eq)]
 enum LastUsed {
     Never,
@@ -126,7 +146,7 @@ fn last_used(use_count: i64, at: Option<DateTime<Utc>>, now: DateTime<Local>) ->
     match (now.date_naive() - day).num_days() {
         ..=0 => LastUsed::Today,
         1 => LastUsed::Yesterday,
-        n @ 2..=6 => LastUsed::DaysAgo(n),
+        n @ 2..=RELATIVE_DAYS => LastUsed::DaysAgo(n),
         _ => LastUsed::Date {
             day,
             this_year: day.year() == now.year(),
@@ -161,6 +181,14 @@ fn full_timestamp(at: DateTime<Utc>) -> String {
         "%A, %B %-d, %Y at %-I:%M %p"
     };
     at.with_timezone(&Local).format(format).to_string()
+}
+
+/// How much of the use track a word fills, scaled to the most used word.
+fn use_bar_width(uses: i64, max_uses: i64) -> f32 {
+    if uses <= 0 || max_uses <= 0 {
+        return 0.;
+    }
+    (USE_TRACK * uses as f32 / max_uses as f32).clamp(USE_BAR_MIN, USE_TRACK)
 }
 
 /// A replacement on one line: line breaks become a return glyph.
@@ -246,10 +274,16 @@ struct OpenMenu {
 enum Removal {
     Word(DictionaryEntry),
     Snippet(Snippet),
+    /// A learned mishearing of `term`, shown as a "heard as" chip.
+    Correction {
+        misheard: String,
+        term: String,
+    },
 }
 
-/// A row taken off screen but not yet deleted, so Undo loses nothing: deleting
-/// a word also forgets its use count and mishearings.
+/// A row or chip taken off screen but not yet deleted, so Undo loses nothing:
+/// deleting a word also forgets its use count and mishearings, and a learned
+/// mishearing takes many corrections to learn again.
 struct PendingRemoval {
     id: u64,
     removal: Removal,
@@ -503,6 +537,9 @@ impl DictionaryView {
         match pending.removal {
             Removal::Word(entry) => update_dictionary(Vec::new(), vec![entry.word], cx),
             Removal::Snippet(snippet) => Self::remove_snippet(snippet.trigger, cx),
+            Removal::Correction { misheard, term } => {
+                AppState::global(cx).update(cx, |s, cx| s.remove_correction(&misheard, &term, cx))
+            }
         }
         cx.notify();
     }
@@ -514,6 +551,7 @@ impl DictionaryView {
         let key = match &pending.removal {
             Removal::Word(entry) => word_key(&entry.word),
             Removal::Snippet(snippet) => snippet_key(&snippet.trigger),
+            Removal::Correction { term, .. } => word_key(term),
         };
         focus_key(key, window, cx);
         cx.notify();
@@ -522,15 +560,36 @@ impl DictionaryView {
     fn pending_word(&self) -> Option<&str> {
         match &self.pending.as_ref()?.removal {
             Removal::Word(entry) => Some(&entry.word),
-            Removal::Snippet(_) => None,
+            _ => None,
         }
     }
 
     fn pending_trigger(&self) -> Option<&str> {
         match &self.pending.as_ref()?.removal {
             Removal::Snippet(snippet) => Some(&snippet.trigger),
-            Removal::Word(_) => None,
+            _ => None,
         }
+    }
+
+    /// The (misheard, term) pair waiting on Undo, if any.
+    fn pending_correction(&self) -> Option<(&str, &str)> {
+        match &self.pending.as_ref()?.removal {
+            Removal::Correction { misheard, term } => Some((misheard, term)),
+            _ => None,
+        }
+    }
+
+    /// Forgets a mishearing, with Undo. The chip's × goes with it, so focus
+    /// moves to its word's row.
+    fn forget_correction(
+        &mut self,
+        misheard: String,
+        term: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        focus_key(word_key(&term), window, cx);
+        self.remove(Removal::Correction { misheard, term }, cx);
     }
 
     // ---- Menus -------------------------------------------------------------------------------
@@ -1109,7 +1168,7 @@ impl DictionaryView {
         }
         list.with_animation(
             "dict-menu-in",
-            Animation::new(Duration::from_millis(DUR_SNAP)).with_easing(ease_snap),
+            motion(DUR_SNAP, cx).with_easing(ease_snap),
             |d, t| d.opacity(t),
         )
         .into_any_element()
@@ -1125,8 +1184,12 @@ impl DictionaryView {
                 "dictionary.snippets.removed",
                 &[("trigger", &snippet.trigger)],
             ),
+            Removal::Correction { misheard, .. } => {
+                t_with("dictionary.forgotMishearing", &[("word", misheard)])
+            }
         };
         let viewport = window.viewport_size();
+        let reduced = cx.reduce_motion();
         let bar = div()
             .id("dict-undo")
             .occlude()
@@ -1159,8 +1222,11 @@ impl DictionaryView {
             )
             .with_animation(
                 ("dict-undo-in", pending.id as usize),
-                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
-                |d, t| d.opacity(t).mt(px(6. * (1. - t))),
+                motion(DUR_BASE, cx).with_easing(ease_out),
+                move |d, t| {
+                    let d = d.opacity(t);
+                    if reduced { d } else { d.mt(px(6. * (1. - t))) }
+                },
             );
         Some(
             deferred(
@@ -1352,11 +1418,23 @@ impl DictionaryView {
             vec![
                 div()
                     .flex_1()
-                    .child(self.column_heading(0, "dictionary.columnWord", SortKey::Word, cx))
+                    .child(self.column_heading(
+                        0,
+                        "dictionary.columnWord",
+                        SortKey::Word,
+                        window,
+                        cx,
+                    ))
                     .into_any_element(),
                 div()
                     .w(px(COL_USES))
-                    .child(self.column_heading(1, "dictionary.columnUses", SortKey::Uses, cx))
+                    .child(self.column_heading(
+                        1,
+                        "dictionary.columnUses",
+                        SortKey::Uses,
+                        window,
+                        cx,
+                    ))
                     .into_any_element(),
                 div()
                     .w(px(COL_LAST_USED))
@@ -1366,6 +1444,7 @@ impl DictionaryView {
                         2,
                         "dictionary.columnLastUsed",
                         SortKey::LastUsed,
+                        window,
                         cx,
                     ))
                     .into_any_element(),
@@ -1377,11 +1456,19 @@ impl DictionaryView {
         }
         self.row_keys = visible.iter().map(|e| word_key(&e.word)).collect();
         let corrections = AppState::global(cx).read(cx).known_corrections.clone();
+        let hidden = self
+            .pending_correction()
+            .map(|(m, t)| (m.to_string(), t.to_string()));
         let mut focused_row = false;
         for (index, entry) in visible.into_iter().enumerate() {
             let misheard: Vec<String> = corrections
                 .iter()
                 .filter(|c| c.term == entry.word)
+                .filter(|c| {
+                    hidden
+                        .as_ref()
+                        .is_none_or(|(m, t)| *m != c.misheard || *t != c.term)
+                })
                 .take(MAX_ROW_CORRECTIONS)
                 .map(|c| c.misheard.clone())
                 .collect();
@@ -1413,6 +1500,8 @@ impl DictionaryView {
                         .items_start()
                         .gap(px(8.))
                         .px(px(8.))
+                        // Kept to a readable measure, not the full table width.
+                        .max_w(px(560.))
                         .child(div().pt(px(2.)).child(icon(
                             "alert-circle",
                             13.,
@@ -1609,21 +1698,53 @@ impl DictionaryView {
         div().flex().child(seg)
     }
 
-    /// A sortable column heading; a second click flips the direction.
+    /// A sortable column heading; a second click flips the direction. Idle
+    /// headings show a faint chevron on hover or focus, pointing the way a
+    /// click would sort, so every sortable column reads as one.
     fn column_heading(
         &self,
         index: usize,
         key: &'static str,
         sort: SortKey,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = cx.palette();
         let active = sort == self.sort;
         let focus: ElementId = ("dict-column", index).into();
+        let focused = keyed_focus_handle(focus.clone(), cx).is_focused(window);
         let label = t_with("dictionary.sortBy", &[("column", &t(key))]);
+        let group: SharedString = format!("dict-column-{index}").into();
+        let (descending, chevron_color) = if active {
+            (self.descending, p.foreground)
+        } else {
+            (default_descending(sort), p.subtle_foreground)
+        };
+        // The chevron always takes its space so headings do not shift as it
+        // appears. In a right-aligned column it leads, so the label's edge
+        // lines up with the values below.
+        let chevron = div()
+            .flex_none()
+            .opacity(if active || focused { 1. } else { 0. })
+            .group_hover(group.clone(), |s| s.opacity(1.))
+            .child(icon(
+                if descending {
+                    "chevron-down"
+                } else {
+                    "chevron-up"
+                },
+                12.,
+                chevron_color,
+            ));
+        let (before, after) = if sort == SortKey::LastUsed {
+            (Some(chevron), None)
+        } else {
+            (None, Some(chevron))
+        };
         div()
             .id(focus.clone())
             .keyboard_focusable(focus, Role::ColumnHeader, label, cx)
+            .group(group)
             .flex()
             .items_center()
             .gap(px(4.))
@@ -1639,24 +1760,15 @@ impl DictionaryView {
             })
             .cursor_pointer()
             .hover(|s| s.text_color(p.foreground))
+            .children(before)
             .child(t(key))
-            .when(active, |d| {
-                d.child(icon(
-                    if self.descending {
-                        "chevron-down"
-                    } else {
-                        "chevron-up"
-                    },
-                    12.,
-                    p.foreground,
-                ))
-            })
+            .children(after)
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.sort == sort {
                     this.descending = !this.descending;
                 } else {
                     this.sort = sort;
-                    this.descending = sort != SortKey::Word;
+                    this.descending = default_descending(sort);
                 }
                 cx.notify();
             }))
@@ -1696,41 +1808,52 @@ impl DictionaryView {
             })
     }
 
-    /// A way the word was misheard; activating it forgets that mapping.
-    fn misheard_chip(misheard: String, word: String, cx: &mut App) -> Stateful<Div> {
+    /// A way the word was misheard. Only its × forgets it, so a stray click
+    /// while reading the row cannot, and forgetting goes through Undo.
+    fn misheard_chip(misheard: String, word: String, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let key: ElementId = SharedString::from(format!("dict-chip:{word}:{misheard}")).into();
+        let key: ElementId =
+            SharedString::from(format!("dict-chip-forget:{word}:{misheard}")).into();
         let group: SharedString = format!("{key}-group").into();
         let label = t_with("dictionary.forgetMishearing", &[("word", &misheard)]);
-        let tip = label.clone();
-        div()
+        let label_text = misheard.clone();
+        let wash = p.hover_wash(0.1);
+        let forget = div()
             .id(key.clone())
-            .keyboard_focusable(key, Role::Button, label, cx)
+            .keyboard_focusable(key, Role::Button, label.clone(), cx)
             .group(group.clone())
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(3.))
-            .h(px(20.))
-            .pl(px(6.))
-            .pr(px(4.))
+            .justify_center()
+            .size(px(16.))
             .rounded(px(RADIUS_SM))
-            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }))
-            .text_size(px(TEXT_SMALL))
-            .text_color(p.muted_foreground)
             .cursor_pointer()
-            .hover(|s| s.text_color(p.foreground))
-            .tooltip(text_tooltip(tip.clone()))
-            .child(misheard.clone())
+            .hover(move |s| s.bg(wash))
+            .tooltip(text_tooltip(label))
             // The × stays visible so the chip reads as removable before it is hovered.
             .child(
                 icon("x", 10., p.subtle_foreground)
                     .group_hover(group, move |s| s.text_color(p.foreground)),
             )
-            .on_click(move |_, _, cx| {
+            .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
-                AppState::global(cx).update(cx, |s, cx| s.remove_correction(&misheard, &word, cx))
-            })
+                this.forget_correction(misheard.clone(), word.clone(), window, cx);
+            }));
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .h(px(20.))
+            .pl(px(6.))
+            .pr(px(2.))
+            .rounded(px(RADIUS_SM))
+            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }))
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.muted_foreground)
+            .child(div().max_w(px(160.)).truncate().child(label_text))
+            .child(forget)
     }
 
     fn learned_badge(p: &Palette) -> Div {
@@ -1782,7 +1905,7 @@ impl DictionaryView {
                 .child(text_field_small(&self.edit_input, false, window, cx).h(px(28.)))
         } else {
             let has_misheard = !misheard.is_empty();
-            let chips: Vec<Stateful<Div>> = misheard
+            let chips: Vec<Div> = misheard
                 .into_iter()
                 .map(|m| Self::misheard_chip(m, word.clone(), cx))
                 .collect();
@@ -1855,11 +1978,7 @@ impl DictionaryView {
                 .child(actions)
         };
 
-        let bar = if max_uses > 0 {
-            USE_BAR_MAX * entry.use_count as f32 / max_uses as f32
-        } else {
-            0.
-        };
+        let bar = use_bar_width(entry.use_count, max_uses);
         let used = last_used(entry.use_count, entry.last_used_at, Local::now());
         let tooltip = entry
             .last_used_at
@@ -1886,13 +2005,19 @@ impl DictionaryView {
                     .child(entry.use_count.to_string()),
             )
             .child(
-                div().w(px(USE_BAR_MAX)).flex().child(
-                    div()
-                        .h(px(4.))
-                        .w(px(bar))
-                        .rounded(px(2.))
-                        .bg(p.foreground.opacity(0.22)),
-                ),
+                div()
+                    .w(px(USE_TRACK))
+                    .h(px(4.))
+                    .flex()
+                    .rounded(px(2.))
+                    .bg(p.foreground.opacity(if p.dark { 0.08 } else { 0.07 }))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(px(bar))
+                            .rounded(px(2.))
+                            .bg(p.foreground.opacity(if p.dark { 0.45 } else { 0.4 })),
+                    ),
             );
         let last_used_cell = div()
             .id(("dict-last-used", index))
@@ -1956,7 +2081,10 @@ impl DictionaryView {
             .child(word_cell)
             .child(uses_cell)
             .child(last_used_cell);
-        (stagger_in(row, format!("dict-in-{word}"), index), focused)
+        (
+            stagger_in(row, format!("dict-in-{word}"), index, cx),
+            focused,
+        )
     }
 
     fn render_empty(p: &Palette, cx: &mut Context<Self>) -> Div {
@@ -2243,7 +2371,7 @@ impl DictionaryView {
                     .child(actions),
             );
         (
-            stagger_in(row, format!("snippet-in-{trigger}"), index),
+            stagger_in(row, format!("snippet-in-{trigger}"), index, cx),
             focused,
         )
     }
@@ -2674,7 +2802,8 @@ mod tests {
     use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 
     use super::{
-        DictionaryEntry, DictionarySource, LastUsed, SortKey, last_used, one_line, sort_entries,
+        DictionaryEntry, DictionarySource, LastUsed, SortKey, USE_BAR_MIN, USE_TRACK, last_used,
+        one_line, sort_entries, use_bar_width,
     };
 
     fn entry(word: &str, use_count: i64, last_used_at: Option<i64>) -> DictionaryEntry {
@@ -2723,16 +2852,17 @@ mod tests {
     }
 
     #[test]
-    fn last_used_is_relative_for_a_week_then_a_date() {
+    fn last_used_is_relative_for_a_month_then_a_date() {
         let now = Local.with_ymd_and_hms(2026, 11, 4, 15, 0, 0).unwrap();
         let ago = |days: i64| Some((now - Duration::days(days)).with_timezone(&Utc));
         assert_eq!(last_used(3, ago(0), now), LastUsed::Today);
         assert_eq!(last_used(3, ago(1), now), LastUsed::Yesterday);
-        assert_eq!(last_used(3, ago(6), now), LastUsed::DaysAgo(6));
+        assert_eq!(last_used(3, ago(9), now), LastUsed::DaysAgo(9));
+        assert_eq!(last_used(3, ago(30), now), LastUsed::DaysAgo(30));
         assert_eq!(
-            last_used(3, ago(7), now),
+            last_used(3, ago(31), now),
             LastUsed::Date {
-                day: NaiveDate::from_ymd_opt(2026, 10, 28).unwrap(),
+                day: NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(),
                 this_year: true,
             }
         );
@@ -2753,6 +2883,15 @@ mod tests {
             LastUsed::Never
         );
         assert_eq!(last_used(4, None, now), LastUsed::Never);
+    }
+
+    #[test]
+    fn use_bars_share_one_scale_and_never_vanish_for_a_used_word() {
+        assert_eq!(use_bar_width(0, 14), 0.);
+        assert_eq!(use_bar_width(14, 14), USE_TRACK);
+        assert_eq!(use_bar_width(7, 14), USE_TRACK / 2.);
+        assert_eq!(use_bar_width(1, 1_000), USE_BAR_MIN);
+        assert_eq!(use_bar_width(3, 0), 0.);
     }
 
     #[test]
