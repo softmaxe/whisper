@@ -28,8 +28,8 @@ use super::components::f32_tx;
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, Toggle, backdrop,
     dialog_shadow, icon, nav_row, page_container, panel_row, section_header, segment,
-    segmented_track, settings_field, settings_field_tagged, settings_panel, settings_row,
-    settings_section, status_label,
+    segmented_track, settings_field, settings_field_tagged, settings_row, settings_section,
+    status_label,
 };
 use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH};
 use super::hotkey_input::{HotkeyListInput, hotkey_glyphs};
@@ -37,9 +37,10 @@ use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog,
 use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
 use super::text_input::{text_field, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL,
-    RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL,
-    WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap, motion,
+    CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt,
+    RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION,
+    TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
+    motion,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,6 +120,7 @@ pub struct SettingsModal {
     stt_model: Entity<InputState>,
 
     cleanup_url: Entity<InputState>,
+    cleanup_model: Entity<InputState>,
     api_key: String,
     api_key_editing: bool,
     api_key_input: Entity<InputState>,
@@ -249,7 +251,7 @@ fn mask_key(key: &str) -> String {
     }
     let head: String = chars[..3].iter().collect();
     let tail: String = chars[chars.len() - 4..].iter().collect();
-    format!("{head}...{tail}")
+    format!("{head}…{tail}")
 }
 
 /// Default addresses of common OpenAI-compatible chat servers.
@@ -286,6 +288,7 @@ fn endpoint_control(field: impl IntoElement, raw: &str, path: &str, p: &Palette)
                     .child(
                         div()
                             .font_family(FONT_MONO)
+                            .text_size(px(TEXT_MONO_SMALL))
                             .text_color(p.foreground.opacity(0.85))
                             .child(format!("POST {target}")),
                     ),
@@ -354,6 +357,21 @@ impl SettingsModal {
                 _ => {}
             },
         ));
+
+        let cleanup_model = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("qwen3:8b")
+                .default_value(s.cleanup_model.clone())
+        });
+        subscriptions.push(
+            cx.subscribe(&cleanup_model, |_, input, e: &InputEvent, cx| {
+                if matches!(e, InputEvent::Change) {
+                    let value = input.read(cx).value().trim().to_string();
+                    update_settings(cx, |s| s.cleanup_model = value);
+                    cx.notify();
+                }
+            }),
+        );
 
         let api_key_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("apiKeyInput.placeholder")));
@@ -543,6 +561,7 @@ impl SettingsModal {
             stt_url,
             stt_model,
             cleanup_url,
+            cleanup_model,
             api_key: backend::cleanup_api_key(),
             api_key_editing: false,
             api_key_input,
@@ -761,23 +780,22 @@ impl SettingsModal {
         }
     }
 
-    /// A segmented row of known servers; picking one fills the endpoint
-    /// with its default address, and the one matching the field stays lit.
+    /// Shortcuts that fill the Server URL with a known server's default
+    /// address. They are not a selection: a custom address matches none, and
+    /// the one whose address the field holds carries a check.
     fn cleanup_presets(&self, draft: &str, cx: &mut Context<Self>) -> AnyElement {
-        let p = cx.palette();
         let current = normalize_base_url(draft);
-        let mut track = segmented_track(&p).flex_wrap().gap(px(2.));
+        let mut row = div().flex().flex_wrap().gap(px(6.));
         for &(name, url) in CLEANUP_PRESETS.iter() {
-            let active = current == url;
-            track = track.child(
-                segment(
+            row = row.child(
+                suggestion_chip(
                     SharedString::from(format!("settings-preset-{name}")),
                     name,
-                    active,
+                    t_with("settings.llms.server.fillIn", &[("server", name)]),
+                    current == url,
+                    false,
                     cx,
                 )
-                .h(px(24.))
-                .child(name)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.cleanup_url
                         .update(cx, |input, cx| input.set_value(url, window, cx));
@@ -785,7 +803,15 @@ impl SettingsModal {
                 })),
             );
         }
-        div().flex().child(track).into_any_element()
+        row.into_any_element()
+    }
+
+    /// Puts a listed model in the Model field, as if typed.
+    fn pick_cleanup_model(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.cleanup_model
+            .update(cx, |input, cx| input.set_value(value.clone(), window, cx));
+        update_settings(cx, |s| s.cleanup_model = value);
+        cx.notify();
     }
 
     fn apply_cleanup_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1237,7 +1263,7 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.language.sectionTitle"),
-                None,
+                Some(t("settings.language.uiSectionDescription").into()),
                 vec![
                     settings_row(
                         t("settings.language.uiLabel"),
@@ -1251,7 +1277,7 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.general.soundEffects.title"),
-                None,
+                Some(t("settings.general.soundEffects.description").into()),
                 vec![
                     toggle(
                         "audio-cues",
@@ -1272,7 +1298,7 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.general.clipboard.title"),
-                None,
+                Some(t("settings.general.clipboard.description").into()),
                 vec![
                     toggle(
                         "auto-paste",
@@ -1299,7 +1325,7 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.dictionary.title"),
-                None,
+                Some(t("settings.dictionary.description").into()),
                 vec![toggle(
                     "auto-learn",
                     "settings.dictionary.autoLearnTitle",
@@ -1427,7 +1453,7 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.general.floatingIcon.title"),
-                None,
+                Some(t("settings.general.floatingIcon.description").into()),
                 vec![
                     settings_row(
                         t("settings.general.floatingIcon.startPosition"),
@@ -1473,7 +1499,7 @@ impl SettingsModal {
             vec![
                 settings_field_tagged(
                     t("settings.selfHosted.serverUrl"),
-                    "OpenAI · /audio/transcriptions",
+                    t("settings.speechToText.protocolTag"),
                     Some(t("settings.speechToText.serverUrlHelp").into_any_element()),
                     endpoint_control(
                         text_field(&self.stt_url, true, window, cx),
@@ -1517,24 +1543,23 @@ impl SettingsModal {
             .into_any_element()
     }
 
-    /// The models the server listed, as one-click choices for the free-text
-    /// Model field; the one matching the field stays lit.
+    /// The models the server listed, as chips that fill the free-text Model
+    /// field; the one matching the field carries a check.
     fn stt_model_choices(&self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let current = self.stt_model.read(cx).value().trim().to_string();
-        let mut track = segmented_track(&p).flex_wrap().gap(px(2.));
+        let mut row = div().flex().flex_wrap().gap(px(6.));
         for (index, model) in self.stt_models.iter().take(STT_MODEL_CHOICES).enumerate() {
             let value = model.clone();
-            track = track.child(
-                segment(
+            row = row.child(
+                suggestion_chip(
                     ("settings-stt-model", index),
                     model.clone(),
+                    model.clone(),
                     *model == current,
+                    true,
                     cx,
                 )
-                .h(px(24.))
-                .font_family(FONT_MONO)
-                .child(model.clone())
                 .on_click(cx.listener(move |this, _, window, cx| {
                     let value = value.clone();
                     this.stt_model
@@ -1556,7 +1581,7 @@ impl SettingsModal {
                     .text_color(p.subtle_foreground)
                     .child(t("settings.speechToText.serverModels")),
             )
-            .child(div().flex().child(track))
+            .child(row)
             .into_any_element()
     }
 
@@ -1619,45 +1644,50 @@ impl SettingsModal {
             .into_any_element()
     }
 
+    /// The switch is the Server panel's master row: everything under it
+    /// only matters while cleanup is on.
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let s = settings(cx);
-        // The breadcrumb names the page, so it opens straight on the switch.
-        let mut col = div()
+        let mut server_rows = vec![toggle_row(
+            "use-cleanup",
+            t("settings.aiModels.enableTextCleanup"),
+            Some(t("settings.aiModels.enableTextCleanupDescription")),
+            s.use_cleanup_model,
+            false,
+            |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
+            &p,
+        )];
+        if s.use_cleanup_model {
+            server_rows.extend(self.render_cleanup_server(window, cx));
+        }
+        div()
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(settings_panel(
-                vec![toggle_row(
-                    "use-cleanup",
-                    t("settings.aiModels.enableTextCleanup"),
-                    Some(t("settings.aiModels.enableTextCleanupDescription")),
-                    s.use_cleanup_model,
-                    false,
-                    |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
-                    &p,
-                )],
+            .child(settings_section(
+                t("settings.llms.server.title"),
+                Some(t("settings.llms.server.description").into()),
+                server_rows,
                 &p,
             ))
-            .when(s.use_cleanup_model, |d| {
-                d.child(self.render_cleanup_server(window, cx))
-            });
-        col = col.child(
-            div()
-                .border_t_1()
-                .border_color(p.border.opacity(0.7))
-                .pt(px(24.))
-                .child(section_header(t("settings.prompts.title"), None, &p))
-                .child(self.render_prompt_studio(window, cx)),
-        );
-        col.into_any_element()
+            .child(
+                div()
+                    .child(section_header(
+                        t("settings.prompts.title"),
+                        Some(t("settings.prompts.description").into()),
+                        &p,
+                    ))
+                    .child(self.render_prompt_studio(window, cx)),
+            )
+            .into_any_element()
     }
 
     fn render_cleanup_server(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> Vec<AnyElement> {
         let p = cx.palette();
         let s = settings(cx);
         let draft = self.cleanup_draft(cx);
@@ -1671,128 +1701,6 @@ impl SettingsModal {
         };
         let query_url = build_api_url(&query_base, "/models").unwrap_or_default();
 
-        let api_key_control = if self.api_key_editing {
-            div()
-                .relative()
-                .child(text_field(&self.api_key_input, true, window, cx))
-                .child(
-                    div()
-                        .absolute()
-                        .right(px(4.))
-                        .top(px(4.))
-                        .flex()
-                        .gap(px(2.))
-                        .child(
-                            div()
-                                .id("settings-api-key-save")
-                                .keyboard_focusable(
-                                    "settings-api-key-save",
-                                    Role::Button,
-                                    t("common.save"),
-                                    cx,
-                                )
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(RADIUS_SM))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(p.success.opacity(0.1)))
-                                .child(icon("check", 14., p.success))
-                                .on_click(cx.listener(|this, _, _, cx| this.save_api_key(cx))),
-                        )
-                        .child(
-                            div()
-                                .id("settings-api-key-cancel")
-                                .keyboard_focusable(
-                                    "settings-api-key-cancel",
-                                    Role::Button,
-                                    t("common.cancel"),
-                                    cx,
-                                )
-                                .size(px(24.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(px(RADIUS_SM))
-                                .cursor_pointer()
-                                .hover(|s| s.bg(p.hover_wash(0.06)))
-                                .child(icon("x", 14., p.subtle_foreground))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.api_key_editing = false;
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .into_any_element()
-        } else {
-            let has_key = !self.api_key.is_empty();
-            div()
-                .id("settings-api-key-display")
-                .keyboard_focusable(
-                    "settings-api-key-display",
-                    Role::Button,
-                    if has_key {
-                        t("apiKeyInput.editLabel")
-                    } else {
-                        t("apiKeyInput.addLabel")
-                    },
-                    cx,
-                )
-                .w_full()
-                .h(px(32.))
-                .flex()
-                .items_center()
-                .px(px(12.))
-                .rounded(px(RADIUS_LG))
-                .border_1()
-                .when(has_key, |d| {
-                    d.border_color(p.input_border).bg(if p.dark {
-                        p.white.opacity(0.035)
-                    } else {
-                        p.input
-                    })
-                })
-                .when(!has_key, |d| {
-                    d.border_dashed()
-                        .border_color(p.input_border)
-                        .hover(|s| s.bg(p.hover_wash(0.03)))
-                })
-                .cursor_pointer()
-                .child(if has_key {
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .font_family(FONT_MONO)
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.muted_foreground)
-                        .child(icon("key-round", 12., p.subtle_foreground))
-                        .child(mask_key(&self.api_key))
-                        .into_any_element()
-                } else {
-                    div()
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.subtle_foreground)
-                        .child(t("apiKeyInput.placeholder"))
-                        .into_any_element()
-                })
-                .child(div().flex_1())
-                .child(
-                    div()
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground)
-                        .child(if has_key {
-                            t("apiKeyInput.editButton")
-                        } else {
-                            t("apiKeyInput.addButton")
-                        }),
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.edit_api_key(window, cx)))
-                .into_any_element()
-        };
-
         let refresh_label = if self.models_loading {
             t("common.loading")
         } else if is_dirty {
@@ -1800,7 +1708,12 @@ impl SettingsModal {
         } else {
             t("common.refresh")
         };
-        let mut status: Vec<AnyElement> = Vec::new();
+        let models = if is_dirty {
+            Vec::new()
+        } else {
+            self.models.clone()
+        };
+        let model = s.cleanup_model.trim().to_string();
         let small = |text: String, color: Hsla| {
             div()
                 .text_size(px(TEXT_SMALL))
@@ -1809,169 +1722,294 @@ impl SettingsModal {
                 .child(text)
                 .into_any_element()
         };
-        // One message at a time, most actionable first.
-        if is_dirty {
-            status.push(small(
+        // One message at a time, most actionable first. The field above
+        // always shows the saved model, so a failed fetch never hides it.
+        let status = if is_dirty {
+            Some(small(
                 t("reasoning.custom.modelsReloadHint"),
                 p.muted_foreground,
-            ));
+            ))
         } else if !has_base {
-            status.push(small(
+            Some(small(
                 t("reasoning.custom.enterEndpoint"),
                 p.muted_foreground,
-            ));
+            ))
         } else if self.models_loading {
-            status.push(small(
+            Some(small(
                 t("reasoning.custom.fetchingModels"),
                 p.muted_foreground,
-            ));
+            ))
         } else if let Some(error) = &self.models_error {
-            status.push(self.render_models_error(error, &saved_base, cx));
-        } else if self.models.is_empty() {
-            status.push(small(t("reasoning.custom.noModels"), p.warning));
-        } else if s.cleanup_model.is_empty() {
-            status.push(small(t("reasoning.custom.selectModelHint"), p.warning));
-        }
-        let models = if is_dirty {
-            Vec::new()
+            Some(self.render_models_error(error, &saved_base, cx))
+        } else if models.is_empty() {
+            Some(small(t("reasoning.custom.noModels"), p.warning))
+        } else if model.is_empty() {
+            Some(small(t("reasoning.custom.selectModelHint"), p.warning))
+        } else if !models.iter().any(|m| m.value == model) {
+            Some(small(t("reasoning.custom.modelNotListed"), p.warning))
         } else {
-            self.models.clone()
+            None
         };
-        let model_list = model_card_list(&models, &s.cleanup_model, &p, cx);
 
-        settings_section(
-            t("settings.llms.server.title"),
-            Some(t("settings.llms.server.description").into()),
-            vec![
-                settings_field_tagged(
-                    t("reasoning.custom.endpointTitle"),
-                    "OpenAI · /chat/completions",
-                    Some(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(10.))
-                            .child(t("reasoning.selfHosted.endpointHelp"))
-                            .child(self.cleanup_presets(&draft, cx))
-                            .into_any_element(),
-                    ),
-                    endpoint_control(
-                        text_field(&self.cleanup_url, true, window, cx),
-                        &draft,
-                        "/chat/completions",
-                        &p,
-                    ),
-                    &p,
-                )
-                .into_any_element(),
-                settings_field(
-                    t("reasoning.custom.apiKeyOptional"),
-                    Some(t("reasoning.custom.apiKeyHelp").into_any_element()),
-                    None,
-                    api_key_control,
-                    &p,
-                )
-                .into_any_element(),
-                settings_field(
-                    t("common.model"),
-                    Some(
-                        div()
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.subtle_foreground)
-                            .child(t("reasoning.custom.queryPrefix"))
-                            .child(
-                                div()
-                                    .font_family(FONT_MONO)
-                                    .child(format!("GET {query_url}")),
-                            )
-                            .into_any_element(),
-                    ),
-                    Some(
-                        Button::new("settings-refresh-models")
-                            .label(refresh_label)
-                            .variant(ButtonVariant::Outline)
-                            .size(ButtonSize::Sm)
-                            .disabled(self.models_loading || (draft.is_empty() && !has_base))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
-                            )
-                            .into_any_element(),
-                    ),
+        vec![
+            settings_field_tagged(
+                t("settings.selfHosted.serverUrl"),
+                t("settings.llms.server.protocolTag"),
+                Some(
                     div()
                         .flex()
                         .flex_col()
-                        .gap(px(8.))
-                        .children(status)
-                        .child(model_list),
-                    &p,
-                )
-                .into_any_element(),
-                toggle_row(
-                    "disable-thinking",
-                    t("reasoning.disableThinking.label"),
-                    Some(t("reasoning.disableThinking.help")),
-                    s.cleanup_disable_thinking,
-                    false,
-                    |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
+                        .gap(px(10.))
+                        .child(t("reasoning.selfHosted.endpointHelp"))
+                        .child(self.cleanup_presets(&draft, cx))
+                        .into_any_element(),
+                ),
+                endpoint_control(
+                    text_field(&self.cleanup_url, true, window, cx),
+                    &draft,
+                    "/chat/completions",
                     &p,
                 ),
-            ],
-            &p,
-        )
+                &p,
+            )
+            .into_any_element(),
+            settings_field(
+                t("reasoning.custom.apiKeyOptional"),
+                Some(t("reasoning.custom.apiKeyHelp").into_any_element()),
+                None,
+                self.render_api_key(window, cx),
+                &p,
+            )
+            .into_any_element(),
+            settings_field(
+                t("common.model"),
+                Some(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .child(t("reasoning.custom.queryPrefix"))
+                        .child(
+                            div()
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_MONO_SMALL))
+                                .child(format!("GET {query_url}")),
+                        )
+                        .into_any_element(),
+                ),
+                Some(
+                    Button::new("settings-refresh-models")
+                        .label(refresh_label)
+                        .variant(ButtonVariant::Outline)
+                        .size(ButtonSize::Sm)
+                        .disabled(self.models_loading || (draft.is_empty() && !has_base))
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
+                        )
+                        .into_any_element(),
+                ),
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(text_field(&self.cleanup_model, true, window, cx))
+                    .children(status)
+                    .when(!models.is_empty(), |d| {
+                        d.child(model_card_list(
+                            &models,
+                            &model,
+                            cx.entity().downgrade(),
+                            &p,
+                            cx,
+                        ))
+                    }),
+                &p,
+            )
+            .into_any_element(),
+            toggle_row(
+                "disable-thinking",
+                t("reasoning.disableThinking.label"),
+                Some(t("reasoning.disableThinking.help")),
+                s.cleanup_disable_thinking,
+                false,
+                |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
+                &p,
+            ),
+        ]
     }
 
-    /// A failed model fetch: plain-language cause and next step, with the
-    /// server's own message one click away.
+    /// The API key reads as a field in both states: a masked key or a
+    /// placeholder in an input frame, with a small outline button to edit.
+    fn render_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        if self.api_key_editing {
+            return div()
+                .relative()
+                // Room for the two buttons, so a long key never runs under them.
+                .child(text_field(&self.api_key_input, true, window, cx).pr(px(60.)))
+                .child(
+                    div()
+                        .absolute()
+                        .right(px(4.))
+                        .top(px(4.))
+                        .flex()
+                        .gap(px(2.))
+                        .child(
+                            icon_action(
+                                "settings-api-key-save",
+                                t("common.save"),
+                                "check",
+                                p.success,
+                                cx,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| this.save_api_key(cx))),
+                        )
+                        .child(
+                            icon_action(
+                                "settings-api-key-cancel",
+                                t("common.cancel"),
+                                "x",
+                                p.subtle_foreground,
+                                cx,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.api_key_editing = false;
+                                cx.notify();
+                            })),
+                        ),
+                )
+                .into_any_element();
+        }
+        let has_key = !self.api_key.is_empty();
+        let hover_border = if p.dark {
+            p.white.opacity(0.18)
+        } else {
+            p.border_hover.blend(p.foreground.opacity(0.08))
+        };
+        div()
+            .id("settings-api-key-display")
+            .keyboard_focusable(
+                "settings-api-key-display",
+                Role::Button,
+                if has_key {
+                    t("apiKeyInput.editLabel")
+                } else {
+                    t("apiKeyInput.addLabel")
+                },
+                cx,
+            )
+            .group("settings-api-key")
+            .w_full()
+            .h(px(CONTROL_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pl(px(12.))
+            .pr(px(4.))
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(p.input_border)
+            .bg(if p.dark {
+                p.white.opacity(0.035)
+            } else {
+                p.input
+            })
+            .hover(move |s| s.border_color(hover_border))
+            .cursor_pointer()
+            .child(if has_key {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(icon("key-round", 12., p.subtle_foreground))
+                    .child(
+                        div()
+                            .truncate()
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_MONO_BODY))
+                            .text_color(p.muted_foreground)
+                            .child(mask_key(&self.api_key)),
+                    )
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(p.subtle_foreground)
+                    .child(t("apiKeyInput.placeholder"))
+                    .into_any_element()
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(24.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(RADIUS_MD))
+                    .border_1()
+                    .border_color(p.border)
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.muted_foreground)
+                    .group_hover("settings-api-key", |s| s.text_color(p.foreground))
+                    .child(if has_key {
+                        t("apiKeyInput.editButton")
+                    } else {
+                        t("apiKeyInput.addButton")
+                    }),
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.edit_api_key(window, cx)))
+            .into_any_element()
+    }
+
+    /// A failed model fetch: plain-language cause and next step, then Retry
+    /// and the server's own message one click away, both set under the text.
     fn render_models_error(&self, error: &str, base: &str, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let (headline, details) = friendly_server_error(error, base);
         let open = self.models_error_details;
-        let mut col = div()
+        let mut actions = div().ml(px(20.)).flex().items_center().gap(px(12.)).child(
+            text_link("settings-models-retry", Role::Button, t("common.retry"), cx)
+                .child(icon("refresh-cw", 12., p.muted_foreground))
+                .on_click(cx.listener(|this, _, window, cx| this.refresh_models(window, cx))),
+        );
+        if details.is_some() {
+            actions = actions.child(
+                text_link(
+                    "settings-models-error-details",
+                    Role::DisclosureTriangle,
+                    t("reasoning.custom.errorDetails"),
+                    cx,
+                )
+                .aria_expanded(open)
+                .child(
+                    icon("chevron-down", 12., p.muted_foreground).with_transformation(
+                        Transformation::rotate(radians(if open {
+                            0.
+                        } else {
+                            -std::f32::consts::FRAC_PI_2
+                        })),
+                    ),
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.models_error_details = !this.models_error_details;
+                    cx.notify();
+                })),
+            );
+        }
+        div()
             .flex()
             .flex_col()
             .gap(px(6.))
-            .child(error_line(headline, &p));
-        if let Some(details) = details {
-            col = col.child(
-                div()
-                    .id("settings-models-error-details")
-                    .keyboard_focusable(
-                        "settings-models-error-details",
-                        Role::DisclosureTriangle,
-                        t("reasoning.custom.errorDetails"),
-                        cx,
-                    )
-                    .aria_expanded(open)
-                    .ml(px(20.))
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .rounded(px(RADIUS_SM))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(p.muted_foreground)
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(p.foreground))
-                    .child(t("reasoning.custom.errorDetails"))
-                    .child(
-                        icon("chevron-down", 12., p.muted_foreground).with_transformation(
-                            Transformation::rotate(radians(if open {
-                                0.
-                            } else {
-                                -std::f32::consts::FRAC_PI_2
-                            })),
-                        ),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.models_error_details = !this.models_error_details;
-                        cx.notify();
-                    })),
-            );
-            if open {
-                col = col.child(
+            .child(error_line(headline, &p))
+            .child(actions)
+            .when_some(details.filter(|_| open), |d, details| {
+                d.child(
                     div()
                         .ml(px(20.))
                         .px(px(10.))
@@ -1979,14 +2017,13 @@ impl SettingsModal {
                         .rounded(px(RADIUS_MD))
                         .bg(p.hover_wash(0.04))
                         .font_family(FONT_MONO)
-                        .text_size(px(TEXT_SMALL))
+                        .text_size(px(TEXT_MONO_SMALL))
                         .line_height(px(LINE_SMALL))
                         .text_color(p.muted_foreground)
                         .child(details),
-                );
-            }
-        }
-        col.into_any_element()
+                )
+            })
+            .into_any_element()
     }
 
     fn render_prompt_studio(
@@ -2075,14 +2112,11 @@ impl SettingsModal {
                                             .text_size(px(TEXT_SMALL))
                                             .font_weight(FontWeight::MEDIUM)
                                             .text_color(p.subtle_foreground)
-                                            .child(
-                                                if is_custom {
-                                                    t("promptStudio.view.customPrompt")
-                                                } else {
-                                                    t("promptStudio.view.defaultPrompt")
-                                                }
-                                                .to_uppercase(),
-                                            ),
+                                            .child(if is_custom {
+                                                t("promptStudio.view.customPrompt")
+                                            } else {
+                                                t("promptStudio.view.defaultPrompt")
+                                            }),
                                     )
                                     .when(is_custom, |d| {
                                         d.child(
@@ -2093,9 +2127,7 @@ impl SettingsModal {
                                                 .text_size(px(TEXT_CAPTION))
                                                 .font_weight(FontWeight::MEDIUM)
                                                 .text_color(p.muted_foreground)
-                                                .child(
-                                                    t("promptStudio.view.modified").to_uppercase(),
-                                                ),
+                                                .child(t("promptStudio.view.modified")),
                                         )
                                     }),
                             )
@@ -2129,7 +2161,7 @@ impl SettingsModal {
                                 p.muted.opacity(0.3)
                             })
                             .font_family(FONT_MONO)
-                            .text_size(px(TEXT_SMALL))
+                            .text_size(px(TEXT_MONO_SMALL))
                             .line_height(px(LINE_SMALL))
                             .text_color(p.muted_foreground)
                             .child(text),
@@ -2374,7 +2406,7 @@ impl SettingsModal {
             // History comes first: audio is only kept for saved dictations.
             .child(settings_section(
                 t("settings.privacy.historyTitle"),
-                None,
+                Some(t("settings.privacy.historyDescription").into()),
                 vec![
                     toggle_row(
                         "data-retention",
@@ -2461,7 +2493,7 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.permissions.troubleshootingTitle"),
-                None,
+                Some(t("settings.permissions.troubleshootingDescription").into()),
                 vec![
                     settings_row(
                         t("settings.permissions.resetAccessibility.label"),
@@ -2768,6 +2800,89 @@ fn radio_dot(selected: bool, p: &Palette) -> Div {
         })
 }
 
+/// A 24 px icon button set inside a field, like the API key's save and cancel.
+fn icon_action(
+    id: &'static str,
+    label: String,
+    name: &'static str,
+    color: Hsla,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let wash = cx.palette().hover_wash(0.06);
+    div()
+        .id(id)
+        .keyboard_focusable(id, Role::Button, label, cx)
+        .size(px(24.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(RADIUS_SM))
+        .cursor_pointer()
+        .hover(move |s| s.bg(wash))
+        .child(icon(name, 14., color))
+}
+
+/// A quiet text action under a status line, such as Retry or Details.
+fn text_link(id: &'static str, role: Role, label: String, cx: &mut App) -> Stateful<Div> {
+    let p = cx.palette();
+    div()
+        .id(id)
+        .keyboard_focusable(id, role, label.clone(), cx)
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .rounded(px(RADIUS_SM))
+        .text_size(px(TEXT_SMALL))
+        .line_height(px(LINE_SMALL))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(p.muted_foreground)
+        .cursor_pointer()
+        .hover(move |s| s.text_color(p.foreground))
+        .child(label)
+}
+
+/// A small outline chip that fills a field with a value. Chips are
+/// shortcuts, not a selection, so none may match; the one that does carries
+/// a check. `mono` sets code-like values in the mono step.
+fn suggestion_chip(
+    id: impl Into<ElementId>,
+    text: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    matches: bool,
+    mono: bool,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let p = cx.palette();
+    let id: ElementId = id.into();
+    let (fg, hover_fg) = (p.foreground, p.foreground);
+    let hover_border = p.border_hover;
+    div()
+        .id(id.clone())
+        .keyboard_focusable(id, Role::Button, label, cx)
+        .h(px(24.))
+        .px(px(8.))
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .rounded(px(RADIUS_MD))
+        .border_1()
+        .border_color(if matches {
+            p.foreground.opacity(if p.dark { 0.35 } else { 0.3 })
+        } else {
+            p.border
+        })
+        .when(matches, |d| d.bg(p.hover_wash(0.04)))
+        .text_size(px(if mono { TEXT_MONO_SMALL } else { TEXT_SMALL }))
+        .when(mono, |d| d.font_family(FONT_MONO))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(if matches { fg } else { p.muted_foreground })
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .hover(move |s| s.border_color(hover_border).text_color(hover_fg))
+        .when(matches, |d| d.child(icon("check", 12., fg)))
+        .child(text.into())
+}
+
 /// A settings row whose whole surface flips its switch, so the hit target
 /// is the row and not only the 30×18 track.
 fn toggle_row(
@@ -2877,12 +2992,12 @@ fn info_line(label: String, value: String, p: &Palette) -> Div {
             div()
                 .text_size(px(TEXT_SMALL))
                 .text_color(p.subtle_foreground)
-                .child(label.to_uppercase()),
+                .child(label),
         )
         .child(
             div()
                 .font_family(FONT_MONO)
-                .text_size(px(TEXT_SMALL))
+                .text_size(px(TEXT_MONO_SMALL))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(p.foreground)
                 .child(value),
@@ -2904,16 +3019,15 @@ fn split_model_id(id: &str) -> (&str, &str, &str) {
     (&rest[..slash], &rest[slash..], tag)
 }
 
+/// The models the server listed, as a table whose rows fill the Model
+/// field; the row matching the field is marked.
 fn model_card_list(
     models: &[ModelOption],
     selected: &str,
+    this: WeakEntity<SettingsModal>,
     p: &Palette,
     cx: &mut App,
 ) -> AnyElement {
-    // The status line above already explains an empty list.
-    if models.is_empty() {
-        return div().into_any_element();
-    }
     let p = *p;
     let line = if p.dark {
         p.white.opacity(0.08)
@@ -2978,15 +3092,23 @@ fn model_card_list(
                     model.label.clone(),
                     cx,
                 )
-                .aria_selected(is_selected)
+                .aria_toggled(if is_selected {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
                 .py(px(9.))
                 .when(index > 0, |d| d.border_t_1().border_color(line))
                 .cursor_pointer()
                 .when(is_selected, |d| d.bg(p.hover_wash(0.06)))
                 .when(!is_selected, |d| d.hover(|s| s.bg(p.hover_wash(0.03))))
-                .on_click(move |_, _, cx| {
-                    let value = value.clone();
-                    update_settings(cx, |s| s.cleanup_model = value)
+                .on_click({
+                    let this = this.clone();
+                    move |_, window, cx| {
+                        let value = value.clone();
+                        let _ =
+                            this.update(cx, |this, cx| this.pick_cleanup_model(value, window, cx));
+                    }
                 })
                 .child(radio_dot(is_selected, &p))
                 .child(
@@ -2998,7 +3120,7 @@ fn model_card_list(
                                 .flex()
                                 .overflow_hidden()
                                 .font_family(FONT_MONO)
-                                .text_size(px(TEXT_SMALL))
+                                .text_size(px(TEXT_MONO_SMALL))
                                 .font_weight(FontWeight::MEDIUM)
                                 .when(!source.is_empty(), |d| {
                                     d.child(

@@ -3,7 +3,7 @@
     "language": {
       "sectionTitle": "语言",
       "uiLabel": "界面语言",
-      "uiDescription": "选择 Whisper 界面使用的语言",
+      "uiDescription": "转录语言在“语音转文字”中设置",
       "transcriptionLabel": "转录语言",
       "transcriptionDescription": "选择你说话的语言，以提高转录准确率",
       "chineseScriptLabel": "中文书写（听写）",
@@ -11,7 +11,8 @@
       "chineseScriptAsTranscribed": "保持转录原样",
       "chineseScriptSimplified": "简体",
       "chineseScriptTraditional": "繁体",
-      "transcriptionSectionDescription": "你说的语言，以及中文的书写方式"
+      "transcriptionSectionDescription": "你说的语言，以及中文的书写方式",
+      "uiSectionDescription": "Whisper 自身界面使用的语言"
     },
     "groups": {
       "app": "应用",
@@ -42,7 +43,8 @@
     "dictionary": {
       "autoLearnTitle": "从纠正中自动学习",
       "autoLearnDescription": "当你在目标应用中纠正转录时，Whisper 会记住这个词以及它被误听成了什么，并自动修正重复出现的错误。",
-      "title": "词典"
+      "title": "词典",
+      "description": "词典如何随听写不断完善"
     },
     "general": {
       "appearance": {
@@ -62,7 +64,8 @@
         "startPositionDescription": "录音胶囊在屏幕上的显示位置",
         "bottomRight": "右下角",
         "center": "底部居中",
-        "bottomLeft": "左下角"
+        "bottomLeft": "左下角",
+        "description": "听写进行时显示的浮动胶囊"
       },
       "hotkey": {
         "activationMode": "激活模式",
@@ -86,14 +89,16 @@
         "dictationSoundsDescription": "在录音开始和停止时播放提示音",
         "pauseMedia": "暂停媒体",
         "pauseMediaDescription": "开始听写时自动暂停音乐",
-        "title": "声音与媒体"
+        "title": "声音与媒体",
+        "description": "听写时如何处理声音"
       },
       "clipboard": {
         "title": "剪贴板",
         "autoPaste": "自动粘贴",
         "autoPasteDescription": "听写结束后自动将转录文本粘贴到当前活动的应用中",
         "keepInClipboard": "将转录内容保留在剪贴板",
-        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴"
+        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴",
+        "description": "转录完成后文本的去向"
       },
       "startup": {
         "launchAtLogin": "登录时启动",
@@ -130,7 +135,8 @@
       "grantAccess": "授予访问权限",
       "granted": "已授权",
       "title": "权限",
-      "troubleshootingTitle": "问题排查"
+      "troubleshootingTitle": "问题排查",
+      "troubleshootingDescription": "权限问题的修复方法"
     },
     "privacy": {
       "dataRetention": "保存历史记录",
@@ -153,10 +159,12 @@
       "clearAudioDescription": "将永久删除 {{count}} 个录音（{{size}}）。转录内容仍会保留在历史记录中。",
       "clearAudioConfirm": "删除音频",
       "audioCleared": "已删除 {{count}} 个音频文件（{{size}}）",
-      "needsHistory": "开启“保存历史记录”后可用"
+      "needsHistory": "开启“保存历史记录”后可用",
+      "historyDescription": "Whisper 保留哪些转录，以及保留多久"
     },
     "prompts": {
-      "title": "提示词工作室"
+      "title": "提示词工作室",
+      "description": "整理模型遵循的指令"
     },
     "speechToText": {
       "sharedDescription": "用于转录听写和上传文件的 OpenAI 兼容服务",
@@ -170,12 +178,15 @@
       "testConnection": "测试连接",
       "serverTitle": "服务器",
       "modelHelp": "服务器使用的模型名称。点“测试连接”可列出它提供的模型。",
-      "serverModels": "此服务器上的模型"
+      "serverModels": "此服务器上的模型",
+      "protocolTag": "OpenAI 兼容 · 无鉴权"
     },
     "llms": {
       "server": {
         "title": "服务器",
-        "description": "用于整理听写文本的 OpenAI 兼容服务"
+        "description": "用于整理听写文本的 OpenAI 兼容服务",
+        "fillIn": "填入 {{server}} 的默认地址",
+        "protocolTag": "OpenAI 兼容 · 可选密钥"
       }
     },
     "transcription": {
@@ -196,7 +207,7 @@
     "serverErrors": {
       "unreachable": "无法连接 {{host}}。请确认服务正在运行，然后重试。",
       "timedOut": "{{host}} 没有及时响应。请检查地址后重试。",
-      "status": "服务器返回错误 {{status}}。请检查端点 URL。"
+      "status": "服务器返回错误 {{status}}。请检查服务器 URL，然后重试。"
     }
   },
   "tray": {
@@ -293,20 +304,20 @@
       "endpointWithProtocol": "请输入包含协议的完整 URL（例如 https://server/v1）。",
       "httpsRequired": "需要 HTTPS（仅本地网络允许 HTTP）。",
       "endpointUnauthorized": "端点拒绝了请求（401/403）。请添加 API Key 或调整服务器认证设置。",
-      "endpointTitle": "端点 URL",
       "apiKeyOptional": "API 密钥",
       "apiKeyHelp": "可选，将作为 Bearer token 发送给文本整理服务器。",
       "applyAndRefresh": "应用并刷新",
       "queryPrefix": "模型列表来自",
       "modelsReloadHint": "离开 URL 输入框或点击“应用并刷新”后，模型列表会重新加载。",
-      "enterEndpoint": "请在上方输入端点 URL 以加载模型。",
+      "enterEndpoint": "请在上方输入服务器 URL 以加载模型。",
       "fetchingModels": "正在加载模型…",
-      "noModels": "未返回任何模型，请检查端点 URL。",
+      "noModels": "服务器没有列出任何模型。请在上方输入模型名称。",
       "unableToLoadModels": "无法从端点加载模型。",
-      "selectModelHint": "请从下方列表中选择一个模型。",
+      "selectModelHint": "输入模型名称，或从下方选择一个。",
       "columnTag": "标签",
       "columnOwner": "所有者",
-      "errorDetails": "详细信息"
+      "errorDetails": "详细信息",
+      "modelNotListed": "服务器没有列出此模型。请检查名称，或从下方选择一个。"
     },
     "disableThinking": {
       "label": "跳过模型推理",

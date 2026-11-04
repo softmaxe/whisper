@@ -3,7 +3,7 @@
     "language": {
       "sectionTitle": "Language",
       "uiLabel": "Interface language",
-      "uiDescription": "Choose the language used throughout Whisper’s interface",
+      "uiDescription": "Transcription language is set in Speech to text",
       "transcriptionLabel": "Transcription language",
       "transcriptionDescription": "Choose the language you speak for more accurate transcription",
       "chineseScriptLabel": "Chinese script (dictation)",
@@ -11,7 +11,8 @@
       "chineseScriptAsTranscribed": "Keep as transcribed",
       "chineseScriptSimplified": "Simplified (简体)",
       "chineseScriptTraditional": "Traditional (繁體)",
-      "transcriptionSectionDescription": "The language you speak, and how Chinese is written"
+      "transcriptionSectionDescription": "The language you speak, and how Chinese is written",
+      "uiSectionDescription": "The language of Whisper’s own interface"
     },
     "groups": {
       "app": "App",
@@ -42,7 +43,8 @@
     "dictionary": {
       "autoLearnTitle": "Auto-learn from corrections",
       "autoLearnDescription": "When you correct a transcription in the target app, Whisper remembers the word and how it was misheard, and fixes repeated mistakes for you.",
-      "title": "Dictionary"
+      "title": "Dictionary",
+      "description": "How the dictionary grows as you dictate"
     },
     "general": {
       "appearance": {
@@ -62,7 +64,8 @@
         "bottomRight": "Bottom right",
         "center": "Bottom center",
         "bottomLeft": "Bottom left",
-        "title": "Recording pill"
+        "title": "Recording pill",
+        "description": "The floating pill that shows dictation in progress"
       },
       "hotkey": {
         "activationMode": "Activation mode",
@@ -86,14 +89,16 @@
         "dictationSoundsDescription": "Play a tone when recording starts and stops",
         "pauseMedia": "Pause media",
         "pauseMediaDescription": "Automatically pause music when dictation starts",
-        "title": "Sound & media"
+        "title": "Sound & media",
+        "description": "What happens to sound while you dictate"
       },
       "clipboard": {
         "title": "Clipboard",
         "autoPaste": "Automatic pasting",
         "autoPasteDescription": "Automatically paste transcribed text into the active app when dictation finishes",
         "keepInClipboard": "Keep transcription in clipboard",
-        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed"
+        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed",
+        "description": "Where finished transcripts go"
       },
       "startup": {
         "launchAtLogin": "Launch at login",
@@ -130,7 +135,8 @@
       "grantAccess": "Grant Access",
       "granted": "Granted",
       "title": "Permissions",
-      "troubleshootingTitle": "Troubleshooting"
+      "troubleshootingTitle": "Troubleshooting",
+      "troubleshootingDescription": "Fixes for permission problems"
     },
     "privacy": {
       "audioRetention": "Audio recordings",
@@ -156,10 +162,12 @@
       "audioCleared_other": "Deleted {{count}} audio files ({{size}})",
       "audioStorageFiles_one": "{{count}} file, {{size}}",
       "audioStorageFiles_other": "{{count}} files, {{size}}",
-      "needsHistory": "Turn on Save history to use this"
+      "needsHistory": "Turn on Save history to use this",
+      "historyDescription": "Which transcripts Whisper keeps, and for how long"
     },
     "prompts": {
-      "title": "Prompt Studio"
+      "title": "Prompt Studio",
+      "description": "The instructions the cleanup model follows"
     },
     "speechToText": {
       "sharedDescription": "OpenAI-compatible server that transcribes dictation and uploaded files",
@@ -173,12 +181,15 @@
       "testConnection": "Test Connection",
       "serverTitle": "Server",
       "modelHelp": "The model name your server expects. Test Connection lists the ones it offers.",
-      "serverModels": "Models on this server"
+      "serverModels": "Models on this server",
+      "protocolTag": "OpenAI-compatible · no auth"
     },
     "llms": {
       "server": {
         "title": "Server",
-        "description": "OpenAI-compatible server that cleans up dictated text"
+        "description": "OpenAI-compatible server that cleans up dictated text",
+        "fillIn": "Fill in {{server}}’s default address",
+        "protocolTag": "OpenAI-compatible · optional key"
       }
     },
     "transcription": {
@@ -199,7 +210,7 @@
     "serverErrors": {
       "unreachable": "Couldn’t reach {{host}}. Check that the server is running, then try again.",
       "timedOut": "{{host}} didn’t respond in time. Check the address, then try again.",
-      "status": "The server returned error {{status}}. Check the endpoint URL."
+      "status": "The server returned error {{status}}. Check the server URL, then try again."
     }
   },
   "tray": {
@@ -296,20 +307,20 @@
       "endpointWithProtocol": "Enter a full base URL including protocol (for example, https://server/v1).",
       "httpsRequired": "HTTPS required (HTTP allowed for local network only).",
       "endpointUnauthorized": "Endpoint rejected the request (401/403). Add an API key or adjust server auth settings.",
-      "endpointTitle": "Endpoint URL",
       "apiKeyOptional": "API key",
       "apiKeyHelp": "Optional. Sent as a Bearer token to your text cleanup server.",
       "applyAndRefresh": "Apply & Refresh",
       "queryPrefix": "Lists models from",
       "modelsReloadHint": "Models reload when you leave the URL field or click Apply & Refresh.",
-      "enterEndpoint": "Enter an endpoint URL above to load models.",
+      "enterEndpoint": "Enter a server URL above to load its models.",
       "fetchingModels": "Loading models…",
-      "noModels": "No models returned. Check your endpoint URL.",
+      "noModels": "The server listed no models. Type the model name above.",
       "unableToLoadModels": "Unable to load models from endpoint.",
-      "selectModelHint": "Choose a model from the list below.",
+      "selectModelHint": "Type a model name, or pick one below.",
       "columnTag": "Tag",
       "columnOwner": "Owner",
-      "errorDetails": "Details"
+      "errorDetails": "Details",
+      "modelNotListed": "The server doesn’t list this model. Check the name, or pick one below."
     },
     "disableThinking": {
       "label": "Skip model reasoning",
