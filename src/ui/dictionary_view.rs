@@ -17,9 +17,8 @@ use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon, kbd,
-    keyed_focus_handle, page_container, segment, segmented_track, surface_card,
+    keyed_focus_handle, page_container, segment, segmented_track, surface_card, text_tooltip,
 };
-use super::insights_view::TextTooltip;
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
@@ -1202,7 +1201,7 @@ impl DictionaryView {
             .rounded(px(RADIUS_MD))
             .cursor_pointer()
             .hover(move |s| s.bg(wash))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(label.clone().into())).into())
+            .tooltip(text_tooltip(label.clone()))
             .child(
                 icon(name, 14., p.muted_foreground).group_hover(group, move |s| s.text_color(fg)),
             )
@@ -1721,7 +1720,7 @@ impl DictionaryView {
             .text_color(p.muted_foreground)
             .cursor_pointer()
             .hover(|s| s.text_color(p.foreground))
-            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+            .tooltip(text_tooltip(tip.clone()))
             .child(misheard.clone())
             // The × stays visible so the chip reads as removable before it is hovered.
             .child(
@@ -1908,9 +1907,7 @@ impl DictionaryView {
                 p.muted_foreground
             })
             .child(last_used_label(&used))
-            .when_some(tooltip, |d, tip| {
-                d.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
-            });
+            .when_some(tooltip, |d, tip| d.tooltip(text_tooltip(tip.clone())));
 
         let row_handle = handle.clone();
         let row_key = key.clone();
