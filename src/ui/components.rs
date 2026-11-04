@@ -9,8 +9,8 @@ use gpui_kit::*;
 use super::theme::{
     CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE,
     NAV_ROW_HEIGHT, PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG,
-    RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css,
-    ease_out, spring,
+    RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_MONO_CAPTION, TEXT_SMALL, TEXT_TITLE,
+    ease_css, ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -860,7 +860,7 @@ pub fn settings_field_tagged(
                 .border_color(if p.dark { p.border_hover } else { p.border })
                 .bg(if p.dark { p.surface_3 } else { p.muted })
                 .font_family(FONT_MONO)
-                .text_size(px(TEXT_CAPTION))
+                .text_size(px(TEXT_MONO_CAPTION))
                 .line_height(px(LINE_SMALL))
                 .text_color(p.muted_foreground)
                 .child(tag.into()),

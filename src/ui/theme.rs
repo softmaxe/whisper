@@ -258,6 +258,7 @@ pub const TEXT_FIGURE: f32 = 34.;
 /// JetBrains Mono reads larger and heavier than SF at the same size, so
 /// code-like values set beside SF text drop a step: `MONO_SMALL` next to
 /// `SMALL` text, `MONO_BODY` in inputs and beside `BODY` text.
+pub const TEXT_MONO_CAPTION: f32 = 10.5;
 pub const TEXT_MONO_SMALL: f32 = 11.5;
 pub const TEXT_MONO_BODY: f32 = 13.;
 
