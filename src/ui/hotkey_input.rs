@@ -188,12 +188,10 @@ impl HotkeyListInput {
             Err(message) => {
                 self.items = previous;
                 show_toast(
-                    Toast::new(t_with(
-                        "hotkey.errors.registrationFailed",
-                        &[("hotkey", &format_hotkey_list_label(&list))],
-                    ))
-                    .description(message)
-                    .variant(ToastVariant::Destructive),
+                    // The message already names the hotkey and the next step.
+                    Toast::new(t("hotkeyInput.saveFailed"))
+                        .description(message)
+                        .variant(ToastVariant::Destructive),
                     cx,
                 );
             }
@@ -449,7 +447,7 @@ impl HotkeyListInput {
                     .items_center()
                     .gap(px(8.))
                     .child(recording_dot(&p, cx))
-                    .child(label_text(t("hotkeyInput.recording"), p.foreground)),
+                    .child(label_text(t("hotkeyInput.listening"), p.foreground)),
             )
             .child(
                 div()
@@ -539,7 +537,7 @@ fn recording_dot(p: &Palette, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// "Click to Change", drawn as a quiet button that takes an outline while
+/// "Click to change", drawn as a quiet button that takes an outline while
 /// the pointer is over its row, so the whole row reads as clickable.
 fn change_affordance(group: SharedString, p: &Palette) -> AnyElement {
     let (border, wash, fg) = (p.border, p.hover_wash(0.04), p.foreground);
@@ -557,7 +555,7 @@ fn change_affordance(group: SharedString, p: &Palette) -> AnyElement {
         .group_hover(group, move |s| {
             s.border_color(border).bg(wash).text_color(fg)
         })
-        .child(t("hotkeyInput.clickToChangeLower"))
+        .child(t("hotkeyInput.clickToChange"))
         .into_any_element()
 }
 

@@ -228,22 +228,22 @@
   },
   "hotkey": {
     "errors": {
-      "fnCombinationUnsupported": "The Globe/Fn key can only be used by itself.",
-      "alreadyRegistered": "\"{{hotkey}}\" is already registered by another application.",
-      "holdNeedsReleaseKey": "Hold-to-talk needs a key macOS can see you release: Globe, a right-side key like Right Option, or a shortcut with a modifier. Tap works with any key.",
-      "registrationFailed": "Could not register \"{{hotkey}}\". It may be in use by another application.",
-      "trySuggestions": "Try: {{suggestions}}",
-      "slotConflict": "This hotkey is already used for {{slot}}."
+      "fnCombinationUnsupported": "Globe/Fn works only on its own. Press it alone, or pick a shortcut without it.",
+      "alreadyRegistered": "Another app already uses “{{hotkey}}”. Pick a different shortcut, or turn it off in that app.",
+      "holdNeedsReleaseKey": "Hold needs a key macOS can see you release: Globe, a right-side key like Right ⌥, or a shortcut with a modifier. Pick one of those, or change the activation mode.",
+      "registrationFailed": "Couldn’t register “{{hotkey}}”. Another app may be using it, so try a different shortcut.",
+      "trySuggestions": "Try {{suggestions}}.",
+      "slotConflict": "“{{hotkey}}” is already used for {{slot}}. Pick a different shortcut."
     },
     "validation": {
-      "mouseButtonCombination": "Mouse button hotkeys cannot be combined with other keys.",
-      "tooManyKeys": "Shortcuts are limited to three keys.",
-      "leftRightMix": "Do not mix left and right versions of the same modifier in one shortcut.",
-      "noModifierOrSpecial": "Shortcuts must include a modifier or a non-alphanumeric key (like arrows, space, or function keys).",
-      "modifierOnlyUnsupported": "Two-modifier shortcuts are not supported on macOS. Use a right-side modifier on its own (e.g. RightOption), or add a regular key.",
-      "leftModifierOnly": "Single modifier hotkeys must use the right-side key (e.g., RightOption). Or add a regular key (e.g., Control+Space).",
-      "reserved": "That shortcut is reserved by your system.",
-      "reservedNamed": "{{label}} is reserved by the system"
+      "mouseButtonCombination": "Mouse buttons can’t be combined with other keys. Use the button on its own.",
+      "tooManyKeys": "A shortcut can have up to three keys. Drop one and try again.",
+      "leftRightMix": "A shortcut can’t mix the left and right versions of one modifier. Use one side.",
+      "noModifierOrSpecial": "A shortcut needs a modifier like ⌘ or ⌃, or a special key such as an arrow, Space or a function key.",
+      "modifierOnlyUnsupported": "macOS doesn’t support shortcuts made of two modifiers alone. Use one right-side modifier like Right ⌥, or add a regular key.",
+      "leftModifierOnly": "A modifier on its own must be the right-side key, like Right ⌥. Or add a regular key, as in ⌃Space.",
+      "reserved": "macOS reserves that shortcut. Pick a different one.",
+      "reservedNamed": "macOS reserves {{label}}. Pick a different shortcut."
     }
   },
   "common": {
@@ -372,12 +372,10 @@
     }
   },
   "hotkeyInput": {
-    "clickToChangeLower": "Click to Change",
     "clickToSet": "Click to set hotkey",
     "fnCaptureHint": "Press a key to combine, or release for Globe",
     "hotkeyLabel": "Hotkey",
     "keyHint": "+ key",
-    "recording": "Recording",
     "tryShortcut": "Try ⌘⇧K",
     "addAnother": "Add Another Hotkey",
     "duplicate": "Already added",
@@ -386,7 +384,10 @@
     "escToCancel": "Press Esc to cancel",
     "remove": "Remove hotkey",
     "sideLeft": "Left",
-    "sideRight": "Right"
+    "sideRight": "Right",
+    "clickToChange": "Click to change",
+    "listening": "Press keys…",
+    "saveFailed": "Couldn’t change the hotkey"
   },
   "languageSelector": {
     "noLanguagesFound": "No languages found",

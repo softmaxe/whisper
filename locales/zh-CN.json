@@ -225,22 +225,22 @@
   },
   "hotkey": {
     "errors": {
-      "fnCombinationUnsupported": "Globe/Fn 键只能单独使用。",
-      "alreadyRegistered": "\"{{hotkey}}\" 已被其他应用注册。",
-      "holdNeedsReleaseKey": "按住说话需要 macOS 能检测到松开的按键：Globe、右侧 Option 之类的右侧按键，或带修饰键的快捷键。点按可用于任何按键。",
-      "registrationFailed": "无法注册 \"{{hotkey}}\"，该快捷键可能已被其他应用占用。",
-      "trySuggestions": "建议尝试：{{suggestions}}",
-      "slotConflict": "此快捷键已用于{{slot}}。"
+      "fnCombinationUnsupported": "Globe/Fn 只能单独使用。请单独按它，或换一个不含它的快捷键。",
+      "alreadyRegistered": "“{{hotkey}}”已被其他应用占用。请换一个快捷键，或在那个应用中关闭它。",
+      "holdNeedsReleaseKey": "按住模式需要 macOS 能检测到松开的按键：Globe、右 ⌥ 之类的右侧按键，或带修饰键的快捷键。请改用这类按键，或更换激活模式。",
+      "registrationFailed": "无法注册“{{hotkey}}”。它可能已被其他应用占用，请换一个快捷键。",
+      "trySuggestions": "可以试试 {{suggestions}}。",
+      "slotConflict": "“{{hotkey}}”已用于{{slot}}。请换一个快捷键。"
     },
     "validation": {
-      "mouseButtonCombination": "鼠标按键快捷键不能与其他按键组合。",
-      "tooManyKeys": "快捷键最多只能包含三个按键。",
-      "leftRightMix": "同一个快捷键中不要混用同一修饰键的左右两侧版本。",
-      "noModifierOrSpecial": "快捷键必须包含修饰键或非字母数字键（如方向键、空格键或功能键）。",
-      "modifierOnlyUnsupported": "macOS 不支持由两个修饰键组成的快捷键。请单独使用右侧修饰键（例如 RightOption），或再加一个普通按键。",
-      "leftModifierOnly": "单个修饰键作为快捷键时必须使用右侧按键（例如 RightOption），或再加一个普通按键（例如 Control+Space）。",
-      "reserved": "该快捷键已被系统保留。",
-      "reservedNamed": "{{label}} 已被系统保留"
+      "mouseButtonCombination": "鼠标按键不能与其他按键组合。请单独使用该按键。",
+      "tooManyKeys": "快捷键最多包含三个按键。请去掉一个后重试。",
+      "leftRightMix": "快捷键不能同时使用同一修饰键的左右两侧。请只用一侧。",
+      "noModifierOrSpecial": "快捷键需要包含 ⌘、⌃ 等修饰键，或方向键、空格、功能键等特殊按键。",
+      "modifierOnlyUnsupported": "macOS 不支持仅由两个修饰键组成的快捷键。请单独使用一个右侧修饰键（如右 ⌥），或再加一个普通按键。",
+      "leftModifierOnly": "单个修饰键必须是右侧按键，如右 ⌥。也可以再加一个普通按键，如 ⌃空格。",
+      "reserved": "该快捷键已被 macOS 保留。请换一个。",
+      "reservedNamed": "{{label}} 已被 macOS 保留。请换一个快捷键。"
     }
   },
   "common": {
@@ -369,12 +369,10 @@
     }
   },
   "hotkeyInput": {
-    "clickToChangeLower": "点击更改",
     "clickToSet": "点击设置快捷键",
     "fnCaptureHint": "按下一个键进行组合，或松开以使用 Globe",
     "hotkeyLabel": "快捷键",
     "keyHint": "+ 按键",
-    "recording": "录制中",
     "tryShortcut": "试试 ⌘⇧K",
     "addAnother": "添加快捷键",
     "duplicate": "已添加",
@@ -383,7 +381,10 @@
     "escToCancel": "按 Esc 取消",
     "remove": "移除快捷键",
     "sideLeft": "左",
-    "sideRight": "右"
+    "sideRight": "右",
+    "clickToChange": "点击更改",
+    "listening": "请按下按键…",
+    "saveFailed": "无法更改快捷键"
   },
   "languageSelector": {
     "noLanguagesFound": "未找到匹配的语言",
