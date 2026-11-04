@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Datelike, Local, NaiveDate, Utc, Weekday};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -17,9 +17,10 @@ use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon, kbd,
-    keyed_focus_handle, page_container, segment, segmented_track, surface_card, text_tooltip,
+    keyed_focus_handle, page_container, surface_card, text_tooltip,
 };
-use super::control_panel::SIDEBAR_WIDTH;
+use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
+use super::format::day_label;
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
@@ -98,20 +99,21 @@ const COL_LAST_USED: f32 = 112.;
 const USE_TRACK: f32 = 64.;
 /// A word used even once shows a sliver, so it never reads as unused.
 const USE_BAR_MIN: f32 = 3.;
-/// Within this many days a weekday names the day; past it, a date does.
-/// Neither is a bare number, so Last used never reads like the Uses count.
-const WEEKDAY_DAYS: i64 = 6;
 /// Table rows bleed their hover fill this far past the page edge and pad it
 /// back, so cell text starts on the page edge, under the tabs, as on History.
 const ROW_BLEED: f32 = 12.;
 /// Snippet table trigger column width, in px.
 const COL_TRIGGER: f32 = 200.;
-/// Height of the header controls: tabs, search, buttons.
+/// Height of the header controls: search, buttons.
 const HEADER_CONTROL: f32 = 28.;
-/// Content widths, in px, below which the header's controls no longer fit
-/// on one row (with and without the source filter) and wrap to two.
+/// Height of the Words / Snippets tab bar; its underline sits on the bottom edge.
+const TAB_BAR: f32 = 40.;
+/// Side padding of a tab and of a filter chip. Each row is pulled out by the
+/// same amount, so the first label starts on the page edge, over the table.
+const TAB_PAD: f32 = 8.;
+/// Content width, in px, below which the search no longer fits in the tab
+/// bar and drops to the row under it.
 const HEADER_ONE_ROW: f32 = 440.;
-const HEADER_ONE_ROW_FILTERED: f32 = 640.;
 /// Below this content width the table drops Last used, so the word column
 /// keeps room for its chips and row actions.
 const TABLE_FULL: f32 = 600.;
@@ -140,77 +142,14 @@ fn default_descending(key: SortKey) -> bool {
     key != SortKey::Word
 }
 
-/// When a word was last used, to the day: the table only needs to tell
-/// words in daily use from ones that went quiet. Today and Yesterday, a
-/// weekday within the past week, and a short date after that, as Finder does.
-#[derive(Debug, PartialEq, Eq)]
-enum LastUsed {
-    Never,
-    Today,
-    Yesterday,
-    Weekday(Weekday),
-    Date { day: NaiveDate, this_year: bool },
-}
-
-fn last_used(use_count: i64, at: Option<DateTime<Utc>>, now: DateTime<Local>) -> LastUsed {
+/// The local day a word was last spoken, if ever. The table only needs to
+/// tell words in daily use from ones that went quiet, so it shows the day
+/// (labelled by `day_label`, as every view does) and keeps the time for the
+/// tooltip.
+fn last_used_day(use_count: i64, at: Option<DateTime<Utc>>) -> Option<NaiveDate> {
     // A word added but never spoken may still carry a timestamp; it was not used.
-    let Some(at) = at.filter(|_| use_count > 0) else {
-        return LastUsed::Never;
-    };
-    let day = at.with_timezone(&Local).date_naive();
-    match (now.date_naive() - day).num_days() {
-        ..=0 => LastUsed::Today,
-        1 => LastUsed::Yesterday,
-        2..=WEEKDAY_DAYS => LastUsed::Weekday(day.weekday()),
-        _ => LastUsed::Date {
-            day,
-            this_year: day.year() == now.year(),
-        },
-    }
-}
-
-fn last_used_label(value: &LastUsed) -> String {
-    let zh = i18n::language() == Language::ZhCn;
-    match value {
-        LastUsed::Never => "—".to_string(),
-        LastUsed::Today => t("dictionary.lastUsed.today"),
-        LastUsed::Yesterday => t("dictionary.lastUsed.yesterday"),
-        LastUsed::Weekday(day) => {
-            let index = day.num_days_from_monday() as usize;
-            if zh {
-                [
-                    "星期一",
-                    "星期二",
-                    "星期三",
-                    "星期四",
-                    "星期五",
-                    "星期六",
-                    "星期日",
-                ][index]
-                    .to_string()
-            } else {
-                [
-                    "Monday",
-                    "Tuesday",
-                    "Wednesday",
-                    "Thursday",
-                    "Friday",
-                    "Saturday",
-                    "Sunday",
-                ][index]
-                    .to_string()
-            }
-        }
-        LastUsed::Date { day, this_year } => {
-            let format = match (zh, this_year) {
-                (true, true) => "%-m月%-d日",
-                (true, false) => "%Y年%-m月%-d日",
-                (false, true) => "%b %-d",
-                (false, false) => "%b %-d, %Y",
-            };
-            day.format(format).to_string()
-        }
-    }
+    at.filter(|_| use_count > 0)
+        .map(|at| at.with_timezone(&Local).date_naive())
 }
 
 /// The exact time, for the Last used tooltip.
@@ -251,6 +190,32 @@ fn one_line(text: &str) -> String {
         .join(" ↵ ")
 }
 
+/// A tab label whose width does not change with its weight: a hidden
+/// semibold copy holds the width, so switching tabs never nudges its
+/// neighbours.
+fn steady_label(label: String, active: bool) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .font_weight(if active {
+                    FontWeight::SEMIBOLD
+                } else {
+                    FontWeight::NORMAL
+                })
+                .child(label.clone()),
+        )
+        .child(
+            div()
+                .h_0()
+                .overflow_hidden()
+                .text_color(transparent_black())
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(label),
+        )
+}
+
 fn word_key(word: &str) -> ElementId {
     SharedString::from(format!("dict-word:{word}")).into()
 }
@@ -275,6 +240,7 @@ enum MenuAction {
     Import,
     Export,
     Clear,
+    OpenSettings,
     EditWord(String),
     RemoveWord(String),
     EditSnippet(Snippet),
@@ -686,6 +652,13 @@ impl DictionaryView {
         let entries = vec![
             MenuEntry::new(t("dictionary.importList"), "upload", MenuAction::Import),
             MenuEntry::new(t("dictionary.exportList"), "save", MenuAction::Export),
+            // Auto-learn, which fills the Learned filter, lives in Settings ›
+            // General; this is the way there from the page it affects.
+            MenuEntry::new(
+                t("dictionary.openSettings"),
+                "settings",
+                MenuAction::OpenSettings,
+            ),
             MenuEntry::new(t("dictionary.clearDictionary"), "trash2", MenuAction::Clear)
                 .destructive(),
         ];
@@ -728,6 +701,7 @@ impl DictionaryView {
                 Self::export(cx);
             }
             MenuAction::Clear => self.confirm_clear(cx),
+            MenuAction::OpenSettings => window.dispatch_action(Box::new(OpenSettings), cx),
             MenuAction::EditWord(word) => self.start_edit(word, window, cx),
             MenuAction::RemoveWord(word) => self.remove_word(&word, window, cx),
             MenuAction::EditSnippet(snippet) => Self::edit_snippet(snippet, window, cx),
@@ -1069,17 +1043,17 @@ impl DictionaryView {
                     )
                 })
         });
-        let filter = (self.tab == Tab::Words)
-            .then(|| self.source_counts(cx))
-            .filter(|&(_, learned)| learned > 0)
-            .map(|(total, learned)| self.filter_tabs(total, learned, cx));
-        let fits_one_row = if filter.is_some() {
-            HEADER_ONE_ROW_FILTERED
-        } else {
-            HEADER_ONE_ROW
-        };
-        let compact = self.content_width(window) < fits_one_row;
+        // Only auto-learn makes words of two sources, so until it adds one
+        // the filter has nothing to tell apart. Snippets have no source.
+        let filter =
+            (self.tab == Tab::Words && self.learned_count(cx) > 0).then(|| self.render_filter(cx));
+        let compact = self.content_width(window) < HEADER_ONE_ROW;
         let search = has_rows.then(|| self.render_search(compact, window, cx));
+        let (bar_search, row_search) = if compact {
+            (None, search)
+        } else {
+            (search, None)
+        };
         let actions = div()
             .flex_none()
             .flex()
@@ -1087,58 +1061,52 @@ impl DictionaryView {
             .gap(px(8.))
             .child(add)
             .children(overflow);
-        let header = if compact {
-            // Too narrow for one row: the filter and search drop to a second
-            // row and the search takes its full width.
-            let second = (search.is_some() || filter.is_some()).then(|| {
+        // The view switch owns the page: an underlined tab bar that also holds
+        // the page's actions. The source filter only narrows the Words view,
+        // so it sits under the bar, smaller and without a track.
+        let bar = div()
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .h(px(TAB_BAR))
+            .child(
                 div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(1.))
+                    .bg(p.border),
+            )
+            .child(self.render_tabs(&p, cx))
+            .child(
+                // The search field gives up width first as the window narrows.
+                div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .items_center()
-                    .gap(px(12.))
-                    .children(filter)
-                    .children(search)
-            });
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(12.))
-                        .child(self.render_tabs(&p, cx))
-                        .child(actions),
-                )
-                .children(second)
-        } else {
+                    .justify_end()
+                    .gap(px(8.))
+                    .children(bar_search)
+                    .child(actions),
+            );
+        let below = (filter.is_some() || row_search.is_some()).then(|| {
             div()
                 .flex()
                 .items_center()
+                .justify_between()
                 .gap(px(12.))
-                .child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(self.render_tabs(&p, cx))
-                        .children(filter),
-                )
-                .child(
-                    // The search field gives up width first as the window narrows.
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap(px(8.))
-                        .children(search)
-                        .child(actions),
-                )
-        };
+                .children(filter)
+                .children(row_search)
+        });
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(bar)
+            .children(below);
         let this = cx.entity().downgrade();
         header.relative().child(
             canvas(
@@ -1167,24 +1135,58 @@ impl DictionaryView {
         })
     }
 
+    /// Words / Snippets: the page-level view switch, in body text with a
+    /// semibold active label and an underline on the bar's bottom edge.
     fn render_tabs(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
-        let mut track = segmented_track(p)
+        let mut row = div()
             .flex_none()
-            .items_center()
-            .h(px(HEADER_CONTROL))
-            .gap(px(2.));
+            .flex()
+            .h_full()
+            .gap(px(8.))
+            .ml(px(-TAB_PAD));
         for (tab, id, key) in [
             (Tab::Words, "dict-tab-words", "dictionary.tabWords"),
             (Tab::Snippets, "dict-tab-snippets", "dictionary.tabSnippets"),
         ] {
-            track = track.child(
-                segment(id, t(key), self.tab == tab, cx)
+            let active = self.tab == tab;
+            let label = t(key);
+            let hover_fg = p.foreground;
+            row = row.child(
+                div()
+                    .id(id)
+                    .keyboard_focusable(id, Role::Tab, label.clone(), cx)
+                    .aria_selected(active)
+                    .relative()
                     .h_full()
-                    .child(t(key))
+                    .flex()
+                    .items_center()
+                    .px(px(TAB_PAD))
+                    .rounded(px(RADIUS_MD))
+                    .text_size(px(TEXT_BODY))
+                    .cursor_pointer()
+                    .text_color(if active {
+                        p.foreground
+                    } else {
+                        p.muted_foreground
+                    })
+                    .when(!active, |d| d.hover(move |s| s.text_color(hover_fg)))
+                    .child(steady_label(label, active))
+                    .when(active, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .bottom_0()
+                                .left(px(TAB_PAD))
+                                .right(px(TAB_PAD))
+                                .h(px(2.))
+                                .rounded(px(1.))
+                                .bg(p.foreground),
+                        )
+                    })
                     .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx))),
             );
         }
-        track
+        row
     }
 
     /// The header search field: Escape clears it, ↓ moves into the list.
@@ -1462,6 +1464,7 @@ impl DictionaryView {
         div()
             .id(key.clone())
             .keyboard_focusable(key.clone(), Role::ListItem, label, cx)
+            .aria_description(t("dictionary.rowKeysHint"))
             .relative()
             .flex()
             .items_center()
@@ -1821,65 +1824,79 @@ impl DictionaryView {
             .into_any_element()
     }
 
-    /// Word counts by source, leaving out a word waiting on Undo.
-    fn source_counts(&self, cx: &App) -> (usize, usize) {
+    /// Learned words, leaving out a word waiting on Undo.
+    fn learned_count(&self, cx: &App) -> usize {
         let pending = self.pending_word();
-        let entries = &AppState::global(cx).read(cx).dictionary_entries;
-        let live = entries.iter().filter(|e| Some(e.word.as_str()) != pending);
-        let total = live.clone().count();
-        let learned = live
+        AppState::global(cx)
+            .read(cx)
+            .dictionary_entries
+            .iter()
+            .filter(|e| Some(e.word.as_str()) != pending)
             .filter(|e| e.source == DictionarySource::Learned)
-            .count();
-        (total, learned)
+            .count()
     }
 
-    /// All / Manual / Learned, beside the tabs once auto-learn has added a
+    /// All / Manual / Learned, under the tab bar once auto-learn has added a
     /// word, so learned words can be reviewed without digging through a menu.
-    fn filter_tabs(&self, total: usize, learned: usize, cx: &mut Context<Self>) -> Div {
+    /// Quiet ghost chips with no counts: the footer already says how many
+    /// words show.
+    fn render_filter(&self, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let mut seg = segmented_track(&p)
-            .flex_none()
-            .items_center()
-            .h(px(HEADER_CONTROL))
-            .gap(px(2.));
-        for (filter, id, key, count) in [
-            (
-                SourceFilter::All,
-                "dict-filter-all",
-                "dictionary.filterAll",
-                total,
-            ),
+        let active_bg = p.hover_wash(if p.dark { 0.1 } else { 0.06 });
+        let hover_bg = p.hover_wash(if p.dark { 0.05 } else { 0.035 });
+        let hover_fg = p.foreground;
+        let mut row = div().flex_none().flex().items_center().gap(px(2.)).child(
+            div()
+                .mr(px(6.))
+                .text_size(px(TEXT_SMALL))
+                .text_color(p.subtle_foreground)
+                .child(t("dictionary.filterSource")),
+        );
+        for (filter, id, key) in [
+            (SourceFilter::All, "dict-filter-all", "dictionary.filterAll"),
             (
                 SourceFilter::Manual,
                 "dict-filter-manual",
                 "dictionary.filterManual",
-                total - learned,
             ),
             (
                 SourceFilter::Learned,
                 "dict-filter-learned",
                 "dictionary.filterLearned",
-                learned,
             ),
         ] {
-            seg = seg.child(
-                segment(id, t(key), self.filter == filter, cx)
-                    .h_full()
-                    .gap(px(6.))
-                    .child(t(key))
-                    .child(
-                        div()
-                            .font_features(tabular_nums())
-                            .text_color(p.subtle_foreground)
-                            .child(count.to_string()),
-                    )
+            let active = self.filter == filter;
+            let label = t(key);
+            row = row.child(
+                div()
+                    .id(id)
+                    .keyboard_focusable(id, Role::RadioButton, label.clone(), cx)
+                    .aria_toggled(if active {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+                    .flex()
+                    .items_center()
+                    .h(px(24.))
+                    .px(px(TAB_PAD))
+                    .rounded(px(RADIUS_MD))
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .cursor_pointer()
+                    .when(active, |d| d.bg(active_bg).text_color(p.foreground))
+                    .when(!active, |d| {
+                        d.text_color(p.muted_foreground)
+                            .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
+                    })
+                    .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.filter = filter;
                         cx.notify();
                     })),
             );
         }
-        seg
+        row
     }
 
     /// A sortable column heading; a second click flips the direction. Idle
@@ -2246,10 +2263,10 @@ impl DictionaryView {
 
         let show_last_used = self.content_width(window) >= TABLE_FULL;
         let bar = use_bar_width(entry.use_count, max_uses);
-        let used = last_used(entry.use_count, entry.last_used_at, Local::now());
+        let used = last_used_day(entry.use_count, entry.last_used_at);
         let tooltip = entry
             .last_used_at
-            .filter(|_| used != LastUsed::Never)
+            .filter(|_| used.is_some())
             .map(full_timestamp);
         let count_color = if entry.use_count > 0 {
             p.muted_foreground
@@ -2280,7 +2297,11 @@ impl DictionaryView {
             .flex()
             .items_center()
             .justify_center()
-            .when(max_uses > 0, |d| d.tooltip(text_tooltip(bar_tip.clone())))
+            .when(max_uses > 0, |d| {
+                d.role(Role::Meter)
+                    .aria_label(bar_tip.clone())
+                    .tooltip(text_tooltip(bar_tip.clone()))
+            })
             .child(
                 div()
                     .w(px(USE_TRACK))
@@ -2303,12 +2324,15 @@ impl DictionaryView {
             .justify_end()
             .text_size(px(TEXT_SMALL))
             .font_features(tabular_nums())
-            .text_color(if used == LastUsed::Never {
-                p.subtle_foreground
-            } else {
+            .text_color(if used.is_some() {
                 p.muted_foreground
+            } else {
+                p.subtle_foreground
             })
-            .child(last_used_label(&used))
+            .child(used.map_or_else(
+                || "—".to_string(),
+                |day| day_label(day, Local::now().date_naive()),
+            ))
             .when_some(tooltip, |d, tip| d.tooltip(text_tooltip(tip.clone())));
 
         let row_handle = handle.clone();
@@ -3079,11 +3103,11 @@ impl Render for SnippetEditor {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc, Weekday};
+    use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 
     use super::{
-        DictionaryEntry, DictionarySource, LastUsed, SortKey, USE_BAR_MIN, USE_TRACK, clip_chars,
-        last_used, one_line, sort_entries, use_bar_width,
+        DictionaryEntry, DictionarySource, SortKey, USE_BAR_MIN, USE_TRACK, clip_chars,
+        last_used_day, one_line, sort_entries, use_bar_width,
     };
 
     fn entry(word: &str, use_count: i64, last_used_at: Option<i64>) -> DictionaryEntry {
@@ -3132,38 +3156,19 @@ mod tests {
     }
 
     #[test]
-    fn last_used_names_the_weekday_for_a_week_then_a_date() {
-        // A Wednesday.
-        let now = Local.with_ymd_and_hms(2026, 11, 4, 15, 0, 0).unwrap();
-        let ago = |days: i64| Some((now - Duration::days(days)).with_timezone(&Utc));
-        assert_eq!(last_used(3, ago(0), now), LastUsed::Today);
-        assert_eq!(last_used(3, ago(1), now), LastUsed::Yesterday);
-        assert_eq!(last_used(3, ago(2), now), LastUsed::Weekday(Weekday::Mon));
-        assert_eq!(last_used(3, ago(6), now), LastUsed::Weekday(Weekday::Thu));
+    fn last_used_is_the_local_day_of_the_last_use() {
+        let at = Local.with_ymd_and_hms(2026, 11, 4, 23, 30, 0).unwrap();
         assert_eq!(
-            last_used(3, ago(7), now),
-            LastUsed::Date {
-                day: NaiveDate::from_ymd_opt(2026, 10, 28).unwrap(),
-                this_year: true,
-            }
+            last_used_day(3, Some(at.with_timezone(&Utc))),
+            NaiveDate::from_ymd_opt(2026, 11, 4)
         );
-        assert!(matches!(
-            last_used(3, ago(400), now),
-            LastUsed::Date {
-                this_year: false,
-                ..
-            }
-        ));
     }
 
     #[test]
     fn a_word_never_spoken_was_never_used_whatever_its_timestamp() {
         let now = Local.with_ymd_and_hms(2026, 11, 4, 15, 0, 0).unwrap();
-        assert_eq!(
-            last_used(0, Some(now.with_timezone(&Utc)), now),
-            LastUsed::Never
-        );
-        assert_eq!(last_used(4, None, now), LastUsed::Never);
+        assert_eq!(last_used_day(0, Some(now.with_timezone(&Utc))), None);
+        assert_eq!(last_used_day(4, None), None);
     }
 
     #[test]

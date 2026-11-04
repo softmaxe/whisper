@@ -510,6 +510,9 @@
     "separateWithCommas": "每行一个词，或用逗号分隔",
     "wordsReady_other": "{{count}} 个词语就绪",
     "import": "导入",
+    "filterSource": "来源",
+    "openSettings": "词典设置…",
+    "rowKeysHint": "按 Return 编辑，按 Delete 删除",
     "filterAll": "全部",
     "filterManual": "手动",
     "filterLearned": "自动学习",
@@ -588,10 +591,6 @@
     "removedWord": "已移除“{{word}}”",
     "undo": "撤销",
     "sortBy": "按{{column}}排序",
-    "lastUsed": {
-      "today": "今天",
-      "yesterday": "昨天"
-    },
     "usesBar": "{{count}} / 最多 {{max}}",
     "editDuplicate": "“{{word}}”已在词典中",
     "editEmpty": "请输入词语，或按 Esc 保留原词"

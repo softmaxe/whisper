@@ -579,6 +579,9 @@
     "wordsReady_one": "{{count}} word ready",
     "wordsReady_other": "{{count}} words ready",
     "import": "Import",
+    "filterSource": "Source",
+    "openSettings": "Dictionary Settings…",
+    "rowKeysHint": "Press Return to edit, Delete to remove",
     "filterAll": "All",
     "filterManual": "Manual",
     "filterLearned": "Learned",
@@ -662,10 +665,6 @@
     "removedWord": "Removed “{{word}}”",
     "undo": "Undo",
     "sortBy": "Sort by {{column}}",
-    "lastUsed": {
-      "today": "Today",
-      "yesterday": "Yesterday"
-    },
     "usesBar": "{{count}} of {{max}} max",
     "editDuplicate": "“{{word}}” is already in your dictionary",
     "editEmpty": "Enter a word, or press Esc to keep the old one"
