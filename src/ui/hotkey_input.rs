@@ -16,11 +16,12 @@ use crate::text::hotkeys::{
     serialize_hotkey_list,
 };
 
-use super::components::{Button, ButtonSize, ButtonVariant, icon};
-use super::overlays::{Toast, ToastVariant, show_toast};
-use super::theme::{
-    FONT_MONO, PaletteExt, RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_SMALL, TEXT_TITLE,
+use super::components::{
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, icon, kbd, keyed_focus_handle,
 };
+use super::control_panel::CloseOverlay;
+use super::overlays::{Toast, ToastVariant, show_toast};
+use super::theme::{LINE_SMALL, Palette, PaletteExt, RADIUS_MD, TEXT_BODY, TEXT_SMALL};
 
 const MODIFIER_ONLY_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 const WARNING_TIMEOUT: Duration = Duration::from_secs(4);
@@ -357,6 +358,18 @@ impl HotkeyListInput {
         out
     }
 
+    /// Escape ends a capture in progress before it can close the sheet.
+    fn on_close_overlay(&mut self, _: &CloseOverlay, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(slot) = self.capturing else {
+            cx.propagate();
+            return;
+        };
+        self.stop_capture(cx);
+        if let Slot::Existing(i) = slot {
+            window.focus(&keyed_focus_handle(row_key(i).into(), cx), cx);
+        }
+    }
+
     fn render_row(
         &self,
         slot: Slot,
@@ -366,33 +379,32 @@ impl HotkeyListInput {
     ) -> AnyElement {
         let p = cx.palette();
         let capturing = self.capturing == Some(slot);
-        let id: SharedString = match slot {
-            Slot::Existing(i) => format!("hotkey-row-{i}").into(),
-            Slot::New => "hotkey-row-new".into(),
+        let key: SharedString = match slot {
+            Slot::Existing(i) => row_key(i).into(),
+            Slot::New => "settings-hotkey-row-new".into(),
         };
-        let mut row = div()
-            .id(id)
-            .group("hotkey-row")
-            .relative()
-            .overflow_hidden()
-            .rounded(px(RADIUS_MD))
-            .border_1()
+        let label: SharedString = match value {
+            Some(value) => t_with(
+                "hotkeyInput.rowLabel",
+                &[("hotkey", &spoken_label(&value.label_parts()))],
+            )
+            .into(),
+            None => t("hotkeyInput.clickToSet").into(),
+        };
+        let row = div()
+            .id(key.clone())
+            .keyboard_focusable(key, Role::Button, label, cx)
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .px(px(16.))
+            .py(px(12.))
             .cursor_pointer()
             .map(|d| {
                 if capturing {
-                    d.bg(p.primary.opacity(0.05))
-                        .border_color(p.primary.opacity(0.3))
-                        .shadow(vec![BoxShadow {
-                            color: hsla(0.6, 0.7, 0.49, 0.1),
-                            offset: point(px(0.), px(0.)),
-                            blur_radius: px(0.),
-                            spread_radius: px(2.),
-                            inset: false,
-                        }])
+                    d.bg(p.primary.opacity(if p.dark { 0.08 } else { 0.05 }))
                 } else {
-                    d.bg(p.surface_1)
-                        .border_color(p.border)
-                        .hover(|s| s.border_color(p.border_hover).bg(p.surface_2))
+                    d.hover(|s| s.bg(p.hover_wash(0.03)))
                 }
             })
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -400,201 +412,94 @@ impl HotkeyListInput {
                     this.start_capture(slot, window, cx);
                 }
             }));
-        if capturing {
-            row = row.child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .h(px(2.))
-                    .bg(p.primary)
-                    .with_animation(
-                        "capture-pulse",
-                        Animation::new(Duration::from_millis(2000)).repeat(),
-                        |d, t| d.opacity(0.5 + 0.5 * (t * std::f32::consts::TAU).cos().abs()),
-                    ),
-            );
-        }
+        let label_text = |text: String, color: Hsla| {
+            div()
+                .text_size(px(TEXT_BODY))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(color)
+                .child(text)
+        };
+        let line = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
+            .min_h(px(24.));
         let content = if capturing {
             let held = self.held_labels();
-            div()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .gap(px(12.))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .child(
-                                    div()
-                                        .size(px(6.))
-                                        .rounded_full()
-                                        .bg(p.primary)
-                                        .with_animation(
-                                            "rec-dot",
-                                            Animation::new(Duration::from_millis(2000)).repeat(),
-                                            |d, t| {
-                                                d.opacity(
-                                                    0.5 + 0.5
-                                                        * (t * std::f32::consts::TAU).cos().abs(),
-                                                )
-                                            },
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(TEXT_SMALL))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(p.muted_foreground)
-                                        .child(t("hotkeyInput.recording")),
-                                ),
-                        )
-                        .child(if held.is_empty() {
-                            div()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground)
-                                .child(t("hotkeyInput.tryShortcut"))
+            let keys = if held.is_empty() {
+                hint(t("hotkeyInput.tryShortcut"), p.muted_foreground)
+            } else {
+                keycaps(&held, &p)
+                    .child(hint(
+                        if self.capture.fn_held {
+                            t("hotkeyInput.fnCaptureHint")
                         } else {
-                            let mut chips = div().flex().items_center().gap(px(4.));
-                            for label in held {
-                                chips = chips.child(
-                                    div()
-                                        .px(px(8.))
-                                        .py(px(2.))
-                                        .rounded(px(RADIUS_SM))
-                                        .border_1()
-                                        .border_color(p.primary.opacity(0.2))
-                                        .bg(p.primary.opacity(0.1))
-                                        .font_family(FONT_MONO)
-                                        .text_size(px(TEXT_SMALL))
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(p.primary)
-                                        .child(label),
-                                );
-                            }
-                            chips.child(
-                                div()
-                                    .text_size(px(TEXT_SMALL))
-                                    .text_color(p.primary.opacity(0.4))
-                                    .child(if self.capture.fn_held {
-                                        t("hotkeyInput.fnCaptureHint")
-                                    } else {
-                                        t("hotkeyInput.keyHint")
-                                    }),
-                            )
-                        }),
-                )
-                .when_some(self.warning.clone(), |d, warning| {
-                    d.child(
+                            t("hotkeyInput.keyHint")
+                        },
+                        p.muted_foreground,
+                    ))
+                    .into_any_element()
+            };
+            line.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
                         div()
-                            .mt(px(6.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .px(px(12.))
-                            .py(px(6.))
-                            .rounded(px(RADIUS_MD))
-                            .border_1()
-                            .border_color(p.warning.opacity(if p.dark { 0.25 } else { 0.2 }))
-                            .bg(p.warning.opacity(if p.dark { 0.12 } else { 0.08 }))
-                            .child(icon("alert-triangle", 12., p.warning))
-                            .child(
-                                div()
-                                    .text_size(px(TEXT_SMALL))
-                                    .text_color(p.warning)
-                                    .child(warning),
+                            .size(px(6.))
+                            .rounded_full()
+                            .bg(p.primary)
+                            .with_animation(
+                                "rec-dot",
+                                Animation::new(Duration::from_millis(2000)).repeat(),
+                                |d, t| {
+                                    d.opacity(0.5 + 0.5 * (t * std::f32::consts::TAU).cos().abs())
+                                },
                             ),
                     )
-                })
-                .into_any_element()
+                    .child(label_text(t("hotkeyInput.recording"), p.foreground)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(keys)
+                    .child(hint(t("hotkeyInput.escToCancel"), p.subtle_foreground)),
+            )
+            .into_any_element()
         } else if let Some(value) = value {
             let removable = match slot {
                 Slot::Existing(i) if can_remove => Some(i),
                 _ => None,
             };
-            let parts = value.label_parts();
-            let keys = if parts.len() > 1 {
-                let mut keys = div().flex().items_center().gap(px(4.));
-                for (i, part) in parts.into_iter().enumerate() {
-                    if i > 0 {
-                        keys = keys.child(
-                            div()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.subtle_foreground)
-                                .child("+"),
-                        );
-                    }
-                    keys = keys.child(key_chip(part, &p));
-                }
-                keys.into_any_element()
-            } else if value.is_globe() {
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(
-                        div()
-                            .px(px(8.))
-                            .py(px(2.))
-                            .rounded(px(RADIUS_SM))
-                            .border_1()
-                            .border_color(p.border)
-                            .bg(p.surface_raised)
-                            .text_size(px(TEXT_TITLE))
-                            .child("🌐"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.muted_foreground)
-                            .child(t("hotkeyInput.globe")),
-                    )
-                    .into_any_element()
+            let keys = if value.is_globe() {
+                globe_keycap(&p).into_any_element()
             } else {
-                key_chip(value.label(), &p)
-                    .px(px(10.))
-                    .py(px(4.))
-                    .into_any_element()
+                keycaps(&value.label_parts(), &p).into_any_element()
             };
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(px(TEXT_BODY))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.foreground)
-                        .child(t("hotkeyInput.hotkeyLabel")),
-                )
+            line.child(label_text(t("hotkeyInput.hotkeyLabel"), p.foreground))
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
+                        .gap(px(12.))
                         .child(keys)
-                        .child(
-                            div()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.subtle_foreground)
-                                .child(t("hotkeyInput.clickToChangeLower")),
-                        )
+                        .child(hint(
+                            t("hotkeyInput.clickToChangeLower"),
+                            p.subtle_foreground,
+                        ))
                         .when_some(removable, |d, index| {
                             d.child(
-                                div()
-                                    .id(("remove-hotkey", index))
-                                    .opacity(0.)
-                                    .group_hover("hotkey-row", |s| s.opacity(1.))
-                                    .cursor_pointer()
-                                    .child(icon("trash2", 14., p.subtle_foreground))
+                                Button::new(("settings-remove-hotkey", index))
+                                    .icon("trash2", 14.)
+                                    .aria_label(t("hotkeyInput.remove"))
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Sm)
                                     .on_click(cx.listener(move |this, _, _, cx| {
+                                        // The row behind the button would start a capture.
                                         cx.stop_propagation();
                                         this.remove(index, cx);
                                     })),
@@ -603,34 +508,102 @@ impl HotkeyListInput {
                 )
                 .into_any_element()
         } else {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(TEXT_BODY))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(p.muted_foreground)
-                .child(t("hotkeyInput.clickToSet"))
+            line.justify_center()
+                .child(label_text(t("hotkeyInput.clickToSet"), p.muted_foreground))
                 .into_any_element()
         };
-        row.child(div().px(px(16.)).py(px(12.)).child(content))
+        row.child(content)
+            .when_some(self.warning.clone().filter(|_| capturing), |d, warning| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .px(px(10.))
+                        .py(px(6.))
+                        .rounded(px(RADIUS_MD))
+                        .border_1()
+                        .border_color(p.warning.opacity(if p.dark { 0.25 } else { 0.2 }))
+                        .bg(p.warning.opacity(if p.dark { 0.12 } else { 0.08 }))
+                        .child(icon("alert-triangle", 12., p.warning))
+                        .child(
+                            div()
+                                .text_size(px(TEXT_SMALL))
+                                .line_height(px(LINE_SMALL))
+                                .text_color(p.warning)
+                                .child(warning),
+                        ),
+                )
+            })
             .into_any_element()
     }
 }
 
-fn key_chip(text: String, p: &super::theme::Palette) -> Div {
+fn row_key(index: usize) -> String {
+    format!("settings-hotkey-row-{index}")
+}
+
+fn hint(text: String, color: Hsla) -> AnyElement {
     div()
-        .px(px(8.))
-        .py(px(2.))
-        .rounded(px(RADIUS_SM))
-        .border_1()
-        .border_color(p.border)
-        .bg(p.surface_raised)
-        .font_family(FONT_MONO)
         .text_size(px(TEXT_SMALL))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(p.foreground)
+        .text_color(color)
+        .whitespace_nowrap()
         .child(text)
+        .into_any_element()
+}
+
+/// How a key reads on a keycap: macOS modifier glyphs and arrows, like the
+/// menu bar shows shortcuts. Display only; stored hotkeys keep their names.
+fn key_glyph(part: &str) -> String {
+    let (side, name) = match part.split_once(' ') {
+        Some(("Left", rest)) => (Some(t("hotkeyInput.sideLeft")), rest),
+        Some(("Right", rest)) => (Some(t("hotkeyInput.sideRight")), rest),
+        _ => (None, part),
+    };
+    let glyph = match name {
+        "Ctrl" => "⌃",
+        "Cmd" => "⌘",
+        "Option" => "⌥",
+        "Shift" => "⇧",
+        "Fn" => "fn",
+        "Enter" => "↩",
+        "Tab" => "⇥",
+        "Backspace" => "⌫",
+        "Delete" => "⌦",
+        "Esc" => "esc",
+        "Up" => "↑",
+        "Down" => "↓",
+        "Left" => "←",
+        "Right" => "→",
+        other => other,
+    };
+    match side {
+        Some(side) => format!("{side} {glyph}"),
+        None => glyph.to_string(),
+    }
+}
+
+/// The hotkey as VoiceOver should read it: the written names joined by "+".
+fn spoken_label(parts: &[String]) -> String {
+    parts.join(" + ")
+}
+
+/// One `kbd` chip per key, set in the primary text color so the shortcut
+/// reads as the row's value.
+fn keycaps(parts: &[String], p: &Palette) -> Div {
+    div().flex().items_center().gap(px(4.)).children(
+        parts
+            .iter()
+            .map(|part| kbd(key_glyph(part), p).px(px(6.)).text_color(p.foreground)),
+    )
+}
+
+fn globe_keycap(p: &Palette) -> Div {
+    kbd("fn", p)
+        .gap(px(4.))
+        .px(px(6.))
+        .text_color(p.foreground)
+        .child(icon("globe", 12., p.foreground))
 }
 
 impl Render for HotkeyListInput {
@@ -644,26 +617,32 @@ impl Render for HotkeyListInput {
             backend::set_hotkey_listening_mode(false);
         }
         let can_remove = self.items.len() > 1;
-        let mut col = div().flex().flex_col().gap(px(8.));
+        let divider = p.border.opacity(0.5);
+        let mut rows: Vec<AnyElement> = Vec::new();
         let items = self.items.clone();
         for (i, item) in items.iter().enumerate() {
-            col = col.child(self.render_row(Slot::Existing(i), Some(item), can_remove, cx));
+            rows.push(self.render_row(Slot::Existing(i), Some(item), can_remove, cx));
         }
         if items.is_empty() || self.adding {
-            col = col.child(self.render_row(Slot::New, None, false, cx));
+            rows.push(self.render_row(Slot::New, None, false, cx));
         }
         let show_reset = !items.is_empty() && items != parse_hotkey_list(DEFAULT_HOTKEY);
         let show_add = !self.adding && !items.is_empty();
         if (show_add || show_reset) && !self.adding {
-            col = col.child(
+            let reset_label = t_with(
+                "settings.general.hotkey.resetToDefault",
+                &[("hotkey", &format_hotkey_list_label(DEFAULT_HOTKEY))],
+            );
+            rows.push(
                 div()
-                    .mt(px(2.))
+                    .px(px(12.))
+                    .py(px(8.))
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap(px(12.))
                     .child(if show_add {
-                        Button::new("add-hotkey")
+                        Button::new("settings-add-hotkey")
                             .icon("plus", 14.)
                             .label(t("hotkeyInput.addAnother"))
                             .variant(ButtonVariant::OutlineFlat)
@@ -678,19 +657,22 @@ impl Render for HotkeyListInput {
                     })
                     .when(show_reset, |d| {
                         d.child(
-                            div()
-                                .id("reset-hotkey")
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.subtle_foreground)
-                                .cursor_pointer()
-                                .hover(|s| s.text_color(p.foreground))
-                                .child(t_with(
-                                    "settings.general.hotkey.resetToDefault",
-                                    &[("hotkey", &format_hotkey_list_label(DEFAULT_HOTKEY))],
-                                ))
+                            Button::new("settings-reset-hotkey")
+                                .label(reset_label)
+                                .variant(ButtonVariant::Ghost)
+                                .size(ButtonSize::Sm)
                                 .on_click(cx.listener(|this, _, _, cx| this.reset_to_default(cx))),
                         )
-                    }),
+                    })
+                    .into_any_element(),
+            );
+        }
+        let mut col = div().flex().flex_col();
+        for (index, row) in rows.into_iter().enumerate() {
+            col = col.child(
+                div()
+                    .when(index > 0, |d| d.border_t_1().border_color(divider))
+                    .child(row),
             );
         }
         div()
@@ -699,6 +681,7 @@ impl Render for HotkeyListInput {
             .key_context("HotkeyCapture")
             .on_key_down(cx.listener(Self::on_key_down))
             .on_modifiers_changed(cx.listener(Self::on_modifiers))
+            .on_action(cx.listener(Self::on_close_overlay))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if this.capturing.is_some() {
                     this.stop_capture(cx);
@@ -713,5 +696,22 @@ impl Drop for HotkeyListInput {
         if self.capturing.is_some() {
             backend::set_hotkey_listening_mode(false);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::key_glyph;
+
+    #[test]
+    fn keycaps_show_macos_glyphs() {
+        assert_eq!(key_glyph("Ctrl"), "⌃");
+        assert_eq!(key_glyph("Option"), "⌥");
+        assert_eq!(key_glyph("Shift"), "⇧");
+        assert_eq!(key_glyph("Cmd"), "⌘");
+        assert_eq!(key_glyph("Right Cmd"), "Right ⌘");
+        assert_eq!(key_glyph("Right"), "→");
+        assert_eq!(key_glyph("F19"), "F19");
+        assert_eq!(key_glyph("Mouse Button 4"), "Mouse Button 4");
     }
 }

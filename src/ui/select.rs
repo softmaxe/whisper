@@ -6,7 +6,8 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{drop, f32_tx, icon};
+use super::components::{drop, f32_tx, focus_ring, icon};
+use super::control_panel::CloseOverlay;
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY,
     TEXT_SMALL, ease_out, ease_snap,
@@ -60,6 +61,8 @@ pub struct Select {
     options: Vec<SelectOption>,
     selected: Option<SharedString>,
     placeholder: SharedString,
+    /// The name VoiceOver reads for the trigger, usually its row's label.
+    label: SharedString,
     open: bool,
     style: SelectStyle,
     width: Option<Pixels>,
@@ -86,19 +89,16 @@ impl Select {
                 InputState::new(window, cx)
                     .placeholder(crate::i18n::t("languageSelector.searchPlaceholder"))
             });
-            cx.subscribe(
+            cx.subscribe_in(
                 &input,
-                |this: &mut Self, input, event: &InputEvent, cx| match event {
+                window,
+                |this: &mut Self, input, event: &InputEvent, window, cx| match event {
                     InputEvent::Change => {
                         this.query = input.read(cx).value().to_string();
                         this.highlighted = 0;
                         cx.notify();
                     }
-                    InputEvent::PressEnter { .. } => {
-                        if let Some(option) = this.filtered().get(this.highlighted).cloned() {
-                            this.choose(option.value, cx);
-                        }
-                    }
+                    InputEvent::PressEnter { .. } => this.choose_highlighted(window, cx),
                     _ => {}
                 },
             )
@@ -111,6 +111,7 @@ impl Select {
             options,
             selected,
             placeholder: "".into(),
+            label: "".into(),
             open: false,
             style,
             width: None,
@@ -125,6 +126,11 @@ impl Select {
 
     pub fn with_width(mut self, width: Pixels) -> Self {
         self.width = Some(width);
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
         self
     }
 
@@ -203,39 +209,72 @@ impl Select {
         }
     }
 
-    fn choose(&mut self, value: SharedString, cx: &mut Context<Self>) {
-        self.open = false;
+    /// Closes the menu and hands focus back to the trigger, so keyboard
+    /// users continue from where they opened it.
+    fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(cx);
+        window.focus(&self.focus, cx);
+    }
+
+    fn choose(&mut self, value: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss(window, cx);
         self.selected = Some(value.clone());
         cx.emit(SelectEvent::Change(value));
         cx.notify();
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn choose_highlighted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(option) = self.filtered().get(self.highlighted).cloned()
+            && !option.disabled
+        {
+            self.choose(option.value, window, cx);
+        }
+    }
+
+    /// Arrow keys move through the open menu and open a closed one, like a
+    /// macOS pop-up button. Return and Space arrive as keyboard clicks on the
+    /// trigger instead (see `on_trigger_click`).
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        if !matches!(key, "down" | "up") || event.keystroke.modifiers.modified() {
+            return;
+        }
+        cx.stop_propagation();
         if !self.open {
+            self.toggle(window, cx);
             return;
         }
         let count = self.filtered().len();
-        match event.keystroke.key.as_str() {
-            "down" if count > 0 => {
-                self.highlighted = (self.highlighted + 1) % count;
-                cx.notify();
-            }
-            "up" if count > 0 => {
-                self.highlighted = (self.highlighted + count - 1) % count;
-                cx.notify();
-            }
-            "enter" => {
-                if let Some(option) = self.filtered().get(self.highlighted).cloned()
-                    && !option.disabled
-                {
-                    self.choose(option.value, cx);
-                }
-            }
-            "escape" => {
-                self.close(cx);
-                cx.stop_propagation();
-            }
-            _ => {}
+        if count == 0 {
+            return;
+        }
+        self.highlighted = if key == "down" {
+            (self.highlighted + 1) % count
+        } else {
+            (self.highlighted + count - 1) % count
+        };
+        cx.notify();
+    }
+
+    fn on_trigger_click(
+        &mut self,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.open && event.is_keyboard() {
+            self.choose_highlighted(window, cx);
+        } else {
+            self.toggle(window, cx);
+        }
+    }
+
+    /// Escape closes an open menu before it can close the sheet around it.
+    fn on_close_overlay(&mut self, _: &CloseOverlay, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open {
+            self.dismiss(window, cx);
+        } else {
+            cx.propagate();
         }
     }
 }
@@ -278,8 +317,21 @@ impl Render for Select {
         } else {
             vec![drop(0., 1., 2., 0.05)]
         };
+        let aria_name = self.label.clone();
+        let value = selected_option
+            .as_ref()
+            .map(|o| o.label.clone())
+            .unwrap_or_default();
         let trigger = div()
             .id("select-trigger")
+            .when(!self.disabled, |d| {
+                d.track_focus(&self.focus.clone().tab_stop(true))
+                    .focus_visible(move |s| s.shadow(focus_ring(&p)))
+            })
+            .role(Role::ComboBox)
+            .aria_label(aria_name)
+            .aria_value(value)
+            .aria_expanded(open)
             .flex()
             .items_center()
             .justify_between()
@@ -338,14 +390,14 @@ impl Render for Select {
                     chevron_turn * std::f32::consts::PI,
                 ))),
             )
-            .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx)));
+            .on_click(cx.listener(Self::on_trigger_click));
 
         let menu = open.then(|| self.render_menu(cx));
 
         div()
             .id("select")
-            .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key))
+            .on_action(cx.listener(Self::on_close_overlay))
             .relative()
             .when_some(self.width, |d, w| d.w(w))
             .child(trigger)
@@ -398,9 +450,9 @@ impl Select {
                     .when(!option.disabled, |d| {
                         d.cursor_pointer()
                             .hover(|s| s.bg(p.foreground.opacity(0.08)))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.choose(value.clone(), cx)),
-                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.choose(value.clone(), window, cx)
+                            }))
                     })
                     .child(
                         div()

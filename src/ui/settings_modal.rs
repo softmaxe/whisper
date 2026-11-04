@@ -2,6 +2,9 @@
 
 use std::time::Duration;
 
+use std::rc::Rc;
+
+use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -20,18 +23,22 @@ use crate::services::cleanup::ModelOption;
 use crate::text::prompts::default_cleanup_prompt;
 use crate::text::url::{build_api_url, normalize_base_url};
 
+use super::components::f32_tx;
 use super::components::{
-    Button, ButtonSize, ButtonVariant, NavSurface, Toggle, backdrop, dialog_shadow, icon, nav_row,
-    panel_row, section_header, segment, segmented_track, settings_field, settings_field_tagged,
-    settings_panel, settings_row, settings_section, status_label,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, Toggle, backdrop,
+    dialog_shadow, icon, nav_row, page_container, panel_row, section_header, segment,
+    segmented_track, settings_field, settings_field_tagged, settings_panel, settings_row,
+    settings_section, status_label,
 };
+use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH};
 use super::hotkey_input::HotkeyListInput;
-use super::overlays::{DialogRequest, Toast, show_dialog, show_toast};
+use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog, show_toast};
 use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
 use super::text_input::{text_field, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL, RADIUS_LG,
-    RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, ease_out, ease_snap,
+    DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL,
+    RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL,
+    WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,6 +99,15 @@ enum PromptTab {
     Test,
 }
 
+/// The state of the Speech to text "Test Connection" check.
+#[derive(Clone, PartialEq)]
+enum ConnectionCheck {
+    Idle,
+    Checking,
+    Connected { model_listed: Option<bool> },
+    Failed(String),
+}
+
 const RETENTION_DAY_OPTIONS: [u32; 6] = [1, 7, 14, 30, 60, 90];
 
 pub struct SettingsModal {
@@ -108,6 +124,7 @@ pub struct SettingsModal {
     models: Vec<ModelOption>,
     models_loading: bool,
     models_error: Option<String>,
+    models_error_details: bool,
     last_loaded_base: Option<String>,
     models_request: Option<Task<()>>,
 
@@ -128,6 +145,9 @@ pub struct SettingsModal {
 
     hotkeys: Entity<HotkeyListInput>,
 
+    stt_check: ConnectionCheck,
+    stt_request: Option<Task<()>>,
+
     auto_start: AutoStartState,
     auto_start_loading: bool,
     mic_devices: Vec<MicDevice>,
@@ -137,7 +157,12 @@ pub struct SettingsModal {
     accessibility_permission: bool,
 
     scroll: ScrollHandle,
+    /// The section whose scroll extent has been measured for the bottom fade.
+    measured_section: Option<SettingsSection>,
     focus: FocusHandle,
+    /// Where keyboard focus was when the sheet opened; it returns there on
+    /// close, like a macOS sheet.
+    restore_focus: Option<FocusHandle>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -289,10 +314,11 @@ impl SettingsModal {
                 .placeholder("http://192.168.1.126:8000/v1")
                 .default_value(s.remote_transcription_url.clone())
         });
-        subscriptions.push(cx.subscribe(&stt_url, |_, input, e: &InputEvent, cx| {
+        subscriptions.push(cx.subscribe(&stt_url, |this, input, e: &InputEvent, cx| {
             if matches!(e, InputEvent::Change) {
                 let value = input.read(cx).value().to_string();
                 update_settings(cx, |s| s.remote_transcription_url = value);
+                this.reset_stt_check();
                 cx.notify();
             }
         }));
@@ -368,6 +394,7 @@ impl SettingsModal {
             )
             .with_width(px(140.))
             .with_menu_min_width(px(240.))
+            .with_label(t("settings.language.uiLabel"))
         });
         subscriptions.push(cx.subscribe(&ui_language, |_, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
@@ -385,6 +412,7 @@ impl SettingsModal {
             )
             .with_width(px(180.))
             .with_menu_min_width(px(240.))
+            .with_label(t("settings.language.transcriptionLabel"))
         });
         subscriptions.push(cx.subscribe(&stt_language, |_, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
@@ -401,6 +429,7 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(176.))
+            .with_label(t("settings.language.chineseScriptLabel"))
         });
         subscriptions.push(cx.subscribe(&chinese_script, |_, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
@@ -417,6 +446,7 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(140.))
+            .with_label(t("settings.general.floatingIcon.startPosition"))
         });
         subscriptions.push(cx.subscribe(&pill_position, |_, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
@@ -436,6 +466,7 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(124.))
+            .with_label(t("settings.privacy.keepAudioFor"))
         });
         subscriptions.push(cx.subscribe(&audio_retention, |_, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
@@ -456,6 +487,7 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(124.))
+            .with_label(t("settings.privacy.transcriptRetention"))
         });
         subscriptions.push(
             cx.subscribe(&transcript_retention, |_, _, e: &SelectEvent, cx| {
@@ -466,7 +498,10 @@ impl SettingsModal {
             }),
         );
 
-        let microphone = cx.new(|cx| Select::new(Vec::new(), None, SelectStyle::Field, window, cx));
+        let microphone = cx.new(|cx| {
+            Select::new(Vec::new(), None, SelectStyle::Field, window, cx)
+                .with_label(t("microphoneSettings.inputDevice"))
+        });
         subscriptions.push(cx.subscribe(&microphone, |this, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
             if value.as_ref() == "__auto__" {
@@ -486,6 +521,11 @@ impl SettingsModal {
 
         let hotkeys = cx.new(HotkeyListInput::new);
 
+        // Keyboard focus moves into the sheet, so Tab starts on its first
+        // control and Escape reaches it.
+        let focus = cx.focus_handle();
+        window.focus(&focus, cx);
+
         let state = AppState::global(cx);
         subscriptions.push(cx.observe(&state, |this, _, cx| {
             this.sync_selects(cx);
@@ -504,6 +544,7 @@ impl SettingsModal {
             models: Vec::new(),
             models_loading: false,
             models_error: None,
+            models_error_details: false,
             last_loaded_base: None,
             models_request: None,
             prompt_tab: PromptTab::View,
@@ -520,6 +561,8 @@ impl SettingsModal {
             transcript_retention,
             microphone,
             hotkeys,
+            stt_check: ConnectionCheck::Idle,
+            stt_request: None,
             auto_start: backend::auto_start_state(),
             auto_start_loading: false,
             mic_devices: Vec::new(),
@@ -528,7 +571,9 @@ impl SettingsModal {
             mic_permission: backend::microphone_permission_granted(),
             accessibility_permission: backend::accessibility_granted(),
             scroll: ScrollHandle::new(),
-            focus: cx.focus_handle(),
+            measured_section: None,
+            focus,
+            restore_focus: window.focused(cx),
             _subscriptions: subscriptions,
         };
         this.reload_microphones(cx);
@@ -549,6 +594,30 @@ impl SettingsModal {
             }
             cx.notify();
         }
+    }
+
+    /// Closes the sheet and returns keyboard focus to where it was before.
+    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(handle) = self.restore_focus.take() {
+            window.focus(&handle, cx);
+        }
+        self.request_close(cx);
+    }
+
+    /// Escape peels one layer at a time: an API key edit first, then the
+    /// sheet. Dialogs and the command palette above the sheet close first.
+    fn on_close_overlay(&mut self, _: &CloseOverlay, window: &mut Window, cx: &mut Context<Self>) {
+        let overlays = Overlays::global(cx).read(cx);
+        if overlays.has_dialog() || overlays.has_custom() {
+            cx.propagate();
+            return;
+        }
+        if self.api_key_editing {
+            self.api_key_editing = false;
+            cx.notify();
+            return;
+        }
+        self.close(window, cx);
     }
 
     pub fn request_close(&mut self, cx: &mut Context<Self>) {
@@ -684,35 +753,31 @@ impl SettingsModal {
         }
     }
 
-    /// Buttons that fill the endpoint with a known server's default address.
-    fn cleanup_presets(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex()
-            .flex_wrap()
-            .gap(px(6.))
-            .children(CLEANUP_PRESETS.iter().map(|&(name, url)| {
-                div()
-                    .id(name)
-                    .h(px(26.))
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(RADIUS_MD))
-                    .border_1()
-                    .border_color(if p.dark { p.border_hover } else { p.border })
-                    .bg(if p.dark { p.surface_2 } else { p.background })
-                    .text_size(px(TEXT_SMALL))
-                    .text_color(p.foreground.opacity(0.85))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(p.hover_wash(0.06)))
-                    .child(name)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.cleanup_url
-                            .update(cx, |input, cx| input.set_value(url, window, cx));
-                        this.apply_cleanup_base(window, cx);
-                    }))
-            }))
-            .into_any_element()
+    /// A segmented row of known servers; picking one fills the endpoint
+    /// with its default address, and the one matching the field stays lit.
+    fn cleanup_presets(&self, draft: &str, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let current = normalize_base_url(draft);
+        let mut track = segmented_track(&p).flex_wrap().gap(px(2.));
+        for &(name, url) in CLEANUP_PRESETS.iter() {
+            let active = current == url;
+            track = track.child(
+                segment(
+                    SharedString::from(format!("settings-preset-{name}")),
+                    name,
+                    active,
+                    cx,
+                )
+                .h(px(24.))
+                .child(name)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.cleanup_url
+                        .update(cx, |input, cx| input.set_value(url, window, cx));
+                    this.apply_cleanup_base(window, cx);
+                })),
+            );
+        }
+        div().flex().child(track).into_any_element()
     }
 
     fn apply_cleanup_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -759,6 +824,7 @@ impl SettingsModal {
         }
         self.models_loading = true;
         self.models_error = None;
+        self.models_error_details = false;
         cx.notify();
         let api_key = self.api_key.trim().to_string();
         let request = backend::list_models(normalized.clone(), api_key.clone());
@@ -780,6 +846,40 @@ impl SettingsModal {
                         this.models_error = Some(message);
                     }
                 }
+                cx.notify();
+            });
+        }));
+    }
+
+    // ---- Speech to text server --------------------------------------------------------------
+
+    fn reset_stt_check(&mut self) {
+        self.stt_request = None;
+        self.stt_check = ConnectionCheck::Idle;
+    }
+
+    /// Asks the server for its model list: a cheap request every
+    /// OpenAI-compatible server answers, which proves the address works.
+    fn test_stt_connection(&mut self, cx: &mut Context<Self>) {
+        let s = settings(cx);
+        let base = normalize_base_url(&s.remote_transcription_url);
+        if base.is_empty() {
+            return;
+        }
+        let model = s.remote_transcription_model.trim().to_string();
+        self.stt_check = ConnectionCheck::Checking;
+        cx.notify();
+        let request = backend::list_models(base.clone(), String::new());
+        self.stt_request = Some(cx.spawn(async move |this, cx| {
+            let result = request.await;
+            let _ = this.update(cx, |this, cx| {
+                this.stt_check = match result {
+                    Ok((_, models)) => ConnectionCheck::Connected {
+                        model_listed: (!model.is_empty() && !models.is_empty())
+                            .then(|| models.iter().any(|m| m.value == model)),
+                    },
+                    Err(error) => ConnectionCheck::Failed(friendly_server_error(&error, &base).0),
+                };
                 cx.notify();
             });
         }));
@@ -999,34 +1099,43 @@ impl SettingsModal {
             track
         };
 
-        let toggle = |id: &'static str, checked: bool, f: fn(&mut Settings, bool)| {
-            Toggle::new(id, checked)
-                .on_change(move |value, _, cx| update_settings(cx, |s| f(s, value)))
+        let toggle = |id: &'static str,
+                      label: &str,
+                      description: &str,
+                      checked: bool,
+                      f: fn(&mut Settings, bool)| {
+            toggle_row(
+                id,
+                t(label),
+                Some(t(description)),
+                checked,
+                false,
+                move |value, _, cx| update_settings(cx, |s| f(s, value)),
+                &p,
+            )
         };
 
         let auto_start = self.auto_start;
-        let mut startup_rows = vec![
-            settings_row(
-                t("settings.general.startup.launchAtLogin"),
-                Some(t("settings.general.startup.launchAtLoginDescription").into()),
-                Toggle::new("launch-at-login", auto_start.enabled)
-                    .disabled(self.auto_start_loading)
-                    .on_change({
-                        let this = cx.entity().downgrade();
-                        move |enabled, _, cx| {
-                            if let Err(err) = backend::set_auto_start(enabled) {
-                                log::warn!("failed to change launch at login: {err}");
-                            }
-                            let _ = this.update(cx, |this, cx| {
-                                this.auto_start = backend::auto_start_state();
-                                cx.notify();
-                            });
-                        }
-                    }),
-                &p,
-            )
-            .into_any_element(),
-        ];
+        let mut startup_rows = vec![toggle_row(
+            "launch-at-login",
+            t("settings.general.startup.launchAtLogin"),
+            Some(t("settings.general.startup.launchAtLoginDescription")),
+            auto_start.enabled,
+            self.auto_start_loading,
+            {
+                let this = cx.entity().downgrade();
+                move |enabled, _, cx| {
+                    if let Err(err) = backend::set_auto_start(enabled) {
+                        log::warn!("failed to change launch at login: {err}");
+                    }
+                    let _ = this.update(cx, |this, cx| {
+                        this.auto_start = backend::auto_start_state();
+                        cx.notify();
+                    });
+                }
+            },
+            &p,
+        )];
         if auto_start.requires_approval {
             startup_rows.push(
                 panel_row()
@@ -1071,17 +1180,13 @@ impl SettingsModal {
                     .into_any_element(),
             );
         }
-        startup_rows.push(
-            settings_row(
-                t("settings.general.startup.startMinimized"),
-                Some(t("settings.general.startup.startMinimizedDescription").into()),
-                toggle("start-minimized", s.start_minimized, |s, v| {
-                    s.start_minimized = v
-                }),
-                &p,
-            )
-            .into_any_element(),
-        );
+        startup_rows.push(toggle(
+            "start-minimized",
+            "settings.general.startup.startMinimized",
+            "settings.general.startup.startMinimizedDescription",
+            s.start_minimized,
+            |s, v| s.start_minimized = v,
+        ));
 
         let mut language_rows = vec![
             settings_row(
@@ -1126,15 +1231,13 @@ impl SettingsModal {
                         &p,
                     )
                     .into_any_element(),
-                    settings_row(
-                        t("settings.general.appearance.showMenuBarIcon"),
-                        Some(t("settings.general.appearance.showMenuBarIconDescription").into()),
-                        toggle("menu-bar-icon", s.show_menu_bar_icon, |s, v| {
-                            s.show_menu_bar_icon = v
-                        }),
-                        &p,
-                    )
-                    .into_any_element(),
+                    toggle(
+                        "menu-bar-icon",
+                        "settings.general.appearance.showMenuBarIcon",
+                        "settings.general.appearance.showMenuBarIconDescription",
+                        s.show_menu_bar_icon,
+                        |s, v| s.show_menu_bar_icon = v,
+                    ),
                 ],
                 &p,
             ))
@@ -1142,24 +1245,20 @@ impl SettingsModal {
                 t("settings.general.soundEffects.title"),
                 None,
                 vec![
-                    settings_row(
-                        t("settings.general.soundEffects.dictationSounds"),
-                        Some(t("settings.general.soundEffects.dictationSoundsDescription").into()),
-                        toggle("audio-cues", s.audio_cues_enabled, |s, v| {
-                            s.audio_cues_enabled = v
-                        }),
-                        &p,
-                    )
-                    .into_any_element(),
-                    settings_row(
-                        t("settings.general.soundEffects.pauseMedia"),
-                        Some(t("settings.general.soundEffects.pauseMediaDescription").into()),
-                        toggle("pause-media", s.pause_media_on_dictation, |s, v| {
-                            s.pause_media_on_dictation = v
-                        }),
-                        &p,
-                    )
-                    .into_any_element(),
+                    toggle(
+                        "audio-cues",
+                        "settings.general.soundEffects.dictationSounds",
+                        "settings.general.soundEffects.dictationSoundsDescription",
+                        s.audio_cues_enabled,
+                        |s, v| s.audio_cues_enabled = v,
+                    ),
+                    toggle(
+                        "pause-media",
+                        "settings.general.soundEffects.pauseMedia",
+                        "settings.general.soundEffects.pauseMediaDescription",
+                        s.pause_media_on_dictation,
+                        |s, v| s.pause_media_on_dictation = v,
+                    ),
                 ],
                 &p,
             ))
@@ -1167,26 +1266,20 @@ impl SettingsModal {
                 t("settings.general.clipboard.title"),
                 None,
                 vec![
-                    settings_row(
-                        t("settings.general.clipboard.autoPaste"),
-                        Some(t("settings.general.clipboard.autoPasteDescription").into()),
-                        toggle("auto-paste", s.auto_paste_enabled, |s, v| {
-                            s.auto_paste_enabled = v
-                        }),
-                        &p,
-                    )
-                    .into_any_element(),
-                    settings_row(
-                        t("settings.general.clipboard.keepInClipboard"),
-                        Some(t("settings.general.clipboard.keepInClipboardDescription").into()),
-                        toggle(
-                            "keep-clipboard",
-                            s.keep_transcription_in_clipboard,
-                            |s, v| s.keep_transcription_in_clipboard = v,
-                        ),
-                        &p,
-                    )
-                    .into_any_element(),
+                    toggle(
+                        "auto-paste",
+                        "settings.general.clipboard.autoPaste",
+                        "settings.general.clipboard.autoPasteDescription",
+                        s.auto_paste_enabled,
+                        |s, v| s.auto_paste_enabled = v,
+                    ),
+                    toggle(
+                        "keep-clipboard",
+                        "settings.general.clipboard.keepInClipboard",
+                        "settings.general.clipboard.keepInClipboardDescription",
+                        s.keep_transcription_in_clipboard,
+                        |s, v| s.keep_transcription_in_clipboard = v,
+                    ),
                 ],
                 &p,
             ))
@@ -1223,19 +1316,15 @@ impl SettingsModal {
                 &p,
             ))
             .child(settings_section(
-                t("settings.dictionary.autoLearnTitle"),
+                t("settings.dictionary.title"),
                 None,
-                vec![
-                    settings_row(
-                        t("settings.dictionary.autoLearnTitle"),
-                        Some(t("settings.dictionary.autoLearnDescription").into()),
-                        toggle("auto-learn", s.auto_learn_corrections, |s, v| {
-                            s.auto_learn_corrections = v
-                        }),
-                        &p,
-                    )
-                    .into_any_element(),
-                ],
+                vec![toggle(
+                    "auto-learn",
+                    "settings.dictionary.autoLearnTitle",
+                    "settings.dictionary.autoLearnDescription",
+                    s.auto_learn_corrections,
+                    |s, v| s.auto_learn_corrections = v,
+                )],
                 &p,
             ))
             .into_any_element()
@@ -1263,22 +1352,11 @@ impl SettingsModal {
                             .child(t("microphoneSettings.inputDevice")),
                     )
                     .child(
-                        div()
-                            .id("refresh-mics")
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded(px(RADIUS_SM))
-                            .cursor_pointer()
-                            .hover(|s| {
-                                s.bg(if p.dark {
-                                    p.white.opacity(0.08)
-                                } else {
-                                    p.muted
-                                })
-                            })
-                            .child(icon("refresh-cw", 14., p.foreground))
+                        Button::new("settings-refresh-mics")
+                            .icon("refresh-cw", 14.)
+                            .aria_label(t("microphoneSettings.refresh"))
+                            .variant(ButtonVariant::Ghost)
+                            .size(ButtonSize::Sm)
                             .on_click(cx.listener(|this, _, _, cx| this.reload_microphones(cx))),
                     ),
             )
@@ -1286,17 +1364,14 @@ impl SettingsModal {
             .child(
                 div()
                     .text_size(px(TEXT_SMALL))
-                    .text_color(p.muted_foreground)
-                    .child(t("microphoneSettings.auto.description")),
+                    .line_height(px(LINE_SMALL))
+                    .text_color(p.subtle_foreground)
+                    .child(if is_auto {
+                        t("microphoneSettings.auto.description")
+                    } else {
+                        t("microphoneSettings.helpText")
+                    }),
             )
-            .when(!is_auto, |d| {
-                d.child(
-                    div()
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.muted_foreground)
-                        .child(t("microphoneSettings.helpText")),
-                )
-            })
     }
 
     /// The row label and device name to report under the picker, when the
@@ -1325,7 +1400,7 @@ impl SettingsModal {
         let s = settings(cx);
         let mode = s.activation_mode;
         let mode_info = backend::hotkey_mode_info(&s.effective_dictation_key());
-        let selector = activation_mode_cards(mode, mode_info.push_disabled_reason.clone(), &p);
+        let selector = activation_mode_cards(mode, mode_info.push_disabled_reason.clone(), cx);
         div()
             .flex()
             .flex_col()
@@ -1333,21 +1408,18 @@ impl SettingsModal {
             .child(settings_section(
                 t("settings.general.hotkey.title"),
                 Some(t("settings.general.hotkey.description").into()),
-                vec![
-                    panel_row().child(self.hotkeys.clone()).into_any_element(),
-                    panel_row()
-                        .child(
-                            div()
-                                .text_size(px(TEXT_BODY))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.foreground)
-                                .child(t("settings.general.hotkey.activationMode")),
-                        )
-                        .child(div().mt(px(10.)).child(selector))
-                        .into_any_element(),
-                ],
+                vec![self.hotkeys.clone().into_any_element()],
                 &p,
             ))
+            .child(
+                div()
+                    .child(section_header(
+                        t("settings.general.hotkey.activationMode"),
+                        Some(t("settings.general.hotkey.activationModeDescription").into()),
+                        &p,
+                    ))
+                    .child(selector),
+            )
             .into_any_element()
     }
 
@@ -1378,10 +1450,70 @@ impl SettingsModal {
                     &p,
                 )
                 .into_any_element(),
+                self.render_stt_check(cx),
             ],
             &p,
         )
         .into_any_element()
+    }
+
+    fn render_stt_check(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let has_url = !settings(cx).remote_transcription_url.trim().is_empty();
+        let status = match &self.stt_check {
+            ConnectionCheck::Idle => div()
+                .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
+                .text_color(p.subtle_foreground)
+                .child(t("settings.speechToText.connectionIdle"))
+                .into_any_element(),
+            ConnectionCheck::Checking => div()
+                .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
+                .text_color(p.muted_foreground)
+                .child(t("settings.speechToText.connectionChecking"))
+                .into_any_element(),
+            ConnectionCheck::Connected { model_listed } => status_label(
+                match model_listed {
+                    Some(true) => t("settings.speechToText.connectedWithModel"),
+                    Some(false) => t("settings.speechToText.connectedModelMissing"),
+                    None => t("settings.speechToText.connected"),
+                },
+                &p,
+            )
+            .into_any_element(),
+            ConnectionCheck::Failed(message) => error_line(message.clone(), &p),
+        };
+        panel_row()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(16.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_BODY))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.foreground)
+                                    .child(t("settings.speechToText.connection")),
+                            )
+                            .child(div().mt(px(2.)).child(status)),
+                    )
+                    .child(
+                        Button::new("settings-stt-test")
+                            .label(t("settings.speechToText.testConnection"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .disabled(!has_url || self.stt_check == ConnectionCheck::Checking)
+                            .on_click(cx.listener(|this, _, _, cx| this.test_stt_connection(cx))),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1396,19 +1528,15 @@ impl SettingsModal {
                         .flex_col()
                         .gap(px(24.))
                         .child(settings_panel(
-                            vec![
-                                settings_row(
-                                    t("settings.aiModels.enableTextCleanup"),
-                                    Some(
-                                        t("settings.aiModels.enableTextCleanupDescription").into(),
-                                    ),
-                                    Toggle::new("use-cleanup", s.use_cleanup_model).on_change(
-                                        |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
-                                    ),
-                                    &p,
-                                )
-                                .into_any_element(),
-                            ],
+                            vec![toggle_row(
+                                "use-cleanup",
+                                t("settings.aiModels.enableTextCleanup"),
+                                Some(t("settings.aiModels.enableTextCleanupDescription")),
+                                s.use_cleanup_model,
+                                false,
+                                |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
+                                &p,
+                            )],
                             &p,
                         ))
                         .when(s.use_cleanup_model, |d| {
@@ -1458,7 +1586,13 @@ impl SettingsModal {
                         .gap(px(2.))
                         .child(
                             div()
-                                .id("api-key-save")
+                                .id("settings-api-key-save")
+                                .keyboard_focusable(
+                                    "settings-api-key-save",
+                                    Role::Button,
+                                    t("common.save"),
+                                    cx,
+                                )
                                 .size(px(24.))
                                 .flex()
                                 .items_center()
@@ -1471,14 +1605,20 @@ impl SettingsModal {
                         )
                         .child(
                             div()
-                                .id("api-key-cancel")
+                                .id("settings-api-key-cancel")
+                                .keyboard_focusable(
+                                    "settings-api-key-cancel",
+                                    Role::Button,
+                                    t("common.cancel"),
+                                    cx,
+                                )
                                 .size(px(24.))
                                 .flex()
                                 .items_center()
                                 .justify_center()
                                 .rounded(px(RADIUS_SM))
                                 .cursor_pointer()
-                                .hover(|s| s.bg(p.muted.opacity(0.5)))
+                                .hover(|s| s.bg(p.hover_wash(0.06)))
                                 .child(icon("x", 14., p.subtle_foreground))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.api_key_editing = false;
@@ -1490,7 +1630,17 @@ impl SettingsModal {
         } else {
             let has_key = !self.api_key.is_empty();
             div()
-                .id("api-key-display")
+                .id("settings-api-key-display")
+                .keyboard_focusable(
+                    "settings-api-key-display",
+                    Role::Button,
+                    if has_key {
+                        t("apiKeyInput.editLabel")
+                    } else {
+                        t("apiKeyInput.addLabel")
+                    },
+                    cx,
+                )
                 .w_full()
                 .h(px(32.))
                 .flex()
@@ -1508,7 +1658,7 @@ impl SettingsModal {
                 .when(!has_key, |d| {
                     d.border_dashed()
                         .border_color(p.input_border)
-                        .hover(|s| s.bg(p.muted.opacity(0.3)))
+                        .hover(|s| s.bg(p.hover_wash(0.03)))
                 })
                 .cursor_pointer()
                 .child(if has_key {
@@ -1518,7 +1668,7 @@ impl SettingsModal {
                         .gap(px(6.))
                         .font_family(FONT_MONO)
                         .text_size(px(TEXT_SMALL))
-                        .text_color(p.foreground.opacity(0.7))
+                        .text_color(p.muted_foreground)
                         .child(icon("key-round", 12., p.subtle_foreground))
                         .child(mask_key(&self.api_key))
                         .into_any_element()
@@ -1533,7 +1683,8 @@ impl SettingsModal {
                 .child(
                     div()
                         .text_size(px(TEXT_SMALL))
-                        .text_color(p.subtle_foreground)
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.muted_foreground)
                         .child(if has_key {
                             t("apiKeyInput.editButton")
                         } else {
@@ -1555,35 +1706,40 @@ impl SettingsModal {
         let small = |text: String, color: Hsla| {
             div()
                 .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
                 .text_color(color)
                 .child(text)
                 .into_any_element()
         };
+        // One message at a time, most actionable first.
         if is_dirty {
-            status.push(small(t("reasoning.custom.modelsReloadHint"), p.primary));
-        }
-        if !has_base {
-            status.push(small(t("reasoning.custom.enterEndpoint"), p.warning));
-        } else {
-            if self.models_loading {
-                status.push(small(t("reasoning.custom.fetchingModels"), p.primary));
-            }
-            if let Some(error) = &self.models_error {
-                status.push(small(error.clone(), p.destructive));
-            }
-            if !self.models_loading && self.models_error.is_none() && self.models.is_empty() {
-                status.push(small(t("reasoning.custom.noModels"), p.warning));
-            }
-            if !self.models_loading && !self.models.is_empty() && s.cleanup_model.is_empty() {
-                status.push(small(t("reasoning.custom.selectModelHint"), p.warning));
-            }
+            status.push(small(
+                t("reasoning.custom.modelsReloadHint"),
+                p.muted_foreground,
+            ));
+        } else if !has_base {
+            status.push(small(
+                t("reasoning.custom.enterEndpoint"),
+                p.muted_foreground,
+            ));
+        } else if self.models_loading {
+            status.push(small(
+                t("reasoning.custom.fetchingModels"),
+                p.muted_foreground,
+            ));
+        } else if let Some(error) = &self.models_error {
+            status.push(self.render_models_error(error, &saved_base, cx));
+        } else if self.models.is_empty() {
+            status.push(small(t("reasoning.custom.noModels"), p.warning));
+        } else if s.cleanup_model.is_empty() {
+            status.push(small(t("reasoning.custom.selectModelHint"), p.warning));
         }
         let models = if is_dirty {
             Vec::new()
         } else {
             self.models.clone()
         };
-        let model_list = model_card_list(&models, &s.cleanup_model, &p);
+        let model_list = model_card_list(&models, &s.cleanup_model, &p, cx);
 
         settings_section(
             t("settings.llms.server.title"),
@@ -1598,7 +1754,7 @@ impl SettingsModal {
                             .flex_col()
                             .gap(px(10.))
                             .child(t("reasoning.selfHosted.endpointHelp"))
-                            .child(self.cleanup_presets(&p, cx))
+                            .child(self.cleanup_presets(&draft, cx))
                             .into_any_element(),
                     ),
                     endpoint_control(
@@ -1612,7 +1768,7 @@ impl SettingsModal {
                 .into_any_element(),
                 settings_field(
                     t("reasoning.custom.apiKeyOptional"),
-                    Some(small(t("reasoning.custom.apiKeyHelp"), p.subtle_foreground)),
+                    Some(t("reasoning.custom.apiKeyHelp").into_any_element()),
                     None,
                     api_key_control,
                     &p,
@@ -1633,7 +1789,7 @@ impl SettingsModal {
                             .into_any_element(),
                     ),
                     Some(
-                        Button::new("refresh-models")
+                        Button::new("settings-refresh-models")
                             .label(refresh_label)
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Sm)
@@ -1652,18 +1808,84 @@ impl SettingsModal {
                     &p,
                 )
                 .into_any_element(),
-                settings_row(
+                toggle_row(
+                    "disable-thinking",
                     t("reasoning.disableThinking.label"),
-                    Some(t("reasoning.disableThinking.help").into()),
-                    Toggle::new("disable-thinking", s.cleanup_disable_thinking).on_change(
-                        |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
-                    ),
+                    Some(t("reasoning.disableThinking.help")),
+                    s.cleanup_disable_thinking,
+                    false,
+                    |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
                     &p,
-                )
-                .into_any_element(),
+                ),
             ],
             &p,
         )
+    }
+
+    /// A failed model fetch: plain-language cause and next step, with the
+    /// server's own message one click away.
+    fn render_models_error(&self, error: &str, base: &str, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let (headline, details) = friendly_server_error(error, base);
+        let open = self.models_error_details;
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(error_line(headline, &p));
+        if let Some(details) = details {
+            col = col.child(
+                div()
+                    .id("settings-models-error-details")
+                    .keyboard_focusable(
+                        "settings-models-error-details",
+                        Role::DisclosureTriangle,
+                        t("reasoning.custom.errorDetails"),
+                        cx,
+                    )
+                    .aria_expanded(open)
+                    .ml(px(20.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .rounded(px(RADIUS_SM))
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.muted_foreground)
+                    .cursor_pointer()
+                    .hover(|s| s.text_color(p.foreground))
+                    .child(t("reasoning.custom.errorDetails"))
+                    .child(
+                        icon("chevron-down", 12., p.muted_foreground).with_transformation(
+                            Transformation::rotate(radians(if open {
+                                0.
+                            } else {
+                                -std::f32::consts::FRAC_PI_2
+                            })),
+                        ),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.models_error_details = !this.models_error_details;
+                        cx.notify();
+                    })),
+            );
+            if open {
+                col = col.child(
+                    div()
+                        .ml(px(20.))
+                        .px(px(10.))
+                        .py(px(8.))
+                        .rounded(px(RADIUS_MD))
+                        .bg(p.hover_wash(0.04))
+                        .font_family(FONT_MONO)
+                        .text_size(px(TEXT_SMALL))
+                        .line_height(px(LINE_SMALL))
+                        .text_color(p.muted_foreground)
+                        .child(details),
+                );
+            }
+        }
+        col.into_any_element()
     }
 
     fn render_prompt_studio(
@@ -1698,9 +1920,12 @@ impl SettingsModal {
             (PromptTab::Test, "test-tube", "promptStudio.tabs.test"),
         ] {
             let active = tab == value;
+            let tab_id = SharedString::from(format!("settings-prompt-tab-{key}"));
             tabs = tabs.child(
                 div()
-                    .id(SharedString::from(format!("prompt-tab-{key}")))
+                    .id(tab_id.clone())
+                    .keyboard_focusable(tab_id, Role::Tab, t(key), cx)
+                    .aria_selected(active)
                     .flex_1()
                     .flex()
                     .items_center()
@@ -1992,17 +2217,11 @@ impl SettingsModal {
                                                 .child(t("promptStudio.test.outputLabel")),
                                         )
                                         .child(
-                                            div()
-                                                .id("copy-test-output")
-                                                .h(px(24.))
-                                                .w(px(28.))
-                                                .flex()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded(px(RADIUS_SM))
-                                                .cursor_pointer()
-                                                .hover(|s| s.bg(p.muted))
-                                                .child(icon("copy", 12., p.muted_foreground))
+                                            Button::new("settings-copy-test-output")
+                                                .icon("copy", 12.)
+                                                .aria_label(t("promptStudio.common.copy"))
+                                                .variant(ButtonVariant::Ghost)
+                                                .size(ButtonSize::Sm)
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.copy_prompt(copy_text.clone(), cx)
                                                 })),
@@ -2062,61 +2281,49 @@ impl SettingsModal {
         } else {
             t("settings.privacy.audioStorageEmpty")
         };
-        let block = |content: Div| {
-            div()
-                .border_t_1()
-                .border_color(p.border.opacity(0.7))
-                .pt(px(24.))
-                .child(content)
-        };
-
         div()
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(block(
-                settings_section(
-                    t("settings.privacy.audioRetention"),
-                    Some(t("settings.privacy.audioRetentionDescription").into()),
-                    vec![
-                        settings_row(
-                            t("settings.privacy.audioRetention"),
-                            Some(t("settings.privacy.audioRetentionDescription").into()),
-                            self.audio_retention.clone(),
-                            &p,
-                        )
-                        .into_any_element(),
-                        settings_row(
-                            t("settings.privacy.audioStorageUsage"),
-                            Some(usage.into()),
-                            Button::new("clear-audio")
-                                .label(t("settings.privacy.clearAllAudio"))
-                                .variant(ButtonVariant::Outline)
-                                .size(ButtonSize::Sm)
-                                .disabled(files == 0)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
-                                    this.storage_usage = (0, 0);
-                                    show_toast(Toast::new(t("settings.privacy.clearAllAudio")), cx);
-                                    cx.notify();
-                                })),
-                            &p,
-                        )
-                        .into_any_element(),
-                    ],
-                    &p,
-                ),
-            ))
-            .child(block(div().child(settings_panel(
+            .child(settings_section(
+                t("settings.privacy.audioRetention"),
+                Some(t("settings.privacy.audioRetentionDescription").into()),
                 vec![
                     settings_row(
-                        t("settings.privacy.dataRetention"),
-                        Some(t("settings.privacy.dataRetentionDescription").into()),
-                        Toggle::new("data-retention", s.data_retention_enabled)
-                            .on_change(|v, _, cx| update_settings(cx, |s| s.data_retention_enabled = v)),
+                        t("settings.privacy.keepAudioFor"),
+                        None,
+                        self.audio_retention.clone(),
                         &p,
                     )
                     .into_any_element(),
+                    settings_row(
+                        t("settings.privacy.audioStorageUsage"),
+                        Some(usage.into()),
+                        Button::new("settings-clear-audio")
+                            .label(t("settings.privacy.clearAllAudio"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .disabled(files == 0)
+                            .on_click(cx.listener(|this, _, _, cx| this.confirm_clear_audio(cx))),
+                        &p,
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.privacy.historyTitle"),
+                None,
+                vec![
+                    toggle_row(
+                        "data-retention",
+                        t("settings.privacy.dataRetention"),
+                        Some(t("settings.privacy.dataRetentionDescription")),
+                        s.data_retention_enabled,
+                        false,
+                        |v, _, cx| update_settings(cx, |s| s.data_retention_enabled = v),
+                        &p,
+                    ),
                     settings_row(
                         t("settings.privacy.transcriptRetention"),
                         Some(t("settings.privacy.transcriptRetentionDescription").into()),
@@ -2126,13 +2333,13 @@ impl SettingsModal {
                     .into_any_element(),
                 ],
                 &p,
-            ))))
-            .child(block(settings_section(
+            ))
+            .child(settings_section(
                 t("settings.permissions.title"),
                 Some(t("settings.permissions.description").into()),
                 vec![
                     permission_row(
-                        "perm-mic",
+                        "settings-perm-mic",
                         t("settings.permissions.microphoneTitle"),
                         t("settings.permissions.microphoneDescription"),
                         self.mic_permission,
@@ -2144,7 +2351,7 @@ impl SettingsModal {
                         &p,
                     ),
                     permission_row(
-                        "perm-ax",
+                        "settings-perm-ax",
                         t("settings.permissions.accessibilityTitle"),
                         t("settings.permissions.accessibilityDescription"),
                         self.accessibility_permission,
@@ -2157,8 +2364,8 @@ impl SettingsModal {
                     ),
                 ],
                 &p,
-            )))
-            .child(block(
+            ))
+            .child(
                 settings_section(
                     t("settings.permissions.troubleshootingTitle"),
                     None,
@@ -2166,7 +2373,7 @@ impl SettingsModal {
                         settings_row(
                             t("settings.permissions.resetAccessibility.label"),
                             Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
-                            Button::new("troubleshoot-ax")
+                            Button::new("settings-troubleshoot-ax")
                                 .label(t("settings.permissions.troubleshoot"))
                                 .variant(ButtonVariant::Outline)
                                 .size(ButtonSize::Sm)
@@ -2187,66 +2394,108 @@ impl SettingsModal {
                     ],
                     &p,
                 ),
-            ))
+            )
             .into_any_element()
+    }
+
+    /// Deleting every recording cannot be undone, so it asks first and then
+    /// reports what was freed.
+    fn confirm_clear_audio(&mut self, cx: &mut Context<Self>) {
+        let (files, bytes) = self.storage_usage;
+        let size = crate::text::format::format_bytes(bytes);
+        let this = cx.entity().downgrade();
+        let mut request = DialogRequest::confirm(
+            t("settings.privacy.clearAudioTitle"),
+            Some(
+                t_with(
+                    "settings.privacy.clearAudioDescription",
+                    &[("count", &files.to_string()), ("size", &size)],
+                )
+                .into(),
+            ),
+            true,
+            move |_, cx| {
+                AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
+                let _ = this.update(cx, |this, cx| {
+                    this.storage_usage = backend::audio_storage_usage();
+                    cx.notify();
+                });
+                show_toast(
+                    Toast::new(t_with(
+                        "settings.privacy.audioCleared",
+                        &[("count", &files.to_string()), ("size", &size)],
+                    ))
+                    .variant(ToastVariant::Success),
+                    cx,
+                );
+            },
+        );
+        request.confirm_label = t("settings.privacy.clearAudioConfirm").into();
+        show_dialog(request, cx);
     }
 }
 
-/// Two side-by-side cards, one per activation mode, each explaining itself.
+/// Two side-by-side cards, one per activation mode, each explaining itself
+/// with a small press diagram and marked by a radio like the model list.
 fn activation_mode_cards(
     mode: ActivationMode,
     push_disabled: Option<String>,
-    p: &Palette,
-) -> impl IntoElement {
-    let p = *p;
+    cx: &mut App,
+) -> impl IntoElement + use<> {
+    let p = cx.palette();
     let push_blocked = push_disabled.is_some();
     let options = [
         (
             ActivationMode::Tap,
-            "mouse-pointer-click",
             "common.tap",
             t("settings.general.hotkey.activationModeTapDescription"),
         ),
         (
             ActivationMode::Push,
-            "mic-vocal",
             "common.hold",
             push_disabled
                 .unwrap_or_else(|| t("settings.general.hotkey.activationModeHoldDescription")),
         ),
     ];
-    div().flex().gap(px(8.)).children(options.into_iter().map(
-        move |(value, icon_name, key, description)| {
-            let selected = mode == value;
-            let disabled = value == ActivationMode::Push && push_blocked;
-            let title_color = if selected {
-                p.foreground
-            } else {
-                p.muted_foreground
-            };
+    let mut row = div().flex().flex_wrap().gap(px(8.));
+    for (value, key, description) in options {
+        let selected = mode == value;
+        let disabled = value == ActivationMode::Push && push_blocked;
+        let accent = if selected {
+            p.foreground
+        } else {
+            p.muted_foreground
+        };
+        let id = SharedString::from(format!("settings-activation-{key}"));
+        row = row.child(
             div()
-                .id(SharedString::from(format!("activation-{key}")))
+                .id(id.clone())
+                .when(!disabled, |d| {
+                    d.keyboard_focusable(id, Role::RadioButton, t(key), cx)
+                        .aria_selected(selected)
+                })
                 .flex_1()
-                .min_w_0()
-                .p(px(12.))
-                .rounded(px(RADIUS_LG))
+                .min_w(px(200.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .px(px(16.))
+                .py(px(14.))
+                .rounded(px(RADIUS_XL))
                 .border_1()
-                .when(selected, |d| {
-                    d.border_color(p.foreground.opacity(if p.dark { 0.3 } else { 0.4 }))
-                        .bg(if p.dark {
-                            p.surface_raised
-                        } else {
-                            p.surface_3
-                        })
+                .map(|d| {
+                    if selected {
+                        d.border_color(p.foreground.opacity(if p.dark { 0.5 } else { 0.6 }))
+                            .bg(p.hover_wash(if p.dark { 0.05 } else { 0.03 }))
+                    } else {
+                        d.border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
+                            .bg(p.card.opacity(0.4))
+                    }
                 })
-                .when(!selected, |d| {
-                    d.border_color(if p.dark { p.border_hover } else { p.border })
-                        .bg(if p.dark { p.surface_1 } else { p.background })
-                })
-                .when(disabled, |d| d.opacity(0.6))
+                .when(disabled, |d| d.opacity(0.5))
                 .when(!disabled && !selected, |d| {
                     d.cursor_pointer()
-                        .hover(|s| s.bg(p.hover_wash(0.04)))
+                        .hover(|s| s.bg(p.hover_wash(0.03)))
                         .on_click(move |_, _, cx| {
                             update_settings(cx, |s| s.activation_mode = value)
                         })
@@ -2255,26 +2504,146 @@ fn activation_mode_cards(
                     div()
                         .flex()
                         .items_center()
-                        .gap(px(8.))
-                        .child(icon(icon_name, 14., title_color))
+                        .gap(px(10.))
+                        .child(radio_dot(selected, &p))
                         .child(
                             div()
+                                .flex_1()
                                 .text_size(px(TEXT_BODY))
                                 .font_weight(FontWeight::MEDIUM)
-                                .text_color(title_color)
+                                .text_color(p.foreground)
                                 .child(t(key)),
-                        ),
+                        )
+                        .child(press_diagram(value, accent)),
                 )
                 .child(
                     div()
-                        .mt(px(6.))
+                        .pl(px(22.))
                         .text_size(px(TEXT_SMALL))
                         .line_height(px(LINE_SMALL))
                         .text_color(p.subtle_foreground)
                         .child(description),
-                )
-        },
-    ))
+                ),
+        );
+    }
+    row
+}
+
+/// A key press drawn on a timeline: two short taps, or one long hold.
+fn press_diagram(mode: ActivationMode, color: Hsla) -> Div {
+    let press = |width: f32| div().h(px(4.)).w(px(width)).rounded_full().bg(color);
+    let line = div().flex().items_center().gap(px(3.)).w(px(32.));
+    match mode {
+        ActivationMode::Tap => line.child(press(6.)).child(press(6.)),
+        ActivationMode::Push => line.child(press(32.)),
+    }
+}
+
+/// The 12 px radio used by the activation cards and the model list.
+fn radio_dot(selected: bool, p: &Palette) -> Div {
+    div()
+        .size(px(12.))
+        .flex_none()
+        .rounded_full()
+        .when(selected, |d| d.border_4().border_color(p.foreground))
+        .when(!selected, |d| {
+            d.border_1().border_color(p.subtle_foreground)
+        })
+}
+
+/// A settings row whose whole surface flips its switch, so the hit target
+/// is the row and not only the 30×18 track.
+fn toggle_row(
+    id: &'static str,
+    label: String,
+    description: Option<String>,
+    checked: bool,
+    disabled: bool,
+    on_change: impl Fn(bool, &mut Window, &mut App) + 'static,
+    p: &Palette,
+) -> AnyElement {
+    let on_change: Rc<dyn Fn(bool, &mut Window, &mut App)> = Rc::new(on_change);
+    let on_switch = on_change.clone();
+    let toggle = Toggle::new(id, checked)
+        .label(label.clone())
+        .disabled(disabled)
+        .on_change(move |value, window, cx| {
+            // The row's own click would flip it straight back.
+            cx.stop_propagation();
+            on_switch(value, window, cx)
+        });
+    settings_row(label, description.map(Into::into), toggle, p)
+        .id((id, 1usize))
+        .when(!disabled, |d| {
+            d.cursor_pointer()
+                .on_click(move |_, window, cx| on_change(!checked, window, cx))
+        })
+        .into_any_element()
+}
+
+/// An error sentence led by an alert icon; the icon carries the color so
+/// the text stays readable.
+fn error_line(message: String, p: &Palette) -> AnyElement {
+    div()
+        .flex()
+        .items_start()
+        .gap(px(6.))
+        .child(div().h(px(LINE_SMALL)).flex().items_center().child(icon(
+            "alert-circle",
+            14.,
+            p.destructive,
+        )))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
+                .text_color(p.foreground)
+                .child(message),
+        )
+        .into_any_element()
+}
+
+/// The host and port of a base URL, as people read it: `127.0.0.1:9`.
+fn endpoint_host(base: &str) -> String {
+    url::Url::parse(base)
+        .ok()
+        .and_then(|url| {
+            let host = url.host_str()?.to_string();
+            Some(match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host,
+            })
+        })
+        .unwrap_or_else(|| base.to_string())
+}
+
+/// Turns a server error into a sentence with the next step, plus the raw
+/// text when it adds detail. Messages that are already localized pass
+/// through as they are.
+fn friendly_server_error(raw: &str, base: &str) -> (String, Option<String>) {
+    let raw = raw.trim();
+    let host = endpoint_host(base);
+    let lower = raw.to_ascii_lowercase();
+    let status = raw
+        .split_whitespace()
+        .next()
+        .filter(|code| code.len() == 3 && code.chars().all(|c| c.is_ascii_digit()));
+    let headline = if lower.starts_with("error sending request")
+        || lower.contains("connection refused")
+        || lower.contains("dns error")
+        || lower.contains("connect")
+    {
+        t_with("settings.serverErrors.unreachable", &[("host", &host)])
+    } else if lower.contains("timed out") {
+        t_with("settings.serverErrors.timedOut", &[("host", &host)])
+    } else if let Some(status) = status {
+        t_with("settings.serverErrors.status", &[("status", status)])
+    } else {
+        return (raw.to_string(), None);
+    };
+    (headline, Some(raw.to_string()))
 }
 
 fn info_line(label: String, value: String, p: &Palette) -> Div {
@@ -2313,13 +2682,15 @@ fn split_model_id(id: &str) -> (&str, &str, &str) {
     (&rest[..slash], &rest[slash..], tag)
 }
 
-fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyElement {
+fn model_card_list(
+    models: &[ModelOption],
+    selected: &str,
+    p: &Palette,
+    cx: &mut App,
+) -> AnyElement {
+    // The status line above already explains an empty list.
     if models.is_empty() {
-        return div()
-            .text_size(px(TEXT_SMALL))
-            .text_color(p.muted_foreground)
-            .child(t("models.noneAvailable"))
-            .into_any_element();
+        return div().into_any_element();
     }
     let p = *p;
     let line = if p.dark {
@@ -2379,6 +2750,13 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
         table = table.child(
             row()
                 .id(("model-card", index))
+                .keyboard_focusable(
+                    ("settings-model", index),
+                    Role::RadioButton,
+                    model.label.clone(),
+                    cx,
+                )
+                .aria_selected(is_selected)
                 .py(px(9.))
                 .when(index > 0, |d| d.border_t_1().border_color(line))
                 .cursor_pointer()
@@ -2388,16 +2766,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
                     let value = value.clone();
                     update_settings(cx, |s| s.cleanup_model = value)
                 })
-                .child(
-                    div()
-                        .size(px(12.))
-                        .flex_none()
-                        .rounded_full()
-                        .when(is_selected, |d| d.border_4().border_color(p.foreground))
-                        .when(!is_selected, |d| {
-                            d.border_1().border_color(p.subtle_foreground)
-                        }),
-                )
+                .child(radio_dot(is_selected, &p))
                 .child(
                     div()
                         .flex_1()
@@ -2492,11 +2861,7 @@ impl Render for SettingsModal {
             SettingsSection::Llms => self.render_llms(window, cx),
             SettingsSection::PrivacyData => self.render_privacy(cx),
         };
-        let viewport = window.viewport_size();
-        // Inset clear of the top bar and traffic lights, like a sheet over the canvas.
-        let width = (viewport.width - px(96.)).min(px(1120.));
-        let height = (viewport.height - px(104.)).min(px(960.));
-        let compact = width < px(800.);
+        let frame = sheet_frame(window.viewport_size());
         let closing = self.closing;
         let section_label = t(&format!("settings.sections.{}.label", self.section.key()));
         let header = div()
@@ -2526,39 +2891,106 @@ impl Render for SettingsModal {
                     .child(section_label),
             )
             .child(
-                div()
-                    .id("settings-close")
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(28.))
-                    .rounded(px(RADIUS_LG))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(p.hover_wash(if p.dark { 0.06 } else { 0.05 })))
-                    .child(icon("x", 16., p.muted_foreground))
-                    .on_click(cx.listener(|this, _, _, cx| this.request_close(cx))),
+                Button::new("settings-close")
+                    .icon("x", 16.)
+                    .aria_label(t("settings.close"))
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
             );
+
+        // A soft edge at the bottom says the page continues below.
+        let max_scroll = self.scroll.max_offset().y;
+        // The scroll extent is only known after layout; look again next frame
+        // so the fade shows on a page that opens with more below.
+        if self.measured_section != Some(self.section) {
+            self.measured_section = Some(self.section);
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+        }
+        let more_below = max_scroll > px(1.) && self.scroll.offset().y > -max_scroll + px(1.);
+        let fade = f32_tx(
+            "settings-scroll-fade",
+            if more_below { 1. } else { 0. },
+            DUR_FAST,
+            ease_out,
+            window,
+            cx,
+        );
+        let radius = px(RADIUS_2XL - 1.);
+        let body = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .id("settings-content")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(
+                        page_container()
+                            .when(frame.compact, |d| d.px(px(20.)))
+                            .pb(px(48.))
+                            .child(content),
+                    ),
+            )
+            .when(fade > 0.01, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right(px(12.))
+                        .bottom_0()
+                        .h(px(24.))
+                        .opacity(fade)
+                        .when(!frame.attached, |d| d.rounded_br(radius))
+                        .bg(linear_gradient(
+                            0.,
+                            linear_color_stop(p.background, 0.),
+                            linear_color_stop(p.background.opacity(0.), 1.),
+                        )),
+                )
+            });
 
         let panel = div()
             .id("settings-panel")
+            .role(Role::Dialog)
+            .aria_label(t("sidebar.settings"))
+            .key_context("SettingsModal")
+            .on_action(cx.listener(Self::on_close_overlay))
             .occlude()
-            .relative()
-            .w(width)
-            .h(height)
+            .absolute()
+            .left(frame.bounds.origin.x)
+            .top(frame.bounds.origin.y)
+            .w(frame.bounds.size.width)
+            .h(frame.bounds.size.height)
             .flex()
-            .rounded(px(RADIUS_2XL))
+            .map(|d| {
+                if frame.attached {
+                    d.rounded_t(px(RADIUS_2XL)).border_t_1()
+                } else {
+                    d.rounded(px(RADIUS_2XL)).border_1()
+                }
+            })
             .overflow_hidden()
-            .border_1()
             .border_color(p.border)
             .bg(p.background)
             .shadow(dialog_shadow(&p))
             .on_click(|_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .w(px(if compact { 48. } else { 240. }))
+                    .w(px(if frame.compact { 196. } else { 240. }))
                     .flex_none()
                     .h_full()
+                    // The panel clips square, so the sidebar fill rounds its
+                    // own outer corners to sit inside the border.
+                    .map(|d| {
+                        if frame.attached {
+                            d.rounded_tl(radius)
+                        } else {
+                            d.rounded_l(radius)
+                        }
+                    })
                     .border_r_1()
                     .border_color(p.border)
                     .bg(p.settings_sidebar)
@@ -2572,25 +3004,9 @@ impl Render for SettingsModal {
                     .flex()
                     .flex_col()
                     .child(header)
-                    .child(
-                        div()
-                            .id("settings-content")
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll)
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(896.))
-                                    .mx_auto()
-                                    .px(px(if compact { 16. } else { 24. }))
-                                    .pt(px(24.))
-                                    .pb(px(48.))
-                                    .child(content),
-                            ),
-                    ),
+                    .child(body),
             )
+            .focus_trap("settings-sheet", &self.focus)
             .with_animation(
                 ("settings-panel-anim", closing as usize),
                 Animation::new(Duration::from_millis(if closing {
@@ -2608,16 +3024,11 @@ impl Render for SettingsModal {
 
         div()
             .id("settings-backdrop")
-            .track_focus(&self.focus)
-            .key_context("SettingsModal")
             .absolute()
             .inset_0()
-            .flex()
-            .items_center()
-            .justify_center()
             .bg(backdrop(&p))
             .occlude()
-            .on_click(cx.listener(|this, _, _, cx| this.request_close(cx)))
+            .on_click(cx.listener(|this, _, window, cx| this.close(window, cx)))
             .child(panel)
             .with_animation(
                 ("settings-backdrop-anim", closing as usize),
@@ -2629,5 +3040,85 @@ impl Render for SettingsModal {
                 .with_easing(if closing { ease_snap } else { ease_out }),
                 move |d, t| d.opacity(if closing { 1. - t } else { t }),
             )
+    }
+}
+
+/// Where the sheet sits in the window, and whether it uses the narrow layout.
+struct SheetFrame {
+    bounds: Bounds<Pixels>,
+    /// Hangs from the top bar across the full window width instead of
+    /// floating centered.
+    attached: bool,
+    compact: bool,
+}
+
+/// The widest the sheet grows; its content column stops at `PAGE_MAX_WIDTH`.
+const SHEET_MAX_WIDTH: f32 = 1120.;
+const SHEET_MAX_HEIGHT: f32 = 960.;
+
+/// A centered sheet when the window is wide enough for it to clear the app
+/// sidebar entirely. Otherwise the sheet hangs from the top bar and covers
+/// the window below it edge to edge, so no sidebar label or transcript line
+/// peeks out half cut beside it.
+fn sheet_frame(viewport: Size<Pixels>) -> SheetFrame {
+    let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
+    let centered_inset = (vw - SHEET_MAX_WIDTH) / 2.;
+    let attached = centered_inset < SIDEBAR_WIDTH + 24.;
+    let (x, y, w, h) = if attached {
+        let top = WORKSPACE_TOP_BAR_HEIGHT;
+        (0., top, vw, vh - top)
+    } else {
+        let h = (vh - 2. * WORKSPACE_TOP_BAR_HEIGHT).min(SHEET_MAX_HEIGHT);
+        (centered_inset, (vh - h) / 2., SHEET_MAX_WIDTH, h)
+    };
+    SheetFrame {
+        bounds: Bounds::new(point(px(x), px(y)), size(px(w), px(h))),
+        attached,
+        compact: w < 900.,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{endpoint_host, friendly_server_error, sheet_frame};
+    use gpui_kit::{px, size};
+
+    #[test]
+    fn transport_errors_become_a_next_step_and_keep_the_raw_text() {
+        let raw = "error sending request for url (http://127.0.0.1:9/v1/models)";
+        let (headline, details) = friendly_server_error(raw, "http://127.0.0.1:9/v1");
+        assert!(headline.contains("127.0.0.1:9"));
+        assert_eq!(details.as_deref(), Some(raw));
+    }
+
+    #[test]
+    fn status_errors_name_the_code_and_localized_messages_pass_through() {
+        let (headline, details) = friendly_server_error("404 Not Found", "http://host/v1");
+        assert!(headline.contains("404"));
+        assert!(details.is_some());
+        let (headline, details) = friendly_server_error("Add an API key.", "http://host/v1");
+        assert_eq!(headline, "Add an API key.");
+        assert!(details.is_none());
+    }
+
+    #[test]
+    fn endpoint_host_keeps_the_port() {
+        assert_eq!(
+            endpoint_host("http://localhost:11434/v1"),
+            "localhost:11434"
+        );
+        assert_eq!(endpoint_host("https://api.openai.com/v1"), "api.openai.com");
+    }
+
+    #[test]
+    fn sheet_covers_the_sidebar_unless_it_can_clear_it() {
+        let narrow = sheet_frame(size(px(720.), px(480.)));
+        assert!(narrow.attached && narrow.compact);
+        assert_eq!(narrow.bounds.origin.x, px(0.));
+        let default = sheet_frame(size(px(1200.), px(800.)));
+        assert!(default.attached && !default.compact);
+        let wide = sheet_frame(size(px(1800.), px(1100.)));
+        assert!(!wide.attached);
+        assert!(f32::from(wide.bounds.origin.x) >= super::SIDEBAR_WIDTH + 24.);
     }
 }

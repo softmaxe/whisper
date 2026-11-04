@@ -41,7 +41,8 @@
     },
     "dictionary": {
       "autoLearnTitle": "Auto-learn from corrections",
-      "autoLearnDescription": "When you correct a transcription in the target app, Whisper remembers the word and how it was misheard, and fixes repeated mistakes for you."
+      "autoLearnDescription": "When you correct a transcription in the target app, Whisper remembers the word and how it was misheard, and fixes repeated mistakes for you.",
+      "title": "Dictionary"
     },
     "general": {
       "appearance": {
@@ -70,7 +71,8 @@
         "activationModeTapDescription": "Double-tap the hotkey to start hands-free dictation, then press it once to finish. Key combinations start and stop with a single press.",
         "description": "The key combination that starts and stops voice dictation",
         "resetToDefault": "Reset to {{hotkey}}",
-        "title": "Dictation hotkey"
+        "title": "Dictation hotkey",
+        "activationModeDescription": "How the hotkey starts and stops dictation"
       },
       "microphone": {
         "description": "Select which input device to use for dictation",
@@ -129,14 +131,23 @@
       "retentionDays_one": "{{count}} day",
       "retentionDays_other": "{{count}} days",
       "audioStorageUsage": "Storage used",
-      "audioStorageFiles": "{{count}} files, {{size}}",
       "audioStorageEmpty": "No audio files stored",
       "clearAllAudio": "Clear All Audio",
       "dataRetention": "Save history",
       "dataRetentionDescription": "Store transcriptions and audio locally in your history. When disabled, transcriptions are pasted but not saved.",
       "transcriptRetention": "Transcript retention",
       "transcriptRetentionDescription": "Automatically delete saved transcriptions, their audio, and their Insights counters after this period.",
-      "transcriptRetentionForever": "Forever"
+      "transcriptRetentionForever": "Forever",
+      "keepAudioFor": "Keep audio for",
+      "historyTitle": "History",
+      "clearAudioTitle": "Delete all audio?",
+      "clearAudioDescription_one": "{{count}} recording ({{size}}) will be permanently deleted. Your transcripts stay in history.",
+      "clearAudioDescription_other": "{{count}} recordings ({{size}}) will be permanently deleted. Your transcripts stay in history.",
+      "clearAudioConfirm": "Delete Audio",
+      "audioCleared_one": "Deleted {{count}} audio file ({{size}})",
+      "audioCleared_other": "Deleted {{count}} audio files ({{size}})",
+      "audioStorageFiles_one": "{{count}} file, {{size}}",
+      "audioStorageFiles_other": "{{count}} files, {{size}}"
     },
     "prompts": {
       "title": "Prompt Studio"
@@ -144,7 +155,14 @@
     "speechToText": {
       "title": "Speech to text",
       "sharedDescription": "Dictation and file transcription share these settings.",
-      "serverUrlHelp": "Base URL of an OpenAI-compatible speech-to-text server, such as vLLM or speaches. It usually ends in /v1; a full endpoint URL is trimmed to its base."
+      "serverUrlHelp": "Base URL of an OpenAI-compatible speech-to-text server, such as vLLM or speaches. It usually ends in /v1; a full endpoint URL is trimmed to its base.",
+      "connection": "Connection",
+      "connectionIdle": "Check that Whisper can reach this server.",
+      "connectionChecking": "Checking…",
+      "connected": "Connected",
+      "connectedWithModel": "Connected, model available",
+      "connectedModelMissing": "Connected, but the server doesn't list this model",
+      "testConnection": "Test Connection"
     },
     "llms": {
       "title": "Text cleanup",
@@ -166,6 +184,12 @@
       "invalid": "Not a valid http:// or https:// URL.",
       "needsHttps": "Public hosts need HTTPS. Plain HTTP only works on this Mac, your local network, or Tailscale.",
       "noV1": "No /v1 at the end. Most servers serve the API under /v1."
+    },
+    "close": "Close settings",
+    "serverErrors": {
+      "unreachable": "Couldn't reach {{host}}. Check that the server is running, then try again.",
+      "timedOut": "{{host}} didn't respond in time. Check the address, then try again.",
+      "status": "The server returned error {{status}}. Check the endpoint URL."
     }
   },
   "tray": {
@@ -270,7 +294,8 @@
       "unableToLoadModels": "Unable to load models from endpoint.",
       "selectModelHint": "No model selected yet — choose one from the list below.",
       "columnTag": "Tag",
-      "columnOwner": "Owner"
+      "columnOwner": "Owner",
+      "errorDetails": "Details"
     },
     "disableThinking": {
       "label": "Disable thinking output",
@@ -330,7 +355,12 @@
     "tryShortcut": "Try ⌘⇧K",
     "addAnother": "Add another hotkey",
     "duplicate": "Already added",
-    "singleModifierNeedsRightSide": "{{key}} on its own can't be a shortcut. Press {{alternative}} instead, or add a second key."
+    "singleModifierNeedsRightSide": "{{key}} on its own can't be a shortcut. Press {{alternative}} instead, or add a second key.",
+    "rowLabel": "Dictation hotkey {{hotkey}}. Press to change.",
+    "escToCancel": "Press Esc to cancel",
+    "remove": "Remove hotkey",
+    "sideLeft": "Left",
+    "sideRight": "Right"
   },
   "languageSelector": {
     "noLanguagesFound": "No languages found",
@@ -349,7 +379,8 @@
       "preferredDevice": "Preferred device"
     },
     "builtInDevice": "Built-in Microphone",
-    "unavailableDevice": "{{device}} (Unavailable)"
+    "unavailableDevice": "{{device}} (Unavailable)",
+    "refresh": "Refresh devices"
   },
   "promptStudio": {
     "common": {
@@ -605,7 +636,9 @@
   "apiKeyInput": {
     "placeholder": "Paste your API key",
     "editButton": "Edit",
-    "addButton": "Add"
+    "addButton": "Add",
+    "addLabel": "Add API key",
+    "editLabel": "Edit API key"
   },
   "app": {
     "toasts": {

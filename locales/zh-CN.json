@@ -41,7 +41,8 @@
     },
     "dictionary": {
       "autoLearnTitle": "从纠正中自动学习",
-      "autoLearnDescription": "当你在目标应用中纠正转录时，Whisper 会记住这个词以及它被误听成了什么，并自动修正重复出现的错误。"
+      "autoLearnDescription": "当你在目标应用中纠正转录时，Whisper 会记住这个词以及它被误听成了什么，并自动修正重复出现的错误。",
+      "title": "词典"
     },
     "general": {
       "appearance": {
@@ -70,7 +71,8 @@
         "activationModeTapDescription": "双击快捷键开始免提听写，再按一下结束。组合键按一下即可开始或结束。",
         "description": "用于开始和停止语音听写的组合键",
         "resetToDefault": "重置为 {{hotkey}}",
-        "title": "听写快捷键"
+        "title": "听写快捷键",
+        "activationModeDescription": "快捷键如何开始和结束听写"
       },
       "microphone": {
         "description": "选择用于听写的输入设备",
@@ -81,7 +83,7 @@
         "dictationSoundsDescription": "在录音开始和停止时播放提示音",
         "pauseMedia": "暂停媒体",
         "pauseMediaDescription": "开始听写时自动暂停音乐",
-        "title": "音效"
+        "title": "声音与媒体"
       },
       "clipboard": {
         "title": "剪贴板",
@@ -123,7 +125,7 @@
       "troubleshootingTitle": "问题排查"
     },
     "privacy": {
-      "dataRetention": "数据保留",
+      "dataRetention": "保存历史记录",
       "dataRetentionDescription": "将转录和音频本地保存到历史记录中。禁用后，转录内容会被粘贴但不会被保存。",
       "transcriptRetention": "转录保留",
       "transcriptRetentionDescription": "在此期限后自动删除已保存的转录、其音频及其 Insights 计数。",
@@ -136,7 +138,13 @@
       "audioStorageUsage": "存储用量",
       "audioStorageFiles": "{{count}} 个文件，{{size}}",
       "audioStorageEmpty": "没有存储的音频文件",
-      "clearAllAudio": "清除所有音频"
+      "clearAllAudio": "清除所有音频",
+      "keepAudioFor": "音频保留时长",
+      "historyTitle": "历史记录",
+      "clearAudioTitle": "删除所有音频？",
+      "clearAudioDescription": "将永久删除 {{count}} 个录音（{{size}}）。转录内容仍会保留在历史记录中。",
+      "clearAudioConfirm": "删除音频",
+      "audioCleared": "已删除 {{count}} 个音频文件（{{size}}）"
     },
     "prompts": {
       "title": "提示词工作室"
@@ -144,7 +152,14 @@
     "speechToText": {
       "title": "语音转文字",
       "sharedDescription": "听写与文件转录共用此配置。",
-      "serverUrlHelp": "OpenAI 兼容的语音转文字服务（如 vLLM、speaches）的基础地址，通常以 /v1 结尾；填完整的接口地址也会自动截成基础地址。"
+      "serverUrlHelp": "OpenAI 兼容的语音转文字服务（如 vLLM、speaches）的基础地址，通常以 /v1 结尾；填完整的接口地址也会自动截成基础地址。",
+      "connection": "连接",
+      "connectionIdle": "检查 Whisper 能否连接到此服务器。",
+      "connectionChecking": "正在检查…",
+      "connected": "已连接",
+      "connectedWithModel": "已连接，模型可用",
+      "connectedModelMissing": "已连接，但服务器没有列出此模型",
+      "testConnection": "测试连接"
     },
     "llms": {
       "title": "文本整理",
@@ -166,6 +181,12 @@
       "invalid": "不是有效的 http:// 或 https:// 地址。",
       "needsHttps": "公网地址需要 HTTPS。HTTP 只能用于本机、局域网或 Tailscale。",
       "noV1": "结尾没有 /v1，大多数服务的 API 都在 /v1 下。"
+    },
+    "close": "关闭设置",
+    "serverErrors": {
+      "unreachable": "无法连接 {{host}}。请确认服务正在运行，然后重试。",
+      "timedOut": "{{host}} 没有及时响应。请检查地址后重试。",
+      "status": "服务器返回错误 {{status}}。请检查端点 URL。"
     }
   },
   "tray": {
@@ -258,7 +279,7 @@
       "httpsRequired": "需要 HTTPS（仅本地网络允许 HTTP）。",
       "endpointUnauthorized": "端点拒绝了请求（401/403）。请添加 API Key 或调整服务器认证设置。",
       "endpointTitle": "端点 URL",
-      "apiKeyOptional": "API Key（可选）",
+      "apiKeyOptional": "API 密钥",
       "apiKeyHelp": "可选，将作为 Bearer token 发送给文本整理服务器。",
       "applyAndRefresh": "应用并刷新",
       "queryPrefix": "我们将查询",
@@ -270,7 +291,8 @@
       "unableToLoadModels": "无法从端点加载模型。",
       "selectModelHint": "尚未选择模型 — 请从下方列表中选择一个。",
       "columnTag": "标签",
-      "columnOwner": "所有者"
+      "columnOwner": "所有者",
+      "errorDetails": "详细信息"
     },
     "disableThinking": {
       "label": "禁用思考输出",
@@ -330,7 +352,12 @@
     "tryShortcut": "试试 ⌘⇧K",
     "addAnother": "添加其他快捷键",
     "duplicate": "已添加",
-    "singleModifierNeedsRightSide": "{{key}} 单独不能作为快捷键。请按 {{alternative}}，或再加一个按键。"
+    "singleModifierNeedsRightSide": "{{key}} 单独不能作为快捷键。请按 {{alternative}}，或再加一个按键。",
+    "rowLabel": "听写快捷键 {{hotkey}}。按下以更改。",
+    "escToCancel": "按 Esc 取消",
+    "remove": "移除快捷键",
+    "sideLeft": "左",
+    "sideRight": "右"
   },
   "languageSelector": {
     "noLanguagesFound": "未找到匹配的语言",
@@ -349,7 +376,8 @@
       "preferredDevice": "优先设备"
     },
     "builtInDevice": "内置麦克风",
-    "unavailableDevice": "{{device}}（不可用）"
+    "unavailableDevice": "{{device}}（不可用）",
+    "refresh": "刷新设备"
   },
   "promptStudio": {
     "common": {
@@ -586,9 +614,11 @@
     "hide": "隐藏侧边栏"
   },
   "apiKeyInput": {
-    "placeholder": "输入你的 API Key",
-    "editButton": "编辑密钥",
-    "addButton": "添加密钥"
+    "placeholder": "粘贴你的 API 密钥",
+    "editButton": "编辑",
+    "addButton": "添加",
+    "addLabel": "添加 API 密钥",
+    "editLabel": "编辑 API 密钥"
   },
   "app": {
     "toasts": {
