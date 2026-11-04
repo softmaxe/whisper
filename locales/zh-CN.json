@@ -209,7 +209,8 @@
     "loading": "加载中...",
     "hold": "按住",
     "tap": "双击",
-    "save": "保存"
+    "save": "保存",
+    "close": "关闭"
   },
   "controlPanel": {
     "history": {
@@ -246,7 +247,9 @@
       "transcribing": "正在转录",
       "retryError": "重新转录失败",
       "audioNotFound": "音频文件未找到或已过期",
-      "rawTranscript": "原始转录"
+      "rawTranscript": "原始转录",
+      "copyRaw": "复制原始转录",
+      "moreActions": "更多操作"
     }
   },
   "reasoning": {
@@ -518,7 +521,9 @@
     "home": "首页",
     "upload": "上传",
     "dictionary": "词典",
-    "settings": "设置"
+    "settings": "设置",
+    "show": "显示侧边栏",
+    "hide": "隐藏侧边栏"
   },
   "apiKeyInput": {
     "placeholder": "输入你的 API Key",

@@ -209,7 +209,8 @@
     "loading": "Loading...",
     "hold": "Hold",
     "tap": "Double-tap",
-    "save": "Save"
+    "save": "Save",
+    "close": "Close"
   },
   "controlPanel": {
     "history": {
@@ -246,7 +247,9 @@
       "clearAllDescriptionDevice": "All transcriptions, audio files, and Insights counters will be permanently removed from this device.",
       "clearAllSuccess": "History cleared",
       "clearAllErrorTitle": "Couldn't clear history",
-      "clearAllErrorDescription": "Something went wrong. Please try again."
+      "clearAllErrorDescription": "Something went wrong. Please try again.",
+      "copyRaw": "Copy raw transcript",
+      "moreActions": "More actions"
     }
   },
   "reasoning": {
@@ -393,7 +396,9 @@
     "insights": "Insights",
     "upload": "Upload",
     "dictionary": "Dictionary",
-    "settings": "Settings"
+    "settings": "Settings",
+    "show": "Show sidebar",
+    "hide": "Hide sidebar"
   },
   "insights": {
     "yourUsage": "Your usage",

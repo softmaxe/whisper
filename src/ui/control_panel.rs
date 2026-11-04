@@ -11,7 +11,9 @@ use crate::i18n::t;
 use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
-use super::components::{NavSurface, drop, f32_tx, icon, inset, kbd, nav_row};
+use super::components::{
+    KeyboardFocusable, NavSurface, drop, f32_tx, icon, inset, kbd, nav_row, text_tooltip,
+};
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
@@ -361,6 +363,21 @@ impl ControlPanel {
                     .child(
                         div()
                             .id("sidebar-toggle")
+                            .keyboard_focusable(
+                                "panel-sidebar-toggle",
+                                Role::Button,
+                                t(if collapsed {
+                                    "sidebar.show"
+                                } else {
+                                    "sidebar.hide"
+                                }),
+                                cx,
+                            )
+                            .tooltip(text_tooltip(t(if collapsed {
+                                "sidebar.show"
+                            } else {
+                                "sidebar.hide"
+                            })))
                             .flex()
                             .flex_none()
                             .items_center()
@@ -386,7 +403,7 @@ impl ControlPanel {
                     .child(
                         div()
                             .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .line_height(px(20.))
                             .text_color(p.foreground)
                             .truncate()
@@ -396,6 +413,12 @@ impl ControlPanel {
             .child(
                 div()
                     .id("search-trigger")
+                    .keyboard_focusable(
+                        "panel-search-trigger",
+                        Role::SearchInput,
+                        t("commandSearch.placeholder"),
+                        cx,
+                    )
                     .flex_none()
                     .w(px(360.))
                     .max_w(relative(0.34))
@@ -522,7 +545,7 @@ impl Render for ControlPanel {
         );
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();
-        let dialog = render_dialog(cx);
+        let dialog = render_dialog(window, cx);
         let toasts = render_toasts(window, cx);
 
         div()
