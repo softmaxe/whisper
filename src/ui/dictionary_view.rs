@@ -461,14 +461,14 @@ impl DictionaryView {
         ] {
             let active = self.filter == filter;
             seg = seg.child(
-                segment(SharedString::from(key), active, &p)
+                segment(SharedString::from(key), t(key), active, cx)
                     .h_full()
                     .gap(px(6.))
                     .child(t(key))
                     .child(
                         div()
                             .font_features(tabular_nums())
-                            .text_color(p.muted_foreground.opacity(0.8))
+                            .text_color(p.subtle_foreground)
                             .child(count.to_string()),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1148,7 +1148,7 @@ impl DictionaryView {
                     .bg(p.muted.opacity(0.4))
                     .font_family(FONT_MONO)
                     .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_color(p.subtle_foreground)
                     .child(s)
             };
             div()

@@ -13,6 +13,9 @@ pub struct Palette {
     pub primary_foreground: Hsla,
     pub muted: Hsla,
     pub muted_foreground: Hsla,
+    /// Tertiary text (descriptions, timestamps, axis labels): a step quieter
+    /// than `muted_foreground` that still clears 4.5:1 on every surface.
+    pub subtle_foreground: Hsla,
     pub destructive: Hsla,
     pub border: Hsla,
     pub input: Hsla,
@@ -61,7 +64,8 @@ impl Palette {
             primary: c(0x1b4ed8),
             primary_foreground: c(0xffffff),
             muted: c(0xf4f4f5),
-            muted_foreground: c(0x71717b),
+            muted_foreground: c(0x62626c),
+            subtle_foreground: c(0x71717b),
             destructive: c(0xfb2c36),
             border: c(0xe4e4e7),
             input: c(0xffffff),
@@ -101,6 +105,7 @@ impl Palette {
             primary_foreground: c(0xffffff),
             muted: c(0x141414),
             muted_foreground: c(0xa1a1a1),
+            subtle_foreground: c(0x8b8b8b),
             destructive: c(0xfb414a),
             border: c(0xffffff).opacity(0.08),
             input: c(0x0a0a0a),

@@ -265,7 +265,7 @@ impl ControlPanel {
                     view.label(),
                     view == active,
                     NavSurface::App,
-                    &p,
+                    cx,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx))),
             );
@@ -306,7 +306,7 @@ impl ControlPanel {
                         t("sidebar.settings"),
                         false,
                         NavSurface::App,
-                        &p,
+                        cx,
                     )
                     .on_click(cx.listener(|_, _, window, cx| {
                         window.dispatch_action(Box::new(OpenSettings), cx)

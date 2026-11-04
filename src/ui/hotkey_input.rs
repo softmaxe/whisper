@@ -527,7 +527,7 @@ impl HotkeyListInput {
                         keys = keys.child(
                             div()
                                 .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground.opacity(0.7))
+                                .text_color(p.subtle_foreground)
                                 .child("+"),
                         );
                     }
@@ -583,7 +583,7 @@ impl HotkeyListInput {
                         .child(
                             div()
                                 .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground.opacity(0.7))
+                                .text_color(p.subtle_foreground)
                                 .child(t("hotkeyInput.clickToChangeLower")),
                         )
                         .when_some(removable, |d, index| {
@@ -593,7 +593,7 @@ impl HotkeyListInput {
                                     .opacity(0.)
                                     .group_hover("hotkey-row", |s| s.opacity(1.))
                                     .cursor_pointer()
-                                    .child(icon("trash2", 14., p.muted_foreground.opacity(0.7)))
+                                    .child(icon("trash2", 14., p.subtle_foreground))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         cx.stop_propagation();
                                         this.remove(index, cx);
@@ -681,7 +681,7 @@ impl Render for HotkeyListInput {
                             div()
                                 .id("reset-hotkey")
                                 .text_size(px(TEXT_SMALL))
-                                .text_color(p.muted_foreground.opacity(0.7))
+                                .text_color(p.subtle_foreground)
                                 .cursor_pointer()
                                 .hover(|s| s.text_color(p.foreground))
                                 .child(t_with(

@@ -201,7 +201,7 @@ impl InsightsView {
         {
             let active = self.range == range;
             picker = picker.child(
-                segment(("insights-range", index), active, p)
+                segment(("insights-range", index), range.label(), active, cx)
                     .h(px(24.))
                     .child(range.label())
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -405,7 +405,7 @@ impl InsightsView {
                         .justify_end()
                         .text_size(px(TEXT_CAPTION))
                         .font_features(tabular_nums())
-                        .text_color(p.muted_foreground.opacity(0.8))
+                        .text_color(p.subtle_foreground)
                         .child(compact_number(tick as i64)),
                 );
             tick += step;
@@ -525,7 +525,7 @@ impl InsightsView {
         let labels = labels
             .text_size(px(TEXT_CAPTION))
             .font_features(tabular_nums())
-            .text_color(p.muted_foreground.opacity(0.8));
+            .text_color(p.subtle_foreground);
 
         let points: Vec<Option<(f32, f32)>> = bars
             .iter()
@@ -768,7 +768,7 @@ impl Render for InsightsView {
                     .pt(px(32.))
                     .text_center()
                     .text_size(px(TEXT_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(t("insights.onDevicePrivacy")),
             )
     }

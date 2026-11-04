@@ -507,7 +507,7 @@ impl UploadView {
                     .mt(px(2.))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_color(p.subtle_foreground)
                     .child(t("upload.supportedFormats")),
             )
             .child(
@@ -668,7 +668,7 @@ impl UploadView {
                     .mt(px(2.))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.7))
+                    .text_color(p.subtle_foreground)
                     .child(t("upload.completionHint")),
             )
             .child(
@@ -1139,7 +1139,7 @@ impl UploadView {
                         .px(px(16.))
                         .text_size(px(TEXT_SMALL))
                         .line_height(px(LINE_SMALL))
-                        .text_color(p.muted_foreground.opacity(0.8))
+                        .text_color(p.subtle_foreground)
                         .child(t("upload.queueEmpty")),
                 )
             })

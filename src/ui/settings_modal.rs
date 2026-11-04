@@ -253,7 +253,7 @@ fn endpoint_control(field: impl IntoElement, raw: &str, path: &str, p: &Palette)
                     .gap(px(6.))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(t("settings.endpointHint.willCall"))
                     .child(
                         div()
@@ -917,7 +917,7 @@ impl SettingsModal {
                         .pb(px(4.))
                         .text_size(px(TEXT_SMALL))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground.opacity(0.8))
+                        .text_color(p.subtle_foreground)
                         .child(t(group)),
                 );
                 last_group = group;
@@ -931,7 +931,7 @@ impl SettingsModal {
                         t(&format!("settings.sections.{}.label", section.key())),
                         active,
                         NavSurface::Settings,
-                        &p,
+                        cx,
                     )
                     .on_click(cx.listener(move |this, _, _, cx| this.set_section(section, cx))),
                 ),
@@ -975,7 +975,7 @@ impl SettingsModal {
             ] {
                 let selected = s.theme == value;
                 track = track.child(
-                    segment(SharedString::from(format!("theme-{key}")), selected, &p)
+                    segment(SharedString::from(format!("theme-{key}")), t(key), selected, cx)
                         .gap(px(4.))
                         .py(px(4.))
                         .child(icon(
@@ -1474,7 +1474,7 @@ impl SettingsModal {
                                 .rounded(px(RADIUS_SM))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(p.muted.opacity(0.5)))
-                                .child(icon("x", 14., p.muted_foreground.opacity(0.7)))
+                                .child(icon("x", 14., p.subtle_foreground))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.api_key_editing = false;
                                     cx.notify();
@@ -1514,13 +1514,13 @@ impl SettingsModal {
                         .font_family(FONT_MONO)
                         .text_size(px(TEXT_SMALL))
                         .text_color(p.foreground.opacity(0.7))
-                        .child(icon("key-round", 12., p.muted_foreground.opacity(0.7)))
+                        .child(icon("key-round", 12., p.subtle_foreground))
                         .child(mask_key(&self.api_key))
                         .into_any_element()
                 } else {
                     div()
                         .text_size(px(TEXT_SMALL))
-                        .text_color(p.muted_foreground.opacity(0.7))
+                        .text_color(p.subtle_foreground)
                         .child(t("apiKeyInput.placeholder"))
                         .into_any_element()
                 })
@@ -1528,7 +1528,7 @@ impl SettingsModal {
                 .child(
                     div()
                         .text_size(px(TEXT_SMALL))
-                        .text_color(p.muted_foreground.opacity(0.7))
+                        .text_color(p.subtle_foreground)
                         .child(if has_key {
                             t("apiKeyInput.editButton")
                         } else {
@@ -1609,7 +1609,7 @@ impl SettingsModal {
                     t("reasoning.custom.apiKeyOptional"),
                     Some(small(
                         t("reasoning.custom.apiKeyHelp"),
-                        p.muted_foreground.opacity(0.8),
+                        p.subtle_foreground,
                     )),
                     None,
                     api_key_control,
@@ -1624,7 +1624,7 @@ impl SettingsModal {
                             .flex_wrap()
                             .gap(px(4.))
                             .text_size(px(TEXT_SMALL))
-                            .text_color(p.muted_foreground.opacity(0.8))
+                            .text_color(p.subtle_foreground)
                             .child(t("reasoning.custom.queryPrefix"))
                             .child(div().font_family(FONT_MONO).child(query_url))
                             .child(t("reasoning.custom.querySuffix"))
@@ -1760,7 +1760,7 @@ impl SettingsModal {
                                         div()
                                             .text_size(px(TEXT_SMALL))
                                             .font_weight(FontWeight::MEDIUM)
-                                            .text_color(p.muted_foreground.opacity(0.7))
+                                            .text_color(p.subtle_foreground)
                                             .child(
                                                 if is_custom {
                                                     t("promptStudio.view.customPrompt")
@@ -2268,7 +2268,7 @@ fn activation_mode_cards(
                         .mt(px(6.))
                         .text_size(px(TEXT_SMALL))
                         .line_height(px(LINE_SMALL))
-                        .text_color(p.muted_foreground.opacity(0.8))
+                        .text_color(p.subtle_foreground)
                         .child(description),
                 )
         },
@@ -2283,7 +2283,7 @@ fn info_line(label: String, value: String, p: &Palette) -> Div {
         .child(
             div()
                 .text_size(px(TEXT_SMALL))
-                .text_color(p.muted_foreground.opacity(0.7))
+                .text_color(p.subtle_foreground)
                 .child(label.to_uppercase()),
         )
         .child(
@@ -2329,7 +2329,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
     let header = |text: String| {
         div()
             .text_size(px(TEXT_CAPTION))
-            .text_color(p.muted_foreground.opacity(0.7))
+            .text_color(p.subtle_foreground)
             .child(text)
     };
     let mut table = div()
@@ -2371,7 +2371,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
                 .flex_none()
                 .truncate()
                 .text_size(px(TEXT_CAPTION))
-                .text_color(p.muted_foreground.opacity(0.7))
+                .text_color(p.subtle_foreground)
                 .child(text)
         };
         table = table.child(
@@ -2393,7 +2393,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
                         .rounded_full()
                         .when(is_selected, |d| d.border_4().border_color(p.foreground))
                         .when(!is_selected, |d| {
-                            d.border_1().border_color(p.muted_foreground.opacity(0.6))
+                            d.border_1().border_color(p.subtle_foreground)
                         }),
                 )
                 .child(
@@ -2413,7 +2413,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
                                             .flex_shrink(1.)
                                             .min_w_0()
                                             .truncate()
-                                            .text_color(p.muted_foreground.opacity(0.7))
+                                            .text_color(p.subtle_foreground)
                                             .child(source.to_string()),
                                     )
                                 })
@@ -2430,7 +2430,7 @@ fn model_card_list(models: &[ModelOption], selected: &str, p: &Palette) -> AnyEl
                                     .mt(px(2.))
                                     .truncate()
                                     .text_size(px(TEXT_CAPTION))
-                                    .text_color(p.muted_foreground.opacity(0.7))
+                                    .text_color(p.subtle_foreground)
                                     .child(desc),
                             )
                         }),
@@ -2514,7 +2514,7 @@ impl Render for SettingsModal {
                     .text_color(p.muted_foreground)
                     .child(t("sidebar.settings")),
             )
-            .child(div().text_color(p.muted_foreground.opacity(0.6)).child("/"))
+            .child(div().text_color(p.subtle_foreground).child("/"))
             .child(
                 div()
                     .flex_1()

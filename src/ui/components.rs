@@ -20,6 +20,60 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
         .text_color(color)
 }
 
+/// The keyboard focus ring: a 2 px ring color halo hugging the element's
+/// corners, shown only when focus arrived from the keyboard.
+pub fn focus_ring(p: &Palette) -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: p.ring.opacity(if p.dark { 0.85 } else { 0.7 }),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+        inset: false,
+    }]
+}
+
+/// Focus handles of [`KeyboardFocusable`] elements, by key. Kept app-wide so
+/// render helpers that only hold an `App` can make elements focusable.
+#[derive(Default)]
+struct FocusHandles(std::collections::HashMap<ElementId, FocusHandle>);
+
+impl Global for FocusHandles {}
+
+/// The focus handle stored under `key`, created on first use.
+pub fn keyed_focus_handle(key: ElementId, cx: &mut App) -> FocusHandle {
+    if let Some(handle) = cx.default_global::<FocusHandles>().0.get(&key) {
+        return handle.clone();
+    }
+    let handle = cx.focus_handle();
+    cx.global_mut::<FocusHandles>()
+        .0
+        .insert(key, handle.clone());
+    handle
+}
+
+/// Makes a clickable element reachable with Tab, activatable with Return or
+/// Space (GPUI turns those into clicks on the focused element), named for
+/// VoiceOver, and ringed while keyboard-focused. `key` must be unique in the
+/// app.
+pub trait KeyboardFocusable: StatefulInteractiveElement + Sized {
+    fn keyboard_focusable(
+        self,
+        key: impl Into<ElementId>,
+        role: Role,
+        label: impl Into<SharedString>,
+        cx: &mut App,
+    ) -> Self {
+        let p = cx.palette();
+        let handle = keyed_focus_handle(key.into(), cx);
+        self.track_focus(&handle.tab_stop(true))
+            .role(role)
+            .aria_label(label)
+            .focus_visible(move |s| s.shadow(focus_ring(&p)))
+    }
+}
+
+impl<T: StatefulInteractiveElement + Sized> KeyboardFocusable for T {}
+
 /// A color transition keyed by `id`, 150 ms ease by default.
 pub fn color_tx(
     id: impl Into<ElementId>,
@@ -60,6 +114,7 @@ pub struct Toggle {
     id: ElementId,
     checked: bool,
     disabled: bool,
+    label: Option<SharedString>,
     on_change: Option<Box<dyn Fn(bool, &mut Window, &mut App) + 'static>>,
 }
 
@@ -69,12 +124,19 @@ impl Toggle {
             id: id.into(),
             checked,
             disabled: false,
+            label: None,
             on_change: None,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// The name VoiceOver reads; usually the settings row's label.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
         self
     }
 
@@ -96,8 +158,10 @@ impl RenderOnce for Toggle {
             }
         } else if self.checked {
             p.primary
+        } else if p.dark {
+            p.white.opacity(0.22)
         } else {
-            p.input_border
+            p.foreground.opacity(0.15)
         };
         let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
@@ -108,16 +172,29 @@ impl RenderOnce for Toggle {
             window,
             cx,
         );
+        // The knob stays light in both themes, like the macOS switch, so the
+        // off state reads as a control and not an empty slot.
         let knob = if self.disabled {
             p.muted_foreground.opacity(0.5)
+        } else if p.dark {
+            p.foreground
         } else {
-            p.background
+            p.white
         };
         let checked = self.checked;
         let disabled = self.disabled;
         let on_change = self.on_change;
+        let label = self.label.unwrap_or_default();
         div()
-            .id(id)
+            .id(id.clone())
+            .when(!disabled, |d| {
+                d.keyboard_focusable(id.clone(), Role::Switch, label, cx)
+                    .aria_toggled(if checked {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+            })
             .relative()
             .flex_none()
             .w(px(30.))
@@ -168,6 +245,7 @@ pub struct Button {
     size: ButtonSize,
     disabled: bool,
     full_width: bool,
+    aria_label: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -181,6 +259,7 @@ impl Button {
             size: ButtonSize::Default,
             disabled: false,
             full_width: false,
+            aria_label: None,
             on_click: None,
         }
     }
@@ -212,6 +291,12 @@ impl Button {
 
     pub fn full_width(mut self) -> Self {
         self.full_width = true;
+        self
+    }
+
+    /// The VoiceOver name of an icon-only button.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -275,8 +360,16 @@ impl RenderOnce for Button {
         if depth > 0.01 && style.bg.is_some() {
             shadows.push(inset(0., 1., 0., hsla(0., 0., 0., 0.08 * depth)));
         }
+        let name = self
+            .aria_label
+            .clone()
+            .or_else(|| self.label.clone())
+            .unwrap_or_default();
         let mut el = div()
-            .id(self.id)
+            .id(self.id.clone())
+            .when(!disabled, |d| {
+                d.keyboard_focusable(self.id.clone(), Role::Button, name, cx)
+            })
             .flex()
             .flex_none()
             .items_center()
@@ -298,7 +391,7 @@ impl RenderOnce for Button {
             el = el.bg(bg);
         }
         if disabled {
-            el = el.opacity(0.64);
+            el = el.opacity(0.45);
         } else {
             el = el.cursor_pointer();
             if let Some(hover_bg) = style.hover_bg {
@@ -476,7 +569,7 @@ pub fn section_header(
                     .mt(px(2.))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(desc),
             )
         })
@@ -565,7 +658,7 @@ pub fn label_block(
                     .mt(px(2.))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(desc),
             )
         })
@@ -664,7 +757,7 @@ fn field_with_label(
                                     .mt(px(2.))
                                     .text_size(px(TEXT_SMALL))
                                     .line_height(px(LINE_SMALL))
-                                    .text_color(p.muted_foreground.opacity(0.8))
+                                    .text_color(p.subtle_foreground)
                                     .child(desc),
                             )
                         },
@@ -691,8 +784,10 @@ pub fn nav_row(
     label: impl Into<SharedString>,
     active: bool,
     surface: NavSurface,
-    p: &Palette,
+    cx: &mut App,
 ) -> Stateful<Div> {
+    let p = &cx.palette();
+    let label: SharedString = label.into();
     let (fg, icon_color) = if active {
         (p.foreground, p.foreground)
     } else {
@@ -707,7 +802,9 @@ pub fn nav_row(
     let hover_bg = p.hover_wash(if p.dark { hover_wash } else { 0.04 });
     let hover_fg = p.foreground;
     div()
-        .id(id)
+        .id(id.clone())
+        .keyboard_focusable(id, Role::Tab, label.clone(), cx)
+        .aria_selected(active)
         .flex()
         .items_center()
         .gap(px(8.))
@@ -733,7 +830,7 @@ pub fn nav_row(
             d.hover(move |s| s.bg(hover_bg).text_color(hover_fg))
         })
         .child(icon(icon_name, 16., icon_color))
-        .child(div().flex_1().min_w_0().truncate().child(label.into()))
+        .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
 /// The track of a segmented control: a 2 px inset on a faint wash. Callers
@@ -749,9 +846,18 @@ pub fn segmented_track(p: &Palette) -> Div {
 /// One option in a `segmented_track`: raised with foreground text when
 /// active, muted until hovered otherwise. Callers add height, padding on the
 /// vertical axis, gap, children and the click handler.
-pub fn segment(id: impl Into<ElementId>, active: bool, p: &Palette) -> Stateful<Div> {
+pub fn segment(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let p = &cx.palette();
+    let id: ElementId = id.into();
     div()
-        .id(id)
+        .id(id.clone())
+        .keyboard_focusable(id, Role::RadioButton, label, cx)
+        .aria_selected(active)
         .flex()
         .items_center()
         .px(px(10.))

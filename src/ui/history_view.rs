@@ -95,7 +95,7 @@ fn format_time(item: &TranscriptionItem) -> String {
 fn format_clock(time: DateTime<Local>) -> String {
     match i18n::language() {
         Language::ZhCn => time.format("%H:%M").to_string(),
-        Language::En => time.format("%I:%M %p").to_string(),
+        Language::En => time.format("%-I:%M %p").to_string(),
     }
 }
 
@@ -417,7 +417,7 @@ impl HistoryView {
                         .font_family(FONT_VOICE)
                         .text_size(px(TEXT_BODY))
                         .line_height(px(20.))
-                        .text_color(p.muted_foreground.opacity(0.8))
+                        .text_color(p.subtle_foreground)
                         .child(raw),
                 )
         });
@@ -560,7 +560,7 @@ impl HistoryView {
                     .pt(px(4.))
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(format_time(item)),
             )
             .child(
@@ -598,7 +598,7 @@ impl HistoryView {
                     .flex_none()
                     .pt(px(4.))
                     .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.65))
+                    .text_color(p.subtle_foreground)
                     .child(time),
             )
             .child(
@@ -837,7 +837,7 @@ impl Render for HistoryView {
                         div()
                             .flex_none()
                             .font_features(tabular_nums())
-                            .text_color(p.muted_foreground.opacity(0.8))
+                            .text_color(p.subtle_foreground)
                             .child(items.len().to_string()),
                     );
                 if index == 0 {
