@@ -11,8 +11,8 @@ use gpui_kit::*;
 use gpui_kit::base::FocusTrapElement;
 
 use super::components::{
-    Button, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, focus_ring, icon,
-    keyed_focus_handle, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, focus_ring,
+    icon, keyed_focus_handle, text_tooltip,
 };
 use super::theme::{
     DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
@@ -76,6 +76,8 @@ pub struct Toast {
     pub variant: ToastVariant,
     /// `None` uses the defaults: 6 s for destructive, else 3.5 s.
     pub duration: Option<Duration>,
+    /// One inline action, such as Undo. Running it also closes the toast.
+    pub action: Option<(SharedString, Callback)>,
 }
 
 impl Toast {
@@ -85,7 +87,17 @@ impl Toast {
             description: None,
             variant: ToastVariant::Default,
             duration: None,
+            action: None,
         }
+    }
+
+    pub fn action(
+        mut self,
+        label: impl Into<SharedString>,
+        f: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.action = Some((label.into(), Rc::new(f)));
+        self
     }
 
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
@@ -618,6 +630,21 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                         }
                     }),
             )
+            .when_some(toast.action.clone(), |d, (label, f)| {
+                let overlays = overlays.clone();
+                d.child(
+                    div().mr(px(20.)).flex_none().child(
+                        Button::new(("toast-action", id as usize))
+                            .label(label)
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(move |_, window, cx| {
+                                overlays.update(cx, |o, cx| o.dismiss_toast(id, cx));
+                                f(window, cx);
+                            }),
+                    ),
+                )
+            })
             .child(
                 div()
                     .id(("toast-close", id as usize))

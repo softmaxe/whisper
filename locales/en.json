@@ -259,7 +259,8 @@
     "dates": {
       "today": "Today",
       "yesterday": "Yesterday"
-    }
+    },
+    "undo": "Undo"
   },
   "controlPanel": {
     "history": {
@@ -267,8 +268,6 @@
       "couldNotLoadDescription": "Something went wrong loading your transcripts. Try closing and reopening the app.",
       "copiedTitle": "Copied",
       "copiedDescription": "Text copied to your clipboard",
-      "deleteTitle": "Delete transcript?",
-      "deleteDescription": "This transcript will be permanently removed.",
       "couldNotDeleteTitle": "Couldn’t delete",
       "couldNotDeleteDescription": "This transcript may have already been removed.",
       "couldNotDeleteDescriptionGeneric": "Something went wrong. Please try again.",
@@ -299,7 +298,8 @@
       "showRaw": "Show raw transcript",
       "hideRaw": "Hide raw transcript",
       "pageActions": "History actions",
-      "emptyDescriptionOff": "History is off, so new dictations are pasted but not saved here. Turn on Save history in Settings to keep them."
+      "emptyDescriptionOff": "History is off, so new dictations are pasted but not saved here. Turn on Save history in Settings to keep them.",
+      "deletedTitle": "Transcript deleted"
     }
   },
   "reasoning": {

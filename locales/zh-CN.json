@@ -256,7 +256,8 @@
     "dates": {
       "today": "今天",
       "yesterday": "昨天"
-    }
+    },
+    "undo": "撤销"
   },
   "controlPanel": {
     "history": {
@@ -264,8 +265,6 @@
       "couldNotLoadDescription": "加载转录记录时出错，请尝试关闭并重新打开应用。",
       "copiedTitle": "已复制！",
       "copiedDescription": "文本已复制到剪贴板",
-      "deleteTitle": "删除转录记录",
-      "deleteDescription": "此转录记录将被永久删除。",
       "couldNotDeleteTitle": "无法删除",
       "couldNotDeleteDescription": "此转录记录可能已被删除。",
       "couldNotDeleteDescriptionGeneric": "出了点问题，请重试。",
@@ -296,7 +295,8 @@
       "showRaw": "显示原始转录",
       "hideRaw": "隐藏原始转录",
       "pageActions": "历史记录操作",
-      "emptyDescriptionOff": "历史记录已关闭，新的听写只会粘贴，不会保存在这里。在设置中打开“保存历史记录”即可保留。"
+      "emptyDescriptionOff": "历史记录已关闭，新的听写只会粘贴，不会保存在这里。在设置中打开“保存历史记录”即可保留。",
+      "deletedTitle": "已删除转录"
     }
   },
   "reasoning": {

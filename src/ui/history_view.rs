@@ -71,7 +71,17 @@ pub struct HistoryView {
     pending: Option<PendingRow>,
     /// A row that just landed from Dictation; it reveals and tints briefly.
     arrived: Option<(i64, Instant)>,
+    /// A transcript removed from view whose deletion waits out the Undo
+    /// window; the database keeps it until then.
+    deleting: Option<i64>,
+    /// The row the arrow keys point at while the list has keyboard focus.
+    cursor: Option<i64>,
+    /// A row to scroll into view once it is laid out.
+    reveal_pending: Option<i64>,
 }
+
+/// How long a deleted transcript can be brought back.
+const UNDO_WINDOW: Duration = Duration::from_millis(6000);
 
 pub fn copy_with_toast(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -133,6 +143,9 @@ impl HistoryView {
             hovered_row: None,
             pending: None,
             arrived: None,
+            deleting: None,
+            cursor: None,
+            reveal_pending: None,
         }
     }
 
@@ -202,35 +215,149 @@ impl HistoryView {
         }
     }
 
-    fn delete(id: i64, cx: &mut App) {
-        let mut request = DialogRequest::confirm(
-            t("controlPanel.history.deleteTitle"),
-            Some(t("controlPanel.history.deleteDescription").into()),
-            true,
-            move |_, cx| {
-                let result =
-                    AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
-                match result {
-                    Ok(true) => {}
-                    Ok(false) => show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.couldNotDeleteTitle"),
-                            Some(t("controlPanel.history.couldNotDeleteDescription").into()),
-                        ),
-                        cx,
-                    ),
-                    Err(_) => show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.couldNotDeleteTitle"),
-                            Some(t("controlPanel.history.couldNotDeleteDescriptionGeneric").into()),
-                        ),
-                        cx,
-                    ),
+    /// Removes a transcript from view at once and deletes it when the Undo
+    /// window closes, the way Dictionary removes a word. Clear History,
+    /// which cannot be undone, still asks first.
+    fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.commit_delete(cx);
+        self.deleting = Some(id);
+        if self.cursor == Some(id) {
+            self.cursor = None;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(UNDO_WINDOW).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.deleting == Some(id) {
+                    this.commit_delete(cx);
                 }
-            },
+            });
+        })
+        .detach();
+        let this = cx.weak_entity();
+        show_toast(
+            Toast::new(t("controlPanel.history.deletedTitle"))
+                .duration(UNDO_WINDOW)
+                .action(t("common.undo"), move |_, cx| {
+                    let _ = this.update(cx, |this, cx| {
+                        if this.deleting == Some(id) {
+                            this.deleting = None;
+                            cx.notify();
+                        }
+                    });
+                }),
+            cx,
         );
-        request.confirm_label = t("controlPanel.history.deleteItem").into();
-        show_dialog(request, cx);
+        cx.notify();
+    }
+
+    /// Deletes the transcript waiting out its Undo window, if any.
+    fn commit_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.deleting.take() else {
+            return;
+        };
+        let result = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
+        let description = match result {
+            Ok(true) => return,
+            Ok(false) => t("controlPanel.history.couldNotDeleteDescription"),
+            Err(_) => t("controlPanel.history.couldNotDeleteDescriptionGeneric"),
+        };
+        show_dialog(
+            DialogRequest::alert(
+                t("controlPanel.history.couldNotDeleteTitle"),
+                Some(description.into()),
+            ),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Arrow keys move a row cursor through the list; Return copies the row,
+    /// Space shows its raw transcript, and ⌘⌫ deletes it.
+    fn on_list_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let ids: Vec<i64> = AppState::global(cx)
+            .read(cx)
+            .history
+            .iter()
+            .map(|item| item.id)
+            .filter(|id| Some(*id) != self.deleting)
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let at = self.cursor.and_then(|c| ids.iter().position(|id| *id == c));
+        let key = e.keystroke.key.as_str();
+        let cmd = e.keystroke.modifiers.platform;
+        match key {
+            "down" | "up" if !keyed_focus_handle("history-list".into(), cx).is_focused(window) => {
+                // Arrows from a row's button hand focus back to the list.
+                let list = keyed_focus_handle("history-list".into(), cx);
+                window.focus(&list, cx);
+                self.cursor = self.cursor.or(ids.first().copied());
+                self.reveal_pending = self.cursor;
+            }
+            "down" => {
+                let next = at.map_or(0, |i| (i + 1).min(ids.len() - 1));
+                self.cursor = Some(ids[next]);
+                self.reveal_pending = self.cursor;
+            }
+            "up" => {
+                let prev = at.map_or(ids.len() - 1, |i| i.saturating_sub(1));
+                self.cursor = Some(ids[prev]);
+                self.reveal_pending = self.cursor;
+            }
+            "enter" => {
+                let Some(id) = self.cursor else { return };
+                let text = AppState::global(cx)
+                    .read(cx)
+                    .history
+                    .iter()
+                    .find(|item| item.id == id)
+                    .map(|item| item.text.clone());
+                if let Some(text) = text {
+                    copy_with_toast(text, cx);
+                }
+            }
+            "space" => {
+                let Some(id) = self.cursor else { return };
+                if !self.expanded.remove(&id) {
+                    self.expanded.insert(id);
+                }
+            }
+            "backspace" | "delete" if cmd => {
+                let Some(id) = self.cursor else { return };
+                // Keep the cursor in place on the next row.
+                let next = at.and_then(|i| {
+                    ids.get(i + 1)
+                        .or_else(|| i.checked_sub(1).and_then(|p| ids.get(p)))
+                });
+                let next = next.copied();
+                self.delete(id, cx);
+                self.cursor = next;
+            }
+            "escape" if self.cursor.is_some() => self.cursor = None,
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Scrolls just enough to show a row the keyboard moved to.
+    fn reveal_row(&mut self, row: Bounds<Pixels>) {
+        self.reveal_pending = None;
+        let view = self.scroll.bounds();
+        // Room for the top bar's fade above and a little air below.
+        let top = view.top() + px(40.);
+        let bottom = view.bottom() - px(16.);
+        let offset = self.scroll.offset();
+        let shift = if row.top() < top {
+            top - row.top()
+        } else if row.bottom() > bottom {
+            bottom - row.bottom()
+        } else {
+            return;
+        };
+        let to = (offset.y + shift).clamp(-self.scroll.max_offset().y, px(0.));
+        self.scroll.set_offset(point(offset.x, to));
     }
 
     /// Asks before removing every transcript, its audio and the Insights
@@ -459,7 +586,10 @@ impl HistoryView {
         let focus_within = ["raw-row", "copy-row", "more-row"]
             .iter()
             .any(|key| keyed_focus_handle((*key, id as usize).into(), cx).is_focused(window));
-        let actions_shown = menu_open || self.hovered_row == Some(id) || focus_within;
+        let cursor_here = self.cursor == Some(id)
+            && keyed_focus_handle("history-list".into(), cx).contains_focused(window, cx);
+        let actions_shown =
+            menu_open || self.hovered_row == Some(id) || focus_within || cursor_here;
         let actions_t = f32_tx(
             ("row-actions", id as usize),
             if actions_shown { 1. } else { 0. },
@@ -549,8 +679,29 @@ impl HistoryView {
             .as_ref()
             .is_some_and(|s| s.id == id && s.center_pending);
         let this = cx.weak_entity();
+        let reveal = this.clone();
+        let row_wash = if p.dark {
+            p.white.opacity(0.04)
+        } else {
+            p.foreground.opacity(0.045)
+        };
         div()
             .id(("history-row", id as usize))
+            .role(Role::ListItem)
+            .aria_label(item.text.clone())
+            .when(cursor_here, |d| d.aria_active_descendant().bg(row_wash))
+            .when(self.reveal_pending == Some(id), |d| {
+                d.child(
+                    canvas(
+                        move |bounds, _, cx| {
+                            let _ = reveal.update(cx, |this, _| this.reveal_row(bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .relative()
             .when_some(landed, |d, f| d.bg(p.primary.opacity(f)))
             // The picked row keeps the palette's selection tint; the rest recede.
@@ -852,7 +1003,7 @@ impl HistoryView {
                         match action {
                             0 => this.retry(id, cx),
                             1 => Self::show_in_folder(id, cx),
-                            _ => Self::delete(id, cx),
+                            _ => this.delete(id, cx),
                         }
                         cx.notify();
                     })),
@@ -905,6 +1056,11 @@ impl Render for HistoryView {
             );
         }
 
+        // A transcript waiting out its Undo window is already gone here.
+        let history: Vec<TranscriptionItem> = history
+            .into_iter()
+            .filter(|item| Some(item.id) != self.deleting)
+            .collect();
         if history.is_empty() && pending.is_none() {
             content = content.child(render_empty_with_hotkey(&hotkey, retention, &p));
         } else {
@@ -924,7 +1080,13 @@ impl Render for HistoryView {
             if pending.is_some() && groups.first().is_none_or(|(label, _)| *label != today) {
                 groups.insert(0, (today, Vec::new()));
             }
-            let mut list = div().id("history-list");
+            let list_focus = keyed_focus_handle("history-list".into(), cx);
+            let mut list = div()
+                .id("history-list")
+                .track_focus(&list_focus.tab_stop(true))
+                .role(Role::List)
+                .aria_label(t("sidebar.home"))
+                .on_key_down(cx.listener(Self::on_list_key));
             for (index, (label, items)) in groups.into_iter().enumerate() {
                 // Day label with its count beside it, then a hairline to the edge.
                 let header = div()
