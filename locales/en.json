@@ -212,7 +212,7 @@
   "menu": {
     "appLabel": "Whisper",
     "quit": "Quit Whisper",
-    "settings": "Settings...",
+    "settings": "Settings…",
     "help": "Help",
     "learnMore": "Learn More"
   },
@@ -241,7 +241,7 @@
     "refresh": "Refresh",
     "cancel": "Cancel",
     "model": "Model",
-    "loading": "Loading...",
+    "loading": "Loading…",
     "hold": "Hold",
     "tap": "Double-tap",
     "save": "Save",
@@ -249,13 +249,13 @@
   },
   "controlPanel": {
     "history": {
-      "couldNotLoadTitle": "Couldn't load your history",
+      "couldNotLoadTitle": "Couldn’t load your history",
       "couldNotLoadDescription": "Something went wrong loading your transcriptions. Try closing and reopening the app.",
       "copiedTitle": "Copied",
       "copiedDescription": "Text copied to your clipboard",
       "deleteTitle": "Delete transcription?",
       "deleteDescription": "This transcription will be permanently removed.",
-      "couldNotDeleteTitle": "Couldn't delete",
+      "couldNotDeleteTitle": "Couldn’t delete",
       "couldNotDeleteDescription": "This transcription may have already been removed.",
       "couldNotDeleteDescriptionGeneric": "Something went wrong. Please try again.",
       "empty": "No transcriptions yet",
@@ -280,7 +280,7 @@
       "clearAllTitle": "Clear all transcriptions?",
       "clearAllDescriptionDevice": "All transcriptions, audio files, and Insights counters will be permanently removed from this device.",
       "clearAllSuccess": "History cleared",
-      "clearAllErrorTitle": "Couldn't clear history",
+      "clearAllErrorTitle": "Couldn’t clear history",
       "clearAllErrorDescription": "Something went wrong. Please try again.",
       "copyRaw": "Copy raw transcript",
       "moreActions": "More actions",
@@ -483,7 +483,7 @@
     "onDevicePrivacy": "These insights are calculated on this device to protect your privacy.",
     "emptyTitle": "No dictations yet",
     "emptyBody": "Start dictating and your words, streaks, and daily activity will show up here.",
-    "loadError": "Insights couldn't be read from this device.",
+    "loadError": "Insights couldn’t be read from this device.",
     "dayUnit_one": "day",
     "dayUnit_other": "days",
     "since": "Since {{date}}",
@@ -548,7 +548,7 @@
     "historyOff": "History is off. Transcripts show here but aren’t saved.",
     "openHistory": "Open History",
     "copyText": "Copy Text",
-    "saveFailed": "Couldn't save to history",
+    "saveFailed": "Couldn’t save to history",
     "transcribeFiles_one": "Transcribe {{count}} File",
     "transcribeFiles_other": "Transcribe {{count}} Files",
     "removeFromQueue": "Remove {{name}} from queue"
@@ -556,7 +556,7 @@
   "dictionary": {
     "clearTitle": "Clear dictionary?",
     "add": "Add",
-    "importPlaceholder": "Paste words separated by commas or new lines...",
+    "importPlaceholder": "Paste words separated by commas or new lines…",
     "separateWithCommas": "One word per line, or comma-separated",
     "wordsReady_one": "{{count}} word ready",
     "wordsReady_other": "{{count}} words ready",
@@ -578,14 +578,14 @@
     "tabSnippets": "Snippets",
     "snippets": {
       "editTitle": "Edit snippet",
-      "dialogDescription": "When you speak the trigger, it's replaced with your saved text.",
+      "dialogDescription": "When you speak the trigger, it’s replaced with your saved text.",
       "triggerLabel": "Trigger",
       "triggerPlaceholder": "e.g. cal link",
       "replacementLabel": "Replacement",
       "replacementPlaceholder": "Text to insert when you say the trigger…",
       "create": "Create Snippet",
       "duplicate": "A snippet with this trigger already exists",
-      "emptyTitle": "The stuff you shouldn't have to say",
+      "emptyTitle": "The stuff you shouldn’t have to say",
       "emptyTitleAccent": "twice",
       "emptyDescription": "Speak a trigger word and Whisper replaces it with whatever you saved — URLs, intros, sign-offs, prompts.",
       "new": "New Snippet",
@@ -631,8 +631,8 @@
     "exportList": "Export…",
     "clearDictionary": "Clear Dictionary…",
     "clearConfirm": "Clear Dictionary",
-    "clearDescription_one": "This deletes your {{count}} word, its usage and the mishearings Whisper learned for it. This can't be undone.",
-    "clearDescription_other": "This deletes all {{count}} words, their usage and the mishearings Whisper learned for them. This can't be undone.",
+    "clearDescription_one": "This deletes your {{count}} word, its usage and the mishearings Whisper learned for it. This can’t be undone.",
+    "clearDescription_other": "This deletes all {{count}} words, their usage and the mishearings Whisper learned for them. This can’t be undone.",
     "addQuery": "Add “{{word}}”",
     "heardAs": "heard as",
     "forgetMishearing": "Forget “{{word}}”",
@@ -681,8 +681,8 @@
       }
     },
     "mic": {
-      "recording": "Recording...",
-      "processing": "Processing..."
+      "recording": "Recording…",
+      "processing": "Processing…"
     },
     "commandMenu": {
       "stopListening": "Stop listening",
