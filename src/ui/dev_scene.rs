@@ -5,6 +5,8 @@
 //! `settings[:general|hotkeys|speech|llms|privacy]`, and the pill states
 //! `pill:recording`, `pill:processing`, `pill:error`, `pill:fallback`.
 
+use std::time::Duration;
+
 use gpui_kit::*;
 
 use crate::app_state::AppState;
@@ -45,6 +47,15 @@ pub fn scene() -> Option<Scene> {
         }),
         _ => return None,
     })
+}
+
+/// How long `pill:recording` pretends the microphone has been live, so the
+/// capture shows the pill with its elapsed timer.
+pub fn pill_head_start() -> Duration {
+    match scene() {
+        Some(Scene::Pill("recording")) => Duration::from_secs(14),
+        _ => Duration::ZERO,
+    }
 }
 
 /// Drives the recording pill into the requested state.

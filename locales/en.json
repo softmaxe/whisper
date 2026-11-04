@@ -315,7 +315,8 @@
       "transcriptionFailed": "Transcription failed"
     },
     "errorActions": {
-      "viewTranscript": "View Transcript"
+      "viewTranscript": "View Transcript",
+      "recordAgain": "Record Again"
     },
     "noAudio": {
       "title": "We didn’t catch that",
@@ -342,7 +343,8 @@
       "starting": "Starting microphone",
       "finish": "Click to finish",
       "cancel": "Cancel",
-      "dismiss": "Dismiss"
+      "dismiss": "Dismiss",
+      "dismissTooltip": "Close (Esc)"
     }
   },
   "hotkeyInput": {
@@ -701,8 +703,8 @@
   },
   "transcriptionPreview": {
     "recovery": {
-      "title": "Transcription ready",
-      "pasteFailed": "Couldn’t paste into the active app.",
+      "title": "Couldn’t paste",
+      "pasteFailed": "Whisper couldn’t paste into the active app. Your words are below.",
       "copyFailed": "Copy failed. Try again.",
       "copy": "Copy Text",
       "copiedHint": "Copied. Press ⌘V to paste."

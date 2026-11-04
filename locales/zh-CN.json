@@ -312,7 +312,8 @@
       "transcriptionFailed": "转录失败"
     },
     "errorActions": {
-      "viewTranscript": "查看转录"
+      "viewTranscript": "查看转录",
+      "recordAgain": "重新录音"
     },
     "noAudio": {
       "title": "我们没听清",
@@ -339,7 +340,8 @@
       "starting": "正在打开麦克风",
       "finish": "点按结束",
       "cancel": "取消",
-      "dismiss": "关闭"
+      "dismiss": "关闭",
+      "dismissTooltip": "关闭（Esc）"
     }
   },
   "hotkeyInput": {
@@ -680,8 +682,8 @@
   },
   "transcriptionPreview": {
     "recovery": {
-      "title": "转录已完成",
-      "pasteFailed": "未能粘贴到当前应用。",
+      "title": "未能粘贴",
+      "pasteFailed": "Whisper 未能粘贴到当前应用，文字保留在下方。",
       "copyFailed": "复制失败，请重试。",
       "copy": "复制文字",
       "copiedHint": "已复制，按 ⌘V 粘贴。"

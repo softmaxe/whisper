@@ -29,8 +29,8 @@ use crate::macos;
 use super::components::{KeyboardFocusable, f32_tx, icon, kbd};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
-    RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_READING, TEXT_SMALL, ease_out, ease_overshoot,
-    ease_snap, progress,
+    RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL, ease_out,
+    ease_overshoot, ease_snap, progress, tabular_nums,
 };
 
 pub const WINDOW_SIZE: Size<Pixels> = Size {
@@ -41,13 +41,27 @@ const DOCK_INSET: f32 = 12.;
 const SCREEN_MARGIN: f32 = 4.;
 const PILL_W: f32 = 92.;
 const PILL_H: f32 = 30.;
+/// The elapsed timer joins the pill once a recording outlasts a quick
+/// phrase, so short dictations keep the compact pill.
+const TIMER_AFTER: Duration = Duration::from_secs(3);
+const TIMER_GAP: f32 = 8.;
+/// Fits `m:ss` in tabular figures; longer times spill into the padding.
+const TIMER_W: f32 = 26.;
+const PILL_TIMED_W: f32 = PILL_W + TIMER_GAP + TIMER_W;
 const CANCEL_SIZE: f32 = 28.;
 const CANCEL_GAP: f32 = 8.;
 const TOAST_W: f32 = 300.;
 /// Inner padding of the error and recovery panels.
 const PANEL_PAD: f32 = 16.;
-/// The dismiss button of a panel, ringed by its countdown.
-const DISMISS_SIZE: f32 = 24.;
+/// The panels' leading icon column; body, content and actions start after it.
+const PANEL_ICON: f32 = 16.;
+const PANEL_ICON_GAP: f32 = 10.;
+/// The dismiss button of a panel, ringed by its countdown; the minimum
+/// size for an icon-only control.
+const DISMISS_SIZE: f32 = 28.;
+/// Every error card offers an action, so it stays long enough to reach for
+/// it; hovering holds it longer still.
+const ERROR_HOLD: Duration = Duration::from_millis(12_000);
 const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
 const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
@@ -68,8 +82,9 @@ const ENVELOPE: [f32; BARS] = [0.35, 0.55, 0.75, 0.92, 1., 1., 0.92, 0.75, 0.55,
 /// speech range shows, and close speech fills them.
 const LEVEL_FLOOR_DB: f32 = -55.;
 const LEVEL_CEIL_DB: f32 = -20.;
-/// Peak height of the idle breath while no speech is heard.
-const BREATH: f32 = 0.05;
+/// Peak height of the idle breath while no speech is heard. It follows
+/// [`ENVELOPE`], so silence reads as a soft arch, not a flat row of dots.
+const BREATH: f32 = 0.24;
 const RISE: f32 = 0.45;
 const FALL: f32 = 0.16;
 /// The record dot that says the microphone is live.
@@ -83,6 +98,73 @@ const THINK_GAP: f32 = 5.;
 /// The pill's surfaces always use the dark palette; see the module docs.
 fn hud() -> Palette {
     Palette::dark()
+}
+
+/// The HUD's outline. Brighter than the dark palette's borders so the
+/// near-black surface keeps a visible edge on dark wallpapers and
+/// full-screen dark apps, where its fill alone barely separates.
+fn hud_edge() -> Hsla {
+    hsla(0., 0., 1., 0.2)
+}
+
+/// A drop shadow for a HUD surface plus a 1px top highlight that lifts it
+/// off dark backgrounds the shadow cannot darken.
+fn hud_shadow(y: f32, blur: f32, spread: f32, alpha: f32) -> Vec<BoxShadow> {
+    vec![
+        BoxShadow {
+            color: hsla(0., 0., 0., alpha),
+            offset: point(px(0.), px(y)),
+            blur_radius: px(blur),
+            spread_radius: px(spread),
+            inset: false,
+        },
+        BoxShadow {
+            color: hsla(0., 0., 1., 0.08),
+            offset: point(px(0.), px(1.)),
+            blur_radius: px(0.),
+            spread_radius: px(0.),
+            inset: true,
+        },
+    ]
+}
+
+/// Elapsed recording time as `m:ss`.
+fn format_elapsed(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// A tooltip on the HUD surface, so it matches the panel it labels in
+/// both themes.
+struct HudTip(SharedString);
+
+impl Render for HudTip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let p = hud();
+        div()
+            .font_family(FONT_UI)
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(RADIUS_MD))
+            .border_1()
+            .border_color(hud_edge())
+            .bg(p.toast_surface)
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.foreground)
+            .child(self.0.clone())
+    }
+}
+
+/// How long a dev scene pretends the microphone has already been live, so
+/// a screenshot shows the elapsed timer.
+#[cfg(debug_assertions)]
+fn dev_head_start() -> Duration {
+    super::dev_scene::pill_head_start()
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_head_start() -> Duration {
+    Duration::ZERO
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -103,13 +185,20 @@ fn bar_level(rms: f32) -> f32 {
     ((db - LEVEL_FLOOR_DB) / (LEVEL_CEIL_DB - LEVEL_FLOOR_DB)).clamp(0., 1.)
 }
 
-fn live_target(rms: f32, index: usize, now_ms: f32) -> f32 {
+/// Height of bar `index` for an input level. Silence keeps a slow arch
+/// that never flattens, so a quiet but live microphone still looks live;
+/// under reduced motion the arch holds still.
+fn live_target(rms: f32, index: usize, now_ms: f32, reduce: bool) -> f32 {
     let phase = now_ms * 0.012 * (1. + index as f32 * 0.37) + index as f32 * 1.7;
     let drift = 0.5 + 0.5 * phase.sin();
     let level = bar_level(rms);
     let speech = level * ENVELOPE[index] * (0.55 + 0.45 * drift);
-    let breath = BREATH * (0.5 + 0.5 * ((now_ms / 2400.) * TAU).sin());
-    speech + (1. - level) * breath
+    let swell = if reduce {
+        0.8
+    } else {
+        0.6 + 0.4 * (0.5 + 0.5 * ((now_ms / 2400.) * TAU).sin())
+    };
+    speech + (1. - level) * BREATH * ENVELOPE[index] * swell
 }
 
 fn sweep_opacity(index: usize, now_ms: f32) -> f32 {
@@ -134,7 +223,8 @@ fn rec_pulse(now_ms: f32, reduce: bool) -> f32 {
     if reduce {
         return 1.;
     }
-    0.7 + 0.3 * (0.5 + 0.5 * ((now_ms / 1600.) * TAU).cos())
+    // A shallow pulse: the dot stays a clear red at its dimmest.
+    0.75 + 0.25 * (0.5 + 0.5 * ((now_ms / 1600.) * TAU).cos())
 }
 
 /// The pill's one-shot motion at an instant, layered over the waveform.
@@ -262,24 +352,27 @@ impl Countdown {
 struct ErrorCard {
     title: String,
     description: String,
-    transcript: Option<String>,
+    /// Words the error kept, and whether they are already on the clipboard.
+    transcript: Option<(String, bool)>,
     countdown: Countdown,
 }
 
 impl ErrorCard {
-    /// A card shown from now, on screen for as long as its text needs.
-    fn new(title: String, description: String, transcript: Option<String>) -> Self {
-        let duration = error_duration(&title, &description);
+    /// A card shown from now for [`ERROR_HOLD`].
+    fn new(title: String, description: String, transcript: Option<(String, bool)>) -> Self {
         Self {
             title,
             description,
             transcript,
-            countdown: Countdown::new(duration, Instant::now()),
+            countdown: Countdown::new(ERROR_HOLD, Instant::now()),
         }
     }
 }
 
 struct Recovery {
+    /// Names what went wrong, so the panel never reads as a success.
+    title: String,
+    description: Option<String>,
     text: String,
     copied: bool,
     copy_failed: bool,
@@ -287,13 +380,15 @@ struct Recovery {
 }
 
 impl Recovery {
-    fn new(text: String, copied: bool) -> Self {
+    fn new(title: String, description: Option<String>, text: String, copied: bool) -> Self {
         let duration = if copied {
             RECOVERY_COPIED
         } else {
             RECOVERY_UNCOPIED
         };
         Self {
+            title,
+            description,
             text,
             copied,
             copy_failed: false,
@@ -315,18 +410,6 @@ struct PillToast {
     kind: ToastKind,
     countdown: Countdown,
     undo_words: Option<Vec<String>>,
-}
-
-/// Duration of the dictation error card, by message length.
-fn error_duration(title: &str, description: &str) -> Duration {
-    let len = format!("{title} {description}").trim().chars().count();
-    Duration::from_millis(if len <= 80 {
-        4000
-    } else if len <= 160 {
-        5000
-    } else {
-        6000
-    })
 }
 
 pub struct PillView {
@@ -354,6 +437,13 @@ pub struct PillView {
     dipped_at: Option<Instant>,
     resolved_at: Option<Instant>,
     was_processing: bool,
+    /// When the microphone went live, and the time it ran for, which the
+    /// timer keeps showing while it fades out for transcribing.
+    recording_since: Option<Instant>,
+    recorded: Duration,
+    /// When the timer joined the pill. The pill keeps that width until the
+    /// Dictation ends, so it does not shrink back while transcribing.
+    timed_at: Option<Instant>,
 }
 
 impl PillView {
@@ -391,6 +481,9 @@ impl PillView {
             dipped_at: None,
             resolved_at: None,
             was_processing: false,
+            recording_since: None,
+            recorded: Duration::ZERO,
+            timed_at: None,
         }
     }
 
@@ -435,6 +528,12 @@ impl PillView {
             self.enter_pending = true;
             self.dipped_at = None;
             self.resolved_at = None;
+            self.recording_since = None;
+            self.recorded = Duration::ZERO;
+            self.timed_at = None;
+        }
+        if snapshot.is_recording && self.recording_since.is_none() {
+            self.recording_since = Some(Instant::now() - dev_head_start());
         }
         if active && processing && !self.was_processing && self.was_active {
             self.dipped_at = Some(Instant::now());
@@ -626,11 +725,16 @@ impl PillView {
                 self.error = Some(ErrorCard::new(
                     title,
                     description,
-                    Some(transcript).filter(|t| !t.trim().is_empty()),
+                    Some((transcript, kept_in_clipboard)).filter(|(t, _)| !t.trim().is_empty()),
                 ));
             }
             DictationNotice::DeliveryFallback { text, copied } => {
-                self.recovery = Some(Recovery::new(text, copied));
+                self.recovery = Some(Recovery::new(
+                    t("transcriptionPreview.recovery.title"),
+                    Some(t("transcriptionPreview.recovery.pasteFailed")),
+                    text,
+                    copied,
+                ));
             }
             DictationNotice::CleanupFailed { title, description } => {
                 self.push_toast(
@@ -722,7 +826,7 @@ impl PillView {
         for i in 0..BARS {
             let target = match motion {
                 Motion::Live => match level {
-                    Some(rms) => live_target(rms, i, now_ms),
+                    Some(rms) => live_target(rms, i, now_ms, reduce),
                     None => 0.,
                 },
                 Motion::Sweep => {
@@ -740,6 +844,25 @@ impl PillView {
         opacity
     }
 
+    /// How far the elapsed timer has joined the pill, from 0 to 1. Also
+    /// keeps the recorded time current while the microphone is live.
+    fn timer_progress(&mut self, snapshot: &DictationSnapshot, reduce: bool) -> f32 {
+        let now = Instant::now();
+        if snapshot.is_recording
+            && let Some(since) = self.recording_since
+        {
+            self.recorded = now.saturating_duration_since(since);
+        }
+        if self.timed_at.is_none() && snapshot.is_recording && self.recorded >= TIMER_AFTER {
+            self.timed_at = Some(now);
+        }
+        match self.timed_at {
+            None => 0.,
+            Some(_) if reduce => 1.,
+            Some(at) => ease_out(progress(now - at, DUR_BASE)),
+        }
+    }
+
     /// The pill. Each phase has its own silhouette, so a still frame tells
     /// them apart without relying on color: a record dot beside level bars
     /// while the microphone is live, a dim sweep over the bars while it
@@ -748,6 +871,7 @@ impl PillView {
         &mut self,
         snapshot: &DictationSnapshot,
         motion_fx: PillMotion,
+        timed: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -767,7 +891,11 @@ impl PillView {
             window.request_animation_frame();
         }
         let now_ms = self.started.elapsed().as_secs_f32() * 1000.;
-        let level = Dictation::global(cx).read(cx).level();
+        // A live microphone without a level yet is silence, not a flat row.
+        let level = Dictation::global(cx)
+            .read(cx)
+            .level()
+            .or(recording.then_some(0.));
         let opacity = self.update_lanes(motion, level, reduce);
         let thinking = f32_tx(
             "pill-thinking",
@@ -797,12 +925,31 @@ impl PillView {
         } else {
             p.white.opacity(0.3 * bars_alpha)
         };
+        // The timer slides in from the bars' side as the pill widens, and
+        // fades with them when transcribing takes over.
+        let timer = (timed > 0.).then(|| {
+            div()
+                .flex_none()
+                .w(px((TIMER_GAP + TIMER_W) * timed))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .pl(px(TIMER_GAP))
+                        .whitespace_nowrap()
+                        .text_size(px(TEXT_CAPTION))
+                        .font_weight(FontWeight::MEDIUM)
+                        .font_features(tabular_nums())
+                        .text_color(p.muted_foreground.opacity(timed * bars_alpha))
+                        .child(format_elapsed(self.recorded)),
+                )
+        });
         let meter = div()
             .flex()
             .items_center()
             .gap(px(REC_GAP))
             .child(div().size(px(REC_DOT)).rounded_full().bg(dot_color))
-            .child(bars);
+            .child(bars)
+            .children(timer);
 
         let think_alpha = thinking * motion_fx.bars;
         let think = (think_alpha > 0.001).then(|| {
@@ -843,6 +990,7 @@ impl PillView {
             t("dictation.pill.starting")
         };
         let scale = motion_fx.scale;
+        let width = PILL_W + (PILL_TIMED_W - PILL_W) * timed;
         // GPUI has no paint transforms on divs, so the pill scales by size
         // inside a fixed slot, which keeps it centered and the row still.
         let pill = div()
@@ -851,22 +999,16 @@ impl PillView {
             .aria_label(label)
             .relative()
             .flex_none()
-            .w(px(PILL_W * scale))
+            .w(px(width * scale))
             .h(px(PILL_H * scale))
             .flex()
             .items_center()
             .justify_center()
             .rounded_full()
             .border_1()
-            .border_color(p.border_hover)
+            .border_color(hud_edge())
             .bg(p.toast_surface)
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.28),
-                offset: point(px(0.), px(2.)),
-                blur_radius: px(6.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .shadow(hud_shadow(2., 6., 0., 0.28))
             .when(!processing && !finishing, |d| d.cursor_pointer())
             .child(meter)
             .children(think)
@@ -899,7 +1041,7 @@ impl PillView {
                 }),
             );
         div()
-            .w(px(PILL_W))
+            .w(px(width))
             .h(px(PILL_H))
             .flex()
             .items_center()
@@ -942,8 +1084,9 @@ impl PillView {
             .justify_center()
             .rounded_full()
             .border_1()
-            .border_color(p.border_hover)
+            .border_color(hud_edge())
             .bg(p.toast_surface)
+            .shadow(hud_shadow(2., 6., 0., 0.28))
             .opacity(t_in)
             .cursor_pointer()
             .hover(move |s| s.bg(p.surface_raised))
@@ -984,8 +1127,9 @@ impl PillView {
             .px(px(10.))
             .rounded(px(RADIUS_MD))
             .border_1()
-            .border_color(p.border_hover)
+            .border_color(hud_edge())
             .bg(p.toast_surface)
+            .shadow(hud_shadow(2., 6., 0., 0.28))
             .text_size(px(TEXT_SMALL))
             .whitespace_nowrap();
         if snapshot.is_recording {
@@ -1001,14 +1145,15 @@ impl PillView {
         }
     }
 
-    /// The dismiss control shared by both panels: the Escape key chip, then a
-    /// close button ringed by the panel's countdown.
-    fn dismiss_cluster(
+    /// The close button shared by both panels, ringed by the panel's
+    /// countdown. Escape also closes the panel; the tooltip says so rather
+    /// than a second, unclickable key chip beside it.
+    fn dismiss_button(
         id: &'static str,
         remaining: f32,
         on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut App,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let p = hud();
         let ring = canvas(
             |_, _, _| {},
@@ -1040,7 +1185,8 @@ impl PillView {
         )
         .absolute()
         .inset_0();
-        let close = div()
+        let tip = t("dictation.pill.dismissTooltip");
+        div()
             .id(id)
             .keyboard_focusable(id, Role::Button, t("dictation.pill.dismiss"), cx)
             .relative()
@@ -1052,16 +1198,10 @@ impl PillView {
             .rounded_full()
             .cursor_pointer()
             .hover(move |s| s.bg(p.white.opacity(0.08)))
+            .tooltip(move |_, cx| cx.new(|_| HudTip(tip.clone().into())).into())
             .child(ring)
             .child(icon("x", 12., p.muted_foreground))
-            .on_click(on_close);
-        div()
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(8.))
-            .child(kbd("Esc", &p))
-            .child(close)
+            .on_click(on_close)
     }
 
     /// A compact panel action: white on the HUD when primary, a quiet wash
@@ -1108,17 +1248,79 @@ impl PillView {
             .id(id)
             .relative()
             .w_full()
+            .flex()
+            .flex_col()
+            .p(px(PANEL_PAD))
             .rounded(px(RADIUS_XL))
             .border_1()
-            .border_color(p.border_hover)
+            .border_color(hud_edge())
             .bg(p.toast_surface)
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.35),
-                offset: point(px(0.), px(12.)),
-                blur_radius: px(32.),
-                spread_radius: px(-12.),
-                inset: false,
-            }])
+            .shadow(hud_shadow(12., 32., -12., 0.35))
+    }
+
+    /// The header both panels share: a status icon, the title and the close
+    /// button on one line, then the body under the title. Everything after
+    /// the header sits in [`Self::panel_column`], so the panels share one
+    /// grid.
+    fn panel_header(
+        icon_name: &'static str,
+        accent: Hsla,
+        title: String,
+        body: Option<String>,
+        dismiss: Stateful<Div>,
+    ) -> Div {
+        let p = hud();
+        let line = div()
+            .flex()
+            .items_start()
+            .gap(px(PANEL_ICON_GAP))
+            .child(
+                div()
+                    .h(px(LINE_SMALL))
+                    .flex()
+                    .items_center()
+                    .child(icon(icon_name, PANEL_ICON, accent)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .pr(px(DISMISS_SIZE + 8.))
+                    .text_size(px(TEXT_BODY))
+                    .line_height(px(LINE_SMALL))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(p.foreground)
+                    .child(title),
+            );
+        // The close button floats centered on the title line, so its size
+        // does not push the body down, and the body runs under it rather
+        // than wrapping early.
+        div()
+            .relative()
+            .flex_none()
+            .child(line)
+            .child(
+                div()
+                    .absolute()
+                    .top(px((LINE_SMALL - DISMISS_SIZE) / 2.))
+                    .right_0()
+                    .child(dismiss),
+            )
+            .when_some(body.filter(|b| !b.is_empty()), |d, body| {
+                d.child(
+                    Self::panel_column()
+                        .mt(px(2.))
+                        .text_size(px(TEXT_SMALL))
+                        .line_height(px(LINE_SMALL))
+                        .text_color(p.muted_foreground)
+                        .child(body),
+                )
+            })
+    }
+
+    /// The text column, inset past the header icon.
+    fn panel_column() -> Div {
+        div().pl(px(PANEL_ICON + PANEL_ICON_GAP))
     }
 
     fn render_error(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1130,10 +1332,12 @@ impl PillView {
         let description = error.description.clone();
         let transcript = error.transcript.clone();
 
-        let retry = Self::panel_action(
-            "pill-error-retry",
-            "rotate-ccw",
-            t("common.retry"),
+        // The failed audio is not kept, so the action starts a new recording
+        // and says so rather than promising a retry of the same words.
+        let record = Self::panel_action(
+            "pill-error-record",
+            "mic",
+            t("dictation.errorActions.recordAgain"),
             true,
             cx,
         )
@@ -1141,7 +1345,8 @@ impl PillView {
             this.error = None;
             Dictation::global(cx).update(cx, |d, cx| d.start(cx));
         }));
-        let view = transcript.map(|transcript| {
+        let view = transcript.map(|(transcript, copied)| {
+            let recovery_title = title.clone();
             Self::panel_action(
                 "pill-error-transcript",
                 "scroll-text",
@@ -1151,12 +1356,17 @@ impl PillView {
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.error = None;
-                this.recovery = Some(Recovery::new(transcript.clone(), false));
+                this.recovery = Some(Recovery::new(
+                    recovery_title.clone(),
+                    None,
+                    transcript.clone(),
+                    copied,
+                ));
                 this.set_hovered(this.hovered);
                 cx.notify();
             }))
         });
-        let dismiss = Self::dismiss_cluster(
+        let dismiss = Self::dismiss_button(
             "pill-error-close",
             remaining,
             cx.listener(|this, _, _, cx| {
@@ -1165,51 +1375,23 @@ impl PillView {
             }),
             cx,
         );
-        const ICON: f32 = 16.;
-        const ICON_GAP: f32 = 10.;
-        // The icon and the dismiss cluster center on the title line; the
-        // description runs under the cluster so it does not wrap early.
-        let header = div()
-            .flex()
-            .items_start()
-            .gap(px(ICON_GAP))
-            .child(div().h(px(LINE_SMALL)).flex().items_center().child(icon(
-                "alert-circle",
-                ICON,
-                p.destructive,
-            )))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(TEXT_BODY))
-                    .line_height(px(LINE_SMALL))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(p.foreground)
-                    .child(title),
-            )
-            .child(div().mt(px(-3.)).child(dismiss));
-        let description = (!description.is_empty()).then(|| {
-            div()
-                .mt(px(2.))
-                .pl(px(ICON + ICON_GAP))
-                .text_size(px(TEXT_SMALL))
-                .line_height(px(LINE_SMALL))
-                .text_color(p.muted_foreground)
-                .child(description)
-        });
-        let actions = div()
+        // Actions start in the text column, primary first, so the panel
+        // reads top to bottom without a stray button on the far side.
+        let actions = Self::panel_column()
             .mt(px(12.))
             .flex()
-            .justify_end()
             .gap(px(8.))
-            .children(view)
-            .child(retry);
+            .child(record)
+            .children(view);
         Some(
             Self::panel_card("pill-error")
-                .p(px(PANEL_PAD))
-                .child(header)
-                .children(description)
+                .child(Self::panel_header(
+                    "alert-circle",
+                    p.destructive,
+                    title,
+                    Some(description),
+                    dismiss,
+                ))
                 .child(actions)
                 .with_animation(
                     "pill-error-in",
@@ -1230,9 +1412,11 @@ impl PillView {
         let remaining = recovery.countdown.remaining(Instant::now());
         let ready = !recovery.copy_failed && recovery.copied;
         let failed = recovery.copy_failed;
+        let title = recovery.title.clone();
+        let description = recovery.description.clone();
         let text = recovery.text.clone();
 
-        let dismiss = Self::dismiss_cluster(
+        let dismiss = Self::dismiss_button(
             "pill-recovery-close",
             remaining,
             cx.listener(|this, _, _, cx| {
@@ -1241,49 +1425,29 @@ impl PillView {
             }),
             cx,
         );
-        let header = div()
-            .flex()
-            .items_start()
-            .gap(px(12.))
-            .px(px(PANEL_PAD))
-            .pt(px(PANEL_PAD))
-            .pb(px(12.))
-            .border_b_1()
-            .border_color(p.border)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .line_height(px(LINE_SMALL))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(p.foreground)
-                            .child(t("transcriptionPreview.recovery.title")),
-                    )
-                    .child(
-                        div()
-                            .mt(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .line_height(px(LINE_SMALL))
-                            .text_color(p.muted_foreground)
-                            .child(t("transcriptionPreview.recovery.pasteFailed")),
-                    ),
-            )
-            .child(div().mt(px(-3.)).child(dismiss));
-        let body = div()
-            .id("pill-recovery-text")
+        // The words sit in an inset well so they read as the thing to keep,
+        // apart from the panel's own copy.
+        let transcript = Self::panel_column()
+            .mt(px(12.))
             .flex_1()
             .min_h_0()
-            .overflow_y_scroll()
-            .px(px(PANEL_PAD))
-            .py(px(12.))
-            .font_family(FONT_VOICE)
-            .text_size(px(TEXT_READING))
-            .line_height(px(LINE_READING))
-            .text_color(p.foreground)
-            .child(text.clone());
+            .flex()
+            .child(
+                div()
+                    .id("pill-recovery-text")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded(px(RADIUS_LG))
+                    .bg(p.white.opacity(0.05))
+                    .font_family(FONT_VOICE)
+                    .text_size(px(TEXT_READING))
+                    .line_height(px(LINE_READING))
+                    .text_color(p.foreground)
+                    .child(text.clone()),
+            );
         // One line says where the text stands; Copy shows only while the
         // clipboard does not hold it.
         let status = if ready {
@@ -1301,16 +1465,14 @@ impl PillView {
         } else {
             None
         };
-        let footer = div()
+        let footer = Self::panel_column()
+            .mt(px(12.))
+            .flex_none()
             .flex()
             .items_center()
             .justify_between()
             .gap(px(12.))
-            .min_h(px(52.))
-            .px(px(PANEL_PAD))
-            .py(px(12.))
-            .border_t_1()
-            .border_color(p.border)
+            .min_h(px(28.))
             .child(
                 div()
                     .flex()
@@ -1352,11 +1514,15 @@ impl PillView {
         Some(
             Self::panel_card("pill-recovery")
                 .max_h(px(420.))
-                .flex()
-                .flex_col()
                 .overflow_hidden()
-                .child(header)
-                .child(body)
+                .child(Self::panel_header(
+                    "alert-triangle",
+                    p.warning,
+                    title,
+                    description,
+                    dismiss,
+                ))
+                .child(transcript)
                 .child(footer)
                 .with_animation(
                     "pill-recovery-in",
@@ -1393,9 +1559,9 @@ impl PillView {
                     .py(px(10.))
                     .rounded(px(RADIUS_LG))
                     .border_1()
-                    .border_color(p.border_hover)
+                    .border_color(hud_edge())
                     .bg(p.toast_surface)
-                    .shadow_lg()
+                    .shadow(hud_shadow(8., 20., -6., 0.3))
                     .child(
                         div()
                             .h(px(LINE_SMALL))
@@ -1501,11 +1667,13 @@ impl Render for PillView {
         let show_pill = (active || finishing) && pill_alpha > 0.001;
         let cancel_visible = self.hovered && (snapshot.is_recording || snapshot.is_processing);
         let recording = snapshot.is_recording;
+        let timed = self.timer_progress(&snapshot, cx.reduce_motion());
+        let pill_w = PILL_W + (PILL_TIMED_W - PILL_W) * timed;
 
         let mut root = div().size_full().relative().font_family(FONT_UI);
 
         if show_pill || cancel_visible {
-            let pill = self.render_pill(&snapshot, motion_fx, window, cx);
+            let pill = self.render_pill(&snapshot, motion_fx, timed, window, cx);
             let (cancel, cancel_t) = self.render_cancel(cancel_visible, recording, window, cx);
             let cancel = div()
                 .when(cancel_t < 0.001, |d| d.invisible())
@@ -1524,7 +1692,7 @@ impl Render for PillView {
                 PanelStartPosition::BottomLeft => d.left(px(DOCK_INSET)),
                 // Center the pill itself; the cancel slot sits to its left.
                 PanelStartPosition::Center => {
-                    d.left(WINDOW_SIZE.width / 2. - px(PILL_W / 2. + CANCEL_SIZE + CANCEL_GAP))
+                    d.left(WINDOW_SIZE.width / 2. - px(pill_w / 2. + CANCEL_SIZE + CANCEL_GAP))
                 }
             });
             root = root.child(positioned.child(tracked));
@@ -1599,7 +1767,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        BREATH, Countdown, DUR_BASE, RESOLVE, bar_level, live_target, pill_motion, think_opacity,
+        BREATH, Countdown, DUR_BASE, ENVELOPE, RESOLVE, bar_level, format_elapsed, live_target,
+        pill_motion, think_opacity,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -1626,11 +1795,32 @@ mod tests {
     fn silence_only_breathes_and_speech_stands_out() {
         let peak = |rms: f32| {
             (0..240)
-                .map(|t| live_target(rms, 4, t as f32 * 10.))
+                .map(|t| live_target(rms, 4, t as f32 * 10., false))
                 .fold(0., f32::max)
         };
         assert!(peak(0.) <= BREATH + 1e-4, "{}", peak(0.));
         assert!(peak(db(-30.)) > 0.6, "{}", peak(db(-30.)));
+    }
+
+    #[test]
+    fn silence_is_an_arch_that_never_flattens() {
+        for t in (0..2400).step_by(100) {
+            let now = t as f32;
+            let middle = live_target(0., 4, now, false);
+            let edge = live_target(0., 0, now, false);
+            assert!(middle > edge, "{middle} vs {edge} at {t}");
+            assert!(middle >= BREATH * 0.6 - 1e-4, "{middle} at {t}");
+        }
+        let still = |now: f32| live_target(0., 4, now, true);
+        assert_eq!(still(0.), still(1200.));
+        assert!((still(0.) - BREATH * ENVELOPE[4] * 0.8).abs() < 1e-5);
+    }
+
+    #[test]
+    fn elapsed_time_reads_as_minutes_and_seconds() {
+        assert_eq!(format_elapsed(Duration::from_millis(3_999)), "0:03");
+        assert_eq!(format_elapsed(Duration::from_secs(65)), "1:05");
+        assert_eq!(format_elapsed(Duration::from_secs(754)), "12:34");
     }
 
     #[test]
