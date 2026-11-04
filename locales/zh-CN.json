@@ -295,18 +295,18 @@
       "description": "请检查麦克风后重试。"
     },
     "errorDescriptions": {
-      "transcriptionConnectionFailed": "3 秒内未能连接转录服务器。请确认服务器已启动且网络可达，然后重试。",
-      "transcriptionTimeout": "转录服务器未在 30 秒内完成响应。请确认服务器已启动且网络可达，然后重试。",
-      "microphoneUnavailable": "所选麦克风无法采集音频。请重新连接，在系统设置中检查麦克风权限，或在设置中选择其他麦克风后重试。",
-      "providerRateLimited": "转录服务器限制了请求频率。请稍候再试。",
+      "transcriptionConnectionFailed": "3 秒内无法连接转录服务器。请确认它已启动且可以访问。",
+      "transcriptionTimeout": "转录服务器 30 秒内没有响应。请确认它已启动且可以访问。",
+      "microphoneUnavailable": "所选麦克风没有采集到音频。请重新连接，在系统设置中检查麦克风权限，或在设置中换一个麦克风。",
+      "providerRateLimited": "转录服务器正在限制请求频率。请稍候再重试。",
       "customEndpointInvalid": "自定义转录端点未配置或其 URL 无效。请在“设置 → 语音转文字”中更新。",
       "cleanupTruncated": "AI 模型的输出长度达到上限，未能完成听写清理。",
       "cleanupEmptyReply": "AI 模型返回了空响应，没有生成清理后的文本。"
     },
     "pushForceStopped": {
       "title": "转录内容未粘贴",
-      "description": "听写停止时快捷键仍处于按下状态，因此未粘贴文本。转录内容已复制到剪贴板。",
-      "descriptionClipboardFailed": "听写停止时快捷键仍处于按下状态，因此未粘贴文本，也无法复制到剪贴板。"
+      "description": "听写停止时快捷键仍被按住。文字已在剪贴板中。",
+      "descriptionClipboardFailed": "听写停止时快捷键仍被按住，文字也未能复制到剪贴板。"
     }
   },
   "hotkeyInput": {
