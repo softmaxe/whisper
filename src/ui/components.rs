@@ -241,11 +241,15 @@ impl RenderOnce for Toggle {
             .h(px(18.))
             .rounded_full()
             .bg(track)
-            // A light off track is pale against light cards; an inner edge
-            // keeps its outline at about 3:1, as WCAG 1.4.11 asks.
-            .when(!p.dark && !checked && !disabled, |d| {
+            // An off track is pale against its card; an inner edge keeps
+            // its outline at about 3:1, as WCAG 1.4.11 asks.
+            .when(!checked && !disabled, |d| {
                 d.shadow(vec![BoxShadow {
-                    color: p.foreground.opacity(0.22),
+                    color: if p.dark {
+                        p.white.opacity(0.32)
+                    } else {
+                        p.foreground.opacity(0.4)
+                    },
                     offset: point(px(0.), px(0.)),
                     blur_radius: px(0.),
                     spread_radius: px(1.),
@@ -1006,12 +1010,19 @@ pub fn segment(
         .text_size(px(TEXT_SMALL))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
+        // A transparent border on every segment, so the active one's edge
+        // never shifts its label.
+        .border_1()
+        .border_color(transparent_black())
         .when(active, |d| {
             d.text_color(p.foreground).map(|d| {
                 if p.dark {
-                    d.bg(p.white.opacity(0.1))
+                    d.bg(p.white.opacity(0.15))
+                        .border_color(p.white.opacity(0.08))
                 } else {
-                    d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
+                    d.bg(p.card)
+                        .border_color(p.border_hover)
+                        .shadow(vec![drop(0., 1., 2., 0.08)])
                 }
             })
         })
@@ -1086,13 +1097,37 @@ pub fn kbd(text: impl Into<SharedString>, p: &Palette) -> Div {
         .child(text.into())
 }
 
-/// A spinning loader icon.
+/// A spinning loader icon. Under Reduce motion it holds still, since
+/// `with_animation` would otherwise keep it turning.
 pub fn spinner(id: impl Into<ElementId>, size: f32, color: Hsla) -> impl IntoElement {
-    icon("loader2", size, color).with_animation(
-        id.into(),
-        Animation::new(Duration::from_millis(800)).repeat(),
-        |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-    )
+    Spinner {
+        id: id.into(),
+        size,
+        color,
+    }
+}
+
+#[derive(IntoElement)]
+struct Spinner {
+    id: ElementId,
+    size: f32,
+    color: Hsla,
+}
+
+impl RenderOnce for Spinner {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let loader = icon("loader2", self.size, self.color);
+        if cx.reduce_motion() {
+            return loader.into_any_element();
+        }
+        loader
+            .with_animation(
+                self.id,
+                Animation::new(Duration::from_millis(800)).repeat(),
+                |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+            )
+            .into_any_element()
+    }
 }
 
 /// Brightness of the shimmer band at `x` (0..1 across the text), `ms` into
