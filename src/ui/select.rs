@@ -10,7 +10,7 @@ use super::components::{drop, f32_tx, focus_ring, icon};
 use super::control_panel::CloseOverlay;
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY,
-    TEXT_SMALL, ease_out, ease_snap,
+    TEXT_SMALL, ease_out, ease_snap, motion,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -236,6 +236,13 @@ impl Select {
     /// trigger instead (see `on_trigger_click`).
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = event.keystroke.key.as_str();
+        // Tab leaves an open menu the way Escape does, back on the trigger,
+        // instead of moving on with the menu still floating behind.
+        if key == "tab" && self.open {
+            cx.stop_propagation();
+            self.dismiss(window, cx);
+            return;
+        }
         if !matches!(key, "down" | "up") || event.keystroke.modifiers.modified() {
             return;
         }
@@ -516,7 +523,7 @@ impl Select {
             )
             .with_animation(
                 "select-menu-in",
-                Animation::new(std::time::Duration::from_millis(DUR_SNAP)).with_easing(ease_snap),
+                motion(DUR_SNAP, cx).with_easing(ease_snap),
                 |d, t| d.opacity(t),
             )
             .into_any_element()
