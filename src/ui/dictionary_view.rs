@@ -1,32 +1,33 @@
-//! Dictionary and Snippets.
+//! Dictionary words and Snippets.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use gpui_kit::component::input::{InputEvent, InputState, Textarea, TextareaState};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
+use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::db::{DictionaryEntry, DictionarySource, Snippet};
-use crate::i18n::{t, t_with};
+use crate::i18n::{self, Language, t, t_with};
 use crate::text::dictionary_import::{format_dictionary_export, parse_dictionary_import_text};
 use crate::text::prompt_cap::WHISPER_DECODER_PROMPT_CHARS;
 use crate::text::snippets::get_dictionary_hint_words;
 
 use crate::app_state::{AppEvent, AppState};
 
-use super::command_search::relative_time_label;
 use super::components::{
-    Button, ButtonSize, ButtonVariant, empty_state_icon, icon, segment, segmented_track,
-    surface_card,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon, kbd,
+    keyed_focus_handle, page_container, segment, segmented_track, surface_card,
 };
+use super::insights_view::TextTooltip;
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
 };
 use super::text_input::{text_field, text_field_small, textarea_field};
 use super::theme::{
-    DUR_BASE, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_MD, RADIUS_SM, TEXT_BODY,
-    TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, tabular_nums,
+    DUR_BASE, DUR_SNAP, LINE_SMALL, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, ease_snap, tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
@@ -48,8 +49,17 @@ fn stagger_in(
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
-    Dictionary,
+    Words,
     Snippets,
+}
+
+/// The inline editor shown above a list, at most one at a time.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Panel {
+    None,
+    AddWords,
+    Import,
+    NewSnippet,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -67,12 +77,20 @@ enum SortKey {
 }
 
 /// Dictionary table column widths, in px. The word column takes the rest.
-const COL_SOURCE: f32 = 96.;
 const COL_USES: f32 = 96.;
-const COL_LAST_USED: f32 = 72.;
-const COL_ACTIONS: f32 = 52.;
+const COL_LAST_USED: f32 = 112.;
+/// The use count sits right-aligned in this cell so digits line up.
+const COUNT_CELL: f32 = 28.;
 /// Width of the use-count bar for the most used word.
 const USE_BAR_MAX: f32 = 48.;
+/// Snippet table trigger column width, in px.
+const COL_TRIGGER: f32 = 200.;
+/// Height of the header controls: tabs, search, buttons.
+const HEADER_CONTROL: f32 = 28.;
+/// How long a removed row can be brought back before it is deleted for good.
+const UNDO_WINDOW: Duration = Duration::from_secs(6);
+/// Mishearings shown on a Dictionary row.
+const MAX_ROW_CORRECTIONS: usize = 3;
 
 /// Sorts dictionary rows in place. Ties list the newest word first, so a word
 /// just added tops the rows it ties with.
@@ -88,25 +106,183 @@ fn sort_entries(entries: &mut [DictionaryEntry], key: SortKey, descending: bool)
     });
 }
 
+/// When a word was last used, to the day: the table only needs to tell
+/// words in daily use from ones that went quiet. Relative for the past week,
+/// a date after that.
+#[derive(Debug, PartialEq, Eq)]
+enum LastUsed {
+    Never,
+    Today,
+    Yesterday,
+    DaysAgo(i64),
+    Date { day: NaiveDate, this_year: bool },
+}
+
+fn last_used(use_count: i64, at: Option<DateTime<Utc>>, now: DateTime<Local>) -> LastUsed {
+    // A word added but never spoken may still carry a timestamp; it was not used.
+    let Some(at) = at.filter(|_| use_count > 0) else {
+        return LastUsed::Never;
+    };
+    let day = at.with_timezone(&Local).date_naive();
+    match (now.date_naive() - day).num_days() {
+        ..=0 => LastUsed::Today,
+        1 => LastUsed::Yesterday,
+        n @ 2..=6 => LastUsed::DaysAgo(n),
+        _ => LastUsed::Date {
+            day,
+            this_year: day.year() == now.year(),
+        },
+    }
+}
+
+fn last_used_label(value: &LastUsed) -> String {
+    let zh = i18n::language() == Language::ZhCn;
+    match value {
+        LastUsed::Never => "—".to_string(),
+        LastUsed::Today => t("dictionary.lastUsed.today"),
+        LastUsed::Yesterday => t("dictionary.lastUsed.yesterday"),
+        LastUsed::DaysAgo(n) => t_with("dictionary.lastUsed.daysAgo", &[("count", &n.to_string())]),
+        LastUsed::Date { day, this_year } => {
+            let format = match (zh, this_year) {
+                (true, true) => "%-m月%-d日",
+                (true, false) => "%Y年%-m月%-d日",
+                (false, true) => "%b %-d",
+                (false, false) => "%b %-d, %Y",
+            };
+            day.format(format).to_string()
+        }
+    }
+}
+
+/// The exact time, for the Last used tooltip.
+fn full_timestamp(at: DateTime<Utc>) -> String {
+    let format = if i18n::language() == Language::ZhCn {
+        "%Y年%-m月%-d日 %H:%M"
+    } else {
+        "%A, %B %-d, %Y at %-I:%M %p"
+    };
+    at.with_timezone(&Local).format(format).to_string()
+}
+
+/// A replacement on one line: line breaks become a return glyph.
+fn one_line(text: &str) -> String {
+    text.split('\n')
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ↵ ")
+}
+
+fn word_key(word: &str) -> ElementId {
+    SharedString::from(format!("dict-word:{word}")).into()
+}
+
+fn snippet_key(trigger: &str) -> ElementId {
+    SharedString::from(format!("dict-snippet:{trigger}")).into()
+}
+
+fn menu_item_key(index: usize) -> ElementId {
+    ("dict-menu-item", index).into()
+}
+
+fn focus_key(key: ElementId, window: &mut Window, cx: &mut App) {
+    keyed_focus_handle(key, cx).focus(window, cx);
+}
+
+/// The overflow menu's trigger; focus returns here when the menu closes.
+const MORE_BUTTON: &str = "dict-more";
+
+#[derive(Clone)]
+enum MenuAction {
+    Import,
+    Export,
+    Clear,
+    EditWord(String),
+    RemoveWord(String),
+    EditSnippet(Snippet),
+    RemoveSnippet(String),
+}
+
+#[derive(Clone)]
+struct MenuEntry {
+    label: String,
+    icon: &'static str,
+    shortcut: Option<&'static str>,
+    destructive: bool,
+    action: MenuAction,
+}
+
+impl MenuEntry {
+    fn new(label: String, icon: &'static str, action: MenuAction) -> Self {
+        Self {
+            label,
+            icon,
+            shortcut: None,
+            destructive: false,
+            action,
+        }
+    }
+
+    fn shortcut(mut self, keys: &'static str) -> Self {
+        self.shortcut = Some(keys);
+        self
+    }
+
+    fn destructive(mut self) -> Self {
+        self.destructive = true;
+        self
+    }
+}
+
+#[derive(Clone)]
+struct OpenMenu {
+    entries: Vec<MenuEntry>,
+    /// Where a context menu opened; `None` hangs the menu under the overflow button.
+    position: Option<Point<Pixels>>,
+    /// What takes focus back when the menu closes.
+    return_focus: ElementId,
+}
+
+#[derive(Clone)]
+enum Removal {
+    Word(DictionaryEntry),
+    Snippet(Snippet),
+}
+
+/// A row taken off screen but not yet deleted, so Undo loses nothing: deleting
+/// a word also forgets its use count and mishearings.
+struct PendingRemoval {
+    id: u64,
+    removal: Removal,
+}
+
 pub struct DictionaryView {
     tab: Tab,
-    // Dictionary
+    panel: Panel,
+    // Words
+    word_search: Entity<InputState>,
     add_input: Entity<InputState>,
+    /// Feedback under the add field after the last Enter.
+    add_note: Option<(String, bool)>,
     bulk: Entity<TextareaState>,
-    show_bulk: bool,
     filter: SourceFilter,
     sort: SortKey,
     descending: bool,
     editing: Option<String>,
     edit_input: Entity<InputState>,
     // Snippets
+    snippet_search: Entity<InputState>,
     trigger_input: Entity<InputState>,
     expansion: Entity<TextareaState>,
-    panel_open: bool,
+    // Shared
+    menu: Option<OpenMenu>,
+    /// When a menu last closed, so the click that closed it does not reopen it.
+    menu_closed_at: Option<Instant>,
+    pending: Option<PendingRemoval>,
+    next_removal: u64,
+    /// Focus keys of the rows on screen, top to bottom, for arrow-key moves.
+    row_keys: Vec<ElementId>,
 }
-
-/// Mishearings shown on a Dictionary row.
-const MAX_ROW_CORRECTIONS: usize = 3;
 
 fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
     AppState::global(cx).update(cx, |s, cx| {
@@ -118,14 +294,34 @@ fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
 
 impl DictionaryView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let add_input =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t("dictionary.addPlaceholder")));
+        let notify_on_change = |cx: &mut Context<Self>, state: &Entity<InputState>| {
+            cx.subscribe(state, |_, _, e: &InputEvent, cx| {
+                if matches!(e, InputEvent::Change) {
+                    cx.notify();
+                }
+            })
+            .detach();
+        };
+        let word_search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t("dictionary.searchWordsPlaceholder"))
+        });
+        notify_on_change(cx, &word_search);
+        let snippet_search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t("dictionary.snippets.searchPlaceholder"))
+        });
+        notify_on_change(cx, &snippet_search);
+
+        let add_input = cx
+            .new(|cx| InputState::new(window, cx).placeholder(t("dictionary.addWordsPlaceholder")));
         cx.subscribe_in(
             &add_input,
             window,
             |this, _, e: &InputEvent, window, cx| match e {
                 InputEvent::PressEnter { .. } => this.add_from_input(window, cx),
-                InputEvent::Change => cx.notify(),
+                InputEvent::Change => {
+                    this.add_note = None;
+                    cx.notify();
+                }
                 _ => {}
             },
         )
@@ -139,20 +335,30 @@ impl DictionaryView {
         cx.subscribe_in(
             &edit_input,
             window,
-            |this, _, e: &InputEvent, _, cx| match e {
-                InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_edit(cx),
+            |this, _, e: &InputEvent, window, cx| match e {
+                InputEvent::PressEnter { .. } => {
+                    if let Some(word) = this.commit_edit(cx) {
+                        focus_key(word_key(&word), window, cx);
+                    }
+                }
+                InputEvent::Blur => {
+                    this.commit_edit(cx);
+                }
                 _ => {}
             },
         )
         .detach();
+
         let trigger_input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(t("dictionary.snippets.addPlaceholder"))
+            InputState::new(window, cx).placeholder(t("dictionary.snippets.triggerPlaceholder"))
         });
         cx.subscribe_in(
             &trigger_input,
             window,
             |this, _, e: &InputEvent, window, cx| match e {
-                InputEvent::PressEnter { .. } => this.open_panel(window, cx),
+                InputEvent::PressEnter { .. } => {
+                    this.expansion.update(cx, |i, cx| i.focus(window, cx));
+                }
                 InputEvent::Change => cx.notify(),
                 _ => {}
             },
@@ -164,6 +370,7 @@ impl DictionaryView {
         });
         cx.subscribe(&expansion, |_, _, _: &InputEvent, cx| cx.notify())
             .detach();
+
         let state = AppState::global(cx);
         cx.subscribe(&state, |_, _, e: &AppEvent, cx| {
             if matches!(e, AppEvent::DictionaryChanged | AppEvent::SnippetsChanged) {
@@ -172,53 +379,335 @@ impl DictionaryView {
         })
         .detach();
         Self {
-            tab: Tab::Dictionary,
+            tab: Tab::Words,
+            panel: Panel::None,
+            word_search,
             add_input,
+            add_note: None,
             bulk,
-            show_bulk: false,
             filter: SourceFilter::All,
             sort: SortKey::Uses,
             descending: true,
             editing: None,
             edit_input,
+            snippet_search,
             trigger_input,
             expansion,
-            panel_open: false,
+            menu: None,
+            menu_closed_at: None,
+            pending: None,
+            next_removal: 0,
+            row_keys: Vec::new(),
         }
     }
 
-    // ---- Dictionary --------------------------------------------------------------------------
+    fn set_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
+        if self.tab != tab {
+            self.tab = tab;
+            self.panel = Panel::None;
+            self.editing = None;
+            self.menu = None;
+            cx.notify();
+        }
+    }
 
-    fn add_words(text: &str, cx: &mut App) -> usize {
+    fn search(&self) -> &Entity<InputState> {
+        match self.tab {
+            Tab::Words => &self.word_search,
+            Tab::Snippets => &self.snippet_search,
+        }
+    }
+
+    fn any_text_field_focused(&self, window: &Window, cx: &App) -> bool {
+        [
+            &self.word_search,
+            &self.add_input,
+            &self.edit_input,
+            &self.snippet_search,
+            &self.trigger_input,
+        ]
+        .iter()
+        .any(|s| s.read(cx).focus_handle(cx).is_focused(window))
+            || [&self.bulk, &self.expansion]
+                .iter()
+                .any(|s| s.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    /// Moves keyboard focus `delta` rows from `from`; above the first row is
+    /// the search field.
+    fn focus_neighbor(
+        &mut self,
+        from: &ElementId,
+        delta: isize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.row_keys.iter().position(|k| k == from) else {
+            return;
+        };
+        let target = index as isize + delta;
+        if target < 0 {
+            self.search().update(cx, |i, cx| i.focus(window, cx));
+        } else if let Some(key) = self.row_keys.get(target as usize) {
+            focus_key(key.clone(), window, cx);
+        }
+    }
+
+    /// The row that should take focus once `key`'s row is gone.
+    fn row_after_removal(&self, key: &ElementId) -> Option<ElementId> {
+        let index = self.row_keys.iter().position(|k| k == key)?;
+        self.row_keys
+            .get(index + 1)
+            .or_else(|| index.checked_sub(1).and_then(|i| self.row_keys.get(i)))
+            .cloned()
+    }
+
+    // ---- Removal with undo -------------------------------------------------------------------
+
+    fn remove(&mut self, removal: Removal, cx: &mut Context<Self>) {
+        self.commit_pending(cx);
+        self.next_removal += 1;
+        let id = self.next_removal;
+        self.pending = Some(PendingRemoval { id, removal });
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(UNDO_WINDOW).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.pending.as_ref().is_some_and(|p| p.id == id) {
+                    this.commit_pending(cx);
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Removes a row and, when the keyboard removed it, focuses its neighbor.
+    fn remove_row(
+        &mut self,
+        key: &ElementId,
+        removal: Removal,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let next = self.row_after_removal(key);
+        self.remove(removal, cx);
+        match next {
+            Some(next) => focus_key(next, window, cx),
+            None => self.search().update(cx, |i, cx| i.focus(window, cx)),
+        }
+    }
+
+    fn commit_pending(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        match pending.removal {
+            Removal::Word(entry) => update_dictionary(Vec::new(), vec![entry.word], cx),
+            Removal::Snippet(snippet) => Self::remove_snippet(snippet.trigger, cx),
+        }
+        cx.notify();
+    }
+
+    fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        let key = match &pending.removal {
+            Removal::Word(entry) => word_key(&entry.word),
+            Removal::Snippet(snippet) => snippet_key(&snippet.trigger),
+        };
+        focus_key(key, window, cx);
+        cx.notify();
+    }
+
+    fn pending_word(&self) -> Option<&str> {
+        match &self.pending.as_ref()?.removal {
+            Removal::Word(entry) => Some(&entry.word),
+            Removal::Snippet(_) => None,
+        }
+    }
+
+    fn pending_trigger(&self) -> Option<&str> {
+        match &self.pending.as_ref()?.removal {
+            Removal::Snippet(snippet) => Some(&snippet.trigger),
+            Removal::Word(_) => None,
+        }
+    }
+
+    // ---- Menus -------------------------------------------------------------------------------
+
+    fn open_menu(&mut self, menu: OpenMenu, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = Some(menu);
+        // Focus lands in the menu so arrows, Return and Escape work at once;
+        // the ring only shows when the keyboard opened it.
+        focus_key(menu_item_key(0), window, cx);
+        cx.notify();
+    }
+
+    fn close_menu(&mut self, restore_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(menu) = self.menu.take() {
+            self.menu_closed_at = Some(Instant::now());
+            if restore_focus {
+                focus_key(menu.return_focus, window, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    fn toggle_overflow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.is_some() {
+            self.close_menu(true, window, cx);
+            return;
+        }
+        // The mouse-down that dismissed the menu also lands here as a click.
+        if self
+            .menu_closed_at
+            .is_some_and(|at| at.elapsed() < Duration::from_millis(DUR_BASE))
+        {
+            return;
+        }
+        let entries = vec![
+            MenuEntry::new(t("dictionary.importList"), "upload", MenuAction::Import),
+            MenuEntry::new(t("dictionary.exportList"), "save", MenuAction::Export),
+            MenuEntry::new(t("dictionary.clearDictionary"), "trash2", MenuAction::Clear)
+                .destructive(),
+        ];
+        self.open_menu(
+            OpenMenu {
+                entries,
+                position: None,
+                return_focus: MORE_BUTTON.into(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    fn row_menu_entries(&self, word: Option<&str>, snippet: Option<&Snippet>) -> Vec<MenuEntry> {
+        let (edit, remove) = match (word, snippet) {
+            (Some(word), _) => (
+                MenuAction::EditWord(word.to_string()),
+                MenuAction::RemoveWord(word.to_string()),
+            ),
+            (None, Some(snippet)) => (
+                MenuAction::EditSnippet(snippet.clone()),
+                MenuAction::RemoveSnippet(snippet.trigger.clone()),
+            ),
+            (None, None) => return Vec::new(),
+        };
+        vec![
+            MenuEntry::new(t("dictionary.edit"), "pencil", edit).shortcut("↩"),
+            MenuEntry::new(t("dictionary.remove"), "trash2", remove)
+                .shortcut("⌫")
+                .destructive(),
+        ]
+    }
+
+    fn run(&mut self, action: MenuAction, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            MenuAction::Import => self.open_panel(Panel::Import, window, cx),
+            MenuAction::Export => {
+                self.commit_pending(cx);
+                Self::export(cx);
+            }
+            MenuAction::Clear => self.confirm_clear(cx),
+            MenuAction::EditWord(word) => self.start_edit(word, window, cx),
+            MenuAction::RemoveWord(word) => self.remove_word(&word, window, cx),
+            MenuAction::EditSnippet(snippet) => Self::edit_snippet(snippet, window, cx),
+            MenuAction::RemoveSnippet(trigger) => self.remove_snippet_row(&trigger, window, cx),
+        }
+    }
+
+    // ---- Words -------------------------------------------------------------------------------
+
+    fn open_panel(&mut self, panel: Panel, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel = panel;
+        self.add_note = None;
+        match panel {
+            Panel::AddWords => self.add_input.update(cx, |i, cx| i.focus(window, cx)),
+            Panel::Import => self.bulk.update(cx, |i, cx| i.focus(window, cx)),
+            Panel::NewSnippet => self.trigger_input.update(cx, |i, cx| i.focus(window, cx)),
+            Panel::None => {}
+        }
+        cx.notify();
+    }
+
+    /// Closes the inline editor and hands focus back to the button that opened it.
+    fn close_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let opener = match self.panel {
+            Panel::AddWords => Some("dict-add-word"),
+            Panel::Import => Some(MORE_BUTTON),
+            Panel::NewSnippet => Some("dict-new-snippet"),
+            Panel::None => None,
+        };
+        self.panel = Panel::None;
+        self.add_note = None;
+        self.add_input
+            .update(cx, |i, cx| i.set_value("", window, cx));
+        self.bulk.update(cx, |i, cx| i.set_value("", window, cx));
+        self.trigger_input
+            .update(cx, |i, cx| i.set_value("", window, cx));
+        self.expansion
+            .update(cx, |i, cx| i.set_value("", window, cx));
+        if let Some(opener) = opener {
+            focus_key(opener.into(), window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Adds the words in `text` that are not in the Dictionary yet. Returns
+    /// how many words `text` held and how many were new.
+    fn add_words(&mut self, text: &str, cx: &mut Context<Self>) -> (usize, usize) {
+        // A word waiting to be deleted is still stored; settle it first so
+        // adding it back works.
+        self.commit_pending(cx);
         let dictionary = AppState::global(cx).read(cx).dictionary.clone();
         let mut existing: std::collections::HashSet<String> =
             dictionary.iter().map(|w| w.to_lowercase()).collect();
-        let words: Vec<String> = parse_dictionary_import_text(text)
+        let parsed = parse_dictionary_import_text(text);
+        let total = parsed.len();
+        let words: Vec<String> = parsed
             .into_iter()
             .filter(|w| existing.insert(w.to_lowercase()))
             .collect();
-        let count = words.len();
-        if count > 0 {
+        let added = words.len();
+        if added > 0 {
             update_dictionary(words, Vec::new(), cx);
         }
-        count
+        (total, added)
     }
 
     fn add_from_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.add_input.read(cx).value().to_string();
-        if Self::add_words(&text, cx) > 0 {
+        let (total, added) = self.add_words(&text, cx);
+        if total == 0 {
+            return;
+        }
+        if added > 0 {
             self.add_input
                 .update(cx, |i, cx| i.set_value("", window, cx));
+            self.add_note = Some((
+                t_with("dictionary.addedCount", &[("count", &added.to_string())]),
+                true,
+            ));
+        } else {
+            self.add_note = Some((t("dictionary.alreadyInDictionary"), false));
         }
         cx.notify();
     }
 
     fn import_bulk(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.bulk.read(cx).value().to_string();
-        Self::add_words(&text, cx);
-        self.bulk.update(cx, |i, cx| i.set_value("", window, cx));
-        self.show_bulk = false;
-        cx.notify();
+        let (_, added) = self.add_words(&text, cx);
+        self.close_panel(window, cx);
+        show_toast(
+            Toast::new(t_with(
+                "dictionary.importedCount",
+                &[("count", &added.to_string())],
+            ))
+            .variant(ToastVariant::Success),
+            cx,
+        );
     }
 
     fn start_edit(&mut self, word: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -230,23 +719,76 @@ impl DictionaryView {
         cx.notify();
     }
 
-    fn commit_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(original) = self.editing.take() else {
-            return;
-        };
+    fn cancel_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(word) = self.editing.take() {
+            focus_key(word_key(&word), window, cx);
+            cx.notify();
+        }
+    }
+
+    /// Saves the word being edited. Returns the word the row now shows.
+    fn commit_edit(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        let original = self.editing.take()?;
         let value = self.edit_input.read(cx).value().trim().to_string();
         let dictionary = AppState::global(cx).read(cx).dictionary.clone();
         let duplicate = dictionary
             .iter()
             .any(|w| *w != original && w.to_lowercase() == value.to_lowercase());
-        if !value.is_empty() && value != original && !duplicate {
-            update_dictionary(vec![value], vec![original], cx);
-        }
         cx.notify();
+        if !value.is_empty() && value != original && !duplicate {
+            update_dictionary(vec![value.clone()], vec![original], cx);
+            Some(value)
+        } else {
+            Some(original)
+        }
+    }
+
+    fn remove_word(&mut self, word: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let entry = AppState::global(cx)
+            .read(cx)
+            .dictionary_entries
+            .iter()
+            .find(|e| e.word == word)
+            .cloned();
+        if let Some(entry) = entry {
+            self.remove_row(&word_key(word), Removal::Word(entry), window, cx);
+        }
+    }
+
+    fn confirm_clear(&mut self, cx: &mut Context<Self>) {
+        let count = AppState::global(cx).read(cx).dictionary.len();
+        let view = cx.entity().downgrade();
+        let request = DialogRequest::confirm(
+            t("dictionary.clearTitle"),
+            Some(
+                t_with(
+                    "dictionary.clearDescription",
+                    &[("count", &count.to_string())],
+                )
+                .into(),
+            ),
+            true,
+            move |_, cx| {
+                // Clearing deletes everything, the row waiting on Undo included.
+                let _ = view.update(cx, |this, cx| {
+                    this.pending = None;
+                    cx.notify();
+                });
+                AppState::global(cx).update(cx, |s, cx| s.clear_dictionary(cx))
+            },
+        );
+        show_dialog(
+            DialogRequest {
+                confirm_label: t("dictionary.clearConfirm").into(),
+                ..request
+            },
+            cx,
+        );
     }
 
     fn export(cx: &mut App) {
         let words = AppState::global(cx).read(cx).dictionary.clone();
+        let count = words.len();
         let dialog = rfd::AsyncFileDialog::new()
             .set_file_name(crate::text::dictionary_import::DICTIONARY_EXPORT_FILE_NAME)
             .add_filter("Text", &["txt"]);
@@ -254,16 +796,17 @@ impl DictionaryView {
             let Some(file) = dialog.save_file().await else {
                 return;
             };
-            if let Err(err) = std::fs::write(file.path(), format_dictionary_export(&words)) {
-                cx.update(|cx| {
-                    show_toast(
-                        Toast::new(t("dictionary.exportFailed"))
-                            .description(err.to_string())
-                            .variant(ToastVariant::Destructive),
-                        cx,
-                    )
-                });
-            }
+            let toast = match std::fs::write(file.path(), format_dictionary_export(&words)) {
+                Ok(()) => Toast::new(t_with(
+                    "dictionary.exportedCount",
+                    &[("count", &count.to_string())],
+                ))
+                .variant(ToastVariant::Success),
+                Err(err) => Toast::new(t("dictionary.exportFailed"))
+                    .description(err.to_string())
+                    .variant(ToastVariant::Destructive),
+            };
+            cx.update(|cx| show_toast(toast, cx));
         })
         .detach();
     }
@@ -279,28 +822,10 @@ impl DictionaryView {
         })
     }
 
-    fn open_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let trigger = self.trigger_input.read(cx).value().trim().to_string();
-        let snippets = AppState::global(cx).read(cx).snippets.clone();
-        if trigger.is_empty() || Self::trigger_exists(&snippets, &trigger, None) {
-            return;
-        }
-        self.panel_open = true;
-        self.expansion.update(cx, |i, cx| i.focus(window, cx));
-        cx.notify();
-    }
-
-    fn close_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.panel_open = false;
-        self.expansion
-            .update(cx, |i, cx| i.set_value("", window, cx));
-        self.trigger_input.update(cx, |i, cx| i.focus(window, cx));
-        cx.notify();
-    }
-
     fn create_snippet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let trigger = self.trigger_input.read(cx).value().trim().to_string();
         let replacement = self.expansion.read(cx).value().trim().to_string();
+        self.commit_pending(cx);
         let state = AppState::global(cx);
         let mut snippets = state.read(cx).snippets.clone();
         if trigger.is_empty()
@@ -310,13 +835,12 @@ impl DictionaryView {
             return;
         }
         snippets.push(Snippet {
-            trigger,
+            trigger: trigger.clone(),
             replacement,
         });
         state.update(cx, |s, cx| s.set_snippets(snippets, cx));
-        self.trigger_input
-            .update(cx, |i, cx| i.set_value("", window, cx));
         self.close_panel(window, cx);
+        focus_key(snippet_key(&trigger), window, cx);
     }
 
     fn remove_snippet(trigger: String, cx: &mut App) {
@@ -331,137 +855,743 @@ impl DictionaryView {
         state.update(cx, |s, cx| s.set_snippets(snippets, cx));
     }
 
+    fn remove_snippet_row(&mut self, trigger: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let snippet = AppState::global(cx)
+            .read(cx)
+            .snippets
+            .iter()
+            .find(|s| s.trigger == trigger)
+            .cloned();
+        if let Some(snippet) = snippet {
+            self.remove_row(&snippet_key(trigger), Removal::Snippet(snippet), window, cx);
+        }
+    }
+
     fn edit_snippet(snippet: Snippet, window: &mut Window, cx: &mut App) {
         let editor = cx.new(|cx| SnippetEditor::new(snippet, window, cx));
         show_custom(editor.into(), cx);
     }
 
-    // ---- Rendering ---------------------------------------------------------------------------
+    // ---- Rendering: shared -------------------------------------------------------------------
 
-    fn render_tabs(&self, cx: &mut Context<Self>) -> Div {
+    fn render_header(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let mut tabs = div().flex().items_center().h(px(28.)).gap(px(2.));
-        for (tab, key) in [
-            (Tab::Dictionary, "dictionary.tabDictionary"),
-            (Tab::Snippets, "dictionary.tabSnippets"),
-        ] {
-            let active = self.tab == tab;
-            tabs = tabs.child(
+        let (has_rows, add): (bool, Button) = match self.tab {
+            Tab::Words => (
+                !AppState::global(cx).read(cx).dictionary.is_empty(),
+                Button::new("dict-add-word")
+                    .icon("plus", 12.)
+                    .label(t("dictionary.addWord"))
+                    .variant(ButtonVariant::Outline)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_panel(Panel::AddWords, window, cx)
+                    })),
+            ),
+            Tab::Snippets => (
+                !AppState::global(cx).read(cx).snippets.is_empty(),
+                Button::new("dict-new-snippet")
+                    .icon("plus", 12.)
+                    .label(t("dictionary.snippets.new"))
+                    .variant(ButtonVariant::Outline)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.open_panel(Panel::NewSnippet, window, cx)
+                    })),
+            ),
+        };
+        let overflow = (self.tab == Tab::Words && has_rows).then(|| {
+            let menu = self
+                .menu
+                .clone()
+                .filter(|m| m.position.is_none())
+                .map(|m| self.render_menu(m, cx));
+            div()
+                .flex()
+                .relative()
+                .child(
+                    Button::new(MORE_BUTTON)
+                        .icon("more-vertical", 14.)
+                        .aria_label(t("dictionary.moreActions"))
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_overflow(window, cx)),
+                        ),
+                )
+                .when_some(menu, |d, menu| {
+                    // Hangs from the button's right edge; deferred so it paints over the list.
+                    d.child(
+                        deferred(
+                            div()
+                                .absolute()
+                                .top(px(HEADER_CONTROL + 4.))
+                                .right_0()
+                                .child(menu),
+                        )
+                        .with_priority(2),
+                    )
+                })
+        });
+        let search = has_rows.then(|| self.render_search(window, cx));
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .child(self.render_tabs(&p, cx))
+            .child(
                 div()
-                    .id(SharedString::from(key))
-                    .h(px(24.))
-                    .px(px(10.))
                     .flex()
                     .items_center()
-                    .rounded(px(RADIUS_MD))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .when(active, |d| {
-                        d.bg(p.foreground.opacity(if p.dark { 0.09 } else { 0.06 }))
-                            .text_color(p.foreground)
-                    })
-                    .when(!active, |d| {
-                        d.text_color(p.muted_foreground)
-                            .hover(|s| s.text_color(p.foreground))
-                    })
+                    .gap(px(8.))
+                    .children(search)
+                    .child(add)
+                    .children(overflow),
+            )
+    }
+
+    fn render_tabs(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let mut track = segmented_track(p)
+            .flex_none()
+            .items_center()
+            .h(px(HEADER_CONTROL))
+            .gap(px(2.));
+        for (tab, id, key) in [
+            (Tab::Words, "dict-tab-words", "dictionary.tabWords"),
+            (Tab::Snippets, "dict-tab-snippets", "dictionary.tabSnippets"),
+        ] {
+            track = track.child(
+                segment(id, t(key), self.tab == tab, cx)
+                    .h_full()
                     .child(t(key))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.tab = tab;
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_tab(tab, cx))),
+            );
+        }
+        track
+    }
+
+    /// The header search field: Escape clears it, ↓ moves into the list.
+    fn render_search(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let p = cx.palette();
+        let state = self.search().clone();
+        div()
+            .relative()
+            .flex_none()
+            .w(px(200.))
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+                match e.keystroke.key.as_str() {
+                    "escape" if !state.read(cx).value().is_empty() => {
+                        state.update(cx, |i, cx| i.set_value("", window, cx));
+                        cx.stop_propagation();
+                    }
+                    "down" => {
+                        if let Some(first) = this.row_keys.first() {
+                            focus_key(first.clone(), window, cx);
+                            cx.stop_propagation();
+                        }
+                    }
+                    _ => {}
+                }
+            }))
+            .child(
+                text_field_small(self.search(), false, window, cx)
+                    .h(px(HEADER_CONTROL))
+                    .pl(px(22.)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(9.))
+                    .top_0()
+                    .h(px(HEADER_CONTROL))
+                    .flex()
+                    .items_center()
+                    .child(icon("search", 13., p.subtle_foreground)),
+            )
+    }
+
+    fn render_menu(&self, menu: OpenMenu, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let count = menu.entries.len();
+        let mut list = div()
+            .id("dict-menu")
+            .occlude()
+            .min_w(px(196.))
+            .p(px(4.))
+            .flex()
+            .flex_col()
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(p.foreground.opacity(0.1))
+            .bg(p.popover)
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., if p.dark { 0.55 } else { 0.22 }),
+                offset: point(px(0.), px(16.)),
+                blur_radius: px(40.),
+                spread_radius: px(-18.),
+                inset: false,
+            }])
+            .on_mouse_down_out(
+                cx.listener(|this, _, window, cx| this.close_menu(false, window, cx)),
+            )
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+                let current = (0..count)
+                    .find(|&i| keyed_focus_handle(menu_item_key(i), cx).is_focused(window));
+                let step = |delta: usize| current.map_or(0, |i| (i + delta) % count);
+                match e.keystroke.key.as_str() {
+                    "down" => focus_key(menu_item_key(step(1)), window, cx),
+                    "up" => focus_key(menu_item_key(step(count - 1)), window, cx),
+                    "escape" | "tab" => this.close_menu(true, window, cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }));
+        for (index, entry) in menu.entries.into_iter().enumerate() {
+            let fg = if entry.destructive {
+                p.destructive
+            } else {
+                p.foreground
+            };
+            let wash = if entry.destructive {
+                p.destructive.opacity(0.1)
+            } else {
+                p.hover_wash(0.08)
+            };
+            // Destructive items sit apart from routine ones.
+            if entry.destructive && index > 0 {
+                list = list.child(div().my(px(4.)).mx(px(4.)).h(px(1.)).bg(p.border));
+            }
+            let action = entry.action.clone();
+            list = list.child(
+                div()
+                    .id(menu_item_key(index))
+                    .keyboard_focusable(
+                        menu_item_key(index),
+                        Role::MenuItem,
+                        entry.label.clone(),
+                        cx,
+                    )
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .h(px(28.))
+                    .px(px(8.))
+                    .rounded(px(RADIUS_SM))
+                    .text_size(px(TEXT_BODY))
+                    .text_color(fg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(wash))
+                    .focus(move |s| s.bg(wash))
+                    .child(icon(
+                        entry.icon,
+                        14.,
+                        if entry.destructive {
+                            p.destructive
+                        } else {
+                            p.muted_foreground
+                        },
+                    ))
+                    .child(div().flex_1().whitespace_nowrap().child(entry.label))
+                    .when_some(entry.shortcut, |d, keys| {
+                        d.child(
+                            div()
+                                .pl(px(16.))
+                                .text_size(px(TEXT_SMALL))
+                                .text_color(p.subtle_foreground)
+                                .child(keys),
+                        )
+                    })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_menu(false, window, cx);
+                        this.run(action.clone(), window, cx);
                     })),
             );
         }
-        tabs
+        list.with_animation(
+            "dict-menu-in",
+            Animation::new(Duration::from_millis(DUR_SNAP)).with_easing(ease_snap),
+            |d, t| d.opacity(t),
+        )
+        .into_any_element()
     }
 
-    fn list_frame(p: &Palette) -> Div {
-        surface_card(p).px(px(16.)).py(px(12.))
-    }
-
-    fn list_heading(title: String, p: &Palette) -> Div {
-        div()
-            .text_size(px(TEXT_SMALL))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(p.muted_foreground)
-            .child(title)
-    }
-
-    fn dashed_rule(p: &Palette) -> Div {
-        div()
-            .mt(px(10.))
-            .border_t_1()
-            .border_dashed()
-            .border_color(if p.dark {
-                p.white.opacity(0.1)
-            } else {
-                p.foreground.opacity(0.1)
-            })
-    }
-
-    fn row(id: impl Into<ElementId>, group: SharedString, p: &Palette) -> Stateful<Div> {
-        div()
-            .id(id)
-            .group(group)
+    /// The floating "Removed … Undo" bar at the bottom of the window.
+    fn render_undo(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let pending = self.pending.as_ref()?;
+        let p = cx.palette();
+        let message = match &pending.removal {
+            Removal::Word(entry) => t_with("dictionary.removedWord", &[("word", &entry.word)]),
+            Removal::Snippet(snippet) => t_with(
+                "dictionary.snippets.removed",
+                &[("trigger", &snippet.trigger)],
+            ),
+        };
+        let viewport = window.viewport_size();
+        let bar = div()
+            .id("dict-undo")
+            .occlude()
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(px(10.))
             .h(px(40.))
-            .border_b_1()
-            .border_color(p.border.opacity(0.5))
+            .pl(px(14.))
+            .pr(px(6.))
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(p.foreground.opacity(0.1))
+            .bg(p.popover)
+            .shadow(vec![drop(0., 8., 24., if p.dark { 0.5 } else { 0.14 })])
+            .child(
+                div()
+                    .max_w(px(280.))
+                    .truncate()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(p.foreground)
+                    .child(message),
+            )
+            .child(kbd("⌘Z", &p))
+            .child(
+                Button::new("dict-undo-button")
+                    .label(t("dictionary.undo"))
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|this, _, window, cx| this.undo(window, cx))),
+            )
+            .with_animation(
+                ("dict-undo-in", pending.id as usize),
+                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                |d, t| d.opacity(t).mt(px(6. * (1. - t))),
+            );
+        Some(
+            deferred(
+                anchored()
+                    .position(point(viewport.width / 2., viewport.height - px(24.)))
+                    .anchor(Anchor::BottomCenter)
+                    .child(bar),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
     }
 
+    /// An icon button that appears on a row while it is hovered or focused.
     fn row_action(
-        id: impl Into<ElementId>,
+        key: ElementId,
         name: &'static str,
+        label: String,
         destructive: bool,
-        p: &Palette,
+        cx: &mut App,
     ) -> Stateful<Div> {
-        let hover = if destructive {
-            p.destructive.opacity(0.7)
+        let p = cx.palette();
+        let (fg, wash) = if destructive {
+            (p.destructive, p.destructive.opacity(0.1))
         } else {
-            p.foreground.opacity(0.6)
+            (p.foreground, p.hover_wash(0.08))
         };
-        let hover_bg = if destructive {
-            p.destructive.opacity(0.08)
-        } else {
-            p.hover_wash(0.06)
-        };
+        let group: SharedString = format!("{key}-action").into();
         div()
-            .id(id)
+            .id(key.clone())
+            .keyboard_focusable(key, Role::Button, label.clone(), cx)
+            .group(group.clone())
             .flex()
+            .flex_none()
             .items_center()
             .justify_center()
             .size(px(24.))
             .rounded(px(RADIUS_MD))
             .cursor_pointer()
-            .child(icon(name, 14., p.muted_foreground))
-            .hover(move |s| s.text_color(hover).bg(hover_bg))
+            .hover(move |s| s.bg(wash))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(label.clone().into())).into())
+            .child(
+                icon(name, 14., p.muted_foreground).group_hover(group, move |s| s.text_color(fg)),
+            )
     }
 
-    fn filter_tabs(&self, entries: &[DictionaryEntry], cx: &mut Context<Self>) -> Div {
+    fn table_header(cells: Vec<AnyElement>, p: &Palette) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .h(px(30.))
+            .px(px(8.))
+            .border_b_1()
+            .border_color(p.border.opacity(0.7))
+            .children(cells)
+    }
+
+    fn row_frame(key: &ElementId, label: String, focused: bool, cx: &mut App) -> Stateful<Div> {
         let p = cx.palette();
+        let wash = p.hover_wash(if p.dark { 0.04 } else { 0.03 });
+        div()
+            .id(key.clone())
+            .keyboard_focusable(key.clone(), Role::ListItem, label, cx)
+            .flex()
+            .items_center()
+            .h(px(40.))
+            .px(px(8.))
+            .rounded(px(RADIUS_MD))
+            .border_b_1()
+            .border_color(p.border.opacity(0.5))
+            .hover(move |s| s.bg(wash))
+            .when(focused, |d| d.bg(wash))
+    }
+
+    fn quiet_message(text: String, p: &Palette) -> Div {
+        div()
+            .py(px(28.))
+            .text_center()
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.muted_foreground)
+            .child(text)
+    }
+
+    /// A key hint for the footer: `↩ Edit`.
+    fn key_hint(keys: &'static str, label: String, p: &Palette) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .child(kbd(keys, p))
+            .child(label)
+    }
+
+    fn footer(left: String, focused_row: bool, p: &Palette) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(20.))
+            .px(px(8.))
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.subtle_foreground)
+            .child(left)
+            .when(focused_row, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(14.))
+                        .child(Self::key_hint("↩", t("dictionary.edit"), p))
+                        .child(Self::key_hint("⌫", t("dictionary.remove"), p)),
+                )
+            })
+    }
+
+    /// The frame of an inline editor above a list.
+    fn panel_frame(p: &Palette) -> Div {
+        surface_card(p)
+            .p(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .shadow(vec![drop(0., 1., 2., 0.04)])
+    }
+
+    // ---- Rendering: Words --------------------------------------------------------------------
+
+    fn render_words(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let p = cx.palette();
+        let (entries, words, snippets) = {
+            let s = AppState::global(cx).read(cx);
+            (
+                s.dictionary_entries.clone(),
+                s.dictionary.clone(),
+                s.snippets.clone(),
+            )
+        };
+        let pending = self.pending_word().map(str::to_string);
+        let entries: Vec<DictionaryEntry> = entries
+            .into_iter()
+            .filter(|e| Some(&e.word) != pending.as_ref())
+            .collect();
+        let query_raw = self.word_search.read(cx).value().trim().to_string();
+        let query = query_raw.to_lowercase();
         let learned = entries
             .iter()
             .filter(|e| e.source == DictionarySource::Learned)
             .count();
+        // With no learned words every row is manual, so the filter says nothing.
+        let filter = if learned > 0 {
+            self.filter
+        } else {
+            SourceFilter::All
+        };
+        let mut visible: Vec<DictionaryEntry> = entries
+            .iter()
+            .filter(|e| match filter {
+                SourceFilter::All => true,
+                SourceFilter::Manual => e.source == DictionarySource::Manual,
+                SourceFilter::Learned => e.source == DictionarySource::Learned,
+            })
+            .filter(|e| query.is_empty() || e.word.to_lowercase().contains(&query))
+            .cloned()
+            .collect();
+        sort_entries(&mut visible, self.sort, self.descending);
+        let shown = visible.len();
+        let max_uses = entries.iter().map(|e| e.use_count).max().unwrap_or(0);
+        let prompt_chars = get_dictionary_hint_words(&words, &snippets)
+            .join(", ")
+            .chars()
+            .count();
+
+        let panel = match self.panel {
+            Panel::AddWords => Some(self.render_add_panel(window, cx)),
+            Panel::Import => Some(self.render_import_panel(window, cx)),
+            _ => None,
+        };
+
+        let mut col = div().flex().flex_col().gap(px(12.)).children(panel);
+        if entries.is_empty() {
+            self.row_keys.clear();
+            return col.child(Self::render_empty(&p, cx));
+        }
+        if learned > 0 {
+            col = col.child(self.filter_tabs(&entries, learned, cx));
+        }
+
+        let mut table = div().flex().flex_col().child(Self::table_header(
+            vec![
+                div()
+                    .flex_1()
+                    .child(self.column_heading(0, "dictionary.columnWord", SortKey::Word, cx))
+                    .into_any_element(),
+                div()
+                    .w(px(COL_USES))
+                    .child(self.column_heading(1, "dictionary.columnUses", SortKey::Uses, cx))
+                    .into_any_element(),
+                div()
+                    .w(px(COL_LAST_USED))
+                    .flex()
+                    .justify_end()
+                    .child(self.column_heading(
+                        2,
+                        "dictionary.columnLastUsed",
+                        SortKey::LastUsed,
+                        cx,
+                    ))
+                    .into_any_element(),
+            ],
+            &p,
+        ));
+        if visible.is_empty() {
+            table = table.child(self.render_no_matches(&query_raw, cx));
+        }
+        self.row_keys = visible.iter().map(|e| word_key(&e.word)).collect();
+        let corrections = AppState::global(cx).read(cx).known_corrections.clone();
+        let mut focused_row = false;
+        for (index, entry) in visible.into_iter().enumerate() {
+            let misheard: Vec<String> = corrections
+                .iter()
+                .filter(|c| c.term == entry.word)
+                .take(MAX_ROW_CORRECTIONS)
+                .map(|c| c.misheard.clone())
+                .collect();
+            let (row, focused) = self.render_word_row(index, entry, misheard, max_uses, window, cx);
+            focused_row |= focused;
+            table = table.child(row);
+        }
+
+        let count = if shown == entries.len() {
+            t_with(
+                "dictionary.wordCount",
+                &[("count", &entries.len().to_string())],
+            )
+        } else {
+            t_with(
+                "dictionary.wordCountFiltered",
+                &[
+                    ("shown", &shown.to_string()),
+                    ("total", &entries.len().to_string()),
+                ],
+            )
+        };
+        col.child(table)
+            .child(Self::footer(count, focused_row, &p))
+            .when(prompt_chars > WHISPER_DECODER_PROMPT_CHARS, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap(px(8.))
+                        .px(px(8.))
+                        .child(div().pt(px(2.)).child(icon(
+                            "alert-circle",
+                            13.,
+                            p.subtle_foreground,
+                        )))
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(px(TEXT_SMALL))
+                                .line_height(px(LINE_SMALL))
+                                .text_color(p.subtle_foreground)
+                                .child(t_with(
+                                    "dictionary.promptLimitNotice",
+                                    &[("chars", &prompt_chars.to_string())],
+                                )),
+                        ),
+                )
+            })
+    }
+
+    fn render_add_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let can_add = !self.add_input.read(cx).value().trim().is_empty();
+        let (note, positive) = self
+            .add_note
+            .clone()
+            .unwrap_or_else(|| (t("dictionary.addHint"), false));
+        let note_color = if positive {
+            p.success
+        } else {
+            p.subtle_foreground
+        };
+        Self::panel_frame(&p)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if e.keystroke.key == "escape" {
+                    this.close_panel(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(div().flex_1().child(text_field_small(
+                        &self.add_input,
+                        false,
+                        window,
+                        cx,
+                    )))
+                    .child(
+                        Button::new("dict-add-cancel")
+                            .label(t("common.cancel"))
+                            .variant(ButtonVariant::Ghost)
+                            .size(ButtonSize::Sm)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_panel(window, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new("dict-add-confirm")
+                            .label(t("dictionary.add"))
+                            .size(ButtonSize::Sm)
+                            .disabled(!can_add)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.add_from_input(window, cx)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .px(px(2.))
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(note_color)
+                    .child(note),
+            )
+            .into_any_element()
+    }
+
+    fn render_import_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let pending = parse_dictionary_import_text(&self.bulk.read(cx).value()).len();
+        let hint = if pending > 0 {
+            t_with("dictionary.wordsReady", &[("count", &pending.to_string())])
+        } else {
+            t("dictionary.separateWithCommas")
+        };
+        Self::panel_frame(&p)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                let key = e.keystroke.key.as_str();
+                if key == "escape" {
+                    this.close_panel(window, cx);
+                    cx.stop_propagation();
+                } else if key == "enter" && e.keystroke.modifiers.platform {
+                    this.import_bulk(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(textarea_field(&self.bulk, 96., false, window, cx))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .px(px(2.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(if pending > 0 {
+                                p.muted_foreground
+                            } else {
+                                p.subtle_foreground
+                            })
+                            .child(hint),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(
+                                Button::new("bulk-cancel")
+                                    .label(t("common.cancel"))
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Sm)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.close_panel(window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("bulk-import")
+                                    .label(t("dictionary.import"))
+                                    .size(ButtonSize::Sm)
+                                    .disabled(pending == 0)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.import_bulk(window, cx)
+                                    })),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn filter_tabs(
+        &self,
+        entries: &[DictionaryEntry],
+        learned: usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let p = cx.palette();
         let mut seg = segmented_track(&p)
             .flex_none()
             .items_center()
-            .h(px(32.))
+            .h(px(HEADER_CONTROL))
             .gap(px(2.));
-        for (filter, key, count) in [
-            (SourceFilter::All, "dictionary.filterAll", entries.len()),
+        for (filter, id, key, count) in [
+            (
+                SourceFilter::All,
+                "dict-filter-all",
+                "dictionary.filterAll",
+                entries.len(),
+            ),
             (
                 SourceFilter::Manual,
+                "dict-filter-manual",
                 "dictionary.filterManual",
                 entries.len() - learned,
             ),
-            (SourceFilter::Learned, "dictionary.filterLearned", learned),
+            (
+                SourceFilter::Learned,
+                "dict-filter-learned",
+                "dictionary.filterLearned",
+                learned,
+            ),
         ] {
-            let active = self.filter == filter;
             seg = seg.child(
-                segment(SharedString::from(key), t(key), active, cx)
+                segment(id, t(key), self.filter == filter, cx)
                     .h_full()
                     .gap(px(6.))
                     .child(t(key))
@@ -477,23 +1607,30 @@ impl DictionaryView {
                     })),
             );
         }
-        seg
+        div().flex().child(seg)
     }
 
-    /// A column heading; sortable columns toggle direction on a second click.
+    /// A sortable column heading; a second click flips the direction.
     fn column_heading(
         &self,
+        index: usize,
         key: &'static str,
-        sort: Option<SortKey>,
+        sort: SortKey,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let p = cx.palette();
-        let active = sort.is_some_and(|s| s == self.sort);
-        let mut cell = div()
-            .id(SharedString::from(key))
+        let active = sort == self.sort;
+        let focus: ElementId = ("dict-column", index).into();
+        let label = t_with("dictionary.sortBy", &[("column", &t(key))]);
+        div()
+            .id(focus.clone())
+            .keyboard_focusable(focus, Role::ColumnHeader, label, cx)
             .flex()
             .items_center()
             .gap(px(4.))
+            .px(px(4.))
+            .mx(px(-4.))
+            .rounded(px(RADIUS_SM))
             .text_size(px(TEXT_SMALL))
             .font_weight(FontWeight::MEDIUM)
             .text_color(if active {
@@ -501,402 +1638,190 @@ impl DictionaryView {
             } else {
                 p.muted_foreground
             })
-            .child(t(key));
-        if active {
-            let name = if self.descending {
-                "chevron-down"
-            } else {
-                "chevron-up"
-            };
-            cell = cell.child(icon(name, 12., p.foreground));
-        }
-        if let Some(sort) = sort {
-            cell = cell
-                .cursor_pointer()
-                .hover(|s| s.text_color(p.foreground))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.sort == sort {
-                        this.descending = !this.descending;
-                    } else {
-                        this.sort = sort;
-                        this.descending = sort != SortKey::Word;
-                    }
-                    cx.notify();
-                }));
-        }
-        cell
-    }
-
-    fn footer_action(id: &'static str, label: String, hover: Hsla, p: &Palette) -> Stateful<Div> {
-        div()
-            .id(id)
-            .text_size(px(TEXT_SMALL))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(p.muted_foreground)
             .cursor_pointer()
-            .hover(move |s| s.text_color(hover))
-            .child(label)
+            .hover(|s| s.text_color(p.foreground))
+            .child(t(key))
+            .when(active, |d| {
+                d.child(icon(
+                    if self.descending {
+                        "chevron-down"
+                    } else {
+                        "chevron-up"
+                    },
+                    12.,
+                    p.foreground,
+                ))
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if this.sort == sort {
+                    this.descending = !this.descending;
+                } else {
+                    this.sort = sort;
+                    this.descending = sort != SortKey::Word;
+                }
+                cx.notify();
+            }))
     }
 
-    fn render_dictionary(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_no_matches(&self, query: &str, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let (entries, words, snippets) = {
-            let s = AppState::global(cx).read(cx);
-            (
-                s.dictionary_entries.clone(),
-                s.dictionary.clone(),
-                s.snippets.clone(),
-            )
-        };
-        let query_raw = self.add_input.read(cx).value().trim().to_string();
-        let query = query_raw.to_lowercase();
-        let mut visible: Vec<DictionaryEntry> = entries
-            .iter()
-            .filter(|e| match self.filter {
-                SourceFilter::All => true,
-                SourceFilter::Manual => e.source == DictionarySource::Manual,
-                SourceFilter::Learned => e.source == DictionarySource::Learned,
-            })
-            .filter(|e| query.is_empty() || e.word.to_lowercase().contains(&query))
-            .cloned()
-            .collect();
-        sort_entries(&mut visible, self.sort, self.descending);
-        let shown = visible.len();
-        let max_uses = entries.iter().map(|e| e.use_count).max().unwrap_or(0);
-        let prompt_chars = get_dictionary_hint_words(&words, &snippets)
-            .join(", ")
-            .chars()
-            .count();
-        let pending = parse_dictionary_import_text(&self.bulk.read(cx).value()).len();
-        let can_add = !query_raw.is_empty();
-        let rule = p.border.opacity(0.7);
-
-        let add_row = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .flex_1()
-                    .relative()
-                    .child(text_field_small(&self.add_input, false, window, cx).pr(px(64.)))
-                    .child(
-                        div()
-                            .id("dict-add")
-                            .absolute()
-                            .right(px(10.))
-                            .top(px(0.))
-                            .h(px(32.))
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.foreground.opacity(0.45))
-                            .when(can_add, |d| {
-                                d.cursor_pointer().hover(|s| s.text_color(p.primary))
-                            })
-                            .child(t("dictionary.add"))
-                            .child(icon("corner-down-left", 10., p.foreground.opacity(0.45)))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.add_from_input(window, cx)),
-                            ),
-                    ),
-            )
-            .when(!entries.is_empty(), |d| {
-                d.child(self.filter_tabs(&entries, cx))
-            });
-
-        let bulk = self.show_bulk.then(|| {
-            div()
-                .rounded(px(RADIUS_MD))
-                .border_1()
-                .border_color(p.primary.opacity(if p.dark { 0.4 } else { 0.3 }))
-                .px(px(12.))
-                .pt(px(10.))
-                .pb(px(8.))
-                .child(
-                    div()
-                        .min_h(px(72.))
-                        .text_size(px(TEXT_SMALL))
-                        .child(Textarea::new(&self.bulk).appearance(false).h(px(72.))),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .pt(px(6.))
-                        .child(
-                            div()
-                                .flex()
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.foreground.opacity(0.45))
-                                .child(t("dictionary.separateWithCommas"))
-                                .when(pending > 0, |d| {
-                                    d.child(div().text_color(p.success).child(format!(
-                                        " • {}",
-                                        t_with(
-                                            "dictionary.wordsReady",
-                                            &[("count", &pending.to_string())]
-                                        )
-                                    )))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.))
-                                .child(
-                                    Button::new("bulk-cancel")
-                                        .label(t("common.cancel"))
-                                        .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Sm)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.bulk
-                                                .update(cx, |i, cx| i.set_value("", window, cx));
-                                            this.show_bulk = false;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    Button::new("bulk-import")
-                                        .label(t("dictionary.import"))
-                                        .size(ButtonSize::Sm)
-                                        .disabled(pending == 0)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.import_bulk(window, cx)
-                                        })),
-                                ),
-                        ),
-                )
-        });
-
-        let mut table = div().flex().flex_col();
-        if entries.is_empty() {
-            table = table.child(Self::list_frame(&p).child(Self::render_empty(&p, cx)));
-        } else {
-            table = table.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .h(px(30.))
-                    .px(px(8.))
-                    .border_b_1()
-                    .border_color(rule)
-                    .child(div().flex_1().child(self.column_heading(
-                        "dictionary.columnWord",
-                        Some(SortKey::Word),
-                        cx,
-                    )))
-                    .child(div().w(px(COL_SOURCE)).child(self.column_heading(
-                        "dictionary.columnSource",
-                        None,
-                        cx,
-                    )))
-                    .child(div().w(px(COL_USES)).child(self.column_heading(
-                        "dictionary.columnUses",
-                        Some(SortKey::Uses),
-                        cx,
-                    )))
-                    .child(div().w(px(COL_LAST_USED)).flex().justify_end().child(
-                        self.column_heading(
-                            "dictionary.columnLastUsed",
-                            Some(SortKey::LastUsed),
-                            cx,
-                        ),
-                    ))
-                    .child(div().w(px(COL_ACTIONS))),
-            );
-            if visible.is_empty() {
-                let message = if query_raw.is_empty() {
-                    t("dictionary.filterEmpty")
-                } else {
-                    t_with("dictionary.noMatches", &[("word", &query_raw)])
-                };
-                table = table.child(
-                    div()
-                        .py(px(24.))
-                        .text_center()
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.foreground.opacity(0.45))
-                        .child(message),
-                );
-            }
-            for (index, entry) in visible.into_iter().enumerate() {
-                table = table.child(self.render_row(index, entry, max_uses, rule, window, cx));
-            }
+        if query.is_empty() {
+            return Self::quiet_message(t("dictionary.filterEmpty"), &p);
         }
-
-        let count = if self.filter == SourceFilter::All && query.is_empty() {
-            t_with(
-                "dictionary.wordCount",
-                &[("count", &entries.len().to_string())],
-            )
-        } else {
-            t_with(
-                "dictionary.wordCountFiltered",
-                &[
-                    ("shown", &shown.to_string()),
-                    ("total", &entries.len().to_string()),
-                ],
-            )
-        };
-        let link_hover = p.foreground.opacity(0.75);
-        let footer = (!entries.is_empty()).then(|| {
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .px(px(8.))
-                .child(
-                    div()
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.foreground.opacity(0.4))
-                        .child(count),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(14.))
-                        .child(
-                            Self::footer_action(
-                                "dict-import",
-                                t("dictionary.import"),
-                                link_hover,
-                                &p,
-                            )
-                            .on_click(cx.listener(
-                                |this, _, window, cx| {
-                                    this.show_bulk = true;
-                                    this.bulk.update(cx, |i, cx| i.focus(window, cx));
-                                    cx.notify();
-                                },
-                            )),
-                        )
-                        .child(
-                            Self::footer_action(
-                                "dict-export",
-                                t("dictionary.export"),
-                                link_hover,
-                                &p,
-                            )
-                            .on_click(|_, _, cx| Self::export(cx)),
-                        )
-                        .child(
-                            Self::footer_action(
-                                "dict-clear",
-                                t("dictionary.clearAll"),
-                                p.destructive.opacity(0.7),
-                                &p,
-                            )
-                            .on_click(move |_, _, cx| {
-                                show_dialog(
-                                    DialogRequest::confirm(
-                                        t("dictionary.clearTitle"),
-                                        Some(t("dictionary.clearDescription").into()),
-                                        true,
-                                        move |_, cx| {
-                                            AppState::global(cx)
-                                                .update(cx, |s, cx| s.clear_dictionary(cx))
-                                        },
-                                    ),
-                                    cx,
-                                )
-                            }),
-                        ),
-                )
-        });
-
-        div()
-            .px(px(20.))
-            .py(px(16.))
+        let exists = AppState::global(cx)
+            .read(cx)
+            .dictionary
+            .iter()
+            .any(|w| w.to_lowercase() == query.to_lowercase());
+        let word = query.to_string();
+        Self::quiet_message(t_with("dictionary.noMatches", &[("word", query)]), &p)
             .flex()
             .flex_col()
-            .gap(px(12.))
-            .child(add_row)
-            .children(bulk)
-            .child(table)
-            .children(footer)
-            .when(prompt_chars > WHISPER_DECODER_PROMPT_CHARS, |d| {
+            .items_center()
+            .gap(px(10.))
+            .when(!exists, |d| {
                 d.child(
-                    div()
-                        .px(px(8.))
-                        .text_size(px(TEXT_SMALL))
-                        .line_height(px(LINE_SMALL))
-                        .text_color(p.foreground.opacity(0.45))
-                        .child(t_with(
-                            "dictionary.promptLimitNotice",
-                            &[("chars", &prompt_chars.to_string())],
-                        )),
+                    Button::new("dict-add-query")
+                        .icon("plus", 12.)
+                        .label(t_with("dictionary.addQuery", &[("word", query)]))
+                        .variant(ButtonVariant::Outline)
+                        .size(ButtonSize::Sm)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.add_words(&word, cx);
+                            this.word_search
+                                .update(cx, |i, cx| i.set_value("", window, cx));
+                            focus_key(word_key(&word), window, cx);
+                            cx.notify();
+                        })),
                 )
             })
-            .into_any_element()
     }
 
-    /// A way the word was misheard; clicking it forgets that mapping.
-    fn misheard_chip(
-        id: (&'static str, usize),
-        misheard: String,
-        word: String,
-        group: SharedString,
-        p: &Palette,
-    ) -> impl IntoElement {
-        let muted = p.muted_foreground;
+    /// A way the word was misheard; activating it forgets that mapping.
+    fn misheard_chip(misheard: String, word: String, cx: &mut App) -> Stateful<Div> {
+        let p = cx.palette();
+        let key: ElementId = SharedString::from(format!("dict-chip:{word}:{misheard}")).into();
+        let group: SharedString = format!("{key}-group").into();
+        let label = t_with("dictionary.forgetMishearing", &[("word", &misheard)]);
+        let tip = label.clone();
         div()
-            .id(id)
+            .id(key.clone())
+            .keyboard_focusable(key, Role::Button, label, cx)
+            .group(group.clone())
             .flex_none()
             .flex()
             .items_center()
-            .gap(px(2.))
+            .gap(px(3.))
+            .h(px(20.))
+            .pl(px(6.))
+            .pr(px(4.))
+            .rounded(px(RADIUS_SM))
+            .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }))
             .text_size(px(TEXT_SMALL))
-            .text_color(muted)
+            .text_color(p.muted_foreground)
             .cursor_pointer()
             .hover(|s| s.text_color(p.foreground))
-            .child(format!("← {misheard}"))
+            .tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+            .child(misheard.clone())
+            // The × stays visible so the chip reads as removable before it is hovered.
             .child(
-                div()
-                    .opacity(0.)
-                    .group_hover(group, |s| s.opacity(1.))
-                    .child(icon("x", 10., muted)),
+                icon("x", 10., p.subtle_foreground)
+                    .group_hover(group, move |s| s.text_color(p.foreground)),
             )
             .on_click(move |_, _, cx| {
+                cx.stop_propagation();
                 AppState::global(cx).update(cx, |s, cx| s.remove_correction(&misheard, &word, cx))
             })
     }
 
-    fn render_row(
+    fn learned_badge(p: &Palette) -> Div {
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .h(px(18.))
+            .px(px(6.))
+            .rounded(px(RADIUS_SM))
+            .border_1()
+            .border_color(p.border)
+            .text_size(px(TEXT_CAPTION))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(p.muted_foreground)
+            .child(div().size(px(5.)).rounded_full().bg(p.success))
+            .child(t("dictionary.filterLearned"))
+    }
+
+    /// One word row, and whether focus is inside it.
+    fn render_word_row(
         &mut self,
         index: usize,
         entry: DictionaryEntry,
+        misheard: Vec<String>,
         max_uses: i64,
-        rule: Hsla,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> AnimationElement<Stateful<Div>> {
+    ) -> (AnimationElement<Stateful<Div>>, bool) {
         let p = cx.palette();
+        let key = word_key(&entry.word);
+        let handle = keyed_focus_handle(key.clone(), cx);
+        let focused = handle.contains_focused(window, cx);
         let group: SharedString = format!("dict-row-{index}").into();
         let editing = self.editing.as_deref() == Some(entry.word.as_str());
-        let learned = entry.source == DictionarySource::Learned;
-        let muted = p.muted_foreground;
+        let word = entry.word.clone();
+
         let word_cell = if editing {
             div()
                 .flex_1()
                 .pr(px(12.))
+                .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                    if e.keystroke.key == "escape" {
+                        this.cancel_edit(window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
                 .child(text_field_small(&self.edit_input, false, window, cx).h(px(28.)))
         } else {
-            let misheard: Vec<String> = AppState::global(cx)
-                .read(cx)
-                .known_corrections
-                .iter()
-                .filter(|c| c.term == entry.word)
-                .take(MAX_ROW_CORRECTIONS)
-                .map(|c| c.misheard.clone())
+            let has_misheard = !misheard.is_empty();
+            let chips: Vec<Stateful<Div>> = misheard
+                .into_iter()
+                .map(|m| Self::misheard_chip(m, word.clone(), cx))
                 .collect();
-            let chips = misheard.into_iter().enumerate().map(|(i, misheard)| {
-                let id = ("dict-misheard", index * MAX_ROW_CORRECTIONS + i);
-                Self::misheard_chip(id, misheard, entry.word.clone(), group.clone(), &p)
-            });
+            let (edit_word, remove_word) = (word.clone(), word.clone());
+            let actions = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(2.))
+                .pl(px(8.))
+                .opacity(if focused { 1. } else { 0. })
+                .group_hover(group.clone(), |s| s.opacity(1.))
+                .child(
+                    Self::row_action(
+                        SharedString::from(format!("dict-edit:{word}")).into(),
+                        "pencil",
+                        t_with("dictionary.editWord", &[("word", &word)]),
+                        false,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.start_edit(edit_word.clone(), window, cx)
+                    })),
+                )
+                .child(
+                    Self::row_action(
+                        SharedString::from(format!("dict-remove:{word}")).into(),
+                        "trash2",
+                        t_with("dictionary.removeWord", &[("word", &word)]),
+                        true,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.remove_word(&remove_word, window, cx)
+                    })),
+                );
             div()
                 .flex_1()
                 .min_w_0()
@@ -911,503 +1836,661 @@ impl DictionaryView {
                         .text_size(px(TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(p.foreground)
-                        .child(entry.word.clone()),
+                        .child(word.clone()),
                 )
+                .when(entry.source == DictionarySource::Learned, |d| {
+                    d.child(Self::learned_badge(&p))
+                })
+                .when(has_misheard, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .pl(px(4.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.subtle_foreground)
+                            .child(t("dictionary.heardAs")),
+                    )
+                })
                 .children(chips)
+                .child(div().flex_1())
+                .child(actions)
         };
+
         let bar = if max_uses > 0 {
             USE_BAR_MAX * entry.use_count as f32 / max_uses as f32
         } else {
             0.
         };
-        let last_used = entry
+        let used = last_used(entry.use_count, entry.last_used_at, Local::now());
+        let tooltip = entry
             .last_used_at
-            .map(relative_time_label)
-            .unwrap_or_else(|| "—".to_string());
-        let edit_word = entry.word.clone();
-        let remove_word = entry.word.clone();
-        let row = div()
-            .id(("dict-row", index))
-            .group(group.clone())
+            .filter(|_| used != LastUsed::Never)
+            .map(full_timestamp);
+        let count_color = if entry.use_count > 0 {
+            p.muted_foreground
+        } else {
+            p.subtle_foreground
+        };
+        let uses_cell = div()
+            .w(px(COL_USES))
             .flex()
             .items_center()
-            .h(px(40.))
-            .px(px(8.))
-            .border_b_1()
-            .border_color(rule)
-            .hover(|s| s.bg(p.hover_wash(if p.dark { 0.03 } else { 0.025 })))
-            .child(word_cell)
+            .gap(px(8.))
             .child(
                 div()
-                    .w(px(COL_SOURCE))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_size(px(TEXT_SMALL))
-                    .text_color(muted)
-                    .when(learned, |d| {
-                        d.child(div().size(px(6.)).rounded_full().bg(p.success))
-                    })
-                    .child(t(if learned {
-                        "dictionary.filterLearned"
-                    } else {
-                        "dictionary.filterManual"
-                    })),
-            )
-            .child(
-                div()
-                    .w(px(COL_USES))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(
-                        div().w(px(USE_BAR_MAX)).flex().child(
-                            div()
-                                .h(px(4.))
-                                .w(px(bar))
-                                .rounded(px(2.))
-                                .bg(p.foreground.opacity(0.22)),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(TEXT_SMALL))
-                            .font_features(tabular_nums())
-                            .text_color(if entry.use_count > 0 {
-                                muted
-                            } else {
-                                muted.opacity(0.6)
-                            })
-                            .child(entry.use_count.to_string()),
-                    ),
-            )
-            .child(
-                div()
-                    .w(px(COL_LAST_USED))
+                    .w(px(COUNT_CELL))
                     .flex()
                     .justify_end()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
-                    .text_color(muted)
-                    .child(last_used),
+                    .text_color(count_color)
+                    .child(entry.use_count.to_string()),
             )
             .child(
-                div()
-                    .w(px(COL_ACTIONS))
-                    .flex()
-                    .items_center()
-                    .justify_end()
-                    .gap(px(2.))
-                    .opacity(0.)
-                    .group_hover(group, |s| s.opacity(1.))
-                    .child(
-                        Self::row_action(("dict-edit", index), "pencil", false, &p).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.start_edit(edit_word.clone(), window, cx)
-                            }),
-                        ),
-                    )
-                    .child(
-                        Self::row_action(("dict-remove", index), "x", true, &p).on_click(
-                            move |_, _, cx| {
-                                update_dictionary(Vec::new(), vec![remove_word.clone()], cx)
-                            },
-                        ),
-                    ),
+                div().w(px(USE_BAR_MAX)).flex().child(
+                    div()
+                        .h(px(4.))
+                        .w(px(bar))
+                        .rounded(px(2.))
+                        .bg(p.foreground.opacity(0.22)),
+                ),
             );
-        stagger_in(row, format!("dict-in-{}", entry.word), index)
+        let last_used_cell = div()
+            .id(("dict-last-used", index))
+            .w(px(COL_LAST_USED))
+            .flex()
+            .justify_end()
+            .text_size(px(TEXT_SMALL))
+            .font_features(tabular_nums())
+            .text_color(if used == LastUsed::Never {
+                p.subtle_foreground
+            } else {
+                p.muted_foreground
+            })
+            .child(last_used_label(&used))
+            .when_some(tooltip, |d, tip| {
+                d.tooltip(move |_, cx| cx.new(|_| TextTooltip(tip.clone().into())).into())
+            });
+
+        let row_handle = handle.clone();
+        let row_key = key.clone();
+        let menu_word = word.clone();
+        let edit_word = word.clone();
+        let key_word = word.clone();
+        let click_handle = handle;
+        let row = Self::row_frame(&key, word.clone(), focused && !editing, cx)
+            .group(group)
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                let keyboard = e.is_keyboard() && click_handle.is_focused(window);
+                if keyboard || e.click_count() >= 2 {
+                    this.start_edit(edit_word.clone(), window, cx);
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                    let entries = this.row_menu_entries(Some(&menu_word), None);
+                    let key = word_key(&menu_word);
+                    this.open_menu(
+                        OpenMenu {
+                            entries,
+                            position: Some(e.position),
+                            return_focus: key,
+                        },
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+                // Keys typed into the inline editor or a chip bubble up here.
+                if !row_handle.is_focused(window) {
+                    return;
+                }
+                match e.keystroke.key.as_str() {
+                    "up" => this.focus_neighbor(&row_key, -1, window, cx),
+                    "down" => this.focus_neighbor(&row_key, 1, window, cx),
+                    "backspace" | "delete" => this.remove_word(&key_word, window, cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .child(word_cell)
+            .child(uses_cell)
+            .child(last_used_cell);
+        (stagger_in(row, format!("dict-in-{word}"), index), focused)
     }
 
     fn render_empty(p: &Palette, cx: &mut Context<Self>) -> Div {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .py(px(32.))
-            .child(empty_state_icon("book-open", p).mb(px(16.)))
-            .child(
-                div()
-                    .mb(px(4.))
-                    .text_size(px(17.))
-                    .line_height(px(24.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .child(t("dictionary.emptyTitle")),
-            )
-            .child(
-                div()
-                    .mb(px(16.))
-                    .max_w(px(280.))
-                    .text_center()
-                    .text_size(px(13.))
-                    .line_height(px(18.))
-                    .text_color(p.muted_foreground)
-                    .child(t_with(
-                        "dictionary.emptyDescription",
-                        &[("agentName", crate::text::DEFAULT_AGENT_NAME)],
-                    )),
-            )
-            .child(
-                Button::new("dict-first")
-                    .icon("plus", 12.)
-                    .label(t("dictionary.addFirstWord"))
-                    .size(ButtonSize::Sm)
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.add_input.update(cx, |i, cx| i.focus(window, cx));
-                    })),
-            )
-            .child(
-                div()
-                    .id("dict-import-list")
-                    .mt(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(p.muted_foreground)
-                    .cursor_pointer()
-                    .hover(|s| s.text_color(p.foreground))
-                    .child(icon("upload", 12., p.muted_foreground))
-                    .child(t("dictionary.importList"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_bulk = true;
-                        cx.notify();
-                    })),
-            )
-    }
-
-    fn render_snippets(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = cx.palette();
-        let snippets = AppState::global(cx).read(cx).snippets.clone();
-        let trigger = self.trigger_input.read(cx).value().trim().to_string();
-        let duplicate = !trigger.is_empty() && Self::trigger_exists(&snippets, &trigger, None);
-        let query = trigger.to_lowercase();
-        let visible: Vec<Snippet> = if !query.is_empty() && !self.panel_open {
-            snippets
-                .iter()
-                .filter(|s| {
-                    s.trigger.to_lowercase().contains(&query)
-                        || s.replacement.to_lowercase().contains(&query)
-                })
-                .cloned()
-                .collect()
-        } else {
-            snippets.clone()
-        };
-        let can_create =
-            !trigger.is_empty() && !self.expansion.read(cx).value().trim().is_empty() && !duplicate;
-
-        let add_row = div()
-            .child(
-                div()
-                    .relative()
-                    .child(text_field_small(&self.trigger_input, false, window, cx).pr(px(64.)))
-                    .child(
-                        div()
-                            .id("snippet-add")
-                            .absolute()
-                            .right(px(10.))
-                            .top(px(0.))
-                            .h(px(32.))
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.foreground.opacity(0.45))
-                            .when(!trigger.is_empty() && !duplicate, |d| {
-                                d.cursor_pointer().hover(|s| s.text_color(p.primary))
-                            })
-                            .child(t("dictionary.add"))
-                            .child(icon("corner-down-left", 10., p.foreground.opacity(0.45)))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.open_panel(window, cx)),
-                            ),
-                    ),
-            )
-            .when(duplicate, |d| {
-                d.child(
-                    div()
-                        .mt(px(6.))
-                        .text_size(px(TEXT_SMALL))
-                        .text_color(p.destructive)
-                        .child(t("dictionary.snippets.duplicate")),
-                )
-            });
-
-        let panel = self.panel_open.then(|| {
-            let kbd = |s: &'static str| {
-                div()
-                    .px(px(4.))
-                    .rounded(px(RADIUS_SM))
-                    .border_1()
-                    .border_color(if p.dark {
-                        p.white.opacity(0.1)
-                    } else {
-                        p.border.opacity(0.7)
-                    })
-                    .bg(p.muted.opacity(0.4))
-                    .font_family(FONT_MONO)
-                    .text_size(px(TEXT_CAPTION))
-                    .text_color(p.subtle_foreground)
-                    .child(s)
-            };
+        surface_card(p).child(
             div()
-                .rounded(px(RADIUS_MD))
-                .border_1()
-                .border_color(p.primary.opacity(if p.dark { 0.4 } else { 0.3 }))
-                .px(px(12.))
-                .pt(px(10.))
-                .pb(px(8.))
-                .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                    let key = e.keystroke.key.as_str();
-                    if key == "escape" {
-                        this.close_panel(window, cx);
-                    } else if key == "enter"
-                        && (e.keystroke.modifiers.platform || e.keystroke.modifiers.control)
-                    {
-                        this.create_snippet(window, cx);
-                        cx.stop_propagation();
-                    }
-                }))
+                .flex()
+                .flex_col()
+                .items_center()
+                .py(px(40.))
+                .px(px(24.))
+                .child(empty_state_icon("book-open", p).mb(px(16.)))
                 .child(
                     div()
-                        .min_h(px(72.))
-                        .text_size(px(TEXT_SMALL))
-                        .child(Textarea::new(&self.expansion).appearance(false).h(px(72.))),
+                        .mb(px(4.))
+                        .text_size(px(TEXT_TITLE))
+                        .line_height(px(24.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.foreground)
+                        .child(t("dictionary.emptyTitle")),
+                )
+                .child(
+                    div()
+                        .mb(px(20.))
+                        .max_w(px(320.))
+                        .text_center()
+                        .text_size(px(TEXT_BODY))
+                        .line_height(px(20.))
+                        .text_color(p.muted_foreground)
+                        .child(t_with(
+                            "dictionary.emptyDescription",
+                            &[("agentName", crate::text::DEFAULT_AGENT_NAME)],
+                        )),
                 )
                 .child(
                     div()
                         .flex()
                         .items_center()
-                        .justify_between()
-                        .pt(px(6.))
-                        .child(div().flex().gap(px(2.)).child(kbd("⌘")).child(kbd("⏎")))
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(8.))
-                                .child(
-                                    Button::new("snippet-cancel")
-                                        .label(t("common.cancel"))
-                                        .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Sm)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.close_panel(window, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new("snippet-create")
-                                        .label(t("dictionary.snippets.create"))
-                                        .size(ButtonSize::Sm)
-                                        .disabled(!can_create)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.create_snippet(window, cx)
-                                        })),
-                                ),
-                        ),
-                )
-        });
-
-        let mut list = Self::list_frame(&p);
-        if !snippets.is_empty() {
-            list = list
-                .child(Self::list_heading(t("dictionary.snippets.title"), &p))
-                .child(Self::dashed_rule(&p));
-        }
-        if snippets.is_empty() {
-            let mut examples = Self::list_frame(&p)
-                .flex_1()
-                .min_w(px(260.))
-                .px(px(14.))
-                .flex()
-                .flex_col()
-                .gap(px(10.));
-            for key in ["linkedin", "rewrite", "intro", "signoff"] {
-                examples = examples.child(
-                    div()
-                        .flex()
-                        .items_start()
                         .gap(px(8.))
                         .child(
-                            div()
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .rounded(px(RADIUS_MD))
-                                .border_1()
-                                .border_color(p.primary.opacity(if p.dark { 0.2 } else { 0.15 }))
-                                .bg(p.primary.opacity(if p.dark { 0.15 } else { 0.1 }))
-                                .px(px(6.))
-                                .py(px(2.))
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.primary)
-                                .child(icon("mic", 9., p.primary))
-                                .child(t(&format!("dictionary.snippets.examples.{key}Trigger"))),
+                            Button::new("dict-first")
+                                .icon("plus", 12.)
+                                .label(t("dictionary.addFirstWord"))
+                                .size(ButtonSize::Sm)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_panel(Panel::AddWords, window, cx)
+                                })),
                         )
                         .child(
-                            div()
-                                .flex_none()
-                                .mt(px(2.))
-                                .text_size(px(TEXT_SMALL))
-                                .text_color(p.foreground.opacity(0.45))
-                                .child("→"),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .text_size(px(TEXT_SMALL))
-                                .line_height(px(LINE_SMALL))
-                                .text_color(p.foreground.opacity(0.45))
-                                .child(t(&format!("dictionary.snippets.examples.{key}Text"))),
+                            Button::new("dict-import-first")
+                                .icon("upload", 12.)
+                                .label(t("dictionary.importFirstList"))
+                                .variant(ButtonVariant::Ghost)
+                                .size(ButtonSize::Sm)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_panel(Panel::Import, window, cx)
+                                })),
                         ),
-                );
-            }
-            list = list.child(
+                ),
+        )
+    }
+
+    // ---- Rendering: Snippets -----------------------------------------------------------------
+
+    fn render_snippets(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let p = cx.palette();
+        let pending = self.pending_trigger().map(str::to_string);
+        let snippets: Vec<Snippet> = AppState::global(cx)
+            .read(cx)
+            .snippets
+            .iter()
+            .filter(|s| Some(&s.trigger) != pending.as_ref())
+            .cloned()
+            .collect();
+        let query_raw = self.snippet_search.read(cx).value().trim().to_string();
+        let query = query_raw.to_lowercase();
+        let visible: Vec<Snippet> = snippets
+            .iter()
+            .filter(|s| {
+                query.is_empty()
+                    || s.trigger.to_lowercase().contains(&query)
+                    || s.replacement.to_lowercase().contains(&query)
+            })
+            .cloned()
+            .collect();
+
+        let panel =
+            (self.panel == Panel::NewSnippet).then(|| self.render_snippet_panel(window, cx));
+        let col = div().flex().flex_col().gap(px(12.)).children(panel);
+        if snippets.is_empty() {
+            self.row_keys.clear();
+            return col.child(self.render_snippets_empty(&p, cx));
+        }
+
+        let heading = |key: &str| {
+            div()
+                .text_size(px(TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.muted_foreground)
+                .child(t(key))
+        };
+        let mut table = div().flex().flex_col().child(Self::table_header(
+            vec![
                 div()
+                    .w(px(COL_TRIGGER))
+                    .child(heading("dictionary.snippets.triggerLabel"))
+                    .into_any_element(),
+                div()
+                    .flex_1()
+                    .child(heading("dictionary.snippets.replacementLabel"))
+                    .into_any_element(),
+            ],
+            &p,
+        ));
+        if visible.is_empty() {
+            let trigger = query_raw.clone();
+            table = table.child(
+                Self::quiet_message(
+                    t_with("dictionary.snippets.noMatches", &[("query", &query_raw)]),
+                    &p,
+                )
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(10.))
+                .child(
+                    Button::new("dict-snippet-from-query")
+                        .icon("plus", 12.)
+                        .label(t("dictionary.snippets.new"))
+                        .variant(ButtonVariant::Outline)
+                        .size(ButtonSize::Sm)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.trigger_input
+                                .update(cx, |i, cx| i.set_value(trigger.clone(), window, cx));
+                            this.snippet_search
+                                .update(cx, |i, cx| i.set_value("", window, cx));
+                            this.open_panel(Panel::NewSnippet, window, cx);
+                            this.expansion.update(cx, |i, cx| i.focus(window, cx));
+                        })),
+                ),
+            );
+        }
+        self.row_keys = visible.iter().map(|s| snippet_key(&s.trigger)).collect();
+        let mut focused_row = false;
+        for (index, snippet) in visible.iter().cloned().enumerate() {
+            let (row, focused) = self.render_snippet_row(index, snippet, window, cx);
+            focused_row |= focused;
+            table = table.child(row);
+        }
+        let count = if visible.len() == snippets.len() {
+            t_with(
+                "dictionary.snippets.count",
+                &[("count", &snippets.len().to_string())],
+            )
+        } else {
+            t_with(
+                "dictionary.snippets.countFiltered",
+                &[
+                    ("shown", &visible.len().to_string()),
+                    ("total", &snippets.len().to_string()),
+                ],
+            )
+        };
+        col.child(table).child(Self::footer(count, focused_row, &p))
+    }
+
+    fn render_snippet_row(
+        &mut self,
+        index: usize,
+        snippet: Snippet,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (AnimationElement<Stateful<Div>>, bool) {
+        let p = cx.palette();
+        let key = snippet_key(&snippet.trigger);
+        let handle = keyed_focus_handle(key.clone(), cx);
+        let focused = handle.contains_focused(window, cx);
+        let group: SharedString = format!("snippet-row-{index}").into();
+        let trigger = snippet.trigger.clone();
+
+        let (for_edit, remove) = (snippet.clone(), trigger.clone());
+        let actions = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .pl(px(8.))
+            .opacity(if focused { 1. } else { 0. })
+            .group_hover(group.clone(), |s| s.opacity(1.))
+            .child(
+                Self::row_action(
+                    SharedString::from(format!("dict-snippet-edit:{trigger}")).into(),
+                    "pencil",
+                    t_with("dictionary.snippets.editLabel", &[("trigger", &trigger)]),
+                    false,
+                    cx,
+                )
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    Self::edit_snippet(for_edit.clone(), window, cx)
+                }),
+            )
+            .child(
+                Self::row_action(
+                    SharedString::from(format!("dict-snippet-remove:{trigger}")).into(),
+                    "trash2",
+                    t_with("dictionary.snippets.removeLabel", &[("trigger", &trigger)]),
+                    true,
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.remove_snippet_row(&remove, window, cx)
+                })),
+            );
+
+        let row_handle = handle.clone();
+        let click_handle = handle;
+        let row_key = key.clone();
+        let (menu_snippet, open_snippet, key_trigger) =
+            (snippet.clone(), snippet.clone(), trigger.clone());
+        let row = Self::row_frame(&key, trigger.clone(), focused, cx)
+            .group(group)
+            .on_click(move |e: &ClickEvent, window, cx| {
+                let keyboard = e.is_keyboard() && click_handle.is_focused(window);
+                if keyboard || e.click_count() >= 2 {
+                    Self::edit_snippet(open_snippet.clone(), window, cx);
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                    let entries = this.row_menu_entries(None, Some(&menu_snippet));
+                    this.open_menu(
+                        OpenMenu {
+                            entries,
+                            position: Some(e.position),
+                            return_focus: snippet_key(&menu_snippet.trigger),
+                        },
+                        window,
+                        cx,
+                    );
+                    cx.stop_propagation();
+                }),
+            )
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+                if !row_handle.is_focused(window) {
+                    return;
+                }
+                match e.keystroke.key.as_str() {
+                    "up" => this.focus_neighbor(&row_key, -1, window, cx),
+                    "down" => this.focus_neighbor(&row_key, 1, window, cx),
+                    "backspace" | "delete" => this.remove_snippet_row(&key_trigger, window, cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .child(
+                div()
+                    .w(px(COL_TRIGGER))
+                    .flex_none()
+                    .pr(px(16.))
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(TEXT_BODY))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.foreground)
+                    .child(trigger.clone()),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .flex_wrap()
                     .items_center()
-                    .gap_x(px(32.))
-                    .gap_y(px(20.))
-                    .px(px(8.))
-                    .py(px(24.))
                     .child(
                         div()
                             .flex_1()
-                            .min_w(px(220.))
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.muted_foreground)
+                            .child(one_line(&snippet.replacement)),
+                    )
+                    .child(actions),
+            );
+        (
+            stagger_in(row, format!("snippet-in-{trigger}"), index),
+            focused,
+        )
+    }
+
+    fn render_snippet_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let snippets = AppState::global(cx).read(cx).snippets.clone();
+        let trigger = self.trigger_input.read(cx).value().trim().to_string();
+        let duplicate = !trigger.is_empty() && Self::trigger_exists(&snippets, &trigger, None);
+        let can_create =
+            !trigger.is_empty() && !self.expansion.read(cx).value().trim().is_empty() && !duplicate;
+        let label = |key: &str| {
+            div()
+                .px(px(2.))
+                .text_size(px(TEXT_SMALL))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(p.muted_foreground)
+                .child(t(key))
+        };
+        Self::panel_frame(&p)
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                let key = e.keystroke.key.as_str();
+                if key == "escape" {
+                    this.close_panel(window, cx);
+                    cx.stop_propagation();
+                } else if key == "enter" && e.keystroke.modifiers.platform {
+                    this.create_snippet(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(label("dictionary.snippets.triggerLabel"))
+                    .child(text_field_small(&self.trigger_input, false, window, cx))
+                    .when(duplicate, |d| {
+                        d.child(
+                            div()
+                                .px(px(2.))
+                                .text_size(px(TEXT_SMALL))
+                                .text_color(p.destructive)
+                                .child(t("dictionary.snippets.duplicate")),
+                        )
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(label("dictionary.snippets.replacementLabel"))
+                    .child(textarea_field(&self.expansion, 72., false, window, cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.subtle_foreground)
+                            .child(kbd("⌘↩", &p))
+                            .child(t("dictionary.snippets.createHint")),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.))
                             .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .gap(px(4.))
-                                    .text_size(px(TEXT_BODY))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(t("dictionary.snippets.emptyTitle"))
-                                    .child(
-                                        div()
-                                            .text_color(p.primary)
-                                            .child(t("dictionary.snippets.emptyTitleAccent")),
-                                    ),
+                                Button::new("snippet-cancel")
+                                    .label(t("common.cancel"))
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Sm)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.close_panel(window, cx)
+                                    })),
                             )
                             .child(
-                                div()
-                                    .mt(px(6.))
-                                    .text_size(px(TEXT_SMALL))
-                                    .line_height(px(LINE_SMALL))
-                                    .text_color(p.foreground.opacity(0.45))
-                                    .child(t("dictionary.snippets.emptyDescription")),
-                            )
-                            .child(
-                                div().mt(px(16.)).child(
+                                Button::new("snippet-create")
+                                    .label(t("dictionary.snippets.create"))
+                                    .size(ButtonSize::Sm)
+                                    .disabled(!can_create)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.create_snippet(window, cx)
+                                    })),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_snippets_empty(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let mut examples = div()
+            .flex_1()
+            .min_w(px(260.))
+            .flex()
+            .flex_col()
+            .gap(px(10.));
+        for key in ["linkedin", "rewrite", "intro", "signoff"] {
+            examples = examples.child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .rounded(px(RADIUS_MD))
+                            .border_1()
+                            .border_color(p.primary.opacity(if p.dark { 0.2 } else { 0.15 }))
+                            .bg(p.primary.opacity(if p.dark { 0.15 } else { 0.08 }))
+                            .px(px(6.))
+                            .py(px(2.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.primary)
+                            .child(icon("mic", 10., p.primary))
+                            .child(t(&format!("dictionary.snippets.examples.{key}Trigger"))),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .mt(px(2.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.subtle_foreground)
+                            .child("→"),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .mt(px(2.))
+                            .text_size(px(TEXT_SMALL))
+                            .line_height(px(LINE_SMALL))
+                            .text_color(p.muted_foreground)
+                            .child(t(&format!("dictionary.snippets.examples.{key}Text"))),
+                    ),
+            );
+        }
+        surface_card(p).child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_x(px(40.))
+                .gap_y(px(24.))
+                .px(px(28.))
+                .py(px(32.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(220.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(4.))
+                                .text_size(px(TEXT_TITLE))
+                                .line_height(px(24.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(p.foreground)
+                                .child(t("dictionary.snippets.emptyTitle"))
+                                .child(
+                                    div()
+                                        .text_color(p.primary)
+                                        .child(t("dictionary.snippets.emptyTitleAccent")),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .mt(px(6.))
+                                .text_size(px(TEXT_BODY))
+                                .line_height(px(20.))
+                                .text_color(p.muted_foreground)
+                                .child(t("dictionary.snippets.emptyDescription")),
+                        )
+                        .when(self.panel != Panel::NewSnippet, |d| {
+                            d.child(
+                                div().mt(px(20.)).child(
                                     Button::new("snippet-new")
                                         .icon("plus", 12.)
                                         .label(t("dictionary.snippets.new"))
                                         .size(ButtonSize::Sm)
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.trigger_input
-                                                .update(cx, |i, cx| i.focus(window, cx));
+                                            this.open_panel(Panel::NewSnippet, window, cx)
                                         })),
                                 ),
-                            ),
-                    )
-                    .child(examples),
-            );
-        } else if visible.is_empty() {
-            list = list.child(
-                div()
-                    .py(px(24.))
-                    .text_center()
-                    .text_size(px(TEXT_SMALL))
-                    .text_color(p.foreground.opacity(0.45))
-                    .child(t_with("dictionary.noMatches", &[("word", &trigger)])),
-            );
-        } else {
-            for (index, snippet) in visible.into_iter().enumerate() {
-                let group: SharedString = format!("snippet-row-{index}").into();
-                let for_edit = snippet.clone();
-                let remove = snippet.trigger.clone();
-                let trigger_key = snippet.trigger.clone();
-                list = list.child(stagger_in(
-                    Self::row(("snippet-row", index), group.clone(), &p)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .text_size(px(TEXT_SMALL))
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(p.foreground.opacity(0.6))
-                                        .child(snippet.trigger.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(p.foreground.opacity(0.45))
-                                        .child("→"),
-                                )
-                                .child(
-                                    div()
-                                        .truncate()
-                                        .text_color(p.foreground.opacity(0.45))
-                                        .child(snippet.replacement.clone()),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .opacity(0.)
-                                .group_hover(group, |s| s.opacity(1.))
-                                .child(
-                                    Self::row_action(("snippet-edit", index), "pencil", false, &p)
-                                        .on_click(move |_, window, cx| {
-                                            Self::edit_snippet(for_edit.clone(), window, cx)
-                                        }),
-                                )
-                                .child(
-                                    Self::row_action(("snippet-remove", index), "x", true, &p)
-                                        .on_click(move |_, _, cx| {
-                                            Self::remove_snippet(remove.clone(), cx)
-                                        }),
-                                ),
-                        ),
-                    format!("snippet-in-{trigger_key}"),
-                    index,
-                ));
-            }
-        }
-
-        div()
-            .px(px(20.))
-            .py(px(16.))
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(add_row)
-            .children(panel)
-            .child(list)
-            .into_any_element()
+                            )
+                        }),
+                )
+                .child(examples),
+        )
     }
 }
 
 impl Render for DictionaryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let tabs = self.render_tabs(cx);
+        let header = self.render_header(window, cx);
         let body = match self.tab {
-            Tab::Dictionary => self.render_dictionary(window, cx),
+            Tab::Words => self.render_words(window, cx),
             Tab::Snippets => self.render_snippets(window, cx),
         };
-        div()
+        let context_menu = self
+            .menu
+            .clone()
+            .and_then(|m| m.position.map(|at| (m, at)))
+            .map(|(m, at)| {
+                deferred(
+                    anchored()
+                        .position(at)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(self.render_menu(m, cx)),
+                )
+                .with_priority(2)
+            });
+        let undo = self.render_undo(window, cx);
+        page_container()
+            .pb(px(40.))
             .flex()
             .flex_col()
-            .child(div().px(px(20.)).pt(px(16.)).child(tabs))
+            .gap(px(16.))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                let k = &e.keystroke;
+                if k.key == "z"
+                    && k.modifiers.platform
+                    && !k.modifiers.shift
+                    && this.pending.is_some()
+                    && !this.any_text_field_focused(window, cx)
+                {
+                    this.undo(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(header)
             .child(body)
+            .children(context_menu)
+            .children(undo)
     }
 }
 
@@ -1451,7 +2534,7 @@ impl SnippetEditor {
         (trigger, replacement, duplicate)
     }
 
-    fn save(&mut self, cx: &mut Context<Self>) {
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (trigger, replacement, duplicate) = self.state(cx);
         if trigger.is_empty() || replacement.is_empty() || duplicate {
             return;
@@ -1475,6 +2558,8 @@ impl SnippetEditor {
             .collect();
         state.update(cx, |s, cx| s.set_snippets(snippets, cx));
         close_custom(cx);
+        // Back to the edited row, so keyboard editing can continue.
+        focus_key(snippet_key(&trigger), window, cx);
     }
 }
 
@@ -1493,6 +2578,12 @@ impl Render for SnippetEditor {
             .flex()
             .flex_col()
             .gap(px(16.))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if e.keystroke.key == "enter" && e.keystroke.modifiers.platform {
+                    this.save(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
             .child(
                 div()
                     .flex()
@@ -1539,19 +2630,36 @@ impl Render for SnippetEditor {
                 div()
                     .pt(px(8.))
                     .flex()
-                    .justify_end()
-                    .gap(px(8.))
+                    .items_center()
+                    .justify_between()
                     .child(
-                        Button::new("snippet-edit-cancel")
-                            .label(t("common.cancel"))
-                            .variant(ButtonVariant::Ghost)
-                            .on_click(|_, _, cx| close_custom(cx)),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.subtle_foreground)
+                            .child(kbd("⌘↩", &p))
+                            .child(t("dictionary.snippets.saveHint")),
                     )
                     .child(
-                        Button::new("snippet-edit-save")
-                            .label(t("common.save"))
-                            .disabled(!can_save)
-                            .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(
+                                Button::new("snippet-edit-cancel")
+                                    .label(t("common.cancel"))
+                                    .variant(ButtonVariant::Ghost)
+                                    .on_click(|_, _, cx| close_custom(cx)),
+                            )
+                            .child(
+                                Button::new("snippet-edit-save")
+                                    .label(t("common.save"))
+                                    .disabled(!can_save)
+                                    .on_click(
+                                        cx.listener(|this, _, window, cx| this.save(window, cx)),
+                                    ),
+                            ),
                     ),
             );
         modal_frame(
@@ -1566,9 +2674,11 @@ impl Render for SnippetEditor {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Utc};
+    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
 
-    use super::{DictionaryEntry, DictionarySource, SortKey, sort_entries};
+    use super::{
+        DictionaryEntry, DictionarySource, LastUsed, SortKey, last_used, one_line, sort_entries,
+    };
 
     fn entry(word: &str, use_count: i64, last_used_at: Option<i64>) -> DictionaryEntry {
         DictionaryEntry {
@@ -1613,5 +2723,43 @@ mod tests {
             sorted(SortKey::LastUsed, true),
             ["codex", "tailscale", "beta", "Alpha"]
         );
+    }
+
+    #[test]
+    fn last_used_is_relative_for_a_week_then_a_date() {
+        let now = Local.with_ymd_and_hms(2026, 11, 4, 15, 0, 0).unwrap();
+        let ago = |days: i64| Some((now - Duration::days(days)).with_timezone(&Utc));
+        assert_eq!(last_used(3, ago(0), now), LastUsed::Today);
+        assert_eq!(last_used(3, ago(1), now), LastUsed::Yesterday);
+        assert_eq!(last_used(3, ago(6), now), LastUsed::DaysAgo(6));
+        assert_eq!(
+            last_used(3, ago(7), now),
+            LastUsed::Date {
+                day: NaiveDate::from_ymd_opt(2026, 10, 28).unwrap(),
+                this_year: true,
+            }
+        );
+        assert!(matches!(
+            last_used(3, ago(400), now),
+            LastUsed::Date {
+                this_year: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_word_never_spoken_was_never_used_whatever_its_timestamp() {
+        let now = Local.with_ymd_and_hms(2026, 11, 4, 15, 0, 0).unwrap();
+        assert_eq!(
+            last_used(0, Some(now.with_timezone(&Utc)), now),
+            LastUsed::Never
+        );
+        assert_eq!(last_used(4, None, now), LastUsed::Never);
+    }
+
+    #[test]
+    fn replacements_show_on_one_line() {
+        assert_eq!(one_line("Best,\nRui\n"), "Best, ↵ Rui");
     }
 }
