@@ -146,6 +146,23 @@ fn short_date(date: NaiveDate) -> String {
     }
 }
 
+/// A closed span of days, naming the month once when both ends share it:
+/// "Oct 22 – 28", "Sep 28 – Oct 4". An end of today reads "Today".
+fn date_span(start: NaiveDate, end: NaiveDate, today: NaiveDate) -> String {
+    let same_month = start.month() == end.month() && start.year() == end.year();
+    let end = if end == today {
+        t("insights.today")
+    } else if same_month {
+        match i18n::language() {
+            Language::ZhCn => format!("{}日", end.day()),
+            Language::En => end.day().to_string(),
+        }
+    } else {
+        short_date(end)
+    };
+    format!("{} – {end}", short_date(start))
+}
+
 fn weekday_name(index: usize) -> String {
     match i18n::language() {
         Language::ZhCn => ["周一", "周二", "周三", "周四", "周五", "周六", "周日"][index].into(),
@@ -234,16 +251,32 @@ fn axis_labels(bars: &[TrendBar], bucket_days: i64) -> Vec<Option<String>> {
     labels
 }
 
-/// Bar fill: in-period bars clear 3:1 against the canvas in both themes;
-/// the comparison period stays visible but steps back.
-fn bar_tone(p: &Palette, in_period: bool) -> Hsla {
-    let alpha = match (in_period, p.dark) {
-        (true, true) => 0.5,
-        (true, false) => 0.55,
-        (false, true) => 0.24,
-        (false, false) => 0.22,
-    };
-    p.foreground.opacity(alpha)
+/// Fill of a bar in the selected period: a quiet, desaturated accent that
+/// clears 3:1 against the canvas (3.5:1 dark, 3.3:1 light), so the full
+/// accent stays free to mark the inspected bar.
+fn period_tone(p: &Palette) -> Hsla {
+    if p.dark {
+        hsla(p.primary.h, 0.3, 0.44, 1.)
+    } else {
+        hsla(p.primary.h, 0.45, 0.62, 1.)
+    }
+}
+
+/// A comparison-period bar: a faint neutral fill inside a neutral 1 px edge.
+/// The edge clears 3:1 against the canvas (3.4:1 in both themes) so the
+/// bar's height stays legible, while the light fill keeps the period a
+/// step behind the solid bars it is compared with.
+fn comparison_tone(p: &Palette) -> (Hsla, Hsla) {
+    if p.dark {
+        (p.foreground.opacity(0.14), p.foreground.opacity(0.4))
+    } else {
+        (p.foreground.opacity(0.08), p.foreground.opacity(0.5))
+    }
+}
+
+/// Neutral fill for bars that are not tied to a period.
+fn neutral_bar(p: &Palette) -> Hsla {
+    p.foreground.opacity(if p.dark { 0.5 } else { 0.55 })
 }
 
 /// When a bar covers: its day, or the week it closes.
@@ -372,7 +405,7 @@ impl InsightsView {
     fn period_caption(&self, summary: &AnalyticsSummary, today: NaiveDate) -> String {
         let start = self.period_start(summary, today);
         match self.range.days() {
-            Some(_) => format!("{} – {}", short_date(start), t("insights.today")),
+            Some(_) => date_span(start, today, today),
             None => t_with("insights.since", &[("date", &short_date(start))]),
         }
     }
@@ -510,7 +543,13 @@ impl InsightsView {
             compared(current.dictations, previous.dictations);
         let (pace_change, pace_note) = match (current.wpm(), previous.wpm()) {
             (None, _) => (None, t("insights.noMeasured")),
-            (Some(now), Some(before)) => (Some(absolute_change(now, before)), versus.clone()),
+            (Some(now), Some(before)) => (
+                Some(t_with(
+                    "insights.wpmChange",
+                    &[("change", &absolute_change(now, before))],
+                )),
+                versus.clone(),
+            ),
             (Some(_), None) => (None, nothing_before.clone()),
         };
         [
@@ -590,15 +629,15 @@ impl InsightsView {
         let has_regions = period_from > 0;
         let plot_top = if has_regions { REGION_STRIP } else { 10. };
 
+        // The inspected bar: under the pointer, else the keyboard cursor
+        // while the chart has focus, else today. It wears the full accent and
+        // the readout describes it, so the two always agree.
         let focused = keyed_focus_handle(CHART_KEY.into(), cx).is_focused(window);
         let selected = self
             .hovered
-            .or(if focused {
-                Some(self.cursor.unwrap_or(last))
-            } else {
-                None
-            })
-            .filter(|i| *i <= last);
+            .or(if focused { self.cursor } else { None })
+            .filter(|i| *i <= last)
+            .unwrap_or(last);
 
         let peak = bars
             .iter()
@@ -614,15 +653,37 @@ impl InsightsView {
         // against the period it is compared with.
         if has_regions {
             let days = self.range.days().unwrap_or(0).to_string();
-            let region_label = |text: String, color: Hsla| {
+            // Each band names its period and the dates it spans, so the
+            // comparison reads without counting bars.
+            let span = |from: usize, to: usize| {
+                bars.get(from)
+                    .zip(bars.get(to))
+                    .map(|(a, b)| date_span(a.start, b.end, today))
+                    .unwrap_or_default()
+            };
+            let region_label = |name: String, dates: String, color: Hsla| {
                 div()
                     .px(px(8.))
                     .pt(px(5.))
+                    .flex()
+                    .gap(px(6.))
+                    .min_w_0()
                     .text_size(px(TEXT_CAPTION))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(color)
-                    .truncate()
-                    .child(text)
+                    .font_features(tabular_nums())
+                    .child(
+                        div()
+                            .flex_none()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(color)
+                            .child(name),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.subtle_foreground)
+                            .child(dates),
+                    )
             };
             plot = plot.child(
                 div()
@@ -638,7 +699,8 @@ impl InsightsView {
                             .h_full()
                             .child(region_label(
                                 t_with("insights.previousDays", &[("count", &days)]),
-                                p.subtle_foreground,
+                                span(0, period_from - 1),
+                                p.muted_foreground,
                             )),
                     )
                     .child(
@@ -649,6 +711,7 @@ impl InsightsView {
                             .bg(p.foreground.opacity(if p.dark { 0.05 } else { 0.035 }))
                             .child(region_label(
                                 t_with("insights.lastDays", &[("count", &days)]),
+                                span(period_from, last),
                                 p.foreground,
                             )),
                     ),
@@ -698,24 +761,21 @@ impl InsightsView {
             .flex();
         for (index, bar) in bars.iter().enumerate() {
             let in_period = index >= period_from;
-            let is_selected = selected == Some(index);
-            let tone = bar_tone(p, in_period);
+            let is_selected = selected == index;
+            let (fill, edge) = if is_selected {
+                (p.primary, None)
+            } else if in_period {
+                (period_tone(p), None)
+            } else {
+                let (fill, edge) = comparison_tone(p);
+                (fill, Some(edge))
+            };
             // Idle days keep a stub on the baseline so they read as zero,
             // not as missing data.
-            let (height, fill) = if bar.words > 0 {
-                (
-                    (CHART_HEIGHT - y(bar.words as f64)).max(3.),
-                    if is_selected { p.primary } else { tone },
-                )
+            let height = if bar.words > 0 {
+                (CHART_HEIGHT - y(bar.words as f64)).max(3.)
             } else {
-                (
-                    2.,
-                    if is_selected {
-                        p.primary
-                    } else {
-                        tone.opacity(0.6)
-                    },
-                )
+                2.
             };
             let name = format!(
                 "{}: {}",
@@ -756,7 +816,8 @@ impl InsightsView {
                             .w_full()
                             .h(px(height))
                             .rounded_t(px(RADIUS_SM.min(height / 2.)))
-                            .bg(fill),
+                            .bg(fill)
+                            .when_some(edge, |d, edge| d.border_1().border_color(edge)),
                     ),
             );
         }
@@ -774,7 +835,7 @@ impl InsightsView {
             .font_features(tabular_nums())
             .text_color(p.subtle_foreground);
         for (index, label) in axis_labels(&bars, bucket_days).into_iter().enumerate() {
-            let strong = selected == Some(index);
+            let strong = selected == index;
             let slot = div().flex_1().relative().flex().justify_center();
             labels = labels.child(slot.children(label.map(|text| {
                 let text = div()
@@ -806,20 +867,24 @@ impl InsightsView {
                         bounds.origin.y + px(fy),
                     )
                 };
-                let mut path = PathBuilder::stroke(px(2.));
-                let mut drawing = false;
-                for point in &points {
-                    match point {
-                        Some(p) if drawing => path.line_to(at(*p)),
-                        Some(p) => {
-                            path.move_to(at(*p));
-                            drawing = true;
+                // A canvas-coloured halo under the line keeps it legible
+                // where it crosses bars of similar lightness.
+                for (width, color) in [(px(4.), ring), (px(2.), line_color)] {
+                    let mut path = PathBuilder::stroke(width);
+                    let mut drawing = false;
+                    for point in &points {
+                        match point {
+                            Some(p) if drawing => path.line_to(at(*p)),
+                            Some(p) => {
+                                path.move_to(at(*p));
+                                drawing = true;
+                            }
+                            None => drawing = false,
                         }
-                        None => drawing = false,
                     }
-                }
-                if let Ok(path) = path.build() {
-                    window.paint_path(path, line_color);
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, color);
+                    }
                 }
                 if let Some(Some(end)) = points.last() {
                     let center = at(*end);
@@ -855,7 +920,7 @@ impl InsightsView {
                     .flex()
                     .items_center()
                     .gap(px(6.))
-                    .child(div().size(px(10.)).rounded(px(2.)).bg(bar_tone(p, true)))
+                    .child(div().size(px(10.)).rounded(px(2.)).bg(period_tone(p)))
                     .child(t(per_bar)),
             )
             .child(
@@ -867,10 +932,7 @@ impl InsightsView {
                     .child(t(average)),
             );
 
-        // The readout names the inspected bar, or the latest one at rest, so
-        // every value is readable without a pointer.
-        let shown = selected.unwrap_or(last);
-        let readout = bars.get(shown).map(|bar| {
+        let readout = bars.get(selected).map(|bar| {
             div()
                 .flex()
                 .items_center()
@@ -1059,7 +1121,7 @@ impl InsightsView {
                                     .h_full()
                                     .w(relative(fraction))
                                     .rounded(px(RADIUS_SM))
-                                    .bg(bar_tone(p, true)),
+                                    .bg(neutral_bar(p)),
                             ),
                     )
                     .child(
