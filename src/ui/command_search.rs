@@ -16,7 +16,8 @@ use crate::app_state::AppState;
 use super::components::{backdrop, dialog_shadow, icon, kbd};
 use super::overlays::close_custom;
 use super::theme::{
-    FONT_VOICE, PaletteExt, RADIUS_2XL, RADIUS_LG, TEXT_BODY, TEXT_SMALL, tabular_nums,
+    CONTROL_HEIGHT, FONT_VOICE, PaletteExt, RADIUS_2XL, RADIUS_LG, TEXT_BODY, TEXT_SMALL,
+    WORKSPACE_TOP_BAR_HEIGHT, tabular_nums,
 };
 
 pub enum CommandSearchEvent {
@@ -347,6 +348,11 @@ impl Render for CommandSearch {
                     .child(hint(&["Esc"], t("commandSearch.footer.dismiss"))),
             );
 
+        let content_left = if AppState::settings(cx).sidebar_collapsed {
+            0.
+        } else {
+            super::control_panel::SIDEBAR_WIDTH
+        };
         div()
             .id("command-search-backdrop")
             .absolute()
@@ -354,11 +360,13 @@ impl Render for CommandSearch {
             .bg(backdrop(&p))
             .occlude()
             .on_click(|_, _, cx| close_custom(cx))
+            // Opens over the top-bar field it replaces: centered on the content
+            // column, its top on the field's top.
             .child(
                 div()
                     .absolute()
-                    .top(relative(0.12))
-                    .left_0()
+                    .top(px((WORKSPACE_TOP_BAR_HEIGHT - CONTROL_HEIGHT) / 2.))
+                    .left(px(content_left))
                     .right_0()
                     .flex()
                     .justify_center()
