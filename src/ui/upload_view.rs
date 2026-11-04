@@ -5,7 +5,6 @@
 
 use std::f32::consts::TAU;
 use std::path::PathBuf;
-use std::time::Duration;
 
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -25,9 +24,9 @@ use super::components::{
 use super::history_view::copy_with_toast;
 use super::settings_modal::SettingsSection;
 use super::theme::{
-    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, Palette, PaletteExt,
-    RADIUS_LG, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL,
-    TEXT_TITLE, ease_out,
+    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, PAGE_TOP, Palette,
+    PaletteExt, RADIUS_LG, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING, TEXT_SMALL,
+    TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT, ease_out, motion,
 };
 
 pub enum UploadEvent {
@@ -102,6 +101,21 @@ fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "audio".into())
+}
+
+/// The host and port of the transcription server, as people read it:
+/// `127.0.0.1:9`. Unparseable input shows as typed.
+fn server_host(base: &str) -> String {
+    url::Url::parse(base)
+        .ok()
+        .and_then(|url| {
+            let host = url.host_str()?.to_string();
+            Some(match url.port() {
+                Some(port) => format!("{host}:{port}"),
+                None => host,
+            })
+        })
+        .unwrap_or_else(|| base.to_string())
 }
 
 fn error_text(err: &UploadError) -> String {
@@ -449,13 +463,14 @@ impl UploadView {
                 }))
             })
             // The dashed edge marks an empty drop target; other stages are
-            // ordinary raised cards.
+            // ordinary raised cards. The edge clears 3:1 against the canvas
+            // so the target's bounds read as a control, not decoration.
             .when(browsable, |d| {
                 d.border_dashed()
-                    .border_color(p.foreground.opacity(if p.dark { 0.22 } else { 0.24 }))
+                    .border_color(p.foreground.opacity(if p.dark { 0.4 } else { 0.5 }))
                     .cursor_pointer()
                     .hover(|s| {
-                        s.border_color(p.foreground.opacity(if p.dark { 0.3 } else { 0.34 }))
+                        s.border_color(p.foreground.opacity(if p.dark { 0.55 } else { 0.62 }))
                     })
                     // A mouse-only shortcut across the whole target; the Choose
                     // Files button inside is the keyboard and VoiceOver path.
@@ -467,7 +482,7 @@ impl UploadView {
             })
             .when(accepts_drop, |d| {
                 d.drag_over::<ExternalPaths>(move |s, _, _, _| {
-                    s.border_color(p.foreground.opacity(0.55))
+                    s.border_color(p.foreground.opacity(0.75))
                 })
                 .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                     this.accept_paths(paths.paths().to_vec(), true, cx);
@@ -481,7 +496,7 @@ impl UploadView {
                     .child(content)
                     .with_animation(
                         SharedString::from(format!("upload-stage-{}", stage_key(&stage))),
-                        Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_out),
+                        motion(DUR_SHEET, cx).with_easing(ease_out),
                         |d, t| d.opacity(t),
                     ),
             )
@@ -590,7 +605,7 @@ impl UploadView {
         let p = cx.palette();
         let name = self.file.as_ref().map(|f| f.name.clone());
         stage_body()
-            .child(live_waveform(&p))
+            .child(live_waveform(&p, cx))
             .child(stage_title(t("upload.transcribing"), &p).mt(px(16.)))
             .when_some(name, |d, name| {
                 d.child(stage_text(name, &p).mt(px(2.)).truncate())
@@ -782,6 +797,12 @@ impl UploadView {
     fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let s = AppState::settings(cx);
+        let url = s.remote_transcription_url.trim();
+        let server = if url.is_empty() {
+            "—".to_string()
+        } else {
+            server_host(url)
+        };
         let model = s.remote_transcription_model.trim().to_string();
         let language = crate::text::language::languages()
             .iter()
@@ -798,18 +819,24 @@ impl UploadView {
                     div()
                         .flex_none()
                         .text_size(px(TEXT_SMALL))
-                        .text_color(p.subtle_foreground)
+                        .text_color(p.muted_foreground)
                         .child(label),
                 )
                 .child(value.min_w_0().truncate().text_color(p.foreground))
         };
-        let model_value = if model.is_empty() {
-            div().text_size(px(TEXT_SMALL)).child("—")
-        } else {
-            div()
-                .font_family(FONT_MONO)
-                .text_size(px(TEXT_CAPTION))
-                .child(model)
+        // Server and model are identifiers people match against their
+        // server's config, so they keep the code face, at regular weight
+        // because mono already reads heavier than the UI face.
+        let code = |text: String| {
+            if text == "—" || text.is_empty() {
+                div().text_size(px(TEXT_SMALL)).child("—")
+            } else {
+                div()
+                    .font_family(FONT_MONO)
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::NORMAL)
+                    .child(text)
+            }
         };
         surface_card(&p)
             .flex()
@@ -821,22 +848,19 @@ impl UploadView {
             .pl(px(16.))
             .pr(px(8.))
             .py(px(7.))
-            .child(pair(
-                t("upload.engine"),
-                div()
-                    .text_size(px(TEXT_SMALL))
-                    .child(t("settings.transcription.modes.selfHosted")),
-            ))
-            .child(pair(t("upload.model"), model_value))
+            .child(pair(t("upload.server"), code(server)))
+            .child(pair(t("upload.model"), code(model)))
             .child(pair(
                 t("upload.language"),
-                div().text_size(px(TEXT_SMALL)).child(language),
+                div()
+                    .text_size(px(TEXT_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(language),
             ))
             .child(div().flex_1())
             .child(
                 Button::new("upload-change-settings")
-                    .label(t("upload.changeModel"))
-                    .aria_label(t("upload.changeSettings"))
+                    .label(t("upload.transcriptionSettings"))
                     .variant(ButtonVariant::Ghost)
                     .size(ButtonSize::Sm)
                     .on_click(cx.listener(|_, _, _, cx| {
@@ -1089,19 +1113,71 @@ impl UploadView {
     }
 }
 
+impl UploadView {
+    /// Where finished transcripts go, under the idle drop target, so the
+    /// page answers "what happens next" before a file is chosen.
+    fn render_destination(&mut self, cx: &mut Context<Self>) -> Div {
+        let p = cx.palette();
+        let saving = AppState::settings(cx).data_retention_enabled;
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .min_h(px(28.))
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.subtle_foreground)
+            .child(icon(
+                if saving { "file-text" } else { "alert-circle" },
+                12.,
+                p.subtle_foreground,
+            ))
+            .child(t(if saving {
+                "upload.savesToHistory"
+            } else {
+                "upload.historyOff"
+            }))
+            .when(saving, |d| {
+                d.child(
+                    Button::new("upload-open-history")
+                        .label(t("upload.openHistory"))
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(UploadEvent::OpenHistory))),
+                )
+            })
+    }
+}
+
 impl Render for UploadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stage = self.render_stage_panel(cx);
         let settings = self.render_settings(cx);
-        let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
-        page_container()
-            .pb(px(32.))
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .child(stage)
-            .child(settings)
-            .children(queue)
+        let page = page_container().pb(px(32.)).flex().flex_col();
+        if !self.queue.is_empty() || matches!(self.stage, Stage::Complete { .. }) {
+            let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
+            return page
+                .gap(px(12.))
+                .child(stage)
+                .child(settings)
+                .children(queue);
+        }
+        // With nothing listed below, the target and its settings sit in the
+        // middle of the visible area instead of atop an empty canvas.
+        let destination = self.render_destination(cx);
+        let visible = window.viewport_size().height - px(WORKSPACE_TOP_BAR_HEIGHT);
+        page.min_h(visible).child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .justify_center()
+                .gap(px(12.))
+                .pb(px(PAGE_TOP))
+                .child(stage)
+                .child(settings)
+                .child(destination.mt(px(4.))),
+        )
     }
 }
 
@@ -1228,27 +1304,28 @@ fn drop_overlay(p: &Palette) -> Div {
 }
 
 /// A rolling waveform that stands in for progress while a file transcribes.
-fn live_waveform(p: &Palette) -> Div {
+/// It holds still under Reduce Motion; the title and Cancel button still
+/// say work is under way.
+fn live_waveform(p: &Palette, cx: &App) -> Div {
+    let still = cx.reduce_motion();
     let color = p.foreground.opacity(if p.dark { 0.42 } else { 0.36 });
     let mut bars = div().h(px(WAVE_HEIGHT)).flex().items_center().gap(px(3.));
     for (i, level) in WAVE.iter().copied().enumerate() {
         let height = (WAVE_HEIGHT * level).max(3.);
         let offset = i as f32 / WAVE.len() as f32;
-        bars = bars.child(
-            div()
-                .w(px(3.))
-                .h(px(height))
-                .rounded(px(1.5))
-                .bg(color)
-                .with_animation(
-                    ("upload-wave", i),
-                    Animation::new(Duration::from_millis(1600)).repeat(),
-                    move |d, t| {
-                        let k = 0.5 - 0.5 * ((t - offset) * TAU).cos();
-                        d.h(px(height * (0.45 + 0.55 * k)))
-                    },
-                ),
-        );
+        let bar = div().w(px(3.)).h(px(height)).rounded(px(1.5)).bg(color);
+        bars = if still {
+            bars.child(bar)
+        } else {
+            bars.child(bar.with_animation(
+                ("upload-wave", i),
+                motion(1600, cx).repeat(),
+                move |d, t| {
+                    let k = 0.5 - 0.5 * ((t - offset) * TAU).cos();
+                    d.h(px(height * (0.45 + 0.55 * k)))
+                },
+            ))
+        };
     }
     bars
 }
