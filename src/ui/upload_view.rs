@@ -24,9 +24,9 @@ use super::components::{
 use super::history_view::copy_with_toast;
 use super::settings_modal::SettingsSection;
 use super::theme::{
-    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, PAGE_TOP, Palette,
-    PaletteExt, RADIUS_LG, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING, TEXT_SMALL,
-    TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT, ease_out, motion,
+    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, Palette, PaletteExt,
+    RADIUS_LG, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_MONO_SMALL, TEXT_READING, TEXT_SMALL,
+    TEXT_TITLE, ease_out, motion,
 };
 
 pub enum UploadEvent {
@@ -521,9 +521,9 @@ impl UploadView {
             .child(stage_text(t("upload.idleHint"), &p).mt(px(6.)))
             .child(
                 div().mt(px(20.)).flex().child(
+                    // The page's one primary action while nothing is picked.
                     Button::new("upload-browse")
                         .label(t("upload.chooseFiles"))
-                        .variant(ButtonVariant::Outline)
                         .on_click(cx.listener(|this, _, _, cx| {
                             // The panel behind also browses on click.
                             cx.stop_propagation();
@@ -545,7 +545,6 @@ impl UploadView {
                 div().mt(px(20.)).flex().child(
                     Button::new("upload-no-provider")
                         .label(t("upload.noProviderAction"))
-                        .variant(ButtonVariant::Outline)
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.emit(UploadEvent::OpenSettings(SettingsSection::SpeechToText))
                         })),
@@ -810,15 +809,15 @@ impl UploadView {
                 .child(value.min_w_0().truncate().text_color(p.foreground))
         };
         // Server and model are identifiers people match against their
-        // server's config, so they keep the code face, at regular weight
-        // because mono already reads heavier than the UI face.
+        // server's config, so they keep the code face, a step smaller and at
+        // regular weight because mono reads larger and heavier than SF.
         let code = |text: String| {
             if text == "—" || text.is_empty() {
                 div().text_size(px(TEXT_SMALL)).child("—")
             } else {
                 div()
                     .font_family(FONT_MONO)
-                    .text_size(px(TEXT_SMALL))
+                    .text_size(px(TEXT_MONO_SMALL))
                     .font_weight(FontWeight::NORMAL)
                     .child(text)
             }
@@ -844,8 +843,11 @@ impl UploadView {
             ))
             .child(div().flex_1())
             .child(
+                // The glyph marks it as an action, not one more value in the
+                // line; the sidebar's own glyphs name the same destinations.
                 Button::new("upload-change-settings")
                     .label(t("upload.transcriptionSettings"))
+                    .icon("settings", 13.)
                     .variant(ButtonVariant::Ghost)
                     .size(ButtonSize::Sm)
                     .on_click(cx.listener(|_, _, _, cx| {
@@ -1126,6 +1128,7 @@ impl UploadView {
                 d.child(
                     Button::new("upload-open-history")
                         .label(t("upload.openHistory"))
+                        .icon("clock", 13.)
                         .variant(ButtonVariant::Ghost)
                         .size(ButtonSize::Sm)
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(UploadEvent::OpenHistory))),
@@ -1138,43 +1141,33 @@ impl Render for UploadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stage = self.render_stage_panel(cx);
         let settings = self.render_settings(cx);
-        let page = page_container().pb(px(32.)).flex().flex_col();
-        if !self.queue.is_empty() || matches!(self.stage, Stage::Complete { .. }) {
-            let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
-            return page
-                .gap(px(12.))
-                .child(stage)
-                .child(settings)
-                .children(queue);
-        }
-        // With nothing listed below, the target and its settings sit in the
-        // middle of the visible area instead of atop an empty canvas.
-        let destination = self.render_destination(cx);
-        let visible = window.viewport_size().height - px(WORKSPACE_TOP_BAR_HEIGHT);
-        page.min_h(visible).child(
-            div()
-                .flex_1()
-                .flex()
-                .flex_col()
-                .justify_center()
-                .gap(px(12.))
-                .pb(px(PAGE_TOP))
-                .child(stage)
-                .child(settings)
-                .child(destination.mt(px(4.))),
-        )
+        // Like every other page, the content starts at the top; the
+        // destination line only answers "where does this go" before a
+        // result or a queue answers it instead.
+        let busy = !self.queue.is_empty() || matches!(self.stage, Stage::Complete { .. });
+        let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
+        let destination = (!busy).then(|| self.render_destination(cx).mt(px(4.)));
+        page_container()
+            .pb(px(32.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(stage)
+            .child(settings)
+            .children(queue)
+            .children(destination)
     }
 }
 
 /// Drag-over styles on the stage panel's children key off this group.
 const STAGE_GROUP: &str = "upload-stage";
 
-/// The stage panel's floor, so the centered group sits in a target big
-/// enough to drop on.
-const STAGE_MIN_HEIGHT: f32 = 320.;
+/// The stage panel's floor: a target big enough to drop on that still
+/// leaves its settings and destination in view at the window's minimum size.
+const STAGE_MIN_HEIGHT: f32 = 280.;
 
 /// The stage panel's floor while a queue is listed below it.
-const STAGE_COMPACT_HEIGHT: f32 = 240.;
+const STAGE_COMPACT_HEIGHT: f32 = 220.;
 
 /// Width of the stage's centered text column.
 const GROUP_MAX_WIDTH: f32 = 380.;
@@ -1206,7 +1199,7 @@ fn stage_body() -> Div {
         .items_center()
         .justify_center()
         .px(px(32.))
-        .py(px(40.))
+        .py(px(32.))
         .text_center()
 }
 
