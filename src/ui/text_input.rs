@@ -8,8 +8,17 @@ use gpui_kit::*;
 use super::components::{color_tx, drop};
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_LG, RADIUS_XL, TEXT_BODY,
-    TEXT_SMALL,
+    TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL,
 };
+
+/// JetBrains Mono reads a step larger than SF, so mono fields drop a step.
+fn field_size(size: f32, mono: bool) -> f32 {
+    match (mono, size == TEXT_BODY) {
+        (false, _) => size,
+        (true, true) => TEXT_MONO_BODY,
+        (true, false) => TEXT_MONO_SMALL,
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum FieldKind {
@@ -50,7 +59,7 @@ fn line_field(
     // Size::Size(n) renders n × 0.875 text with 8px of horizontal padding.
     let input = Input::new(state)
         .appearance(false)
-        .with_size(Size::Size(px(text_size / 0.875)));
+        .with_size(Size::Size(px(field_size(text_size, mono) / 0.875)));
     field_frame(
         id,
         focused,
@@ -78,7 +87,7 @@ pub fn textarea_field(
         mono,
         Textarea::new(state)
             .appearance(false)
-            .with_size(Size::Size(px(TEXT_SMALL / 0.875)))
+            .with_size(Size::Size(px(field_size(TEXT_SMALL, mono) / 0.875)))
             .h(px(min_height - 26.))
             .into_any_element(),
         window,
@@ -134,14 +143,14 @@ fn field_frame(
                 .h(px(CONTROL_HEIGHT))
                 .rounded(px(RADIUS_LG))
                 .px(px(4.))
-                .text_size(px(TEXT_BODY)),
+                .text_size(px(field_size(TEXT_BODY, mono))),
             FieldKind::Area { min_height } => d
                 .min_h(px(min_height))
                 .items_start()
                 .rounded(px(RADIUS_XL))
                 .px(px(6.))
                 .py(px(12.))
-                .text_size(px(TEXT_SMALL))
+                .text_size(px(field_size(TEXT_SMALL, mono)))
                 .line_height(px(LINE_SMALL)),
         })
         .hover(move |s| {
