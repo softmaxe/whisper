@@ -254,7 +254,6 @@
         "today": "今天",
         "yesterday": "昨天"
       },
-      "clearAll": "全部清除",
       "clearAllTitle": "清除所有转录",
       "clearAllDescriptionDevice": "此设备上的所有转录、音频文件和统计数据都将被永久删除。",
       "clearAllSuccess": "历史记录已清除",
@@ -270,7 +269,8 @@
       "audioNotFound": "音频文件未找到或已过期",
       "rawTranscript": "原始转录",
       "copyRaw": "复制原始转录",
-      "moreActions": "更多操作"
+      "moreActions": "更多操作",
+      "clearHistory": "清空历史记录…"
     }
   },
   "reasoning": {

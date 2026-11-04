@@ -266,14 +266,14 @@
       "retryError": "Failed to re-transcribe",
       "audioNotFound": "Audio file not found or expired",
       "rawTranscript": "Raw transcript",
-      "clearAll": "Clear all",
       "clearAllTitle": "Clear all transcriptions?",
       "clearAllDescriptionDevice": "All transcriptions, audio files, and Insights counters will be permanently removed from this device.",
       "clearAllSuccess": "History cleared",
       "clearAllErrorTitle": "Couldn't clear history",
       "clearAllErrorDescription": "Something went wrong. Please try again.",
       "copyRaw": "Copy raw transcript",
-      "moreActions": "More actions"
+      "moreActions": "More actions",
+      "clearHistory": "Clear History…"
     }
   },
   "reasoning": {

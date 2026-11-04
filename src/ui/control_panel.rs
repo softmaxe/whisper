@@ -12,7 +12,8 @@ use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
-    KeyboardFocusable, NavSurface, drop, f32_tx, icon, inset, kbd, nav_row, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, drop, f32_tx, icon, inset,
+    kbd, nav_row, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
@@ -339,6 +340,9 @@ impl ControlPanel {
         );
         let collapsed = self.sidebar_collapsed;
         let title = self.active.label();
+        // Page-level actions sit at the top bar's end; Home's is Clear History.
+        let page_actions =
+            self.active == PanelView::Home && !AppState::global(cx).read(cx).history.is_empty();
 
         div()
             .h(px(WORKSPACE_TOP_BAR_HEIGHT))
@@ -462,7 +466,16 @@ impl ControlPanel {
                     .child(kbd("⌘K", &p))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx)),
             )
-            .child(div().flex_1())
+            .child(div().flex_1().flex().justify_end().when(page_actions, |d| {
+                d.child(
+                    Button::new("home-clear-history")
+                        .icon("trash2", 15.)
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .aria_label(t("controlPanel.history.clearHistory"))
+                        .on_click(|_, _, cx| HistoryView::clear_all(cx)),
+                )
+            }))
     }
 
     fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

@@ -20,8 +20,8 @@ use super::components::{
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE,
-    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY,
-    TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, progress, tabular_nums,
+    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY,
+    TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, motion, progress, tabular_nums,
 };
 
 /// How long a new row stays tinted.
@@ -64,7 +64,6 @@ pub struct HistoryView {
     expanded: HashSet<i64>,
     retrying: HashSet<i64>,
     open_menu: Option<i64>,
-    hovering_list: bool,
     hovered_row: Option<i64>,
     pending: Option<PendingRow>,
     /// A row that just landed from Dictation; it reveals and tints briefly.
@@ -138,7 +137,6 @@ impl HistoryView {
             expanded: HashSet::new(),
             retrying: HashSet::new(),
             open_menu: None,
-            hovering_list: false,
             hovered_row: None,
             pending: None,
             arrived: None,
@@ -242,7 +240,9 @@ impl HistoryView {
         show_dialog(request, cx);
     }
 
-    fn clear_all(cx: &mut App) {
+    /// Asks before removing every transcript, its audio and the Insights
+    /// counters. Reached from the top bar while Home shows.
+    pub fn clear_all(cx: &mut App) {
         let request = DialogRequest::confirm(
             t("controlPanel.history.clearAllTitle"),
             Some(t("controlPanel.history.clearAllDescriptionDevice").into()),
@@ -663,7 +663,7 @@ impl HistoryView {
             )
             .with_animation(
                 "pending-in",
-                Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_snap),
+                motion(DUR_SHEET, cx).with_easing(ease_snap),
                 |d, t| d.opacity(t).max_h(px(96. * t)),
             )
             .into_any_element()
@@ -899,19 +899,10 @@ impl Render for HistoryView {
             if pending.is_some() && groups.first().is_none_or(|(label, _)| *label != today) {
                 groups.insert(0, (today, Vec::new()));
             }
-            let mut list =
-                div()
-                    .id("history-list")
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        this.hovering_list = *hovered;
-                        cx.notify();
-                    }));
-            let clear_focused =
-                keyed_focus_handle("history-clear-all".into(), cx).is_focused(window);
-            let show_controls = self.hovering_list || clear_focused;
+            let mut list = div().id("history-list");
             for (index, (label, items)) in groups.into_iter().enumerate() {
                 // Day label with its count beside it, then a hairline to the edge.
-                let mut header = div()
+                let header = div()
                     .relative()
                     .flex()
                     .items_center()
@@ -938,44 +929,6 @@ impl Render for HistoryView {
                             .flex_1()
                             .bg(p.border.opacity(0.5)),
                     );
-                if index == 0 {
-                    header = header.child(
-                        div()
-                            .absolute()
-                            .right(px(0.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .pl(px(8.))
-                            .bg(p.background)
-                            .opacity(if show_controls { 1. } else { 0. })
-                            .child(
-                                div()
-                                    .id("clear-all")
-                                    .keyboard_focusable(
-                                        "history-clear-all",
-                                        Role::Button,
-                                        t("controlPanel.history.clearAll"),
-                                        cx,
-                                    )
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .px(px(6.))
-                                    .py(px(2.))
-                                    .rounded(px(RADIUS_SM))
-                                    .text_size(px(TEXT_SMALL))
-                                    .text_color(p.muted_foreground)
-                                    .cursor_pointer()
-                                    .hover(move |s| {
-                                        s.text_color(p.destructive).bg(p.destructive.opacity(0.08))
-                                    })
-                                    .child(icon("trash2", 12., p.muted_foreground))
-                                    .child(t("controlPanel.history.clearAll"))
-                                    .on_click(|_, _, cx| Self::clear_all(cx)),
-                            ),
-                    );
-                }
                 let mut rows = div().flex().flex_col().gap(px(2.)).mx(px(-12.));
                 if index == 0
                     && let Some(since) = pending
