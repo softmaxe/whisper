@@ -35,16 +35,22 @@ pub fn focus_ring(p: &Palette) -> Vec<BoxShadow> {
     }]
 }
 
-/// The focus ring for controls filled with the accent or destructive color:
-/// a light band inside the edge, which stays visible on the fill.
-pub fn focus_ring_on_fill() -> Vec<BoxShadow> {
-    vec![BoxShadow {
-        color: hsla(0., 0., 1., 0.9),
+/// The focus ring for opaque filled controls (accent buttons, an on
+/// switch): a ring color halo just outside the edge, parted from the fill
+/// by a 1 px gap in the canvas color, as macOS draws it. An outer shadow is
+/// safe here because the opaque fill hides the part GPUI paints beneath.
+pub fn focus_ring_on_fill(p: &Palette) -> Vec<BoxShadow> {
+    let ring = |color: Hsla, spread: f32| BoxShadow {
+        color,
         offset: point(px(0.), px(0.)),
         blur_radius: px(0.),
-        spread_radius: px(2.),
-        inset: true,
-    }]
+        spread_radius: px(spread),
+        inset: false,
+    };
+    vec![
+        ring(p.ring.opacity(if p.dark { 0.9 } else { 0.8 }), 3.),
+        ring(p.background, 1.),
+    ]
 }
 
 /// Focus handles of [`KeyboardFocusable`] elements, by key. Kept app-wide so
@@ -218,7 +224,7 @@ impl RenderOnce for Toggle {
             .id(id.clone())
             .when(!disabled, |d| {
                 let ring = if checked {
-                    focus_ring_on_fill()
+                    focus_ring_on_fill(&p)
                 } else {
                     focus_ring(&p)
                 };
@@ -429,7 +435,7 @@ impl RenderOnce for Button {
                     ButtonVariant::Primary | ButtonVariant::Destructive
                 );
                 let ring = if filled {
-                    focus_ring_on_fill()
+                    focus_ring_on_fill(&p)
                 } else {
                     focus_ring(&p)
                 };
