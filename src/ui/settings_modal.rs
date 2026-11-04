@@ -1975,7 +1975,6 @@ impl SettingsModal {
         let open = self.models_error_details;
         let mut actions = div().ml(px(20.)).flex().items_center().gap(px(12.)).child(
             text_link("settings-models-retry", Role::Button, t("common.retry"), cx)
-                .child(icon("refresh-cw", 12., p.muted_foreground))
                 .on_click(cx.listener(|this, _, window, cx| this.refresh_models(window, cx))),
         );
         if details.is_some() {
