@@ -437,7 +437,7 @@ impl ControlPanel {
                     .pr(px(6.))
                     .rounded(px(RADIUS_LG))
                     .border_1()
-                    .border_color(p.input_border)
+                    .border_color(p.control_border)
                     .bg(if p.dark {
                         p.white.opacity(0.035)
                     } else {

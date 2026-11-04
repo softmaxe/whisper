@@ -143,7 +143,8 @@ pub fn f32_tx(
     )
 }
 
-/// Pill switch: 30×18 track, 14 px knob, 120 ms slide.
+/// Pill switch: 36×20 track (close to the macOS regular switch), 16 px
+/// knob, 120 ms slide.
 #[derive(IntoElement)]
 pub struct Toggle {
     id: ElementId,
@@ -201,7 +202,7 @@ impl RenderOnce for Toggle {
         let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
             (id.clone(), "knob"),
-            if self.checked { 14.0 } else { 2.0 },
+            if self.checked { 18.0 } else { 2.0 },
             DUR_SNAP,
             ease_css,
             window,
@@ -237,8 +238,8 @@ impl RenderOnce for Toggle {
             })
             .relative()
             .flex_none()
-            .w(px(30.))
-            .h(px(18.))
+            .w(px(36.))
+            .h(px(20.))
             .rounded_full()
             .bg(track)
             // An off track is pale against its card; an inner edge keeps
@@ -263,7 +264,7 @@ impl RenderOnce for Toggle {
                     .absolute()
                     .top(px(2.))
                     .left(px(knob_x))
-                    .size(px(14.))
+                    .size(px(16.))
                     .rounded_full()
                     .bg(knob)
                     .when(!disabled, |d| {
@@ -596,7 +597,9 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
             }),
             fg: p.foreground,
             icon: p.muted_foreground,
-            border: Some(p.input_border),
+            // Buttons carry their own fill and lift; the stronger input
+            // edge is for fields, where the outline is the only cue.
+            border: Some(p.control_border),
             shadows: if p.dark {
                 vec![inset(0., 1., 0., p.white.opacity(0.06))]
             } else {
@@ -714,11 +717,16 @@ pub fn page_container() -> Div {
 /// A rounded card with a soft border on a faint fill: the frame shared by
 /// settings panels, the dictionary list and the Insights cards.
 pub fn surface_card(p: &Palette) -> Div {
-    div()
-        .rounded(px(RADIUS_XL))
-        .border_1()
-        .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
-        .bg(p.card.opacity(0.4))
+    div().rounded(px(RADIUS_XL)).border_1().map(|d| {
+        if p.dark {
+            d.border_color(p.border.opacity(0.8))
+                .bg(p.card.opacity(0.4))
+        } else {
+            // Light cards are white on the off-white canvas with a full
+            // hairline, so groups separate without relying on the tint.
+            d.border_color(p.border).bg(p.card)
+        }
+    })
 }
 
 /// `SettingsPanel`: a bordered group whose rows are separated by hairlines.

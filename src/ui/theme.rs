@@ -22,6 +22,9 @@ pub struct Palette {
     /// Border of text inputs, selects and outline buttons: a step stronger
     /// than `border` so controls read as interactive.
     pub input_border: Hsla,
+    /// Edge of outline buttons and the search trigger: quieter than
+    /// `input_border`, since their fill and shadow already mark them.
+    pub control_border: Hsla,
     pub ring: Hsla,
     pub background: Hsla,
     pub foreground: Hsla,
@@ -67,7 +70,8 @@ impl Palette {
             destructive: c(0xdc2626),
             border: c(0xe4e4e7),
             input: c(0xffffff),
-            input_border: c(0xb4b4bb),
+            input_border: c(0x8e8e96),
+            control_border: c(0xd4d4d8),
             ring: c(0x1b4ed8),
             background: c(0xfcfcfc),
             foreground: c(0x18181b),
@@ -79,7 +83,7 @@ impl Palette {
             surface_3: c(0xf4f4f5),
             surface_raised: c(0xebebed),
             surface_window: c(0xfafafa),
-            settings_sidebar: c(0xfafafa),
+            settings_sidebar: c(0xf4f4f5),
             border_subtle: c(0xe4e4e7),
             border_hover: c(0xd4d4d8),
             amber_border: c(0xfe9a00).opacity(0.3),
@@ -105,7 +109,8 @@ impl Palette {
             destructive: c(0xfb414a),
             border: c(0xffffff).opacity(0.08),
             input: c(0x0a0a0a),
-            input_border: c(0xffffff).opacity(0.17),
+            input_border: c(0xffffff).opacity(0.3),
+            control_border: c(0xffffff).opacity(0.14),
             ring: c(0x346bf1),
             background: c(0x000000),
             foreground: c(0xf5f5f5),

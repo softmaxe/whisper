@@ -70,7 +70,7 @@ fn match_window(text: &str, query: &str) -> String {
 /// `text` with every case-insensitive occurrence of `query` emphasized. Text
 /// whose lowercase form changes byte length (some non-ASCII) is left plain,
 /// since match offsets would not map back onto it.
-fn highlighted(text: &str, query: &str, color: Hsla) -> StyledText {
+fn highlighted(text: &str, query: &str, color: Hsla, mark: Hsla) -> StyledText {
     let lower = text.to_lowercase();
     let mut highlights = Vec::new();
     if !query.is_empty() && lower.len() == text.len() {
@@ -80,8 +80,10 @@ fn highlighted(text: &str, query: &str, color: Hsla) -> StyledText {
             let end = start + query.len();
             highlights.push((
                 start..end,
+                // A tinted mark, not only weight, so matches stand out on dark.
                 HighlightStyle {
                     color: Some(color),
+                    background_color: Some(mark),
                     font_weight: Some(FontWeight::SEMIBOLD),
                     ..Default::default()
                 },
@@ -309,6 +311,7 @@ impl Render for CommandSearch {
                                     &match_window(&item.text, &needle),
                                     &needle,
                                     p.foreground,
+                                    p.primary.opacity(if p.dark { 0.32 } else { 0.16 }),
                                 )),
                         )
                         .child(
