@@ -79,7 +79,7 @@ pub fn apply_pill(cx: &mut App) {
         }),
         _ => Dictation::global(cx).update(cx, |_, cx| {
             cx.emit(DictationNotice::DeliveryFallback {
-                text: "Let's move the design review to Thursday at 3 PM.".into(),
+                text: "Let’s move the design review to Thursday at 3 PM.".into(),
                 copied: true,
             })
         }),
