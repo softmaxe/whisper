@@ -2815,7 +2815,7 @@ fn error_line(message: String, p: &Palette) -> AnyElement {
 }
 
 /// The host and port of a base URL, as people read it: `127.0.0.1:9`.
-fn endpoint_host(base: &str) -> String {
+pub(super) fn endpoint_host(base: &str) -> String {
     url::Url::parse(base)
         .ok()
         .and_then(|url| {

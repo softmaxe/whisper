@@ -103,21 +103,6 @@ fn file_name(path: &std::path::Path) -> String {
         .unwrap_or_else(|| "audio".into())
 }
 
-/// The host and port of the transcription server, as people read it:
-/// `127.0.0.1:9`. Unparseable input shows as typed.
-fn server_host(base: &str) -> String {
-    url::Url::parse(base)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            Some(match url.port() {
-                Some(port) => format!("{host}:{port}"),
-                None => host,
-            })
-        })
-        .unwrap_or_else(|| base.to_string())
-}
-
 fn error_text(err: &UploadError) -> String {
     if err.code.as_deref() == Some(CUSTOM_ENDPOINT_INVALID_CODE) {
         return t("upload.customEndpointInvalid");
@@ -801,7 +786,7 @@ impl UploadView {
         let server = if url.is_empty() {
             "—".to_string()
         } else {
-            server_host(url)
+            super::settings_modal::endpoint_host(url)
         };
         let model = s.remote_transcription_model.trim().to_string();
         let language = crate::text::language::languages()
