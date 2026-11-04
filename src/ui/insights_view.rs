@@ -15,7 +15,7 @@ use crate::i18n::{self, Language, t, t_with};
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, empty_state_icon, icon,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon,
     keyed_focus_handle, page_container, retention_banner, segment, segmented_track, surface_card,
 };
 use super::theme::{
@@ -25,8 +25,14 @@ use super::theme::{
 
 const CHART_HEIGHT: f32 = 220.;
 const AXIS_WIDTH: f32 = 40.;
-/// Room above the plot for the period labels.
-const REGION_STRIP: f32 = 26.;
+/// Room right of the plot for the average's end label.
+const END_GUTTER: f32 = 72.;
+/// Height of the value label over the inspected bar.
+const VALUE_LABEL_HEIGHT: f32 = 24.;
+/// Room above the plot so the value label clears the tallest bar.
+const LABEL_STRIP: f32 = VALUE_LABEL_HEIGHT + 10.;
+/// How far the selected period's band rises above the plot.
+const BAND_LIFT: f32 = 8.;
 /// Room below the plot for the date axis.
 const AXIS_STRIP: f32 = 24.;
 const CHART_KEY: &str = "insights-chart";
@@ -197,15 +203,28 @@ fn spoken_time(ms: i64) -> String {
     )
 }
 
-/// A 1-2-2.5-5 step giving about three gridlines up to `max`.
+/// A 1-2-2.5-5 step giving about four gridlines up to `max`. Steps stay
+/// whole numbers, so a 2.5 step only appears from 25 up and every tick
+/// reads exactly.
 fn grid_step(max: f64) -> f64 {
-    let raw = (max / 3.).max(1.);
+    let raw = (max / 4.).max(1.);
     let magnitude = 10f64.powf(raw.log10().floor());
     [1., 2., 2.5, 5., 10.]
         .into_iter()
         .map(|m| m * magnitude)
+        .filter(|step| step.fract() == 0.)
         .find(|step| *step >= raw)
         .unwrap_or(10. * magnitude)
+}
+
+/// A bar's drawn height. Idle days keep a stub on the baseline so they read
+/// as zero, not as missing data.
+fn bar_height(bar: &TrendBar, y: &impl Fn(f64) -> f32) -> f32 {
+    if bar.words > 0 {
+        (CHART_HEIGHT - y(bar.words as f64)).max(3.)
+    } else {
+        2.
+    }
 }
 
 /// Date labels under the bars. Short daily spans label every few days back
@@ -251,26 +270,26 @@ fn axis_labels(bars: &[TrendBar], bucket_days: i64) -> Vec<Option<String>> {
     labels
 }
 
-/// Fill of a bar in the selected period: a quiet, desaturated accent that
-/// clears 3:1 against the canvas (3.5:1 dark, 3.3:1 light), so the full
-/// accent stays free to mark the inspected bar.
+/// Fill of a bar in the selected period: the accent hue at a lower
+/// lightness and chroma that still clears 3:1 against the canvas, so the
+/// full accent stays free to mark the inspected bar.
 fn period_tone(p: &Palette) -> Hsla {
     if p.dark {
-        hsla(p.primary.h, 0.3, 0.44, 1.)
+        hsla(p.primary.h, 0.45, 0.42, 1.)
     } else {
-        hsla(p.primary.h, 0.45, 0.62, 1.)
+        hsla(p.primary.h, 0.55, 0.60, 1.)
     }
 }
 
-/// A comparison-period bar: a faint neutral fill inside a neutral 1 px edge.
-/// The edge clears 3:1 against the canvas (3.4:1 in both themes) so the
-/// bar's height stays legible, while the light fill keeps the period a
-/// step behind the solid bars it is compared with.
+/// A comparison-period bar: a neutral fill inside a stronger neutral 1 px
+/// edge. The edge clears 3:1 against the canvas (4:1 dark, 3.4:1 light) so
+/// the bar's shape reads on its own, while the grey keeps the period a step
+/// behind the tinted bars it is compared with.
 fn comparison_tone(p: &Palette) -> (Hsla, Hsla) {
     if p.dark {
-        (p.foreground.opacity(0.14), p.foreground.opacity(0.4))
+        (p.foreground.opacity(0.22), p.foreground.opacity(0.45))
     } else {
-        (p.foreground.opacity(0.08), p.foreground.opacity(0.5))
+        (p.foreground.opacity(0.14), p.foreground.opacity(0.5))
     }
 }
 
@@ -393,12 +412,20 @@ impl InsightsView {
             let active = self.range == range;
             picker = picker.child(
                 segment(("insights-range", index), range.label(), active, cx)
-                    .h(px(26.))
+                    .h(px(28.))
                     .child(range.label())
                     .on_click(cx.listener(move |this, _, _, cx| this.set_range(range, cx))),
             );
         }
         picker
+    }
+
+    /// What the period-scoped cards cover: "Last 7 days" or "All time".
+    fn scope(&self) -> String {
+        match self.range.days() {
+            Some(days) => t_with("insights.lastDays", &[("count", &days.to_string())]),
+            None => t("insights.allTime"),
+        }
     }
 
     /// The dates the selected period covers, e.g. "Oct 29 – Today".
@@ -485,6 +512,8 @@ impl InsightsView {
                 &[("count", &summary.current_streak_days.to_string())],
             )),
             None,
+            // The streak runs up to today whatever the range, so its note
+            // names its own, all-time scope.
             t_with(
                 "insights.longestStreak",
                 &[("count", &summary.longest_streak_days.to_string())],
@@ -627,11 +656,11 @@ impl InsightsView {
             None => 0,
         };
         let has_regions = period_from > 0;
-        let plot_top = if has_regions { REGION_STRIP } else { 10. };
+        let plot_top = LABEL_STRIP;
 
         // The inspected bar: under the pointer, else the keyboard cursor
         // while the chart has focus, else today. It wears the full accent and
-        // the readout describes it, so the two always agree.
+        // carries the value label, so the two always agree.
         let focused = keyed_focus_handle(CHART_KEY.into(), cx).is_focused(window);
         let selected = self
             .hovered
@@ -646,95 +675,40 @@ impl InsightsView {
         let step = grid_step(peak);
         let top = ((peak / step).ceil().max(1.)) * step;
         let y = |value: f64| CHART_HEIGHT * (1. - (value / top) as f32);
+        // Every layer spans the same box, between the value axis on the left
+        // and the average's end label on the right.
+        let layer = || div().absolute().left(px(AXIS_WIDTH)).right(px(END_GUTTER));
 
         let mut plot = div().relative().h(px(plot_top + CHART_HEIGHT + AXIS_STRIP));
 
         // The selected period sits on a tinted band so it reads as one unit
-        // against the period it is compared with.
+        // against the period it is compared with; the legend names both.
         if has_regions {
-            let days = self.range.days().unwrap_or(0).to_string();
-            // Each band names its period and the dates it spans, so the
-            // comparison reads without counting bars.
-            let span = |from: usize, to: usize| {
-                bars.get(from)
-                    .zip(bars.get(to))
-                    .map(|(a, b)| date_span(a.start, b.end, today))
-                    .unwrap_or_default()
-            };
-            let region_label = |name: String, dates: String, color: Hsla| {
-                div()
-                    .px(px(8.))
-                    .pt(px(5.))
-                    .flex()
-                    .gap(px(6.))
-                    .min_w_0()
-                    .text_size(px(TEXT_CAPTION))
-                    .font_features(tabular_nums())
-                    .child(
-                        div()
-                            .flex_none()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(color)
-                            .child(name),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(p.subtle_foreground)
-                            .child(dates),
-                    )
-            };
             plot = plot.child(
-                div()
-                    .absolute()
-                    .left(px(AXIS_WIDTH))
-                    .right_0()
-                    .top_0()
-                    .h(px(plot_top + CHART_HEIGHT))
+                layer()
+                    .top(px(plot_top - BAND_LIFT))
+                    .h(px(CHART_HEIGHT + BAND_LIFT))
                     .flex()
-                    .child(
-                        div()
-                            .w(relative(period_from as f32 / count as f32))
-                            .h_full()
-                            .child(region_label(
-                                t_with("insights.previousDays", &[("count", &days)]),
-                                span(0, period_from - 1),
-                                p.muted_foreground,
-                            )),
-                    )
+                    .child(div().w(relative(period_from as f32 / count as f32)))
                     .child(
                         div()
                             .flex_1()
                             .h_full()
                             .rounded_t(px(RADIUS_MD))
-                            .bg(p.foreground.opacity(if p.dark { 0.05 } else { 0.035 }))
-                            .child(region_label(
-                                t_with("insights.lastDays", &[("count", &days)]),
-                                span(period_from, last),
-                                p.foreground,
-                            )),
+                            .bg(p.foreground.opacity(if p.dark { 0.05 } else { 0.035 })),
                     ),
             );
         }
 
         let mut tick = 0.;
-        while tick <= top + 0.5 {
+        while tick <= top + step / 2. {
             let line_y = plot_top + y(tick);
             plot = plot
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(AXIS_WIDTH))
-                        .right_0()
-                        .top(px(line_y))
-                        .h(px(1.))
-                        .bg(if tick == 0. {
-                            p.border_hover
-                        } else {
-                            p.border.opacity(0.6)
-                        }),
-                )
+                .child(layer().top(px(line_y)).h(px(1.)).bg(if tick == 0. {
+                    p.border_hover
+                } else {
+                    p.border.opacity(0.6)
+                }))
                 .child(
                     div()
                         .absolute()
@@ -746,19 +720,13 @@ impl InsightsView {
                         .text_size(px(TEXT_CAPTION))
                         .font_features(tabular_nums())
                         .text_color(p.subtle_foreground)
-                        .child(compact_number(tick as i64)),
+                        .child(compact_number(tick.round() as i64)),
                 );
             tick += step;
         }
 
         let inset = if count > 40 { 1.5 } else { 3. };
-        let mut columns = div()
-            .absolute()
-            .left(px(AXIS_WIDTH))
-            .right_0()
-            .top(px(plot_top))
-            .h(px(CHART_HEIGHT))
-            .flex();
+        let mut columns = layer().top(px(plot_top)).h(px(CHART_HEIGHT)).flex();
         for (index, bar) in bars.iter().enumerate() {
             let in_period = index >= period_from;
             let is_selected = selected == index;
@@ -770,13 +738,7 @@ impl InsightsView {
                 let (fill, edge) = comparison_tone(p);
                 (fill, Some(edge))
             };
-            // Idle days keep a stub on the baseline so they read as zero,
-            // not as missing data.
-            let height = if bar.words > 0 {
-                (CHART_HEIGHT - y(bar.words as f64)).max(3.)
-            } else {
-                2.
-            };
+            let height = bar_height(bar, &y);
             let name = format!(
                 "{}: {}",
                 bar_when(bar, bucket_days, today),
@@ -825,10 +787,7 @@ impl InsightsView {
         // Short spans center each date under its bar; dense spans pin
         // "Today" to the right edge so it never runs past the plot.
         let centered = count <= 31;
-        let mut labels = div()
-            .absolute()
-            .left(px(AXIS_WIDTH))
-            .right_0()
+        let mut labels = layer()
             .top(px(plot_top + CHART_HEIGHT + 7.))
             .flex()
             .text_size(px(TEXT_CAPTION))
@@ -856,7 +815,8 @@ impl InsightsView {
             .enumerate()
             .map(|(i, b)| b.average.map(|a| ((i as f32 + 0.5) / count as f32, y(a))))
             .collect();
-        let line_color = p.foreground;
+        let end = points.last().copied().flatten();
+        let line_color = p.foreground.opacity(0.7);
         let ring = p.background;
         let line = canvas(
             move |_, _, _| {},
@@ -869,7 +829,7 @@ impl InsightsView {
                 };
                 // A canvas-coloured halo under the line keeps it legible
                 // where it crosses bars of similar lightness.
-                for (width, color) in [(px(4.), ring), (px(2.), line_color)] {
+                for (width, color) in [(px(3.), ring), (px(1.5), line_color)] {
                     let mut path = PathBuilder::stroke(width);
                     let mut drawing = false;
                     for point in &points {
@@ -886,9 +846,17 @@ impl InsightsView {
                         window.paint_path(path, color);
                     }
                 }
-                if let Some(Some(end)) = points.last() {
-                    let center = at(*end);
-                    for (radius, color) in [(px(5.), ring), (px(3.5), line_color)] {
+                if let Some(end) = end {
+                    let center = at(end);
+                    // A hairline leader carries the latest average to its
+                    // label in the gutter.
+                    let mut leader = PathBuilder::stroke(px(1.));
+                    leader.move_to(center);
+                    leader.line_to(point(bounds.origin.x + bounds.size.width, center.y));
+                    if let Ok(leader) = leader.build() {
+                        window.paint_path(leader, line_color.opacity(0.45));
+                    }
+                    for (radius, color) in [(px(4.), ring), (px(2.5), line_color)] {
                         let bounds = Bounds::new(
                             point(center.x - radius, center.y - radius),
                             size(radius * 2., radius * 2.),
@@ -900,7 +868,7 @@ impl InsightsView {
         )
         .absolute()
         .left(px(AXIS_WIDTH))
-        .right_0()
+        .right(px(END_GUTTER))
         .top(px(plot_top))
         .h(px(CHART_HEIGHT));
 
@@ -909,52 +877,135 @@ impl InsightsView {
         } else {
             ("insights.wordsPerWeek", "insights.weeklyAverage")
         };
+
+        // The average is labeled once, at its latest value, instead of in
+        // the legend: the label sits where the eye already is.
+        let end_label = end
+            .zip(bars.last().and_then(|b| b.average))
+            .map(|((_, fy), value)| {
+                div()
+                    .absolute()
+                    .right_0()
+                    .w(px(END_GUTTER))
+                    .top(px(plot_top + fy - 16.))
+                    .pl(px(8.))
+                    .flex()
+                    .flex_col()
+                    .font_features(tabular_nums())
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SMALL))
+                            .line_height(px(16.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.foreground)
+                            .child(compact_number(value.round() as i64)),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(TEXT_CAPTION))
+                            .line_height(px(14.))
+                            .text_color(p.subtle_foreground)
+                            .whitespace_nowrap()
+                            .child(t(average)),
+                    )
+            });
+
+        // The inspected bar's figures float just above it. The edge bars
+        // align the label to the plot's edge so it never runs past it.
+        let value_label = bars.get(selected).map(|bar| {
+            let card = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .h(px(VALUE_LABEL_HEIGHT))
+                .px(px(8.))
+                .rounded(px(RADIUS_MD))
+                .border_1()
+                .border_color(p.border_hover)
+                .bg(p.popover)
+                .shadow(vec![drop(0., 1., 3., if p.dark { 0.4 } else { 0.08 })])
+                .text_size(px(TEXT_SMALL))
+                .font_features(tabular_nums())
+                .whitespace_nowrap()
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.foreground)
+                        .child(bar_when(bar, bucket_days, today)),
+                )
+                .child(div().text_color(p.muted_foreground).child(bar_figures(bar)));
+            let center = (selected as f32 + 0.5) / count as f32;
+            let anchor = div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .top(px(CHART_HEIGHT
+                    - bar_height(bar, &y)
+                    - VALUE_LABEL_HEIGHT
+                    - 6.))
+                .flex()
+                .map(|d| {
+                    if center < 0.2 {
+                        d.justify_start()
+                    } else if center > 0.8 {
+                        d.justify_end()
+                    } else {
+                        d.justify_center()
+                    }
+                })
+                .child(card);
+            let mut anchor = Some(anchor);
+            let mut slots = layer().top(px(plot_top)).h(px(CHART_HEIGHT)).flex();
+            for index in 0..count {
+                slots = slots.child(
+                    div()
+                        .flex_1()
+                        .relative()
+                        .h_full()
+                        .children((index == selected).then(|| anchor.take()).flatten()),
+                );
+            }
+            slots
+        });
+
+        let swatch = |fill: Hsla, edge: Option<Hsla>, label: String| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(
+                    div()
+                        .size(px(10.))
+                        .rounded(px(2.))
+                        .bg(fill)
+                        .when_some(edge, |d, edge| d.border_1().border_color(edge)),
+                )
+                .child(label)
+        };
         let legend = div()
             .flex()
             .items_center()
             .gap(px(16.))
             .text_size(px(TEXT_SMALL))
             .text_color(p.muted_foreground)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(div().size(px(10.)).rounded(px(2.)).bg(period_tone(p)))
-                    .child(t(per_bar)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(div().w(px(16.)).h(px(2.)).rounded(px(1.)).bg(p.foreground))
-                    .child(t(average)),
-            );
-
-        let readout = bars.get(selected).map(|bar| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .min_w_0()
-                .text_size(px(TEXT_SMALL))
-                .font_features(tabular_nums())
-                .child(
-                    div()
-                        .flex_none()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.foreground)
-                        .child(bar_when(bar, bucket_days, today)),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_color(p.muted_foreground)
-                        .child(bar_figures(bar)),
-                )
-        });
+            .map(|d| match self.range.days().filter(|_| has_regions) {
+                Some(days) => {
+                    let days = days.to_string();
+                    let (fill, edge) = comparison_tone(p);
+                    d.child(swatch(
+                        period_tone(p),
+                        None,
+                        t_with("insights.lastDays", &[("count", &days)]),
+                    ))
+                    .child(swatch(
+                        fill,
+                        Some(edge),
+                        t_with("insights.previousDays", &[("count", &days)]),
+                    ))
+                }
+                None => d.child(swatch(period_tone(p), None, t(per_bar))),
+            });
 
         let bar_count = bars.len();
         div()
@@ -972,17 +1023,31 @@ impl InsightsView {
             .bg(p.background)
             .flex()
             .flex_col()
-            .gap(px(14.))
+            .gap(px(8.))
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .justify_between()
-                    .gap(px(16.))
-                    .child(legend)
-                    .children(readout),
+                    .gap_x(px(16.))
+                    .gap_y(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.foreground)
+                            .child(t(per_bar)),
+                    )
+                    .child(legend),
             )
-            .child(plot.child(columns).child(line).child(labels))
+            .child(
+                plot.child(columns)
+                    .child(line)
+                    .child(labels)
+                    .children(end_label)
+                    .children(value_label),
+            )
             .into_any_element()
     }
 
@@ -1032,11 +1097,7 @@ impl InsightsView {
                 None,
             ),
         ];
-        let description = match self.range.days() {
-            Some(days) => t_with("insights.lastDays", &[("count", &days.to_string())]),
-            None => t("insights.allTime"),
-        };
-        let mut card = panel(t("insights.highlights"), description, p).child(div().h(px(6.)));
+        let mut card = panel(t("insights.highlights"), self.scope(), p).child(div().h(px(6.)));
         for (index, (label, value, detail)) in rows.into_iter().enumerate() {
             card = card.child(
                 div()
@@ -1071,25 +1132,28 @@ impl InsightsView {
         card
     }
 
-    /// Average words per weekday across all recorded use: a steadier rhythm
-    /// than one week could show.
+    /// Average words per weekday over the selected period, like every other
+    /// card on the page, with the busiest weekday called out.
     fn weekly_rhythm(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
-        let first = first_use(summary).unwrap_or(today);
-        let averages = weekday_averages(&summary.daily, first, today);
+        let averages = weekday_averages(&summary.daily, self.period_start(summary, today), today);
         let max = averages.iter().copied().fold(0., f64::max);
         let busiest = averages
             .iter()
             .enumerate()
             .max_by(|a, b| a.1.total_cmp(b.1))
-            .map(|(i, _)| i);
-        let mut card = panel(
-            t("insights.weeklyRhythm"),
-            t("insights.weeklyRhythmBody"),
-            p,
-        )
-        .child(div().h(px(10.)));
+            .map(|(i, _)| i)
+            .filter(|_| max > 0.);
+        let description = match busiest {
+            Some(day) => format!(
+                "{} · {}",
+                self.scope(),
+                t_with("insights.busiestWeekday", &[("day", &weekday_name(day))])
+            ),
+            None => self.scope(),
+        };
+        let mut card = panel(t("insights.weeklyRhythm"), description, p).child(div().h(px(10.)));
         for (index, average) in averages.into_iter().enumerate() {
-            let strong = max > 0. && busiest == Some(index);
+            let strong = busiest == Some(index);
             let fraction = if max > 0. { (average / max) as f32 } else { 0. };
             card = card.child(
                 div()
@@ -1121,7 +1185,11 @@ impl InsightsView {
                                     .h_full()
                                     .w(relative(fraction))
                                     .rounded(px(RADIUS_SM))
-                                    .bg(neutral_bar(p)),
+                                    .bg(if strong {
+                                        period_tone(p)
+                                    } else {
+                                        neutral_bar(p)
+                                    }),
                             ),
                     )
                     .child(
@@ -1166,13 +1234,24 @@ impl InsightsView {
             }))
     }
 
-    fn empty_state(p: &Palette) -> Div {
-        Self::notice(
-            "bar-chart3",
-            t("insights.emptyTitle"),
-            Some(t("insights.emptyBody")),
-            p,
-        )
+    /// With History off nothing new is counted, so the message says how to
+    /// start rather than promising data that will never arrive.
+    fn empty_state(retention: bool, p: &Palette) -> Div {
+        if retention {
+            Self::notice(
+                "bar-chart3",
+                t("insights.emptyTitle"),
+                Some(t("insights.emptyBody")),
+                p,
+            )
+        } else {
+            Self::notice(
+                "bar-chart3",
+                t("insights.historyOffTitle"),
+                Some(t("insights.historyOffBody")),
+                p,
+            )
+        }
     }
 
     fn load_error(p: &Palette, cx: &mut Context<Self>) -> Div {
@@ -1275,21 +1354,23 @@ impl Render for InsightsView {
             .text_color(p.subtle_foreground)
             .child(icon("shield", 12., p.subtle_foreground))
             .child(t("insights.onDevicePrivacy"));
-        let page = page_container().pb(px(32.)).flex().flex_col().when(
-            !retention && !self.load_failed,
-            |d| {
-                d.child(retention_banner(t("insights.dataRetentionDisabled"), None, &p).mb(px(20.)))
-            },
-        );
+        let page = page_container().pb(px(32.)).flex().flex_col();
 
         // `load` runs in `new`, so a summary exists unless loading failed.
         let notice = match self.summary.clone().filter(|_| !self.load_failed) {
             Some(summary) if summary.total_dictations > 0 => {
                 return page
+                    .when(!retention, |d| {
+                        d.child(
+                            retention_banner(t("insights.dataRetentionDisabled"), None, &p)
+                                .mb(px(20.)),
+                        )
+                    })
                     .child(self.dashboard(&summary, window, &p, cx))
                     .child(privacy.mt(px(28.)));
             }
-            Some(_) => Self::empty_state(&p),
+            // The empty state itself explains History being off.
+            Some(_) => Self::empty_state(retention, &p),
             None => Self::load_error(&p, cx),
         };
         // Without data the message sits in the middle of the visible area
@@ -1328,9 +1409,12 @@ mod tests {
 
     #[test]
     fn grid_steps_round_to_readable_values() {
-        assert_eq!(grid_step(3_400.), 2_000.);
-        assert_eq!(grid_step(1_520.), 1_000.);
-        assert_eq!(grid_step(700.), 250.);
+        assert_eq!(grid_step(3_400.), 1_000.);
+        assert_eq!(grid_step(1_520.), 500.);
+        assert_eq!(grid_step(700.), 200.);
+        assert_eq!(grid_step(96.), 25.);
+        // A 2.5 step would label a 7.5 top as 7.
+        assert_eq!(grid_step(7.), 2.);
         assert_eq!(grid_step(0.), 1.);
     }
 
