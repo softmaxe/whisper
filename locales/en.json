@@ -617,7 +617,7 @@
         "signoffTrigger": "Sign off",
         "signoffText": "Best, Alex · alex@example.com"
       },
-      "searchPlaceholder": "Search snippets",
+      "searchPlaceholder": "Filter snippets",
       "noMatches": "No snippets match “{{query}}”",
       "count_one": "{{count}} snippet",
       "count_other": "{{count}} snippets",
@@ -633,7 +633,7 @@
     "addFirstWord": "Add Your First Word",
     "importList": "Import List…",
     "tabWords": "Words",
-    "searchWordsPlaceholder": "Search words",
+    "searchWordsPlaceholder": "Filter words",
     "addWord": "Add Word",
     "addWordsPlaceholder": "Add words, separated by commas",
     "addHint": "Press Return to add. Separate several words with commas.",
@@ -664,10 +664,11 @@
     "sortBy": "Sort by {{column}}",
     "lastUsed": {
       "today": "Today",
-      "yesterday": "Yesterday",
-      "daysAgo_one": "{{count}} day ago",
-      "daysAgo_other": "{{count}} days ago"
-    }
+      "yesterday": "Yesterday"
+    },
+    "usesBar": "{{count}} of {{max}} max",
+    "editDuplicate": "“{{word}}” is already in your dictionary",
+    "editEmpty": "Enter a word, or press Esc to keep the old one"
   },
   "apiKeyInput": {
     "placeholder": "Paste your API key",

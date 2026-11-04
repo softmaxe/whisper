@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Utc, Weekday};
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -19,15 +19,16 @@ use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon, kbd,
     keyed_focus_handle, page_container, segment, segmented_track, surface_card, text_tooltip,
 };
+use super::control_panel::SIDEBAR_WIDTH;
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
 };
 use super::text_input::{text_field, text_field_small, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_SNAP, LINE_SMALL, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
-    TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, ease_snap, motion,
-    tabular_nums,
+    DUR_BASE, DUR_SNAP, LINE_SMALL, PAGE_GUTTER, PAGE_MAX_WIDTH, Palette, PaletteExt, RADIUS_LG,
+    RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out,
+    ease_snap, motion, tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
@@ -86,24 +87,38 @@ enum SortKey {
 }
 
 /// Dictionary table column widths, in px. The word column takes the rest.
-const COL_USES: f32 = 128.;
+/// The use count is right-aligned in its own column so digits line up under
+/// the heading; the bar gets a separate column so it reads as a scale, not as
+/// part of the number.
+const COL_USES: f32 = 64.;
+const COL_USE_BAR: f32 = 96.;
 const COL_LAST_USED: f32 = 112.;
-/// The use count sits right-aligned in this cell so digits line up.
-const COUNT_CELL: f32 = 28.;
 /// Every use bar sits on a track this wide; the most used word fills it, so
 /// bars compare against one scale.
-const USE_TRACK: f32 = 72.;
+const USE_TRACK: f32 = 64.;
 /// A word used even once shows a sliver, so it never reads as unused.
 const USE_BAR_MIN: f32 = 3.;
-/// Past this many days, an age in days is harder to place than a date.
-const RELATIVE_DAYS: i64 = 30;
+/// Within this many days a weekday names the day; past it, a date does.
+/// Neither is a bare number, so Last used never reads like the Uses count.
+const WEEKDAY_DAYS: i64 = 6;
+/// Table rows bleed their hover fill this far past the page edge and pad it
+/// back, so cell text starts on the page edge, under the tabs, as on History.
+const ROW_BLEED: f32 = 12.;
 /// Snippet table trigger column width, in px.
 const COL_TRIGGER: f32 = 200.;
 /// Height of the header controls: tabs, search, buttons.
 const HEADER_CONTROL: f32 = 28.;
+/// Content widths, in px, below which the header's controls no longer fit
+/// on one row (with and without the source filter) and wrap to two.
+const HEADER_ONE_ROW: f32 = 440.;
+const HEADER_ONE_ROW_FILTERED: f32 = 640.;
+/// Below this content width the table drops Last used, so the word column
+/// keeps room for its chips and row actions.
+const TABLE_FULL: f32 = 600.;
 /// How long a removed row can be brought back before it is deleted for good.
 const UNDO_WINDOW: Duration = Duration::from_secs(6);
-/// Mishearings shown on a Dictionary row.
+/// Mishearings shown on a Dictionary row; past this, the last chip becomes
+/// "+N" so rows keep one height.
 const MAX_ROW_CORRECTIONS: usize = 3;
 
 /// Sorts dictionary rows in place. Ties list the newest word first, so a word
@@ -126,14 +141,14 @@ fn default_descending(key: SortKey) -> bool {
 }
 
 /// When a word was last used, to the day: the table only needs to tell
-/// words in daily use from ones that went quiet. Relative for the past
-/// month, so recent rows compare at a glance, and a date after that.
+/// words in daily use from ones that went quiet. Today and Yesterday, a
+/// weekday within the past week, and a short date after that, as Finder does.
 #[derive(Debug, PartialEq, Eq)]
 enum LastUsed {
     Never,
     Today,
     Yesterday,
-    DaysAgo(i64),
+    Weekday(Weekday),
     Date { day: NaiveDate, this_year: bool },
 }
 
@@ -146,7 +161,7 @@ fn last_used(use_count: i64, at: Option<DateTime<Utc>>, now: DateTime<Local>) ->
     match (now.date_naive() - day).num_days() {
         ..=0 => LastUsed::Today,
         1 => LastUsed::Yesterday,
-        n @ 2..=RELATIVE_DAYS => LastUsed::DaysAgo(n),
+        2..=WEEKDAY_DAYS => LastUsed::Weekday(day.weekday()),
         _ => LastUsed::Date {
             day,
             this_year: day.year() == now.year(),
@@ -160,7 +175,32 @@ fn last_used_label(value: &LastUsed) -> String {
         LastUsed::Never => "—".to_string(),
         LastUsed::Today => t("dictionary.lastUsed.today"),
         LastUsed::Yesterday => t("dictionary.lastUsed.yesterday"),
-        LastUsed::DaysAgo(n) => t_with("dictionary.lastUsed.daysAgo", &[("count", &n.to_string())]),
+        LastUsed::Weekday(day) => {
+            let index = day.num_days_from_monday() as usize;
+            if zh {
+                [
+                    "星期一",
+                    "星期二",
+                    "星期三",
+                    "星期四",
+                    "星期五",
+                    "星期六",
+                    "星期日",
+                ][index]
+                    .to_string()
+            } else {
+                [
+                    "Monday",
+                    "Tuesday",
+                    "Wednesday",
+                    "Thursday",
+                    "Friday",
+                    "Saturday",
+                    "Sunday",
+                ][index]
+                    .to_string()
+            }
+        }
         LastUsed::Date { day, this_year } => {
             let format = match (zh, this_year) {
                 (true, true) => "%-m月%-d日",
@@ -189,6 +229,17 @@ fn use_bar_width(uses: i64, max_uses: i64) -> f32 {
         return 0.;
     }
     (USE_TRACK * uses as f32 / max_uses as f32).clamp(USE_BAR_MIN, USE_TRACK)
+}
+
+/// Caps a chip label at `max` characters with an ellipsis. Measured
+/// truncation collapses a chip inside a flex row to its padding, so the cap
+/// is applied to the string instead.
+fn clip_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{}…", kept.trim_end())
 }
 
 /// A replacement on one line: line breaks become a return glyph.
@@ -303,6 +354,8 @@ pub struct DictionaryView {
     descending: bool,
     editing: Option<String>,
     edit_input: Entity<InputState>,
+    /// Why the inline edit was not saved; the editor stays open under it.
+    edit_error: Option<String>,
     // Snippets
     snippet_search: Entity<InputState>,
     trigger_input: Entity<InputState>,
@@ -315,6 +368,9 @@ pub struct DictionaryView {
     next_removal: u64,
     /// Focus keys of the rows on screen, top to bottom, for arrow-key moves.
     row_keys: Vec<ElementId>,
+    /// The content width on the last frame, which picks the header and
+    /// table layouts.
+    width: Option<f32>,
 }
 
 fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
@@ -370,13 +426,14 @@ impl DictionaryView {
             window,
             |this, _, e: &InputEvent, window, cx| match e {
                 InputEvent::PressEnter { .. } => {
-                    if let Some(word) = this.commit_edit(cx) {
+                    if let Some(word) = this.commit_edit(true, cx) {
                         focus_key(word_key(&word), window, cx);
                     }
                 }
                 InputEvent::Blur => {
-                    this.commit_edit(cx);
+                    this.commit_edit(false, cx);
                 }
+                InputEvent::Change if this.edit_error.take().is_some() => cx.notify(),
                 _ => {}
             },
         )
@@ -423,6 +480,7 @@ impl DictionaryView {
             descending: true,
             editing: None,
             edit_input,
+            edit_error: None,
             snippet_search,
             trigger_input,
             expansion,
@@ -431,6 +489,7 @@ impl DictionaryView {
             pending: None,
             next_removal: 0,
             row_keys: Vec::new(),
+            width: None,
         }
     }
 
@@ -770,6 +829,7 @@ impl DictionaryView {
 
     fn start_edit(&mut self, word: String, window: &mut Window, cx: &mut Context<Self>) {
         self.editing = Some(word.clone());
+        self.edit_error = None;
         self.edit_input.update(cx, |i, cx| {
             i.set_value(word, window, cx);
             i.focus(window, cx);
@@ -778,22 +838,40 @@ impl DictionaryView {
     }
 
     fn cancel_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.edit_error = None;
         if let Some(word) = self.editing.take() {
             focus_key(word_key(&word), window, cx);
             cx.notify();
         }
     }
 
-    /// Saves the word being edited. Returns the word the row now shows.
-    fn commit_edit(&mut self, cx: &mut Context<Self>) -> Option<String> {
-        let original = self.editing.take()?;
+    /// Saves the word being edited and returns the word the row now shows.
+    /// A name taken by another word, or an empty one confirmed with Return,
+    /// keeps the editor open with the reason under it and returns `None`.
+    /// Leaving an empty field just keeps the old word.
+    fn commit_edit(&mut self, confirmed: bool, cx: &mut Context<Self>) -> Option<String> {
+        let original = self.editing.clone()?;
         let value = self.edit_input.read(cx).value().trim().to_string();
-        let dictionary = AppState::global(cx).read(cx).dictionary.clone();
-        let duplicate = dictionary
+        let duplicate = AppState::global(cx)
+            .read(cx)
+            .dictionary
             .iter()
             .any(|w| *w != original && w.to_lowercase() == value.to_lowercase());
+        let error = if duplicate {
+            Some(t_with("dictionary.editDuplicate", &[("word", &value)]))
+        } else if value.is_empty() && confirmed {
+            Some(t("dictionary.editEmpty"))
+        } else {
+            None
+        };
         cx.notify();
-        if !value.is_empty() && value != original && !duplicate {
+        if error.is_some() {
+            self.edit_error = error;
+            return None;
+        }
+        self.editing = None;
+        self.edit_error = None;
+        if !value.is_empty() && value != original {
             update_dictionary(vec![value.clone()], vec![original], cx);
             Some(value)
         } else {
@@ -991,22 +1069,102 @@ impl DictionaryView {
                     )
                 })
         });
-        let search = has_rows.then(|| self.render_search(window, cx));
-        div()
+        let filter = (self.tab == Tab::Words)
+            .then(|| self.source_counts(cx))
+            .filter(|&(_, learned)| learned > 0)
+            .map(|(total, learned)| self.filter_tabs(total, learned, cx));
+        let fits_one_row = if filter.is_some() {
+            HEADER_ONE_ROW_FILTERED
+        } else {
+            HEADER_ONE_ROW
+        };
+        let compact = self.content_width(window) < fits_one_row;
+        let search = has_rows.then(|| self.render_search(compact, window, cx));
+        let actions = div()
+            .flex_none()
             .flex()
             .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .child(self.render_tabs(&p, cx))
-            .child(
+            .gap(px(8.))
+            .child(add)
+            .children(overflow);
+        let header = if compact {
+            // Too narrow for one row: the filter and search drop to a second
+            // row and the search takes its full width.
+            let second = (search.is_some() || filter.is_some()).then(|| {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(px(12.))
+                    .children(filter)
                     .children(search)
-                    .child(add)
-                    .children(overflow),
+            });
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(12.))
+                        .child(self.render_tabs(&p, cx))
+                        .child(actions),
+                )
+                .children(second)
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .gap(px(12.))
+                        .child(self.render_tabs(&p, cx))
+                        .children(filter),
+                )
+                .child(
+                    // The search field gives up width first as the window narrows.
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(8.))
+                        .children(search)
+                        .child(actions),
+                )
+        };
+        let this = cx.entity().downgrade();
+        header.relative().child(
+            canvas(
+                move |bounds, _, cx| {
+                    let width = f32::from(bounds.size.width);
+                    let _ = this.update(cx, |this, cx| {
+                        if this.width != Some(width) {
+                            this.width = Some(width);
+                            cx.notify();
+                        }
+                    });
+                },
+                |_, _, _, _| {},
             )
+            .absolute()
+            .size_full(),
+        )
+    }
+
+    /// The page's content width, measured from the header on the last frame;
+    /// before the first, estimated from the window with the sidebar open.
+    fn content_width(&self, window: &Window) -> f32 {
+        self.width.unwrap_or_else(|| {
+            let window = f32::from(window.viewport_size().width);
+            (window - SIDEBAR_WIDTH).min(PAGE_MAX_WIDTH) - 2. * PAGE_GUTTER
+        })
     }
 
     fn render_tabs(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
@@ -1030,13 +1188,14 @@ impl DictionaryView {
     }
 
     /// The header search field: Escape clears it, ↓ moves into the list.
-    fn render_search(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn render_search(&self, full_width: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
         let state = self.search().clone();
         div()
             .relative()
-            .flex_none()
-            .w(px(200.))
+            .flex_1()
+            .min_w(px(120.))
+            .when(!full_width, |d| d.max_w(px(200.)))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 match e.keystroke.key.as_str() {
                     "escape" if !state.read(cx).value().is_empty() => {
@@ -1263,7 +1422,7 @@ impl DictionaryView {
             .flex_none()
             .items_center()
             .justify_center()
-            .size(px(24.))
+            .size(px(28.))
             .rounded(px(RADIUS_MD))
             .cursor_pointer()
             .hover(move |s| s.bg(wash))
@@ -1273,32 +1432,46 @@ impl DictionaryView {
             )
     }
 
+    /// A hairline under a bleeding row, inset back to the page edges so it
+    /// lines up with the header controls while the hover fill runs wider.
+    fn row_rule(color: Hsla) -> Div {
+        div()
+            .absolute()
+            .bottom_0()
+            .left(px(ROW_BLEED))
+            .right(px(ROW_BLEED))
+            .h(px(1.))
+            .bg(color)
+    }
+
     fn table_header(cells: Vec<AnyElement>, p: &Palette) -> Div {
         div()
+            .relative()
             .flex()
             .items_center()
             .h(px(30.))
-            .px(px(8.))
-            .border_b_1()
-            .border_color(p.border.opacity(0.7))
+            .mx(px(-ROW_BLEED))
+            .px(px(ROW_BLEED))
             .children(cells)
+            .child(Self::row_rule(p.border.opacity(0.7)))
     }
 
     fn row_frame(key: &ElementId, label: String, focused: bool, cx: &mut App) -> Stateful<Div> {
         let p = cx.palette();
-        let wash = p.hover_wash(if p.dark { 0.04 } else { 0.03 });
+        let wash = p.hover_wash(if p.dark { 0.04 } else { 0.045 });
         div()
             .id(key.clone())
             .keyboard_focusable(key.clone(), Role::ListItem, label, cx)
+            .relative()
             .flex()
             .items_center()
             .h(px(40.))
-            .px(px(8.))
+            .mx(px(-ROW_BLEED))
+            .px(px(ROW_BLEED))
             .rounded(px(RADIUS_MD))
-            .border_b_1()
-            .border_color(p.border.opacity(0.5))
             .hover(move |s| s.bg(wash))
             .when(focused, |d| d.bg(wash))
+            .child(Self::row_rule(p.border.opacity(0.5)))
     }
 
     fn quiet_message(text: String, p: &Palette) -> Div {
@@ -1326,7 +1499,6 @@ impl DictionaryView {
             .items_center()
             .justify_between()
             .h(px(20.))
-            .px(px(8.))
             .text_size(px(TEXT_SMALL))
             .text_color(p.subtle_foreground)
             .child(left)
@@ -1405,15 +1577,13 @@ impl DictionaryView {
             _ => None,
         };
 
-        let mut col = div().flex().flex_col().gap(px(12.)).children(panel);
+        let col = div().flex().flex_col().gap(px(12.)).children(panel);
         if entries.is_empty() {
             self.row_keys.clear();
             return col.child(Self::render_empty(&p, cx));
         }
-        if learned > 0 {
-            col = col.child(self.filter_tabs(&entries, learned, cx));
-        }
 
+        let show_last_used = self.content_width(window) >= TABLE_FULL;
         let mut table = div().flex().flex_col().child(Self::table_header(
             vec![
                 div()
@@ -1428,6 +1598,8 @@ impl DictionaryView {
                     .into_any_element(),
                 div()
                     .w(px(COL_USES))
+                    .flex()
+                    .justify_end()
                     .child(self.column_heading(
                         1,
                         "dictionary.columnUses",
@@ -1436,6 +1608,10 @@ impl DictionaryView {
                         cx,
                     ))
                     .into_any_element(),
+                div().w(px(COL_USE_BAR)).into_any_element(),
+            ]
+            .into_iter()
+            .chain(show_last_used.then(|| {
                 div()
                     .w(px(COL_LAST_USED))
                     .flex()
@@ -1447,8 +1623,9 @@ impl DictionaryView {
                         window,
                         cx,
                     ))
-                    .into_any_element(),
-            ],
+                    .into_any_element()
+            }))
+            .collect(),
             &p,
         ));
         if visible.is_empty() {
@@ -1469,7 +1646,6 @@ impl DictionaryView {
                         .as_ref()
                         .is_none_or(|(m, t)| *m != c.misheard || *t != c.term)
                 })
-                .take(MAX_ROW_CORRECTIONS)
                 .map(|c| c.misheard.clone())
                 .collect();
             let (row, focused) = self.render_word_row(index, entry, misheard, max_uses, window, cx);
@@ -1499,7 +1675,6 @@ impl DictionaryView {
                         .flex()
                         .items_start()
                         .gap(px(8.))
-                        .px(px(8.))
                         // Kept to a readable measure, not the full table width.
                         .max_w(px(560.))
                         .child(div().pt(px(2.)).child(icon(
@@ -1646,12 +1821,21 @@ impl DictionaryView {
             .into_any_element()
     }
 
-    fn filter_tabs(
-        &self,
-        entries: &[DictionaryEntry],
-        learned: usize,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    /// Word counts by source, leaving out a word waiting on Undo.
+    fn source_counts(&self, cx: &App) -> (usize, usize) {
+        let pending = self.pending_word();
+        let entries = &AppState::global(cx).read(cx).dictionary_entries;
+        let live = entries.iter().filter(|e| Some(e.word.as_str()) != pending);
+        let total = live.clone().count();
+        let learned = live
+            .filter(|e| e.source == DictionarySource::Learned)
+            .count();
+        (total, learned)
+    }
+
+    /// All / Manual / Learned, beside the tabs once auto-learn has added a
+    /// word, so learned words can be reviewed without digging through a menu.
+    fn filter_tabs(&self, total: usize, learned: usize, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
         let mut seg = segmented_track(&p)
             .flex_none()
@@ -1663,13 +1847,13 @@ impl DictionaryView {
                 SourceFilter::All,
                 "dict-filter-all",
                 "dictionary.filterAll",
-                entries.len(),
+                total,
             ),
             (
                 SourceFilter::Manual,
                 "dict-filter-manual",
                 "dictionary.filterManual",
-                entries.len() - learned,
+                total - learned,
             ),
             (
                 SourceFilter::Learned,
@@ -1695,7 +1879,7 @@ impl DictionaryView {
                     })),
             );
         }
-        div().flex().child(seg)
+        seg
     }
 
     /// A sortable column heading; a second click flips the direction. Idle
@@ -1721,8 +1905,8 @@ impl DictionaryView {
             (default_descending(sort), p.subtle_foreground)
         };
         // The chevron always takes its space so headings do not shift as it
-        // appears. In a right-aligned column it leads, so the label's edge
-        // lines up with the values below.
+        // appears. In the right-aligned number and date columns it leads, so
+        // the label's edge lines up with the values below.
         let chevron = div()
             .flex_none()
             .opacity(if active || focused { 1. } else { 0. })
@@ -1736,7 +1920,7 @@ impl DictionaryView {
                 12.,
                 chevron_color,
             ));
-        let (before, after) = if sort == SortKey::LastUsed {
+        let (before, after) = if sort != SortKey::Word {
             (Some(chevron), None)
         } else {
             (None, Some(chevron))
@@ -1810,7 +1994,12 @@ impl DictionaryView {
 
     /// A way the word was misheard. Only its × forgets it, so a stray click
     /// while reading the row cannot, and forgetting goes through Undo.
-    fn misheard_chip(misheard: String, word: String, cx: &mut Context<Self>) -> Div {
+    fn misheard_chip(
+        misheard: String,
+        word: String,
+        max_chars: usize,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = cx.palette();
         let key: ElementId =
             SharedString::from(format!("dict-chip-forget:{word}:{misheard}")).into();
@@ -1826,34 +2015,65 @@ impl DictionaryView {
             .flex()
             .items_center()
             .justify_center()
-            .size(px(16.))
+            // A 24 pt target around the 10 pt glyph. It overhangs the 20 pt
+            // chip vertically (the chip's height is fixed) and its hover
+            // fill stays a 20 pt square inside the chip. Negative margins
+            // here would collapse the chip's measured width.
+            .size(px(24.))
             .rounded(px(RADIUS_SM))
             .cursor_pointer()
-            .hover(move |s| s.bg(wash))
             .tooltip(text_tooltip(label))
-            // The × stays visible so the chip reads as removable before it is hovered.
             .child(
-                icon("x", 10., p.subtle_foreground)
-                    .group_hover(group, move |s| s.text_color(p.foreground)),
+                div()
+                    .size(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(RADIUS_SM))
+                    .group_hover(group.clone(), move |s| s.bg(wash))
+                    // The × stays visible so the chip reads as removable
+                    // before it is hovered.
+                    .child(
+                        icon("x", 10., p.subtle_foreground)
+                            .group_hover(group, move |s| s.text_color(p.foreground)),
+                    ),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.forget_correction(misheard.clone(), word.clone(), window, cx);
             }));
-        div()
+        Self::chip_frame(&p)
             .flex_none()
+            .child(
+                div()
+                    .whitespace_nowrap()
+                    .child(clip_chars(&label_text, max_chars)),
+            )
+            .child(forget)
+    }
+
+    fn chip_frame(p: &Palette) -> Div {
+        div()
             .flex()
             .items_center()
-            .gap(px(2.))
             .h(px(20.))
             .pl(px(6.))
-            .pr(px(2.))
             .rounded(px(RADIUS_SM))
             .bg(p.foreground.opacity(if p.dark { 0.06 } else { 0.045 }))
             .text_size(px(TEXT_SMALL))
             .text_color(p.muted_foreground)
-            .child(div().max_w(px(160.)).truncate().child(label_text))
-            .child(forget)
+    }
+
+    /// Stands in for the mishearings that do not fit; its tooltip lists them.
+    fn more_chip(word: &str, hidden: &[String], cx: &App) -> Stateful<Div> {
+        let p = cx.palette();
+        Self::chip_frame(&p)
+            .id(SharedString::from(format!("dict-chip-more:{word}")))
+            .flex_none()
+            .pr(px(6.))
+            .font_features(tabular_nums())
+            .tooltip(text_tooltip(hidden.join(", ")))
+            .child(format!("+{}", hidden.len()))
     }
 
     fn learned_badge(p: &Palette) -> Div {
@@ -1892,10 +2112,15 @@ impl DictionaryView {
         let editing = self.editing.as_deref() == Some(entry.word.as_str());
         let word = entry.word.clone();
 
+        let edit_error = self.edit_error.clone().filter(|_| editing);
         let word_cell = if editing {
             div()
                 .flex_1()
+                .min_w_0()
                 .pr(px(12.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
                 .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                     if e.keystroke.key == "escape" {
                         this.cancel_edit(window, cx);
@@ -1903,11 +2128,36 @@ impl DictionaryView {
                     }
                 }))
                 .child(text_field_small(&self.edit_input, false, window, cx).h(px(28.)))
+                .when_some(edit_error.clone(), |d, error| {
+                    d.child(
+                        div()
+                            .px(px(2.))
+                            .truncate()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.destructive)
+                            .child(error),
+                    )
+                })
         } else {
             let has_misheard = !misheard.is_empty();
+            // A narrow table keeps one chip and folds the rest into "+N".
+            let narrow = self.content_width(window) < TABLE_FULL;
+            let (max_chips, max_chars) = if narrow {
+                (1, 12)
+            } else {
+                (MAX_ROW_CORRECTIONS, 24)
+            };
+            let shown = if misheard.len() > max_chips {
+                max_chips.saturating_sub(1).max(1)
+            } else {
+                misheard.len()
+            };
+            let more =
+                (misheard.len() > shown).then(|| Self::more_chip(&word, &misheard[shown..], cx));
             let chips: Vec<Div> = misheard
                 .into_iter()
-                .map(|m| Self::misheard_chip(m, word.clone(), cx))
+                .take(shown)
+                .map(|m| Self::misheard_chip(m, word.clone(), max_chars, cx))
                 .collect();
             let (edit_word, remove_word) = (word.clone(), word.clone());
             let actions = div()
@@ -1953,7 +2203,8 @@ impl DictionaryView {
                 .gap(px(8.))
                 .child(
                     div()
-                        .min_w_0()
+                        .flex_shrink_0()
+                        .max_w(px(280.))
                         .truncate()
                         .text_size(px(TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
@@ -1964,20 +2215,36 @@ impl DictionaryView {
                     d.child(Self::learned_badge(&p))
                 })
                 .when(has_misheard, |d| {
+                    // The chip budget above keeps this strip to one line, so
+                    // every row stays 40 pt tall. (A clipping strip would
+                    // break GPUI's sizing of the chips inside it.)
                     d.child(
                         div()
                             .flex_none()
-                            .pl(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.subtle_foreground)
-                            .child(t("dictionary.heardAs")),
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            // On a narrow table the chips speak for themselves.
+                            .when(!narrow, |d| {
+                                d.child(
+                                    div()
+                                        .flex_none()
+                                        .pl(px(4.))
+                                        .pr(px(2.))
+                                        .text_size(px(TEXT_SMALL))
+                                        .text_color(p.subtle_foreground)
+                                        .child(t("dictionary.heardAs")),
+                                )
+                            })
+                            .children(chips)
+                            .children(more),
                     )
                 })
-                .children(chips)
                 .child(div().flex_1())
                 .child(actions)
         };
 
+        let show_last_used = self.content_width(window) >= TABLE_FULL;
         let bar = use_bar_width(entry.use_count, max_uses);
         let used = last_used(entry.use_count, entry.last_used_at, Local::now());
         let tooltip = entry
@@ -1992,18 +2259,28 @@ impl DictionaryView {
         let uses_cell = div()
             .w(px(COL_USES))
             .flex()
+            .justify_end()
+            .text_size(px(TEXT_SMALL))
+            .font_features(tabular_nums())
+            .text_color(count_color)
+            .child(entry.use_count.to_string());
+        // The bar's tooltip names the scale, so a full bar reads as "the most
+        // used word", not as a quota being reached.
+        let bar_tip = t_with(
+            "dictionary.usesBar",
+            &[
+                ("count", &entry.use_count.to_string()),
+                ("max", &max_uses.to_string()),
+            ],
+        );
+        let bar_cell = div()
+            .id(("dict-use-bar", index))
+            .w(px(COL_USE_BAR))
+            .h_full()
+            .flex()
             .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .w(px(COUNT_CELL))
-                    .flex()
-                    .justify_end()
-                    .text_size(px(TEXT_SMALL))
-                    .font_features(tabular_nums())
-                    .text_color(count_color)
-                    .child(entry.use_count.to_string()),
-            )
+            .justify_center()
+            .when(max_uses > 0, |d| d.tooltip(text_tooltip(bar_tip.clone())))
             .child(
                 div()
                     .w(px(USE_TRACK))
@@ -2041,6 +2318,8 @@ impl DictionaryView {
         let key_word = word.clone();
         let click_handle = handle;
         let row = Self::row_frame(&key, word.clone(), focused && !editing, cx)
+            // Only an editor with a message under it grows past one line.
+            .when(edit_error.is_some(), |d| d.h_auto().py(px(6.)))
             .group(group)
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 let keyboard = e.is_keyboard() && click_handle.is_focused(window);
@@ -2080,7 +2359,8 @@ impl DictionaryView {
             }))
             .child(word_cell)
             .child(uses_cell)
-            .child(last_used_cell);
+            .child(bar_cell)
+            .when(show_last_used, |d| d.child(last_used_cell));
         (
             stagger_in(row, format!("dict-in-{word}"), index, cx),
             focused,
@@ -2799,11 +3079,11 @@ impl Render for SnippetEditor {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc};
+    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Utc, Weekday};
 
     use super::{
-        DictionaryEntry, DictionarySource, LastUsed, SortKey, USE_BAR_MIN, USE_TRACK, last_used,
-        one_line, sort_entries, use_bar_width,
+        DictionaryEntry, DictionarySource, LastUsed, SortKey, USE_BAR_MIN, USE_TRACK, clip_chars,
+        last_used, one_line, sort_entries, use_bar_width,
     };
 
     fn entry(word: &str, use_count: i64, last_used_at: Option<i64>) -> DictionaryEntry {
@@ -2852,17 +3132,18 @@ mod tests {
     }
 
     #[test]
-    fn last_used_is_relative_for_a_month_then_a_date() {
+    fn last_used_names_the_weekday_for_a_week_then_a_date() {
+        // A Wednesday.
         let now = Local.with_ymd_and_hms(2026, 11, 4, 15, 0, 0).unwrap();
         let ago = |days: i64| Some((now - Duration::days(days)).with_timezone(&Utc));
         assert_eq!(last_used(3, ago(0), now), LastUsed::Today);
         assert_eq!(last_used(3, ago(1), now), LastUsed::Yesterday);
-        assert_eq!(last_used(3, ago(9), now), LastUsed::DaysAgo(9));
-        assert_eq!(last_used(3, ago(30), now), LastUsed::DaysAgo(30));
+        assert_eq!(last_used(3, ago(2), now), LastUsed::Weekday(Weekday::Mon));
+        assert_eq!(last_used(3, ago(6), now), LastUsed::Weekday(Weekday::Thu));
         assert_eq!(
-            last_used(3, ago(31), now),
+            last_used(3, ago(7), now),
             LastUsed::Date {
-                day: NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(),
+                day: NaiveDate::from_ymd_opt(2026, 10, 28).unwrap(),
                 this_year: true,
             }
         );
@@ -2892,6 +3173,13 @@ mod tests {
         assert_eq!(use_bar_width(7, 14), USE_TRACK / 2.);
         assert_eq!(use_bar_width(1, 1_000), USE_BAR_MIN);
         assert_eq!(use_bar_width(3, 0), 0.);
+    }
+
+    #[test]
+    fn long_chip_labels_end_in_an_ellipsis() {
+        assert_eq!(clip_chars("post gress", 12), "post gress");
+        assert_eq!(clip_chars("kubernetes cluster", 12), "kubernetes…");
+        assert_eq!(clip_chars("库伯内蒂斯集群管理工具", 6), "库伯内蒂斯…");
     }
 
     #[test]

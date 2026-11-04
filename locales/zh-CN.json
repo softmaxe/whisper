@@ -549,7 +549,7 @@
         "signoffTrigger": "签名",
         "signoffText": "祝好，Alex · alex@example.com"
       },
-      "searchPlaceholder": "搜索片段",
+      "searchPlaceholder": "筛选片段",
       "noMatches": "没有与“{{query}}”匹配的片段",
       "count": "{{count}} 个片段",
       "countFiltered": "{{shown}} / {{total}} 个片段",
@@ -564,7 +564,7 @@
     "addFirstWord": "添加第一个词",
     "importList": "导入列表…",
     "tabWords": "词语",
-    "searchWordsPlaceholder": "搜索词语",
+    "searchWordsPlaceholder": "筛选词语",
     "addWord": "添加词语",
     "addWordsPlaceholder": "添加词语，多个词用逗号分隔",
     "addHint": "按 Return 添加，多个词用逗号分隔。",
@@ -590,9 +590,11 @@
     "sortBy": "按{{column}}排序",
     "lastUsed": {
       "today": "今天",
-      "yesterday": "昨天",
-      "daysAgo": "{{count}} 天前"
-    }
+      "yesterday": "昨天"
+    },
+    "usesBar": "{{count}} / 最多 {{max}}",
+    "editDuplicate": "“{{word}}”已在词典中",
+    "editEmpty": "请输入词语，或按 Esc 保留原词"
   },
   "insights": {
     "wordsSpoken": "已听写字数",
