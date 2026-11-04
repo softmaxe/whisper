@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -103,17 +103,7 @@ fn format_clock(time: DateTime<Local>) -> String {
 }
 
 pub fn format_date_group(date: NaiveDate) -> String {
-    let today = Local::now().date_naive();
-    if date == today {
-        return t("controlPanel.history.dateGroups.today");
-    }
-    if Some(date) == today.pred_opt() {
-        return t("controlPanel.history.dateGroups.yesterday");
-    }
-    match i18n::language() {
-        Language::ZhCn => format!("{}年{}月{}日", date.year(), date.month(), date.day()),
-        Language::En => date.format("%b %-d, %Y").to_string(),
-    }
+    super::format::day_label(date, Local::now().date_naive())
 }
 
 impl HistoryView {

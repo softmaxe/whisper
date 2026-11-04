@@ -255,7 +255,11 @@
     "hold": "Hold",
     "tap": "Double-tap",
     "save": "Save",
-    "close": "Close"
+    "close": "Close",
+    "dates": {
+      "today": "Today",
+      "yesterday": "Yesterday"
+    }
   },
   "controlPanel": {
     "history": {
@@ -274,10 +278,6 @@
       "dataRetentionDisabled": "History is off. New dictations aren’t saved.",
       "press": "Press",
       "toStart": "to start",
-      "dateGroups": {
-        "today": "Today",
-        "yesterday": "Yesterday"
-      },
       "copyText": "Copy text",
       "deleteItem": "Delete",
       "showInFolder": "Reveal in Finder",

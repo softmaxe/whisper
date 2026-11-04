@@ -252,7 +252,11 @@
     "hold": "按住",
     "tap": "双击",
     "save": "保存",
-    "close": "关闭"
+    "close": "关闭",
+    "dates": {
+      "today": "今天",
+      "yesterday": "昨天"
+    }
   },
   "controlPanel": {
     "history": {
@@ -271,10 +275,6 @@
       "dataRetentionDisabled": "历史记录已关闭，新的听写不会保存。",
       "press": "按下",
       "toStart": "开始",
-      "dateGroups": {
-        "today": "今天",
-        "yesterday": "昨天"
-      },
       "clearAllTitle": "清除所有转录",
       "clearAllDescriptionDevice": "此设备上的所有转录、音频文件和统计数据都将被永久删除。",
       "clearAllSuccess": "历史记录已清除",
