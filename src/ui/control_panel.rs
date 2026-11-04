@@ -434,7 +434,7 @@ impl ControlPanel {
                             .truncate()
                             .text_size(px(TEXT_BODY))
                             .text_color(p.muted_foreground)
-                            .child(t("commandSearch.sections.transcripts")),
+                            .child(t("commandSearch.placeholder")),
                     )
                     .child(kbd("⌘K", &p))
                     .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx)),

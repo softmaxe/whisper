@@ -558,7 +558,8 @@
   },
   "commandSearch": {
     "sections": {
-      "transcripts": "转录"
+      "transcripts": "转录",
+      "recent": "最近"
     },
     "noResults": "无结果",
     "emptyState": "输入内容开始搜索",
@@ -572,7 +573,9 @@
       "minutesAgo": "{{count}} 分钟前",
       "hoursAgo": "{{count}} 小时前",
       "daysAgo": "{{count}} 天前"
-    }
+    },
+    "placeholder": "搜索转录",
+    "resultCount": "{{count}} 条结果"
   },
   "transcriptionPreview": {
     "recovery": {

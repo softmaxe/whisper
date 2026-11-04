@@ -8,7 +8,6 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::db::TranscriptionItem;
-use crate::db::timestamp::parse_db_timestamp;
 use crate::i18n::{self, Language, t, t_with};
 use crate::text::format::{RelativeTime, relative_time};
 
@@ -27,12 +26,44 @@ pub enum CommandSearchEvent {
 pub struct CommandSearch {
     input: Entity<InputState>,
     selected: usize,
+    scroll: ScrollHandle,
+}
+
+/// Rows listed before anything is typed.
+const RECENT_LIMIT: usize = 5;
+/// Rows listed for a query; the list scrolls past about eight.
+const RESULT_LIMIT: usize = 30;
+
+/// `text` with every case-insensitive occurrence of `query` emphasized. Text
+/// whose lowercase form changes byte length (some non-ASCII) is left plain,
+/// since match offsets would not map back onto it.
+fn highlighted(text: &str, query: &str, color: Hsla) -> StyledText {
+    let lower = text.to_lowercase();
+    let mut highlights = Vec::new();
+    if !query.is_empty() && lower.len() == text.len() {
+        let mut from = 0;
+        while let Some(at) = lower[from..].find(query) {
+            let start = from + at;
+            let end = start + query.len();
+            highlights.push((
+                start..end,
+                HighlightStyle {
+                    color: Some(color),
+                    font_weight: Some(FontWeight::SEMIBOLD),
+                    ..Default::default()
+                },
+            ));
+            from = end;
+        }
+    }
+    StyledText::new(SharedString::from(text.to_string())).with_highlights(highlights)
 }
 
 impl EventEmitter<CommandSearchEvent> for CommandSearch {}
 
 fn relative_label(item: &TranscriptionItem) -> String {
-    parse_db_timestamp(&item.created_at)
+    // When it was spoken, as on Home; `created_at` is when the row was written.
+    item.occurred_at()
         .map(relative_time_label)
         .unwrap_or_default()
 }
@@ -63,7 +94,7 @@ pub(super) fn relative_time_label(ts: DateTime<Utc>) -> String {
 impl CommandSearch {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(t("commandSearch.sections.transcripts"))
+            InputState::new(window, cx).placeholder(t("commandSearch.placeholder"))
         });
         input.update(cx, |i, cx| i.focus(window, cx));
         cx.subscribe(&input, |this, _, e: &InputEvent, cx| match e {
@@ -75,7 +106,11 @@ impl CommandSearch {
             _ => {}
         })
         .detach();
-        Self { input, selected: 0 }
+        Self {
+            input,
+            selected: 0,
+            scroll: ScrollHandle::new(),
+        }
     }
 
     fn results(&self, cx: &App) -> Vec<TranscriptionItem> {
@@ -85,7 +120,11 @@ impl CommandSearch {
             .history
             .iter()
             .filter(|item| query.is_empty() || item.text.to_lowercase().contains(&query))
-            .take(5)
+            .take(if query.is_empty() {
+                RECENT_LIMIT
+            } else {
+                RESULT_LIMIT
+            })
             .cloned()
             .collect()
     }
@@ -101,11 +140,14 @@ impl CommandSearch {
         match e.keystroke.key.as_str() {
             "down" if count > 0 => {
                 self.selected = (self.selected + 1).min(count - 1);
+                // Child 0 is the group header.
+                self.scroll.scroll_to_item(self.selected + 1);
                 cx.notify();
                 cx.stop_propagation();
             }
             "up" => {
                 self.selected = self.selected.saturating_sub(1);
+                self.scroll.scroll_to_item(self.selected + 1);
                 cx.notify();
                 cx.stop_propagation();
             }
@@ -137,10 +179,12 @@ impl Render for CommandSearch {
             )
         };
 
+        let needle = query.trim().to_lowercase();
         let mut list = div()
             .id("search-results")
             .max_h(px(340.))
             .overflow_y_scroll()
+            .track_scroll(&self.scroll)
             .p(px(8.));
         if results.is_empty() {
             list = list.child(
@@ -169,7 +213,14 @@ impl Render for CommandSearch {
                             .text_size(px(TEXT_SMALL))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(p.muted_foreground)
-                            .child(t("commandSearch.sections.transcripts")),
+                            .child(if needle.is_empty() {
+                                t("commandSearch.sections.recent")
+                            } else {
+                                t_with(
+                                    "commandSearch.resultCount",
+                                    &[("count", &results.len().to_string())],
+                                )
+                            }),
                     ),
             );
             for (idx, item) in results.iter().enumerate() {
@@ -177,6 +228,8 @@ impl Render for CommandSearch {
                 list = list.child(
                     div()
                         .id(("search-row", idx))
+                        .role(Role::ListItem)
+                        .aria_selected(selected)
                         .flex()
                         .items_center()
                         .gap(px(8.))
@@ -203,7 +256,7 @@ impl Render for CommandSearch {
                             if selected {
                                 p.foreground
                             } else {
-                                p.muted_foreground.opacity(0.8)
+                                p.subtle_foreground
                             },
                         ))
                         .child(
@@ -218,7 +271,7 @@ impl Render for CommandSearch {
                                 } else {
                                     p.foreground.opacity(0.85)
                                 })
-                                .child(item.text.clone()),
+                                .child(highlighted(&item.text, &needle, p.foreground)),
                         )
                         .child(
                             div()
