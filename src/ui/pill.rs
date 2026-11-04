@@ -48,17 +48,31 @@ const TIMER_GAP: f32 = 8.;
 /// Fits `m:ss` in tabular figures; longer times spill into the padding.
 const TIMER_W: f32 = 26.;
 const PILL_TIMED_W: f32 = PILL_W + TIMER_GAP + TIMER_W;
+/// The cancel control beside the pill. It stays from the first frame of a
+/// Dictation so aborting never depends on discovering a hover state, but
+/// its glyph rests at half strength so the pill stays the focus.
 const CANCEL_SIZE: f32 = 28.;
-const CANCEL_GAP: f32 = 8.;
+const CANCEL_GAP: f32 = 6.;
+const CANCEL_REST: f32 = 0.5;
+/// Side padding of the processing pill, around its dots and label.
+const PILL_PAD: f32 = 14.;
+const THINK_LABEL_GAP: f32 = 8.;
 const TOAST_W: f32 = 300.;
 /// Inner padding of the error and recovery panels.
 const PANEL_PAD: f32 = 16.;
 /// The panels' leading icon column; body, content and actions start after it.
 const PANEL_ICON: f32 = 16.;
 const PANEL_ICON_GAP: f32 = 10.;
-/// The dismiss button of a panel, ringed by its countdown; the minimum
-/// size for an icon-only control.
-const DISMISS_SIZE: f32 = 28.;
+/// The dismiss button of a panel. A full track outlines it as a button,
+/// and the countdown drains over that track.
+const DISMISS_SIZE: f32 = 32.;
+const DISMISS_STROKE: f32 = 2.;
+/// How far the dismiss button reaches past the title line on each side. It
+/// pulls up and right by as much, so it sits the same distance from the
+/// card's top and right edges.
+const DISMISS_OUTSET: f32 = (DISMISS_SIZE - LINE_SMALL) / 2.;
+/// The right inset of the panel's text, clearing the dismiss button.
+const DISMISS_INSET: f32 = DISMISS_SIZE - DISMISS_OUTSET + 8.;
 /// Every error card offers an action, so it stays long enough to reach for
 /// it; hovering holds it longer still.
 const ERROR_HOLD: Duration = Duration::from_millis(12_000);
@@ -88,7 +102,7 @@ const BREATH: f32 = 0.24;
 const RISE: f32 = 0.45;
 const FALL: f32 = 0.16;
 /// The record dot that says the microphone is live.
-const REC_DOT: f32 = 6.;
+const REC_DOT: f32 = 7.;
 const REC_GAP: f32 = 7.;
 /// The three-dot motif that replaces the bars while transcribing.
 const THINK_DOTS: usize = 3;
@@ -135,23 +149,30 @@ fn format_elapsed(elapsed: Duration) -> String {
 }
 
 /// A tooltip on the HUD surface, so it matches the panel it labels in
-/// both themes.
-struct HudTip(SharedString);
+/// both themes, with the control's key shortcut as a chip.
+struct HudTip {
+    label: SharedString,
+    key: Option<&'static str>,
+}
 
 impl Render for HudTip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let p = hud();
         div()
             .font_family(FONT_UI)
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .h(px(28.))
             .px(px(8.))
-            .py(px(4.))
             .rounded(px(RADIUS_MD))
             .border_1()
             .border_color(hud_edge())
             .bg(p.toast_surface)
             .text_size(px(TEXT_SMALL))
             .text_color(p.foreground)
-            .child(self.0.clone())
+            .child(self.label.clone())
+            .when_some(self.key, |d, key| d.child(kbd(key, &p)))
     }
 }
 
@@ -444,6 +465,9 @@ pub struct PillView {
     /// When the timer joined the pill. The pill keeps that width until the
     /// Dictation ends, so it does not shrink back while transcribing.
     timed_at: Option<Instant>,
+    /// Whether the pointer rests on the cancel control, so the hint above
+    /// the pill speaks for it instead of for the pill.
+    cancel_hovered: bool,
 }
 
 impl PillView {
@@ -484,6 +508,7 @@ impl PillView {
             recording_since: None,
             recorded: Duration::ZERO,
             timed_at: None,
+            cancel_hovered: false,
         }
     }
 
@@ -951,6 +976,10 @@ impl PillView {
             .child(bars)
             .children(timer);
 
+        // Transcribing names itself beside the dots, so the state reads
+        // without hovering; the pill widens to fit the label.
+        let think_label = t("dictation.pill.transcribing");
+        let think_w = Self::processing_width(&think_label, window);
         let think_alpha = thinking * motion_fx.bars;
         let think = (think_alpha > 0.001).then(|| {
             let mut dots = div().flex().items_center().gap(px(THINK_GAP));
@@ -967,7 +996,16 @@ impl PillView {
                 .flex()
                 .items_center()
                 .justify_center()
+                .gap(px(THINK_LABEL_GAP))
                 .child(dots)
+                .child(
+                    div()
+                        .whitespace_nowrap()
+                        .text_size(px(TEXT_CAPTION))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(p.muted_foreground.opacity(think_alpha))
+                        .child(think_label.clone()),
+                )
         });
 
         let check = motion_fx.check.map(|(scale, alpha)| {
@@ -982,21 +1020,32 @@ impl PillView {
                         .with_transformation(Transformation::scale(size(scale, scale))),
                 )
         });
-        let label = if recording {
-            t("dictation.pill.recording")
-        } else if processing {
-            t("dictation.pill.transcribing")
-        } else {
-            t("dictation.pill.starting")
-        };
         let scale = motion_fx.scale;
-        let width = PILL_W + (PILL_TIMED_W - PILL_W) * timed;
+        let meter_w = PILL_W + (PILL_TIMED_W - PILL_W) * timed;
+        let width = meter_w + (think_w - meter_w) * thinking;
         // GPUI has no paint transforms on divs, so the pill scales by size
         // inside a fixed slot, which keeps it centered and the row still.
         let pill = div()
             .id("voice-pill")
-            .role(Role::Button)
-            .aria_label(label)
+            // VoiceOver hears what a press does, with the state as detail;
+            // while transcribing the pill is only a status.
+            .map(|d| {
+                if processing {
+                    d.role(Role::Status).aria_label(think_label)
+                } else {
+                    let detail = if recording {
+                        crate::i18n::t_with(
+                            "dictation.pill.elapsed",
+                            &[("time", &format_elapsed(self.recorded))],
+                        )
+                    } else {
+                        t("dictation.pill.starting")
+                    };
+                    d.role(Role::Button)
+                        .aria_label(t("dictation.pill.finishDictation"))
+                        .aria_description(detail)
+                }
+            })
             .relative()
             .flex_none()
             .w(px(width * scale))
@@ -1050,8 +1099,34 @@ impl PillView {
             .into_any_element()
     }
 
+    /// The processing pill's width: its dots and label inside the side
+    /// padding, never narrower than the compact pill.
+    fn processing_width(label: &str, window: &Window) -> f32 {
+        let run = TextRun {
+            len: label.len(),
+            font: Font {
+                weight: FontWeight::MEDIUM,
+                ..font(FONT_UI)
+            },
+            color: hud().muted_foreground,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let text = window.text_system().shape_line(
+            SharedString::from(label.to_string()),
+            px(TEXT_CAPTION),
+            &[run],
+            None,
+        );
+        let dots = THINK_DOTS as f32 * THINK_DOT + (THINK_DOTS - 1) as f32 * THINK_GAP;
+        let content = dots + THINK_LABEL_GAP + f32::from(text.width).ceil();
+        (content + 2. * PILL_PAD).max(PILL_W)
+    }
+
     /// The cancel control and how far it has emerged: it pops in from .8
-    /// over 200 ms and leaves in 60 ms.
+    /// over 200 ms and leaves in 60 ms. At rest its glyph sits at half
+    /// strength; pointing at it brings it to full.
     fn render_cancel(
         &mut self,
         visible: bool,
@@ -1074,9 +1149,21 @@ impl PillView {
             cx,
         );
         let scale = if reduce { 1. } else { 0.8 + 0.2 * t_in };
+        let glyph = if self.cancel_hovered {
+            p.foreground
+        } else {
+            p.white.opacity(CANCEL_REST)
+        };
         let button = div()
             .id("pill-cancel")
-            .keyboard_focusable("pill-cancel", Role::Button, t("dictation.pill.cancel"), cx)
+            .keyboard_focusable(
+                "pill-cancel",
+                Role::Button,
+                t("dictation.pill.cancelDictation"),
+                cx,
+            )
+            // Escape is bound only while the microphone is live.
+            .when(recording, |d| d.aria_keyshortcuts("Escape"))
             .flex_none()
             .size(px(CANCEL_SIZE * scale))
             .flex()
@@ -1090,8 +1177,12 @@ impl PillView {
             .opacity(t_in)
             .cursor_pointer()
             .hover(move |s| s.bg(p.surface_raised))
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                this.cancel_hovered = *hovered;
+                cx.notify();
+            }))
             .child(
-                icon("x", 12., p.foreground)
+                icon("x", 12., glyph)
                     .with_transformation(Transformation::scale(size(scale, scale))),
             )
             .when(visible, |d| {
@@ -1115,8 +1206,9 @@ impl PillView {
         (slot, t_in)
     }
 
-    /// What the pill is doing and how to act on it, shown above it on hover.
-    fn render_hint(snapshot: &DictationSnapshot) -> Div {
+    /// What the pointed-at control does, shown above the pill on hover. The
+    /// processing pill already names itself, so it has no hint of its own.
+    fn render_hint(snapshot: &DictationSnapshot, on_cancel: bool) -> Option<Div> {
         let p = hud();
         let caption = |text: String, color: Hsla| div().text_color(color).child(text);
         let row = div()
@@ -1132,22 +1224,30 @@ impl PillView {
             .shadow(hud_shadow(2., 6., 0., 0.28))
             .text_size(px(TEXT_SMALL))
             .whitespace_nowrap();
-        if snapshot.is_recording {
-            // Escape is bound globally for as long as the recording runs.
-            row.child(caption(t("dictation.pill.finish"), p.foreground))
-                .child(caption("·".into(), p.subtle_foreground))
-                .child(caption(t("dictation.pill.cancel"), p.muted_foreground))
-                .child(kbd("Esc", &p))
-        } else if snapshot.is_processing {
-            row.child(caption(t("dictation.pill.transcribing"), p.foreground))
-        } else {
-            row.child(caption(t("dictation.pill.starting"), p.foreground))
-        }
+        // Escape is bound globally for as long as the recording runs.
+        let esc = snapshot.is_recording.then(|| kbd("Esc", &p));
+        Some(
+            if on_cancel && (snapshot.is_recording || snapshot.is_processing) {
+                row.child(caption(t("dictation.pill.cancelDictation"), p.foreground))
+                    .children(esc)
+            } else if snapshot.is_recording {
+                row.child(caption(t("dictation.pill.finish"), p.foreground))
+                    .child(caption("·".into(), p.subtle_foreground))
+                    .child(caption(t("dictation.pill.cancel"), p.muted_foreground))
+                    .children(esc)
+            } else if snapshot.is_processing {
+                return None;
+            } else {
+                row.child(caption(t("dictation.pill.starting"), p.foreground))
+            },
+        )
     }
 
-    /// The close button shared by both panels, ringed by the panel's
-    /// countdown. Escape also closes the panel; the tooltip says so rather
-    /// than a second, unclickable key chip beside it.
+    /// The close button shared by both panels. A filled disc with a full
+    /// track reads as a button; the panel's countdown drains brighter over
+    /// that track, so it never looks like an indeterminate spinner. Escape
+    /// also closes the panel; the tooltip says so rather than a second,
+    /// unclickable key chip beside it.
     fn dismiss_button(
         id: &'static str,
         remaining: f32,
@@ -1159,10 +1259,11 @@ impl PillView {
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let center = bounds.center();
-                let r = f32::from(bounds.size.width.min(bounds.size.height)) / 2. - 1.;
+                let r =
+                    f32::from(bounds.size.width.min(bounds.size.height)) / 2. - DISMISS_STROKE / 2.;
                 let arc = |share: f32, color: Hsla, window: &mut Window| {
-                    let steps = ((48. * share).ceil() as usize).max(2);
-                    let mut path = PathBuilder::stroke(px(1.5));
+                    let steps = ((64. * share).ceil() as usize).max(2);
+                    let mut path = PathBuilder::stroke(px(DISMISS_STROKE));
                     for i in 0..=steps {
                         // From twelve o'clock, clockwise.
                         let a = -FRAC_PI_2 + TAU * share * i as f32 / steps as f32;
@@ -1177,18 +1278,19 @@ impl PillView {
                         window.paint_path(path, color);
                     }
                 };
-                arc(1., p.white.opacity(0.1), window);
+                arc(1., p.white.opacity(0.25), window);
                 if remaining > 0.005 {
-                    arc(remaining, p.white.opacity(0.5), window);
+                    arc(remaining, p.white.opacity(0.7), window);
                 }
             },
         )
         .absolute()
         .inset_0();
-        let tip = t("dictation.pill.dismissTooltip");
+        let label: SharedString = t("dictation.pill.dismiss").into();
         div()
             .id(id)
-            .keyboard_focusable(id, Role::Button, t("dictation.pill.dismiss"), cx)
+            .keyboard_focusable(id, Role::Button, label.clone(), cx)
+            .aria_keyshortcuts("Escape")
             .relative()
             .flex_none()
             .size(px(DISMISS_SIZE))
@@ -1196,11 +1298,18 @@ impl PillView {
             .items_center()
             .justify_center()
             .rounded_full()
+            .bg(p.white.opacity(0.06))
             .cursor_pointer()
-            .hover(move |s| s.bg(p.white.opacity(0.08)))
-            .tooltip(move |_, cx| cx.new(|_| HudTip(tip.clone().into())).into())
+            .hover(move |s| s.bg(p.white.opacity(0.12)))
+            .tooltip(move |_, cx| {
+                cx.new(|_| HudTip {
+                    label: label.clone(),
+                    key: Some("Esc"),
+                })
+                .into()
+            })
             .child(ring)
-            .child(icon("x", 12., p.muted_foreground))
+            .child(icon("x", 14., p.foreground))
             .on_click(on_close)
     }
 
@@ -1285,7 +1394,7 @@ impl PillView {
                 div()
                     .flex_1()
                     .min_w_0()
-                    .pr(px(DISMISS_SIZE + 8.))
+                    .pr(px(DISMISS_INSET))
                     .text_size(px(TEXT_BODY))
                     .line_height(px(LINE_SMALL))
                     .font_weight(FontWeight::SEMIBOLD)
@@ -1293,8 +1402,9 @@ impl PillView {
                     .child(title),
             );
         // The close button floats centered on the title line, so its size
-        // does not push the body down, and the body runs under it rather
-        // than wrapping early.
+        // does not push the body down. It reaches into the body's first
+        // line, so the body keeps the title's right inset and never runs
+        // under it.
         div()
             .relative()
             .flex_none()
@@ -1302,14 +1412,15 @@ impl PillView {
             .child(
                 div()
                     .absolute()
-                    .top(px((LINE_SMALL - DISMISS_SIZE) / 2.))
-                    .right_0()
+                    .top(px(-DISMISS_OUTSET))
+                    .right(px(-DISMISS_OUTSET))
                     .child(dismiss),
             )
             .when_some(body.filter(|b| !b.is_empty()), |d, body| {
                 d.child(
                     Self::panel_column()
                         .mt(px(2.))
+                        .pr(px(DISMISS_INSET))
                         .text_size(px(TEXT_SMALL))
                         .line_height(px(LINE_SMALL))
                         .text_color(p.muted_foreground)
@@ -1333,12 +1444,14 @@ impl PillView {
         let transcript = error.transcript.clone();
 
         // The failed audio is not kept, so the action starts a new recording
-        // and says so rather than promising a retry of the same words.
+        // and says so rather than promising a retry of the same words. When
+        // the words survived, reading them matters more, so recording again
+        // steps back to the quiet treatment.
         let record = Self::panel_action(
             "pill-error-record",
             "mic",
             t("dictation.errorActions.recordAgain"),
-            true,
+            transcript.is_none(),
             cx,
         )
         .on_click(cx.listener(|this, _, _, cx| {
@@ -1351,7 +1464,7 @@ impl PillView {
                 "pill-error-transcript",
                 "scroll-text",
                 t("dictation.errorActions.viewTranscript"),
-                false,
+                true,
                 cx,
             )
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -1381,8 +1494,8 @@ impl PillView {
             .mt(px(12.))
             .flex()
             .gap(px(8.))
-            .child(record)
-            .children(view);
+            .children(view)
+            .child(record);
         Some(
             Self::panel_card("pill-error")
                 .child(Self::panel_header(
@@ -1665,42 +1778,56 @@ impl Render for PillView {
             cx,
         ) * motion_fx.alpha;
         let show_pill = (active || finishing) && pill_alpha > 0.001;
-        let cancel_visible = self.hovered && (snapshot.is_recording || snapshot.is_processing);
         let recording = snapshot.is_recording;
+        let cancel_visible = (recording || snapshot.is_processing) && !panel_open;
+        if !cancel_visible || !self.hovered {
+            self.cancel_hovered = false;
+        }
         let timed = self.timer_progress(&snapshot, cx.reduce_motion());
-        let pill_w = PILL_W + (PILL_TIMED_W - PILL_W) * timed;
 
         let mut root = div().size_full().relative().font_family(FONT_UI);
 
-        if show_pill || cancel_visible {
+        if show_pill {
             let pill = self.render_pill(&snapshot, motion_fx, timed, window, cx);
             let (cancel, cancel_t) = self.render_cancel(cancel_visible, recording, window, cx);
+            // The slot is held while the microphone opens, so the pill does
+            // not shift when the control arrives.
             let cancel = div()
                 .when(cancel_t < 0.001, |d| d.invisible())
                 .child(cancel);
-            let left_dock = dock == PanelStartPosition::BottomLeft;
-            let mut row = div().flex().items_center().gap(px(CANCEL_GAP));
-            // The cancel control emerges on the side away from the screen edge.
-            if left_dock {
-                row = row.child(pill).child(cancel);
-            } else {
-                row = row.child(cancel).child(pill);
-            }
+            // Cancel trails the pill, where a close control sits on a HUD.
+            let row = div()
+                .flex()
+                .items_center()
+                .gap(px(CANCEL_GAP))
+                .child(pill)
+                .child(cancel);
             let tracked = self.tracked(row).opacity(pill_alpha);
-            let positioned = div().absolute().bottom(px(DOCK_INSET)).map(|d| match dock {
-                PanelStartPosition::BottomRight => d.right(px(DOCK_INSET)),
-                PanelStartPosition::BottomLeft => d.left(px(DOCK_INSET)),
-                // Center the pill itself; the cancel slot sits to its left.
-                PanelStartPosition::Center => {
-                    d.left(WINDOW_SIZE.width / 2. - px(pill_w / 2. + CANCEL_SIZE + CANCEL_GAP))
-                }
-            });
+            let positioned = div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom(px(DOCK_INSET))
+                .px(px(DOCK_INSET))
+                .flex()
+                .map(|d| match dock {
+                    PanelStartPosition::BottomLeft => d.justify_start(),
+                    // A leading spacer as wide as the cancel slot keeps the
+                    // pill itself on the screen's center line.
+                    PanelStartPosition::Center => d
+                        .justify_center()
+                        .child(div().flex_none().w(px(CANCEL_SIZE + CANCEL_GAP))),
+                    PanelStartPosition::BottomRight => d.justify_end(),
+                });
             root = root.child(positioned.child(tracked));
 
             // The hint sits above the pill, aligned with it; toasts take
             // that spot when present.
-            if self.hovered && active && self.toasts.is_empty() {
-                let hint = Self::render_hint(&snapshot).with_animation(
+            let hint = (self.hovered && active && self.toasts.is_empty())
+                .then(|| Self::render_hint(&snapshot, self.cancel_hovered))
+                .flatten();
+            if let Some(hint) = hint {
+                let hint = hint.with_animation(
                     "pill-hint",
                     Animation::new(Duration::from_millis(DUR_SNAP)),
                     |d, t| d.opacity(t),

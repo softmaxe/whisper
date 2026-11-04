@@ -362,13 +362,14 @@
       "descriptionClipboardFailed": "Dictation stopped while the shortcut was still held, and the text couldn’t be copied to the clipboard."
     },
     "pill": {
-      "recording": "Recording",
-      "transcribing": "Transcribing",
-      "starting": "Starting microphone",
+      "transcribing": "Transcribing…",
+      "starting": "Starting microphone…",
       "finish": "Click to finish",
+      "finishDictation": "Finish Dictation",
+      "elapsed": "Recording, {{time}}",
       "cancel": "Cancel",
-      "dismiss": "Dismiss",
-      "dismissTooltip": "Close (Esc)"
+      "cancelDictation": "Cancel Dictation",
+      "dismiss": "Close"
     }
   },
   "hotkeyInput": {
@@ -732,7 +733,7 @@
   "transcriptionPreview": {
     "recovery": {
       "title": "Couldn’t paste",
-      "pasteFailed": "Whisper couldn’t paste into the active app. Your words are below.",
+      "pasteFailed": "The active app didn’t accept it. Your words are below.",
       "copyFailed": "Copy failed. Try again.",
       "copy": "Copy Text",
       "copiedHint": "Copied. Press ⌘V to paste."
