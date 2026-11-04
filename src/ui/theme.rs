@@ -250,14 +250,12 @@ pub const FONT_MONO: &str = "JetBrainsMono Nerd Font Mono";
 /// - `BODY`: labels, navigation, buttons, inputs, list rows
 /// - `READING`: transcripts and other long-form content
 /// - `TITLE`: page, section and dialog titles
-/// - `DISPLAY`: hero titles
 /// - `FIGURE`: large numbers
 pub const TEXT_CAPTION: f32 = 11.;
 pub const TEXT_SMALL: f32 = 12.;
 pub const TEXT_BODY: f32 = 14.;
 pub const TEXT_READING: f32 = 15.5;
 pub const TEXT_TITLE: f32 = 16.;
-pub const TEXT_DISPLAY: f32 = 24.;
 pub const TEXT_FIGURE: f32 = 34.;
 
 /// Line heights paired with the scale.
