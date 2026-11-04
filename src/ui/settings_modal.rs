@@ -1076,16 +1076,6 @@ impl SettingsModal {
         let p = cx.palette();
         let s = settings(cx);
 
-        let mut microphone_rows = vec![
-            panel_row()
-                .child(self.render_microphone(cx))
-                .into_any_element(),
-        ];
-        if let Some((label, device)) = self.microphone_status(cx) {
-            microphone_rows
-                .push(settings_row(label, None, status_label(device, &p), &p).into_any_element());
-        }
-
         let theme_switch = {
             let mut track = segmented_track(&p).items_center().gap(px(2.));
             for (value, icon_name, key) in [
@@ -1220,34 +1210,6 @@ impl SettingsModal {
             |s, v| s.start_minimized = v,
         ));
 
-        let mut language_rows = vec![
-            settings_row(
-                t("settings.language.uiLabel"),
-                Some(t("settings.language.uiDescription").into()),
-                self.ui_language.clone(),
-                &p,
-            )
-            .into_any_element(),
-            settings_row(
-                t("settings.language.transcriptionLabel"),
-                Some(t("settings.language.transcriptionDescription").into()),
-                self.stt_language.clone(),
-                &p,
-            )
-            .into_any_element(),
-        ];
-        if s.preferred_language == "auto" {
-            language_rows.push(
-                settings_row(
-                    t("settings.language.chineseScriptLabel"),
-                    Some(t("settings.language.chineseScriptDescription").into()),
-                    self.chinese_script.clone(),
-                    &p,
-                )
-                .into_any_element(),
-            );
-        }
-
         div()
             .flex()
             .flex_col()
@@ -1270,6 +1232,20 @@ impl SettingsModal {
                         s.show_menu_bar_icon,
                         |s, v| s.show_menu_bar_icon = v,
                     ),
+                ],
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.language.sectionTitle"),
+                None,
+                vec![
+                    settings_row(
+                        t("settings.language.uiLabel"),
+                        Some(t("settings.language.uiDescription").into()),
+                        self.ui_language.clone(),
+                        &p,
+                    )
+                    .into_any_element(),
                 ],
                 &p,
             ))
@@ -1316,35 +1292,9 @@ impl SettingsModal {
                 &p,
             ))
             .child(settings_section(
-                t("settings.general.floatingIcon.title"),
-                Some(t("settings.general.floatingIcon.description").into()),
-                vec![
-                    settings_row(
-                        t("settings.general.floatingIcon.startPosition"),
-                        Some(t("settings.general.floatingIcon.startPositionDescription").into()),
-                        self.pill_position.clone(),
-                        &p,
-                    )
-                    .into_any_element(),
-                ],
-                &p,
-            ))
-            .child(settings_section(
-                t("settings.language.sectionTitle"),
-                Some(t("settings.language.sectionDescription").into()),
-                language_rows,
-                &p,
-            ))
-            .child(settings_section(
                 t("settings.general.startup.title"),
                 Some(t("settings.general.startup.description").into()),
                 startup_rows,
-                &p,
-            ))
-            .child(settings_section(
-                t("settings.general.microphone.title"),
-                Some(t("settings.general.microphone.description").into()),
-                microphone_rows,
                 &p,
             ))
             .child(settings_section(
@@ -1427,8 +1377,19 @@ impl SettingsModal {
         }
     }
 
+    /// The Dictation page: everything about the act of dictating, from the
+    /// keys that start it to the microphone and the pill it shows.
     fn render_hotkeys(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
+        let mut microphone_rows = vec![
+            panel_row()
+                .child(self.render_microphone(cx))
+                .into_any_element(),
+        ];
+        if let Some((label, device)) = self.microphone_status(cx) {
+            microphone_rows
+                .push(settings_row(label, None, status_label(device, &p), &p).into_any_element());
+        }
         let s = settings(cx);
         let mode = s.activation_mode;
         let keys = s.effective_dictation_key();
@@ -1458,6 +1419,26 @@ impl SettingsModal {
                     ))
                     .child(selector),
             )
+            .child(settings_section(
+                t("settings.general.microphone.title"),
+                Some(t("settings.general.microphone.description").into()),
+                microphone_rows,
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.general.floatingIcon.title"),
+                None,
+                vec![
+                    settings_row(
+                        t("settings.general.floatingIcon.startPosition"),
+                        Some(t("settings.general.floatingIcon.startPositionDescription").into()),
+                        self.pill_position.clone(),
+                        &p,
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
             .into_any_element()
     }
 
@@ -1465,7 +1446,28 @@ impl SettingsModal {
     /// titled like the Text cleanup server so the two pages read alike.
     fn render_speech_to_text(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        settings_section(
+        let mut language_rows = vec![
+            settings_row(
+                t("settings.language.transcriptionLabel"),
+                Some(t("settings.language.transcriptionDescription").into()),
+                self.stt_language.clone(),
+                &p,
+            )
+            .into_any_element(),
+        ];
+        // A fixed Chinese language already names its script.
+        if settings(cx).preferred_language == "auto" {
+            language_rows.push(
+                settings_row(
+                    t("settings.language.chineseScriptLabel"),
+                    Some(t("settings.language.chineseScriptDescription").into()),
+                    self.chinese_script.clone(),
+                    &p,
+                )
+                .into_any_element(),
+            );
+        }
+        let server = settings_section(
             t("settings.speechToText.serverTitle"),
             Some(t("settings.speechToText.sharedDescription").into()),
             vec![
@@ -1500,8 +1502,19 @@ impl SettingsModal {
                 self.render_stt_check(cx),
             ],
             &p,
-        )
-        .into_any_element()
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(24.))
+            .child(server)
+            .child(settings_section(
+                t("settings.language.sectionTitle"),
+                Some(t("settings.language.transcriptionSectionDescription").into()),
+                language_rows,
+                &p,
+            ))
+            .into_any_element()
     }
 
     /// The models the server listed, as one-click choices for the free-text

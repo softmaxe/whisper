@@ -2,7 +2,6 @@
   "settings": {
     "language": {
       "sectionTitle": "Language",
-      "sectionDescription": "Set interface and transcription languages independently",
       "uiLabel": "Interface language",
       "uiDescription": "Choose the language used throughout Whisper’s interface",
       "transcriptionLabel": "Transcription language",
@@ -11,7 +10,8 @@
       "chineseScriptDescription": "When Chinese is detected, convert dictated transcripts to Simplified or Traditional characters. Spoken Chinese is the same either way; Whisper only returns one script.",
       "chineseScriptAsTranscribed": "Keep as transcribed",
       "chineseScriptSimplified": "Simplified (简体)",
-      "chineseScriptTraditional": "Traditional (繁體)"
+      "chineseScriptTraditional": "Traditional (繁體)",
+      "transcriptionSectionDescription": "The language you speak, and how Chinese is written"
     },
     "groups": {
       "app": "App",
@@ -23,7 +23,7 @@
         "label": "General"
       },
       "hotkeys": {
-        "label": "Hotkeys"
+        "label": "Dictation"
       },
       "speechToText": {
         "label": "Speech to text"
@@ -62,7 +62,6 @@
         "bottomRight": "Bottom right",
         "center": "Bottom center",
         "bottomLeft": "Bottom left",
-        "description": "Choose where the recording pill appears during dictation",
         "title": "Recording pill"
       },
       "hotkey": {

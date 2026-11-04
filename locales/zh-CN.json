@@ -2,7 +2,6 @@
   "settings": {
     "language": {
       "sectionTitle": "语言",
-      "sectionDescription": "分别设置界面语言和转录语言",
       "uiLabel": "界面语言",
       "uiDescription": "选择 Whisper 界面使用的语言",
       "transcriptionLabel": "转录语言",
@@ -11,7 +10,8 @@
       "chineseScriptDescription": "检测到中文时，将听写的转录结果转换为简体或繁体。口语听起来一样；Whisper 只会输出一种字形。",
       "chineseScriptAsTranscribed": "保持转录原样",
       "chineseScriptSimplified": "简体",
-      "chineseScriptTraditional": "繁体"
+      "chineseScriptTraditional": "繁体",
+      "transcriptionSectionDescription": "你说的语言，以及中文的书写方式"
     },
     "groups": {
       "app": "应用",
@@ -23,7 +23,7 @@
         "label": "通用"
       },
       "hotkeys": {
-        "label": "快捷键"
+        "label": "听写"
       },
       "speechToText": {
         "label": "语音转文字"
@@ -57,7 +57,6 @@
         "title": "外观"
       },
       "floatingIcon": {
-        "description": "选择听写时录音胶囊的显示位置",
         "title": "录音胶囊",
         "startPosition": "起始位置",
         "startPositionDescription": "录音胶囊在屏幕上的显示位置",
