@@ -285,7 +285,8 @@
       "microphoneUnavailable": "Microphone unavailable",
       "transcriptionTimeout": "Transcription timed out",
       "transcriptionConnectionFailed": "Transcription server unavailable",
-      "providerRateLimited": "Too many requests"
+      "providerRateLimited": "Too many requests",
+      "transcriptionFailed": "Transcription failed"
     },
     "errorActions": {
       "viewTranscript": "View Transcript"
@@ -301,7 +302,8 @@
       "providerRateLimited": "The transcription server is limiting requests. Wait a moment, then retry.",
       "customEndpointInvalid": "Your custom transcription endpoint is not configured or its URL is invalid. Update it in Settings → Speech to text.",
       "cleanupTruncated": "The AI model ran out of room before it finished cleaning up your dictation.",
-      "cleanupEmptyReply": "The AI model returned an empty reply instead of the cleaned-up dictation."
+      "cleanupEmptyReply": "The AI model returned an empty reply instead of the cleaned-up dictation.",
+      "transcriptionFailed": "The server returned an error: {{message}}"
     },
     "pushForceStopped": {
       "title": "Transcription not pasted",

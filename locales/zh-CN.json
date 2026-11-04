@@ -285,7 +285,8 @@
       "microphoneUnavailable": "麦克风不可用",
       "transcriptionTimeout": "转录超时",
       "transcriptionConnectionFailed": "无法连接转录服务器",
-      "providerRateLimited": "请求过于频繁"
+      "providerRateLimited": "请求过于频繁",
+      "transcriptionFailed": "转录失败"
     },
     "errorActions": {
       "viewTranscript": "查看转录"
@@ -301,7 +302,8 @@
       "providerRateLimited": "转录服务器正在限制请求频率。请稍候再重试。",
       "customEndpointInvalid": "自定义转录端点未配置或其 URL 无效。请在“设置 → 语音转文字”中更新。",
       "cleanupTruncated": "AI 模型的输出长度达到上限，未能完成听写清理。",
-      "cleanupEmptyReply": "AI 模型返回了空响应，没有生成清理后的文本。"
+      "cleanupEmptyReply": "AI 模型返回了空响应，没有生成清理后的文本。",
+      "transcriptionFailed": "服务器返回错误：{{message}}"
     },
     "pushForceStopped": {
       "title": "转录内容未粘贴",

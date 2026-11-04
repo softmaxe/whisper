@@ -473,11 +473,16 @@ impl Dictation {
                     Some(transcription::RATE_LIMITED_CODE) => {
                         t("dictation.errorTitles.providerRateLimited")
                     }
-                    _ => "Transcription Error".to_string(),
+                    _ => t("dictation.errorTitles.transcriptionFailed"),
                 };
                 let description = message_key
                     .and_then(|key| crate::i18n::try_t(&key))
-                    .unwrap_or_else(|| format!("Transcription failed: {message}"));
+                    .unwrap_or_else(|| {
+                        crate::i18n::t_with(
+                            "dictation.errorDescriptions.transcriptionFailed",
+                            &[("message", &message)],
+                        )
+                    });
                 cx.emit(DictationNotice::Error { title, description });
             }
             PipelineOutcome::Transcribed(transcript) => {

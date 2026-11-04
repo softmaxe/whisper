@@ -240,8 +240,9 @@ pub fn unregister_cancel_hotkey() {
     }
 }
 
-/// Shares Escape with the recording while the copy-recovery panel is open.
-pub fn set_recovery_cancel_hotkey(active: bool) {
+/// Shares Escape with the recording while a pill panel (error or copy
+/// recovery) is open.
+pub fn set_panel_cancel_hotkey(active: bool) {
     use crate::native::hotkeys::CancelHotkeyOwner;
     let Some(manager) = hotkeys() else { return };
     if active {

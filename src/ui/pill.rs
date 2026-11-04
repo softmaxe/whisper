@@ -1462,7 +1462,7 @@ impl Render for PillView {
         let panel_open = self.error.is_some() || self.recovery.is_some();
         if panel_open != self.panel_escape {
             self.panel_escape = panel_open;
-            backend::set_recovery_cancel_hotkey(panel_open);
+            backend::set_panel_cancel_hotkey(panel_open);
         }
         let snapshot = Self::snapshot(cx);
         let dock = Self::dock(cx);
