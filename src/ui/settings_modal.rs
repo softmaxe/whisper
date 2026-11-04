@@ -975,20 +975,25 @@ impl SettingsModal {
             ] {
                 let selected = s.theme == value;
                 track = track.child(
-                    segment(SharedString::from(format!("theme-{key}")), t(key), selected, cx)
-                        .gap(px(4.))
-                        .py(px(4.))
-                        .child(icon(
-                            icon_name,
-                            14.,
-                            if selected {
-                                p.foreground
-                            } else {
-                                p.muted_foreground
-                            },
-                        ))
-                        .child(t(key))
-                        .on_click(move |_, _, cx| update_settings(cx, |s| s.theme = value)),
+                    segment(
+                        SharedString::from(format!("theme-{key}")),
+                        t(key),
+                        selected,
+                        cx,
+                    )
+                    .gap(px(4.))
+                    .py(px(4.))
+                    .child(icon(
+                        icon_name,
+                        14.,
+                        if selected {
+                            p.foreground
+                        } else {
+                            p.muted_foreground
+                        },
+                    ))
+                    .child(t(key))
+                    .on_click(move |_, _, cx| update_settings(cx, |s| s.theme = value)),
                 );
             }
             track
@@ -1607,10 +1612,7 @@ impl SettingsModal {
                 .into_any_element(),
                 settings_field(
                     t("reasoning.custom.apiKeyOptional"),
-                    Some(small(
-                        t("reasoning.custom.apiKeyHelp"),
-                        p.subtle_foreground,
-                    )),
+                    Some(small(t("reasoning.custom.apiKeyHelp"), p.subtle_foreground)),
                     None,
                     api_key_control,
                     &p,

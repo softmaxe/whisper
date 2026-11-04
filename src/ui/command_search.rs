@@ -93,9 +93,8 @@ pub(super) fn relative_time_label(ts: DateTime<Utc>) -> String {
 
 impl CommandSearch {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| {
-            InputState::new(window, cx).placeholder(t("commandSearch.placeholder"))
-        });
+        let input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t("commandSearch.placeholder")));
         input.update(cx, |i, cx| i.focus(window, cx));
         cx.subscribe(&input, |this, _, e: &InputEvent, cx| match e {
             InputEvent::Change => {

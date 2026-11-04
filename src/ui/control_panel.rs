@@ -138,9 +138,9 @@ impl ControlPanel {
         match scene() {
             Some(Scene::View(view)) => self.active = view,
             Some(Scene::Settings(section)) => self.open_settings(Some(section), window, cx),
-            Some(Scene::Search) => window.on_next_frame(|window, cx| {
-                window.dispatch_action(Box::new(OpenSearch), cx)
-            }),
+            Some(Scene::Search) => {
+                window.on_next_frame(|window, cx| window.dispatch_action(Box::new(OpenSearch), cx))
+            }
             _ => {}
         }
     }
