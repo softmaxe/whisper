@@ -23,7 +23,7 @@ fn open_microphone_privacy_settings() {
     open_url(SettingsPane::Microphone.url());
 }
 
-fn open_accessibility_settings() {
+pub fn open_accessibility_settings() {
     open_url(SettingsPane::Accessibility.url());
 }
 
@@ -74,6 +74,23 @@ pub fn request_accessibility_permission() {
     if !crate::native::permissions::is_accessibility_trusted(true) {
         open_accessibility_settings();
     }
+}
+
+/// Removes Whisper's entry from Privacy & Security › Accessibility with
+/// `tccutil`, which clears a stale grant left by an earlier build. Returns
+/// whether the entry was removed; a binary running outside its app bundle has
+/// no entry of its own to remove. Blocks on a child process, so call it off
+/// the main thread.
+pub fn reset_accessibility_entry() -> bool {
+    let Some(bundle_id) = objc2_foundation::NSBundle::mainBundle().bundleIdentifier() else {
+        return false;
+    };
+    std::process::Command::new("/usr/bin/tccutil")
+        .args(["reset", "Accessibility", &bundle_id.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 pub fn audio_storage_usage() -> (usize, u64) {
