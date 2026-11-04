@@ -14,6 +14,7 @@ use crate::settings::{
     ActivationMode, ChineseScriptPreference, MicrophoneSelectionMode, PanelStartPosition, Settings,
     ThemePreference,
 };
+use crate::text::hotkeys::{Hotkey, parse_hotkey_list};
 use crate::text::url::{EndpointIssue, endpoint_check};
 
 use crate::app_state::AppState;
@@ -31,14 +32,14 @@ use super::components::{
     settings_section, status_label,
 };
 use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH};
-use super::hotkey_input::HotkeyListInput;
+use super::hotkey_input::{HotkeyListInput, hotkey_glyphs};
 use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog, show_toast};
 use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
 use super::text_input::{text_field, textarea_field};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL,
     RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL,
-    WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
+    WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap, motion,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +147,8 @@ pub struct SettingsModal {
     hotkeys: Entity<HotkeyListInput>,
 
     stt_check: ConnectionCheck,
+    /// Models the speech server listed on the last successful check.
+    stt_models: Vec<String>,
     stt_request: Option<Task<()>>,
 
     auto_start: AutoStartState,
@@ -327,10 +330,12 @@ impl SettingsModal {
                 .placeholder("Whisper-Large-v3-Turbo")
                 .default_value(s.remote_transcription_model.clone())
         });
-        subscriptions.push(cx.subscribe(&stt_model, |_, input, e: &InputEvent, cx| {
+        subscriptions.push(cx.subscribe(&stt_model, |this, input, e: &InputEvent, cx| {
             if matches!(e, InputEvent::Change) {
                 let value = input.read(cx).value().to_string();
+                this.recheck_model_listed(value.trim());
                 update_settings(cx, |s| s.remote_transcription_model = value);
+                cx.notify();
             }
         }));
 
@@ -562,6 +567,7 @@ impl SettingsModal {
             microphone,
             hotkeys,
             stt_check: ConnectionCheck::Idle,
+            stt_models: Vec::new(),
             stt_request: None,
             auto_start: backend::auto_start_state(),
             auto_start_loading: false,
@@ -577,6 +583,7 @@ impl SettingsModal {
             _subscriptions: subscriptions,
         };
         this.reload_microphones(cx);
+        this.sync_selects(cx);
         if !s.cleanup_remote_url.trim().is_empty() {
             this.load_models(None, false, cx);
         }
@@ -646,6 +653,7 @@ impl SettingsModal {
                 cx,
             );
             sel.set_selected(Some(s.audio_retention_days.to_string().into()), cx);
+            sel.set_disabled(!s.data_retention_enabled, cx);
         });
         self.transcript_retention.update(cx, |sel, cx| {
             sel.set_options(
@@ -856,6 +864,16 @@ impl SettingsModal {
     fn reset_stt_check(&mut self) {
         self.stt_request = None;
         self.stt_check = ConnectionCheck::Idle;
+        self.stt_models.clear();
+    }
+
+    /// Keeps "model available" true to the field after a check, without
+    /// another request, since the server's list is already known.
+    fn recheck_model_listed(&mut self, model: &str) {
+        if let ConnectionCheck::Connected { model_listed } = &mut self.stt_check {
+            *model_listed = (!model.is_empty() && !self.stt_models.is_empty())
+                .then(|| self.stt_models.iter().any(|m| m == model));
+        }
     }
 
     /// Asks the server for its model list: a cheap request every
@@ -874,10 +892,13 @@ impl SettingsModal {
             let result = request.await;
             let _ = this.update(cx, |this, cx| {
                 this.stt_check = match result {
-                    Ok((_, models)) => ConnectionCheck::Connected {
-                        model_listed: (!model.is_empty() && !models.is_empty())
-                            .then(|| models.iter().any(|m| m.value == model)),
-                    },
+                    Ok((_, models)) => {
+                        this.stt_models = models.into_iter().map(|m| m.value).collect();
+                        ConnectionCheck::Connected {
+                            model_listed: (!model.is_empty() && !this.stt_models.is_empty())
+                                .then(|| this.stt_models.contains(&model)),
+                        }
+                    }
                     Err(error) => ConnectionCheck::Failed(friendly_server_error(&error, &base).0),
                 };
                 cx.notify();
@@ -910,6 +931,8 @@ impl SettingsModal {
         default_cleanup_prompt(&settings(cx).ui_language).to_string()
     }
 
+    /// Saving is routine, so it confirms with a toast rather than a dialog
+    /// to dismiss.
     fn save_prompt(&mut self, cx: &mut Context<Self>) {
         let edited = self.prompt_editor.read(cx).value().to_string();
         let default = Self::default_prompt(cx);
@@ -920,27 +943,36 @@ impl SettingsModal {
             edited
         };
         update_settings(cx, |s| s.custom_prompt_cleanup = custom);
-        show_dialog(
-            DialogRequest::alert(
-                t("promptStudio.dialogs.saved.title"),
-                Some(t("promptStudio.dialogs.saved.description").into()),
-            ),
+        show_toast(
+            Toast::new(t("promptStudio.dialogs.saved.title"))
+                .description(t("promptStudio.dialogs.saved.description"))
+                .variant(ToastVariant::Success),
             cx,
         );
     }
 
-    fn reset_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let default = Self::default_prompt(cx);
-        self.prompt_editor
-            .update(cx, |input, cx| input.set_value(default, window, cx));
-        update_settings(cx, |s| s.custom_prompt_cleanup = String::new());
-        show_dialog(
-            DialogRequest::alert(
-                t("promptStudio.dialogs.reset.title"),
-                Some(t("promptStudio.dialogs.reset.description").into()),
-            ),
-            cx,
+    /// Resetting discards the custom prompt, so it asks first.
+    fn confirm_reset_prompt(&mut self, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let mut request = DialogRequest::confirm(
+            t("promptStudio.dialogs.reset.title"),
+            Some(t("promptStudio.dialogs.reset.description").into()),
+            true,
+            move |window, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    let default = Self::default_prompt(cx);
+                    this.prompt_editor
+                        .update(cx, |input, cx| input.set_value(default, window, cx));
+                });
+                update_settings(cx, |s| s.custom_prompt_cleanup = String::new());
+                show_toast(
+                    Toast::new(t("promptStudio.dialogs.reset.done")).variant(ToastVariant::Success),
+                    cx,
+                );
+            },
         );
+        request.confirm_label = t("promptStudio.dialogs.reset.confirm").into();
+        show_dialog(request, cx);
     }
 
     fn copy_prompt(&mut self, text: String, cx: &mut Context<Self>) {
@@ -1399,8 +1431,14 @@ impl SettingsModal {
         let p = cx.palette();
         let s = settings(cx);
         let mode = s.activation_mode;
-        let mode_info = backend::hotkey_mode_info(&s.effective_dictation_key());
-        let selector = activation_mode_cards(mode, mode_info.push_disabled_reason.clone(), cx);
+        let keys = s.effective_dictation_key();
+        let mode_info = backend::hotkey_mode_info(&keys);
+        let selector = activation_mode_cards(
+            mode,
+            TapStyle::of(&parse_hotkey_list(&keys)),
+            mode_info.push_disabled_reason.clone(),
+            cx,
+        );
         div()
             .flex()
             .flex_col()
@@ -1423,10 +1461,12 @@ impl SettingsModal {
             .into_any_element()
     }
 
+    /// The page heading is the breadcrumb; the panel opens with the server,
+    /// titled like the Text cleanup server so the two pages read alike.
     fn render_speech_to_text(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         settings_section(
-            t("settings.speechToText.title"),
+            t("settings.speechToText.serverTitle"),
             Some(t("settings.speechToText.sharedDescription").into()),
             vec![
                 settings_field_tagged(
@@ -1444,9 +1484,16 @@ impl SettingsModal {
                 .into_any_element(),
                 settings_field(
                     t("common.model"),
+                    Some(t("settings.speechToText.modelHelp").into_any_element()),
                     None,
-                    None,
-                    text_field(&self.stt_model, true, window, cx),
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(text_field(&self.stt_model, true, window, cx))
+                        .when(!self.stt_models.is_empty(), |d| {
+                            d.child(self.stt_model_choices(cx))
+                        }),
                     &p,
                 )
                 .into_any_element(),
@@ -1455,6 +1502,49 @@ impl SettingsModal {
             &p,
         )
         .into_any_element()
+    }
+
+    /// The models the server listed, as one-click choices for the free-text
+    /// Model field; the one matching the field stays lit.
+    fn stt_model_choices(&self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let current = self.stt_model.read(cx).value().trim().to_string();
+        let mut track = segmented_track(&p).flex_wrap().gap(px(2.));
+        for (index, model) in self.stt_models.iter().take(STT_MODEL_CHOICES).enumerate() {
+            let value = model.clone();
+            track = track.child(
+                segment(
+                    ("settings-stt-model", index),
+                    model.clone(),
+                    *model == current,
+                    cx,
+                )
+                .h(px(24.))
+                .font_family(FONT_MONO)
+                .child(model.clone())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    let value = value.clone();
+                    this.stt_model
+                        .update(cx, |input, cx| input.set_value(value.clone(), window, cx));
+                    this.recheck_model_listed(&value);
+                    update_settings(cx, |s| s.remote_transcription_model = value);
+                    cx.notify();
+                })),
+            );
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .text_color(p.subtle_foreground)
+                    .child(t("settings.speechToText.serverModels")),
+            )
+            .child(div().flex().child(track))
+            .into_any_element()
     }
 
     fn render_stt_check(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -1519,31 +1609,26 @@ impl SettingsModal {
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let s = settings(cx);
-        let mut col = div().flex().flex_col().gap(px(24.)).child(
-            div()
-                .child(section_header(t("settings.llms.title"), None, &p))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(24.))
-                        .child(settings_panel(
-                            vec![toggle_row(
-                                "use-cleanup",
-                                t("settings.aiModels.enableTextCleanup"),
-                                Some(t("settings.aiModels.enableTextCleanupDescription")),
-                                s.use_cleanup_model,
-                                false,
-                                |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
-                                &p,
-                            )],
-                            &p,
-                        ))
-                        .when(s.use_cleanup_model, |d| {
-                            d.child(self.render_cleanup_server(window, cx))
-                        }),
-                ),
-        );
+        // The breadcrumb names the page, so it opens straight on the switch.
+        let mut col = div()
+            .flex()
+            .flex_col()
+            .gap(px(24.))
+            .child(settings_panel(
+                vec![toggle_row(
+                    "use-cleanup",
+                    t("settings.aiModels.enableTextCleanup"),
+                    Some(t("settings.aiModels.enableTextCleanupDescription")),
+                    s.use_cleanup_model,
+                    false,
+                    |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
+                    &p,
+                )],
+                &p,
+            ))
+            .when(s.use_cleanup_model, |d| {
+                d.child(self.render_cleanup_server(window, cx))
+            });
         col = col.child(
             div()
                 .border_t_1()
@@ -1784,8 +1869,11 @@ impl SettingsModal {
                             .text_size(px(TEXT_SMALL))
                             .text_color(p.subtle_foreground)
                             .child(t("reasoning.custom.queryPrefix"))
-                            .child(div().font_family(FONT_MONO).child(query_url))
-                            .child(t("reasoning.custom.querySuffix"))
+                            .child(
+                                div()
+                                    .font_family(FONT_MONO)
+                                    .child(format!("GET {query_url}")),
+                            )
                             .into_any_element(),
                     ),
                     Some(
@@ -1909,60 +1997,46 @@ impl SettingsModal {
             p.border.opacity(0.6)
         };
 
-        let mut tabs = div().flex().border_b_1().border_color(if p.dark {
-            p.border_subtle
-        } else {
-            p.border.opacity(0.7)
-        });
+        // The same segmented switcher as Theme and the server presets.
+        let mut track = segmented_track(&p).gap(px(2.));
         for (value, icon_name, key) in [
             (PromptTab::View, "eye", "promptStudio.tabs.view"),
             (PromptTab::Edit, "edit3", "promptStudio.tabs.customize"),
             (PromptTab::Test, "test-tube", "promptStudio.tabs.test"),
         ] {
             let active = tab == value;
-            let tab_id = SharedString::from(format!("settings-prompt-tab-{key}"));
-            tabs = tabs.child(
-                div()
-                    .id(tab_id.clone())
-                    .keyboard_focusable(tab_id, Role::Tab, t(key), cx)
-                    .aria_selected(active)
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(8.))
-                    .px(px(16.))
-                    .py(px(12.))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .border_b_2()
-                    .cursor_pointer()
-                    .when(active, |d| {
-                        d.border_color(p.primary)
-                            .text_color(p.foreground)
-                            .bg(p.primary.opacity(if p.dark { 0.03 } else { 0.05 }))
-                    })
-                    .when(!active, |d| {
-                        d.border_color(transparent_black())
-                            .text_color(p.muted_foreground)
-                            .hover(|s| s.text_color(p.foreground).bg(p.hover_wash(0.02)))
-                    })
-                    .child(icon(
-                        icon_name,
-                        14.,
-                        if active {
-                            p.foreground
-                        } else {
-                            p.muted_foreground
-                        },
-                    ))
-                    .child(t(key))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.prompt_tab = value;
-                        cx.notify();
-                    })),
+            track = track.child(
+                segment(
+                    SharedString::from(format!("settings-prompt-tab-{key}")),
+                    t(key),
+                    active,
+                    cx,
+                )
+                .gap(px(6.))
+                .py(px(4.))
+                .child(icon(
+                    icon_name,
+                    14.,
+                    if active {
+                        p.foreground
+                    } else {
+                        p.muted_foreground
+                    },
+                ))
+                .child(t(key))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.prompt_tab = value;
+                    cx.notify();
+                })),
             );
         }
+        let tabs = div()
+            .flex()
+            .px(px(20.))
+            .py(px(12.))
+            .border_b_1()
+            .border_color(divider)
+            .child(track);
 
         let body = match tab {
             PromptTab::View => {
@@ -2002,10 +2076,10 @@ impl SettingsModal {
                                             div()
                                                 .px(px(6.))
                                                 .rounded_full()
-                                                .bg(p.primary.opacity(0.1))
+                                                .bg(p.hover_wash(0.08))
                                                 .text_size(px(TEXT_CAPTION))
                                                 .font_weight(FontWeight::MEDIUM)
-                                                .text_color(p.primary)
+                                                .text_color(p.muted_foreground)
                                                 .child(
                                                     t("promptStudio.view.modified").to_uppercase(),
                                                 ),
@@ -2049,64 +2123,62 @@ impl SettingsModal {
                     )
                     .into_any_element()
             }
-            PromptTab::Edit => {
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .px(px(20.))
-                            .py(px(16.))
-                            .border_b_1()
-                            .border_color(divider)
-                            .flex()
-                            .flex_wrap()
-                            .gap(px(4.))
-                            .text_size(px(TEXT_SMALL))
-                            .text_color(p.muted_foreground)
-                            .child(
-                                div()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(p.warning)
-                                    .child(t("promptStudio.edit.cautionLabel")),
-                            )
-                            .child(t("promptStudio.edit.cautionTextPrefix")),
-                    )
-                    .child(
-                        div()
-                            .px(px(20.))
-                            .py(px(16.))
-                            .border_b_1()
-                            .border_color(divider)
-                            .child(textarea_field(&self.prompt_editor, 360., true, window, cx)),
-                    )
-                    .child(
-                        div()
-                            .px(px(20.))
-                            .py(px(16.))
-                            .flex()
-                            .gap(px(8.))
-                            .child(
-                                Button::new("save-prompt")
-                                    .icon("save", 14.)
-                                    .label(t("promptStudio.common.save"))
-                                    .size(ButtonSize::Sm)
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, _, cx| this.save_prompt(cx))),
-                            )
-                            .child(
-                                Button::new("reset-prompt")
-                                    .icon("rotate-ccw", 14.)
-                                    .label(t("promptStudio.common.reset"))
-                                    .variant(ButtonVariant::Outline)
-                                    .size(ButtonSize::Sm)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.reset_prompt(window, cx)
-                                    })),
-                            ),
-                    )
-                    .into_any_element()
-            }
+            PromptTab::Edit => div()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .px(px(20.))
+                        .py(px(16.))
+                        .border_b_1()
+                        .border_color(divider)
+                        .flex()
+                        .flex_wrap()
+                        .gap(px(4.))
+                        .text_size(px(TEXT_SMALL))
+                        .text_color(p.muted_foreground)
+                        .child(
+                            div()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(p.warning)
+                                .child(t("promptStudio.edit.cautionLabel")),
+                        )
+                        .child(t("promptStudio.edit.cautionTextPrefix")),
+                )
+                .child(
+                    div()
+                        .px(px(20.))
+                        .py(px(16.))
+                        .border_b_1()
+                        .border_color(divider)
+                        .child(textarea_field(&self.prompt_editor, 360., true, window, cx)),
+                )
+                .child(
+                    div()
+                        .px(px(20.))
+                        .py(px(16.))
+                        .flex()
+                        .gap(px(8.))
+                        .child(
+                            Button::new("save-prompt")
+                                .icon("save", 14.)
+                                .label(t("promptStudio.common.save"))
+                                .size(ButtonSize::Sm)
+                                .full_width()
+                                .on_click(cx.listener(|this, _, _, cx| this.save_prompt(cx))),
+                        )
+                        .child(
+                            Button::new("reset-prompt")
+                                .icon("rotate-ccw", 14.)
+                                .label(t("promptStudio.common.reset"))
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Sm)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.confirm_reset_prompt(cx)),
+                                ),
+                        ),
+                )
+                .into_any_element(),
             PromptTab::Test => {
                 let use_cleanup = s.use_cleanup_model;
                 let disabled = self.test_input.read(cx).value().trim().is_empty()
@@ -2281,17 +2353,49 @@ impl SettingsModal {
         } else {
             t("settings.privacy.audioStorageEmpty")
         };
+        let history_on = s.data_retention_enabled;
         div()
             .flex()
             .flex_col()
             .gap(px(24.))
+            // History comes first: audio is only kept for saved dictations.
+            .child(settings_section(
+                t("settings.privacy.historyTitle"),
+                None,
+                vec![
+                    toggle_row(
+                        "data-retention",
+                        t("settings.privacy.dataRetention"),
+                        Some(t("settings.privacy.dataRetentionDescription")),
+                        history_on,
+                        false,
+                        |v, _, cx| update_settings(cx, |s| s.data_retention_enabled = v),
+                        &p,
+                    ),
+                    settings_row(
+                        t("settings.privacy.transcriptRetention"),
+                        Some(
+                            if history_on {
+                                t("settings.privacy.transcriptRetentionDescription")
+                            } else {
+                                t("settings.privacy.needsHistory")
+                            }
+                            .into(),
+                        ),
+                        self.transcript_retention.clone(),
+                        &p,
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
             .child(settings_section(
                 t("settings.privacy.audioRetention"),
                 Some(t("settings.privacy.audioRetentionDescription").into()),
                 vec![
                     settings_row(
                         t("settings.privacy.keepAudioFor"),
-                        None,
+                        (!history_on).then(|| t("settings.privacy.needsHistory").into()),
                         self.audio_retention.clone(),
                         &p,
                     )
@@ -2305,29 +2409,6 @@ impl SettingsModal {
                             .size(ButtonSize::Sm)
                             .disabled(files == 0)
                             .on_click(cx.listener(|this, _, _, cx| this.confirm_clear_audio(cx))),
-                        &p,
-                    )
-                    .into_any_element(),
-                ],
-                &p,
-            ))
-            .child(settings_section(
-                t("settings.privacy.historyTitle"),
-                None,
-                vec![
-                    toggle_row(
-                        "data-retention",
-                        t("settings.privacy.dataRetention"),
-                        Some(t("settings.privacy.dataRetentionDescription")),
-                        s.data_retention_enabled,
-                        false,
-                        |v, _, cx| update_settings(cx, |s| s.data_retention_enabled = v),
-                        &p,
-                    ),
-                    settings_row(
-                        t("settings.privacy.transcriptRetention"),
-                        Some(t("settings.privacy.transcriptRetentionDescription").into()),
-                        self.transcript_retention.clone(),
                         &p,
                     )
                     .into_any_element(),
@@ -2365,37 +2446,72 @@ impl SettingsModal {
                 ],
                 &p,
             ))
-            .child(
-                settings_section(
-                    t("settings.permissions.troubleshootingTitle"),
-                    None,
-                    vec![
-                        settings_row(
-                            t("settings.permissions.resetAccessibility.label"),
-                            Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
-                            Button::new("settings-troubleshoot-ax")
-                                .label(t("settings.permissions.troubleshoot"))
-                                .variant(ButtonVariant::Outline)
-                                .size(ButtonSize::Sm)
-                                .on_click(|_, _, cx| {
-                                    show_dialog(
-                                        DialogRequest::confirm(
-                                            t("settings.permissions.resetAccessibility.title"),
-                                            Some(t("settings.permissions.resetAccessibility.description").into()),
-                                            false,
-                                            |_, _| backend::request_accessibility_permission(),
-                                        ),
-                                        cx,
-                                    )
-                                }),
-                            &p,
-                        )
-                        .into_any_element(),
-                    ],
-                    &p,
-                ),
-            )
+            .child(settings_section(
+                t("settings.permissions.troubleshootingTitle"),
+                None,
+                vec![
+                    settings_row(
+                        t("settings.permissions.resetAccessibility.label"),
+                        Some(t("settings.permissions.resetAccessibility.rowDescription").into()),
+                        Button::new("settings-troubleshoot-ax")
+                            .label(t("settings.permissions.resetAccessibility.action"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.confirm_reset_accessibility(cx)),
+                            ),
+                        &p,
+                    )
+                    .into_any_element(),
+                ],
+                &p,
+            ))
             .into_any_element()
+    }
+
+    /// Removes Whisper's Accessibility entry so macOS can grant it afresh,
+    /// the fix when a stale grant from an earlier build blocks auto-paste.
+    /// When the entry can't be removed, System Settings opens instead and the
+    /// toast says what to do there, so the confirmation never ends in silence.
+    fn confirm_reset_accessibility(&mut self, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let mut request = DialogRequest::confirm(
+            t("settings.permissions.resetAccessibility.title"),
+            Some(t("settings.permissions.resetAccessibility.description").into()),
+            true,
+            move |_, cx| {
+                let this = this.clone();
+                let reset = cx.background_spawn(async { backend::reset_accessibility_entry() });
+                cx.spawn(async move |cx| {
+                    let removed = reset.await;
+                    cx.update(|cx| {
+                        let toast = if removed {
+                            backend::request_accessibility_permission();
+                            Toast::new(t("settings.permissions.resetAccessibility.done"))
+                                .description(t(
+                                    "settings.permissions.resetAccessibility.doneDescription",
+                                ))
+                                .variant(ToastVariant::Success)
+                        } else {
+                            backend::open_accessibility_settings();
+                            Toast::new(t("settings.permissions.resetAccessibility.failed"))
+                                .description(t(
+                                    "settings.permissions.resetAccessibility.failedDescription",
+                                ))
+                                .variant(ToastVariant::Destructive)
+                        };
+                        show_toast(toast, cx);
+                        let _ = this.update(cx, |this, cx| {
+                            this.accessibility_permission = backend::accessibility_granted();
+                            cx.notify();
+                        });
+                    });
+                })
+                .detach();
+            },
+        );
+        request.confirm_label = t("settings.permissions.resetAccessibility.confirm").into();
+        show_dialog(request, cx);
     }
 
     /// Deleting every recording cannot be undone, so it asks first and then
@@ -2435,30 +2551,105 @@ impl SettingsModal {
     }
 }
 
+/// What Tap mode does with the saved hotkeys. Keys the native listener
+/// watches (Globe, a lone right-side modifier) start on a Double tap; key
+/// combinations toggle on a single press.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TapStyle {
+    DoubleTap(String),
+    Toggle(String),
+    /// Some hotkeys double-tap and others toggle.
+    Mixed,
+}
+
+impl TapStyle {
+    /// Names the hotkey in the card copy when there is exactly one.
+    fn of(hotkeys: &[Hotkey]) -> Self {
+        let name = match hotkeys {
+            [only] => hotkey_glyphs(only),
+            _ => t("settings.general.hotkey.theHotkey"),
+        };
+        let listened = hotkeys
+            .iter()
+            .filter(|h| h.listener_key().is_some())
+            .count();
+        if listened == hotkeys.len() {
+            Self::DoubleTap(name)
+        } else if listened == 0 {
+            Self::Toggle(name)
+        } else {
+            Self::Mixed
+        }
+    }
+
+    fn name(&self) -> String {
+        match self {
+            Self::DoubleTap(name) | Self::Toggle(name) => name.clone(),
+            Self::Mixed => t("settings.general.hotkey.theHotkey"),
+        }
+    }
+}
+
 /// Two side-by-side cards, one per activation mode, each explaining itself
-/// with a small press diagram and marked by a radio like the model list.
+/// with a small press diagram and marked by a radio like the model list. The
+/// Tap card describes what the saved hotkey really does: a key combination
+/// toggles on one press rather than waiting for a Double tap.
 fn activation_mode_cards(
     mode: ActivationMode,
+    tap: TapStyle,
     push_disabled: Option<String>,
     cx: &mut App,
 ) -> impl IntoElement + use<> {
     let p = cx.palette();
     let push_blocked = push_disabled.is_some();
+    let hotkey = tap.name();
+    let (tap_title, tap_description) = match &tap {
+        TapStyle::DoubleTap(name) => (
+            t("common.tap"),
+            t_with(
+                "settings.general.hotkey.activationModeDoubleTapDescription",
+                &[("hotkey", name)],
+            ),
+        ),
+        TapStyle::Toggle(name) => (
+            t("settings.general.hotkey.toggle"),
+            t_with(
+                "settings.general.hotkey.activationModeToggleDescription",
+                &[("hotkey", name)],
+            ),
+        ),
+        TapStyle::Mixed => (
+            t("common.tap"),
+            t("settings.general.hotkey.activationModeTapDescription"),
+        ),
+    };
     let options = [
         (
             ActivationMode::Tap,
-            "common.tap",
-            t("settings.general.hotkey.activationModeTapDescription"),
+            "tap",
+            tap_title,
+            tap_description,
+            if matches!(tap, TapStyle::Toggle(_)) {
+                PressPattern::Single
+            } else {
+                PressPattern::Double
+            },
         ),
         (
             ActivationMode::Push,
-            "common.hold",
-            push_disabled
-                .unwrap_or_else(|| t("settings.general.hotkey.activationModeHoldDescription")),
+            "hold",
+            t("common.hold"),
+            push_disabled.unwrap_or_else(|| {
+                t_with(
+                    "settings.general.hotkey.activationModeHoldDescription",
+                    &[("hotkey", &hotkey)],
+                )
+            }),
+            PressPattern::Hold,
         ),
     ];
     let mut row = div().flex().flex_wrap().gap(px(8.));
-    for (value, key, description) in options {
+    for (value, key, title, description, pattern) in options {
         let selected = mode == value;
         let disabled = value == ActivationMode::Push && push_blocked;
         let accent = if selected {
@@ -2471,7 +2662,7 @@ fn activation_mode_cards(
             div()
                 .id(id.clone())
                 .when(!disabled, |d| {
-                    d.keyboard_focusable(id, Role::RadioButton, t(key), cx)
+                    d.keyboard_focusable(id, Role::RadioButton, title.clone(), cx)
                         .aria_selected(selected)
                 })
                 .flex_1()
@@ -2512,9 +2703,9 @@ fn activation_mode_cards(
                                 .text_size(px(TEXT_BODY))
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(p.foreground)
-                                .child(t(key)),
+                                .child(title),
                         )
-                        .child(press_diagram(value, accent)),
+                        .child(press_diagram(pattern, accent)),
                 )
                 .child(
                     div()
@@ -2529,15 +2720,28 @@ fn activation_mode_cards(
     row
 }
 
-/// A key press drawn on a timeline: two short taps, or one long hold.
-fn press_diagram(mode: ActivationMode, color: Hsla) -> Div {
+/// The presses a card's diagram draws.
+#[derive(Clone, Copy)]
+enum PressPattern {
+    Single,
+    Double,
+    Hold,
+}
+
+/// A key press drawn on a timeline: one short tap, two, or one long hold.
+fn press_diagram(pattern: PressPattern, color: Hsla) -> Div {
     let press = |width: f32| div().h(px(4.)).w(px(width)).rounded_full().bg(color);
     let line = div().flex().items_center().gap(px(3.)).w(px(32.));
-    match mode {
-        ActivationMode::Tap => line.child(press(6.)).child(press(6.)),
-        ActivationMode::Push => line.child(press(32.)),
+    match pattern {
+        PressPattern::Single => line.child(press(6.)),
+        PressPattern::Double => line.child(press(6.)).child(press(6.)),
+        PressPattern::Hold => line.child(press(32.)),
     }
 }
+
+/// How many listed speech models to offer as choices; a server that lists
+/// more still accepts any name typed into the field.
+const STT_MODEL_CHOICES: usize = 12;
 
 /// The 12 px radio used by the activation cards and the model list.
 fn radio_dot(selected: bool, p: &Palette) -> Div {
@@ -2572,10 +2776,15 @@ fn toggle_row(
             cx.stop_propagation();
             on_switch(value, window, cx)
         });
+    let wash = p.hover_wash(0.025);
     settings_row(label, description.map(Into::into), toggle, p)
         .id((id, 1usize))
+        // Rounded so the wash stays inside the card's corners on the first
+        // and last rows.
+        .rounded(px(RADIUS_XL - 1.))
         .when(!disabled, |d| {
             d.cursor_pointer()
+                .hover(move |s| s.bg(wash))
                 .on_click(move |_, window, cx| on_change(!checked, window, cx))
         })
         .into_any_element()
@@ -2863,6 +3072,7 @@ impl Render for SettingsModal {
         };
         let frame = sheet_frame(window.viewport_size());
         let closing = self.closing;
+        let reduce_motion = cx.reduce_motion();
         let section_label = t(&format!("settings.sections.{}.label", self.section.key()));
         let header = div()
             .h(px(48.))
@@ -3009,16 +3219,21 @@ impl Render for SettingsModal {
             .focus_trap("settings-sheet", &self.focus)
             .with_animation(
                 ("settings-panel-anim", closing as usize),
-                Animation::new(Duration::from_millis(if closing {
-                    DUR_SNAP
+                motion(if closing { DUR_SNAP } else { DUR_BASE }, cx).with_easing(if closing {
+                    ease_snap
                 } else {
-                    DUR_BASE
-                }))
-                .with_easing(if closing { ease_snap } else { ease_out }),
+                    ease_out
+                }),
                 move |d, t| {
                     let v = if closing { 1. - t } else { t };
-                    // zoom-in-98.5: approximate the scale with a small lift.
-                    d.opacity(v).mt(px(4. * (1. - v)))
+                    // zoom-in-98.5: approximate the scale with a small lift,
+                    // which Reduce motion drops.
+                    let d = d.opacity(v);
+                    if reduce_motion {
+                        d
+                    } else {
+                        d.mt(px(4. * (1. - v)))
+                    }
                 },
             );
 
@@ -3032,12 +3247,11 @@ impl Render for SettingsModal {
             .child(panel)
             .with_animation(
                 ("settings-backdrop-anim", closing as usize),
-                Animation::new(Duration::from_millis(if closing {
-                    DUR_SNAP
+                motion(if closing { DUR_SNAP } else { DUR_BASE }, cx).with_easing(if closing {
+                    ease_snap
                 } else {
-                    DUR_BASE
-                }))
-                .with_easing(if closing { ease_snap } else { ease_out }),
+                    ease_out
+                }),
                 move |d, t| d.opacity(if closing { 1. - t } else { t }),
             )
     }
@@ -3080,7 +3294,8 @@ fn sheet_frame(viewport: Size<Pixels>) -> SheetFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::{endpoint_host, friendly_server_error, sheet_frame};
+    use super::{TapStyle, endpoint_host, friendly_server_error, sheet_frame};
+    use crate::text::hotkeys::parse_hotkey_list;
     use gpui_kit::{px, size};
 
     #[test]
@@ -3120,5 +3335,21 @@ mod tests {
         let wide = sheet_frame(size(px(1800.), px(1100.)));
         assert!(!wide.attached);
         assert!(f32::from(wide.bounds.origin.x) >= super::SIDEBAR_WIDTH + 24.);
+    }
+
+    #[test]
+    fn tap_mode_names_what_the_saved_hotkey_does() {
+        assert_eq!(
+            TapStyle::of(&parse_hotkey_list("RightOption")),
+            TapStyle::DoubleTap("Right ⌥".into())
+        );
+        assert_eq!(
+            TapStyle::of(&parse_hotkey_list("Control+Shift+K")),
+            TapStyle::Toggle("⌃⇧K".into())
+        );
+        assert_eq!(
+            TapStyle::of(&parse_hotkey_list("RightOption,Control+Shift+K")),
+            TapStyle::Mixed
+        );
     }
 }

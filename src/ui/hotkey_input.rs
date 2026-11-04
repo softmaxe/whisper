@@ -21,7 +21,7 @@ use super::components::{
 };
 use super::control_panel::CloseOverlay;
 use super::overlays::{Toast, ToastVariant, show_toast};
-use super::theme::{LINE_SMALL, Palette, PaletteExt, RADIUS_MD, TEXT_BODY, TEXT_SMALL};
+use super::theme::{LINE_SMALL, Palette, PaletteExt, RADIUS_MD, TEXT_BODY, TEXT_SMALL, motion};
 
 const MODIFIER_ONLY_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 const WARNING_TIMEOUT: Duration = Duration::from_secs(4);
@@ -391,8 +391,10 @@ impl HotkeyListInput {
             .into(),
             None => t("hotkeyInput.clickToSet").into(),
         };
+        let group = SharedString::from(format!("{key}-group"));
         let row = div()
             .id(key.clone())
+            .group(group.clone())
             .keyboard_focusable(key, Role::Button, label, cx)
             .flex()
             .flex_col()
@@ -446,19 +448,7 @@ impl HotkeyListInput {
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(
-                        div()
-                            .size(px(6.))
-                            .rounded_full()
-                            .bg(p.primary)
-                            .with_animation(
-                                "rec-dot",
-                                Animation::new(Duration::from_millis(2000)).repeat(),
-                                |d, t| {
-                                    d.opacity(0.5 + 0.5 * (t * std::f32::consts::TAU).cos().abs())
-                                },
-                            ),
-                    )
+                    .child(recording_dot(&p, cx))
                     .child(label_text(t("hotkeyInput.recording"), p.foreground)),
             )
             .child(
@@ -487,10 +477,7 @@ impl HotkeyListInput {
                         .items_center()
                         .gap(px(12.))
                         .child(keys)
-                        .child(hint(
-                            t("hotkeyInput.clickToChangeLower"),
-                            p.subtle_foreground,
-                        ))
+                        .child(change_affordance(group.clone(), &p))
                         .when_some(removable, |d, index| {
                             d.child(
                                 Button::new(("settings-remove-hotkey", index))
@@ -539,6 +526,41 @@ impl HotkeyListInput {
     }
 }
 
+/// Red marks recording everywhere in the app, here as on the pill. The pulse
+/// is decorative, so Reduce motion holds it still.
+fn recording_dot(p: &Palette, cx: &App) -> AnyElement {
+    let dot = div().size(px(6.)).rounded_full().bg(p.destructive);
+    if cx.reduce_motion() {
+        return dot.into_any_element();
+    }
+    dot.with_animation("rec-dot", motion(2000, cx).repeat(), |d, t| {
+        d.opacity(0.5 + 0.5 * (t * std::f32::consts::TAU).cos().abs())
+    })
+    .into_any_element()
+}
+
+/// "Click to Change", drawn as a quiet button that takes an outline while
+/// the pointer is over its row, so the whole row reads as clickable.
+fn change_affordance(group: SharedString, p: &Palette) -> AnyElement {
+    let (border, wash, fg) = (p.border, p.hover_wash(0.04), p.foreground);
+    div()
+        .px(px(8.))
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .rounded(px(RADIUS_MD))
+        .border_1()
+        .border_color(transparent_black())
+        .text_size(px(TEXT_SMALL))
+        .text_color(p.muted_foreground)
+        .whitespace_nowrap()
+        .group_hover(group, move |s| {
+            s.border_color(border).bg(wash).text_color(fg)
+        })
+        .child(t("hotkeyInput.clickToChangeLower"))
+        .into_any_element()
+}
+
 fn row_key(index: usize) -> String {
     format!("settings-hotkey-row-{index}")
 }
@@ -581,6 +603,15 @@ fn key_glyph(part: &str) -> String {
         Some(side) => format!("{side} {glyph}"),
         None => glyph.to_string(),
     }
+}
+
+/// The hotkey as one run of macOS glyphs, like a menu shortcut: `⌃⌥⇧F19`.
+pub fn hotkey_glyphs(hotkey: &Hotkey) -> String {
+    hotkey
+        .label_parts()
+        .iter()
+        .map(|part| key_glyph(part))
+        .collect()
 }
 
 /// The hotkey as VoiceOver should read it: the written names joined by "+".

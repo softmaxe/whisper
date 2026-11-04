@@ -4,7 +4,7 @@
       "sectionTitle": "Language",
       "sectionDescription": "Set interface and transcription languages independently",
       "uiLabel": "Interface language",
-      "uiDescription": "Choose the language used throughout Whisper's interface",
+      "uiDescription": "Choose the language used throughout Whisper’s interface",
       "transcriptionLabel": "Transcription language",
       "transcriptionDescription": "Choose the language you speak for more accurate transcription",
       "chineseScriptLabel": "Chinese script (dictation)",
@@ -20,7 +20,7 @@
     },
     "sections": {
       "general": {
-        "label": "Preferences"
+        "label": "General"
       },
       "hotkeys": {
         "label": "Hotkeys"
@@ -67,12 +67,16 @@
       },
       "hotkey": {
         "activationMode": "Activation mode",
-        "activationModeHoldDescription": "Hold the hotkey while you speak and release it to finish.",
-        "activationModeTapDescription": "Double-tap the hotkey to start hands-free dictation, then press it once to finish. Key combinations start and stop with a single press.",
-        "description": "The key combination that starts and stops voice dictation",
+        "activationModeHoldDescription": "Hold {{hotkey}} while you speak and release it to finish.",
+        "activationModeTapDescription": "Double-tap a single key such as Globe to start hands-free dictation, then press it once to finish. Key combinations start and stop with one press.",
+        "description": "The keys that start and stop dictation",
         "resetToDefault": "Reset to {{hotkey}}",
         "title": "Dictation hotkey",
-        "activationModeDescription": "How the hotkey starts and stops dictation"
+        "activationModeDescription": "How the hotkey starts and stops dictation",
+        "toggle": "Toggle",
+        "theHotkey": "the hotkey",
+        "activationModeDoubleTapDescription": "Double-tap {{hotkey}} to start hands-free dictation, then press it once to finish.",
+        "activationModeToggleDescription": "Press {{hotkey}} once to start and again to finish."
       },
       "microphone": {
         "description": "Select which input device to use for dictation",
@@ -109,34 +113,39 @@
     "permissions": {
       "accessibilityDescription": "Required for auto-paste to work after transcription",
       "accessibilityTitle": "Accessibility",
-      "description": "Test and manage system permissions required for Whisper to function correctly",
+      "description": "Whisper needs these to hear you and paste for you",
       "microphoneDescription": "Captures your voice for dictation and transcription",
       "microphoneTitle": "Microphone",
       "resetAccessibility": {
-        "description": "This will remove Whisper from accessibility permissions. You'll need to re-grant access in System Settings > Privacy & Security > Accessibility.",
-        "label": "Reset accessibility permissions",
-        "rowDescription": "Remove and re-add Whisper if auto-paste stops working after a reinstall",
-        "title": "Reset Accessibility permissions"
+        "description": "Whisper will be removed from Privacy & Security › Accessibility. macOS then asks you to turn it back on; auto-paste won’t work until you do.",
+        "label": "Reset Accessibility access",
+        "rowDescription": "If auto-paste stopped working after an update, remove Whisper’s entry so macOS can grant it again",
+        "title": "Reset Accessibility access?",
+        "action": "Reset…",
+        "confirm": "Reset Access",
+        "done": "Accessibility access reset",
+        "doneDescription": "Turn Whisper back on in System Settings to restore auto-paste.",
+        "failed": "Couldn’t reset Accessibility access",
+        "failedDescription": "In System Settings, select Whisper, remove it with −, then add it back."
       },
       "grantAccess": "Grant Access",
       "granted": "Granted",
       "title": "Permissions",
-      "troubleshoot": "Troubleshoot",
       "troubleshootingTitle": "Troubleshooting"
     },
     "privacy": {
-      "audioRetention": "Audio retention",
-      "audioRetentionDescription": "Store dictation audio on this device so you can re-transcribe it. Files are automatically deleted after the retention period.",
-      "audioRetentionDisabled": "Disabled",
+      "audioRetention": "Audio recordings",
+      "audioRetentionDescription": "Keep the audio of saved dictations on this Mac so you can transcribe them again",
+      "audioRetentionDisabled": "Don’t keep",
       "retentionDays_one": "{{count}} day",
       "retentionDays_other": "{{count}} days",
       "audioStorageUsage": "Storage used",
       "audioStorageEmpty": "No audio files stored",
       "clearAllAudio": "Clear All Audio",
       "dataRetention": "Save history",
-      "dataRetentionDescription": "Store transcriptions and audio locally in your history. When disabled, transcriptions are pasted but not saved.",
-      "transcriptRetention": "Transcript retention",
-      "transcriptRetentionDescription": "Automatically delete saved transcriptions, their audio, and their Insights counters after this period.",
+      "dataRetentionDescription": "Save transcriptions to History on this Mac. When off, dictations are pasted but not saved.",
+      "transcriptRetention": "Keep transcripts for",
+      "transcriptRetentionDescription": "Older transcripts are deleted with their audio and Insights counts",
       "transcriptRetentionForever": "Forever",
       "keepAudioFor": "Keep audio for",
       "historyTitle": "History",
@@ -147,25 +156,27 @@
       "audioCleared_one": "Deleted {{count}} audio file ({{size}})",
       "audioCleared_other": "Deleted {{count}} audio files ({{size}})",
       "audioStorageFiles_one": "{{count}} file, {{size}}",
-      "audioStorageFiles_other": "{{count}} files, {{size}}"
+      "audioStorageFiles_other": "{{count}} files, {{size}}",
+      "needsHistory": "Turn on Save history to use this"
     },
     "prompts": {
       "title": "Prompt Studio"
     },
     "speechToText": {
-      "title": "Speech to text",
-      "sharedDescription": "Dictation and file transcription share these settings.",
-      "serverUrlHelp": "Base URL of an OpenAI-compatible speech-to-text server, such as vLLM or speaches. It usually ends in /v1; a full endpoint URL is trimmed to its base.",
+      "sharedDescription": "OpenAI-compatible server that transcribes dictation and uploaded files",
+      "serverUrlHelp": "Base URL of a speech-to-text server such as speaches or vLLM. It usually ends in /v1; a full endpoint URL is trimmed to its base.",
       "connection": "Connection",
-      "connectionIdle": "Check that Whisper can reach this server.",
+      "connectionIdle": "Check that Whisper can reach this server",
       "connectionChecking": "Checking…",
       "connected": "Connected",
       "connectedWithModel": "Connected, model available",
-      "connectedModelMissing": "Connected, but the server doesn't list this model",
-      "testConnection": "Test Connection"
+      "connectedModelMissing": "Connected, but the server doesn’t list this model",
+      "testConnection": "Test Connection",
+      "serverTitle": "Server",
+      "modelHelp": "The model name your server expects. Test Connection lists the ones it offers.",
+      "serverModels": "Models on this server"
     },
     "llms": {
-      "title": "Text cleanup",
       "server": {
         "title": "Server",
         "description": "OpenAI-compatible server that cleans up dictated text"
@@ -187,8 +198,8 @@
     },
     "close": "Close settings",
     "serverErrors": {
-      "unreachable": "Couldn't reach {{host}}. Check that the server is running, then try again.",
-      "timedOut": "{{host}} didn't respond in time. Check the address, then try again.",
+      "unreachable": "Couldn’t reach {{host}}. Check that the server is running, then try again.",
+      "timedOut": "{{host}} didn’t respond in time. Check the address, then try again.",
       "status": "The server returned error {{status}}. Check the endpoint URL."
     }
   },
@@ -250,7 +261,7 @@
       "empty": "No transcriptions yet",
       "emptyDescription": "Press your hotkey in any app and start talking. Every transcription is saved privately here on your device.",
       "sectionTitle": "Transcriptions",
-      "dataRetentionDisabled": "Data retention is off. Transcriptions and audio are not saved to history.",
+      "dataRetentionDisabled": "History is off. New dictations aren’t saved.",
       "press": "Press",
       "toStart": "to start",
       "dateGroups": {
@@ -286,21 +297,20 @@
       "apiKeyOptional": "API key",
       "apiKeyHelp": "Optional. Sent as a Bearer token to your text cleanup server.",
       "applyAndRefresh": "Apply & Refresh",
-      "queryPrefix": "We'll query",
-      "querySuffix": "for available models.",
-      "modelsReloadHint": "Models will reload when you click away from the URL field or click \"Apply & Refresh\".",
+      "queryPrefix": "Lists models from",
+      "modelsReloadHint": "Models reload when you leave the URL field or click Apply & Refresh.",
       "enterEndpoint": "Enter an endpoint URL above to load models.",
-      "fetchingModels": "Fetching model list from endpoint...",
+      "fetchingModels": "Loading models…",
       "noModels": "No models returned. Check your endpoint URL.",
       "unableToLoadModels": "Unable to load models from endpoint.",
-      "selectModelHint": "No model selected yet — choose one from the list below.",
+      "selectModelHint": "Choose a model from the list below.",
       "columnTag": "Tag",
       "columnOwner": "Owner",
       "errorDetails": "Details"
     },
     "disableThinking": {
-      "label": "Disable thinking output",
-      "help": "Skips reasoning tokens for cleaner output. Recommended for cleanup. Some servers ignore this hint."
+      "label": "Skip model reasoning",
+      "help": "Faster, cleaner output. Some servers ignore this."
     },
     "selfHosted": {
       "endpointHelp": "Any server that speaks OpenAI Chat Completions. Pick one to fill in its default address, then change the host if it runs on another machine."
@@ -348,17 +358,16 @@
     }
   },
   "hotkeyInput": {
-    "clickToChangeLower": "Click to change",
+    "clickToChangeLower": "Click to Change",
     "clickToSet": "Click to set hotkey",
     "fnCaptureHint": "Press a key to combine, or release for Globe",
-    "globe": "Globe",
     "hotkeyLabel": "Hotkey",
     "keyHint": "+ key",
     "recording": "Recording",
     "tryShortcut": "Try ⌘⇧K",
-    "addAnother": "Add another hotkey",
+    "addAnother": "Add Another Hotkey",
     "duplicate": "Already added",
-    "singleModifierNeedsRightSide": "{{key}} on its own can't be a shortcut. Press {{alternative}} instead, or add a second key.",
+    "singleModifierNeedsRightSide": "{{key}} on its own can’t be a shortcut. Press {{alternative}} instead, or add a second key.",
     "rowLabel": "Dictation hotkey {{hotkey}}. Press to change.",
     "escToCancel": "Press Esc to cancel",
     "remove": "Remove hotkey",
@@ -395,8 +404,10 @@
     "defaultTestInput": "um please send the report by thursday no wait friday",
     "dialogs": {
       "reset": {
-        "description": "Prompt has been reset to the default value.",
-        "title": "Reset complete"
+        "description": "Your custom prompt will be replaced. This can’t be undone.",
+        "title": "Reset to the default prompt?",
+        "confirm": "Reset Prompt",
+        "done": "Prompt reset to default"
       },
       "saved": {
         "description": "Your custom prompt will be used for text cleanup.",
@@ -406,7 +417,7 @@
     "edit": {
       "cautionLabel": "Caution",
       "cautionTextPrefix": "Changes affect how transcripts are cleaned.",
-      "placeholder": "Enter your custom system prompt..."
+      "placeholder": "Enter your custom system prompt…"
     },
     "tabs": {
       "customize": "Customize",
@@ -414,15 +425,15 @@
       "view": "View"
     },
     "test": {
-      "disabledReasoning": "Enable text cleanup in Settings to test this prompt.",
+      "disabledReasoning": "Turn on text cleanup above to test this prompt.",
       "failed": "Test failed: {{error}}",
       "inputLabel": "Input",
-      "inputPlaceholder": "Enter text to test...",
+      "inputPlaceholder": "Enter text to test…",
       "modelLabel": "Model",
       "noModelSelected": "No model selected",
       "none": "None",
       "outputLabel": "Output",
-      "processing": "Processing...",
+      "processing": "Processing…",
       "run": "Run Test",
       "noEndpoint": "Set the text cleanup server URL in Settings."
     },

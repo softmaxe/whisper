@@ -20,7 +20,7 @@
     },
     "sections": {
       "general": {
-        "label": "偏好设置"
+        "label": "通用"
       },
       "hotkeys": {
         "label": "快捷键"
@@ -67,12 +67,16 @@
       },
       "hotkey": {
         "activationMode": "激活模式",
-        "activationModeHoldDescription": "按住快捷键说话，松开即结束。",
-        "activationModeTapDescription": "双击快捷键开始免提听写，再按一下结束。组合键按一下即可开始或结束。",
-        "description": "用于开始和停止语音听写的组合键",
+        "activationModeHoldDescription": "按住 {{hotkey}} 说话，松开即结束。",
+        "activationModeTapDescription": "双击 Globe 等单个按键开始免提听写，再按一下结束。组合键按一下即可开始或结束。",
+        "description": "用于开始和停止听写的按键",
         "resetToDefault": "重置为 {{hotkey}}",
         "title": "听写快捷键",
-        "activationModeDescription": "快捷键如何开始和结束听写"
+        "activationModeDescription": "快捷键如何开始和结束听写",
+        "toggle": "单击切换",
+        "theHotkey": "快捷键",
+        "activationModeDoubleTapDescription": "双击 {{hotkey}} 开始免提听写，再按一下结束。",
+        "activationModeToggleDescription": "按一下 {{hotkey}} 开始，再按一下结束。"
       },
       "microphone": {
         "description": "选择用于听写的输入设备",
@@ -109,30 +113,35 @@
     "permissions": {
       "accessibilityDescription": "转录后自动粘贴需要此权限",
       "accessibilityTitle": "辅助功能",
-      "description": "测试和管理 Whisper 正常运行所需的系统权限",
+      "description": "Whisper 需要这些权限来听取语音并自动粘贴",
       "microphoneDescription": "录制您的声音用于听写和转录",
       "microphoneTitle": "麦克风",
       "resetAccessibility": {
-        "description": "这将从辅助功能权限中移除 Whisper。你需要在系统设置 > 隐私与安全 > 辅助功能中重新授权。",
+        "description": "Whisper 将从“隐私与安全性 › 辅助功能”中移除，随后 macOS 会请你重新开启。重新开启前，自动粘贴无法使用。",
         "label": "重置辅助功能权限",
-        "rowDescription": "重新安装后自动粘贴失效时，移除并重新添加 Whisper",
-        "title": "重置辅助功能权限"
+        "rowDescription": "更新后自动粘贴失效时，移除 Whisper 的授权记录，让 macOS 重新授权",
+        "title": "重置辅助功能权限？",
+        "action": "重置…",
+        "confirm": "重置权限",
+        "done": "已重置辅助功能权限",
+        "doneDescription": "在系统设置中重新开启 Whisper，即可恢复自动粘贴。",
+        "failed": "无法重置辅助功能权限",
+        "failedDescription": "请在系统设置中选中 Whisper，点 − 移除，再重新添加。"
       },
       "grantAccess": "授予访问权限",
       "granted": "已授权",
       "title": "权限",
-      "troubleshoot": "排查问题",
       "troubleshootingTitle": "问题排查"
     },
     "privacy": {
       "dataRetention": "保存历史记录",
-      "dataRetentionDescription": "将转录和音频本地保存到历史记录中。禁用后，转录内容会被粘贴但不会被保存。",
-      "transcriptRetention": "转录保留",
-      "transcriptRetentionDescription": "在此期限后自动删除已保存的转录、其音频及其 Insights 计数。",
+      "dataRetentionDescription": "把转录内容保存到这台 Mac 的历史记录中。关闭后，听写内容只粘贴、不保存。",
+      "transcriptRetention": "转录保留时长",
+      "transcriptRetentionDescription": "过期的转录会连同录音和 Insights 计数一起删除",
       "transcriptRetentionForever": "永久",
-      "audioRetention": "音频保留",
-      "audioRetentionDescription": "在本设备上保存听写音频，以便重新转录。保留期限到期后自动删除。",
-      "audioRetentionDisabled": "已禁用",
+      "audioRetention": "录音",
+      "audioRetentionDescription": "在这台 Mac 上保留已保存听写的录音，以便重新转录",
+      "audioRetentionDisabled": "不保留",
       "retentionDays_one": "{{count}} 天",
       "retentionDays_other": "{{count}} 天",
       "audioStorageUsage": "存储用量",
@@ -144,25 +153,27 @@
       "clearAudioTitle": "删除所有音频？",
       "clearAudioDescription": "将永久删除 {{count}} 个录音（{{size}}）。转录内容仍会保留在历史记录中。",
       "clearAudioConfirm": "删除音频",
-      "audioCleared": "已删除 {{count}} 个音频文件（{{size}}）"
+      "audioCleared": "已删除 {{count}} 个音频文件（{{size}}）",
+      "needsHistory": "开启“保存历史记录”后可用"
     },
     "prompts": {
       "title": "提示词工作室"
     },
     "speechToText": {
-      "title": "语音转文字",
-      "sharedDescription": "听写与文件转录共用此配置。",
-      "serverUrlHelp": "OpenAI 兼容的语音转文字服务（如 vLLM、speaches）的基础地址，通常以 /v1 结尾；填完整的接口地址也会自动截成基础地址。",
+      "sharedDescription": "用于转录听写和上传文件的 OpenAI 兼容服务",
+      "serverUrlHelp": "语音转文字服务（如 speaches、vLLM）的基础地址，通常以 /v1 结尾；填完整的接口地址也会自动截成基础地址。",
       "connection": "连接",
-      "connectionIdle": "检查 Whisper 能否连接到此服务器。",
+      "connectionIdle": "检查 Whisper 能否连接到此服务器",
       "connectionChecking": "正在检查…",
       "connected": "已连接",
       "connectedWithModel": "已连接，模型可用",
       "connectedModelMissing": "已连接，但服务器没有列出此模型",
-      "testConnection": "测试连接"
+      "testConnection": "测试连接",
+      "serverTitle": "服务器",
+      "modelHelp": "服务器使用的模型名称。点“测试连接”可列出它提供的模型。",
+      "serverModels": "此服务器上的模型"
     },
     "llms": {
-      "title": "文本整理",
       "server": {
         "title": "服务器",
         "description": "用于整理听写文本的 OpenAI 兼容服务"
@@ -247,7 +258,7 @@
       "empty": "暂无转录记录",
       "emptyDescription": "在任意应用中按下快捷键开始说话。每条转录都会私密地保存在你的设备上。",
       "sectionTitle": "转录记录",
-      "dataRetentionDisabled": "数据保留已关闭。转录和音频不会保存到历史记录。",
+      "dataRetentionDisabled": "历史记录已关闭，新的听写不会保存。",
       "press": "按下",
       "toStart": "开始",
       "dateGroups": {
@@ -283,21 +294,20 @@
       "apiKeyOptional": "API 密钥",
       "apiKeyHelp": "可选，将作为 Bearer token 发送给文本整理服务器。",
       "applyAndRefresh": "应用并刷新",
-      "queryPrefix": "我们将查询",
-      "querySuffix": "获取可用模型。",
-      "modelsReloadHint": "当你离开 URL 输入框或点击“应用并刷新”时，模型列表将重新加载。",
+      "queryPrefix": "模型列表来自",
+      "modelsReloadHint": "离开 URL 输入框或点击“应用并刷新”后，模型列表会重新加载。",
       "enterEndpoint": "请在上方输入端点 URL 以加载模型。",
-      "fetchingModels": "正在从端点获取模型列表...",
+      "fetchingModels": "正在加载模型…",
       "noModels": "未返回任何模型，请检查端点 URL。",
       "unableToLoadModels": "无法从端点加载模型。",
-      "selectModelHint": "尚未选择模型 — 请从下方列表中选择一个。",
+      "selectModelHint": "请从下方列表中选择一个模型。",
       "columnTag": "标签",
       "columnOwner": "所有者",
       "errorDetails": "详细信息"
     },
     "disableThinking": {
-      "label": "禁用思考输出",
-      "help": "跳过推理令牌以获得更清晰的输出。推荐用于清理。某些服务器会忽略此提示。"
+      "label": "跳过模型推理",
+      "help": "输出更快、更干净。部分服务器会忽略此设置。"
     },
     "selfHosted": {
       "endpointHelp": "任何支持 OpenAI Chat Completions 的服务都可以。点下面的服务填入默认地址，服务跑在别的机器上时再改主机名。"
@@ -348,12 +358,11 @@
     "clickToChangeLower": "点击更改",
     "clickToSet": "点击设置快捷键",
     "fnCaptureHint": "按下一个键进行组合，或松开以使用 Globe",
-    "globe": "Globe",
     "hotkeyLabel": "快捷键",
     "keyHint": "+ 按键",
     "recording": "录制中",
     "tryShortcut": "试试 ⌘⇧K",
-    "addAnother": "添加其他快捷键",
+    "addAnother": "添加快捷键",
     "duplicate": "已添加",
     "singleModifierNeedsRightSide": "{{key}} 单独不能作为快捷键。请按 {{alternative}}，或再加一个按键。",
     "rowLabel": "听写快捷键 {{hotkey}}。按下以更改。",
@@ -392,8 +401,10 @@
     "defaultTestInput": "嗯请在周四不对周五之前把报告发给我",
     "dialogs": {
       "reset": {
-        "description": "提示词已重置为默认值。",
-        "title": "重置完成"
+        "description": "你的自定义提示词将被替换，且无法撤销。",
+        "title": "恢复为默认提示词？",
+        "confirm": "恢复默认",
+        "done": "已恢复为默认提示词"
       },
       "saved": {
         "description": "自定义提示词将用于文本整理。",
@@ -403,7 +414,7 @@
     "edit": {
       "cautionLabel": "注意",
       "cautionTextPrefix": "修改提示词会影响转录文本的整理结果。",
-      "placeholder": "输入你的自定义系统提示词..."
+      "placeholder": "输入你的自定义系统提示词…"
     },
     "tabs": {
       "customize": "自定义",
@@ -411,15 +422,15 @@
       "view": "查看"
     },
     "test": {
-      "disabledReasoning": "请在设置中启用文本整理，然后测试提示词。",
+      "disabledReasoning": "请先在上方开启文本整理，再测试此提示词。",
       "failed": "测试失败：{{error}}",
       "inputLabel": "输入",
-      "inputPlaceholder": "输入要测试的文本...",
+      "inputPlaceholder": "输入要测试的文本…",
       "modelLabel": "模型",
       "noModelSelected": "未选择模型",
       "none": "无",
       "outputLabel": "输出",
-      "processing": "处理中...",
+      "processing": "处理中…",
       "run": "运行测试",
       "noEndpoint": "请在设置中填写文本整理服务地址。"
     },
