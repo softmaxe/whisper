@@ -267,7 +267,14 @@ pub fn run() {
         if let Err(err) = open_pill_window(cx) {
             log::error!("failed to open the recording pill window: {err}");
         }
-        start_hotkeys(cx);
+        // A dev scene is for screenshots; it leaves the shortcut to the real app.
+        #[cfg(debug_assertions)]
+        let dev_scene = ui::dev_scene::scene().is_some();
+        #[cfg(not(debug_assertions))]
+        let dev_scene = false;
+        if !dev_scene {
+            start_hotkeys(cx);
+        }
         #[cfg(debug_assertions)]
         {
             let task = cx.spawn(async |cx| {
