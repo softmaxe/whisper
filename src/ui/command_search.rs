@@ -397,7 +397,7 @@ impl Render for CommandSearch {
                     .border_color(p.foreground.opacity(0.07))
                     .bg(p.foreground.opacity(0.025))
                     .child(hint(&["↑", "↓"], t("commandSearch.footer.navigate")))
-                    .child(hint(&["↵"], t("commandSearch.footer.open")))
+                    .child(hint(&["↩"], t("commandSearch.footer.open")))
                     .child(hint(&["Esc"], t("commandSearch.footer.dismiss"))),
             )
             .focus_trap("command-search-focus-trap", &trap);

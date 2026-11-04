@@ -949,7 +949,7 @@ pub fn nav_row(
     let hover_fg = p.foreground;
     div()
         .id(id.clone())
-        .keyboard_focusable(id, Role::Tab, label.clone(), cx)
+        .keyboard_focusable(id.clone(), Role::Tab, label.clone(), cx)
         .aria_selected(active)
         .flex()
         .items_center()
@@ -975,10 +975,15 @@ pub fn nav_row(
                     .shadow(vec![drop(0., 1., 2., 0.05)])
             }
         })
+        .group(id.clone())
         .when(!active, |d| {
             d.hover(move |s| s.bg(hover_bg).text_color(hover_fg))
         })
-        .child(icon(icon_name, 16., icon_color))
+        // The icon brightens with the label on hover.
+        .child(
+            icon(icon_name, 16., icon_color)
+                .group_hover(id.clone(), move |s| s.text_color(hover_fg)),
+        )
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
@@ -1085,6 +1090,40 @@ pub fn empty_state_icon(name: &str, p: &Palette) -> Div {
         .bg(p.card)
         .shadow(vec![drop(0., 1., 2., 0.05)])
         .child(icon(name, 16., p.muted_foreground))
+}
+
+/// The one empty-state layout every page uses: the icon tile, a semibold
+/// title and a short muted body, centered. Callers append actions or hints.
+pub fn empty_state(
+    icon_name: &str,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    p: &Palette,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .text_center()
+        .child(empty_state_icon(icon_name, p))
+        .child(
+            div()
+                .mt(px(16.))
+                .text_size(px(TEXT_TITLE))
+                .line_height(px(LINE_TITLE))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.foreground)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .mt(px(4.))
+                .max_w(px(340.))
+                .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
+                .text_color(p.muted_foreground)
+                .child(body.into()),
+        )
 }
 
 /// A `<kbd>` chip: a flat 20 px tint, no border or shadow.

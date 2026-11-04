@@ -14,14 +14,14 @@ use crate::app_state::AppState;
 use crate::backend;
 
 use super::components::{
-    KeyboardFocusable, empty_state_icon, f32_tx, icon, kbd, keyed_focus_handle, page_container,
+    KeyboardFocusable, empty_state, f32_tx, icon, kbd, keyed_focus_handle, page_container,
     retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
 };
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
-    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE,
-    Palette, PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING,
-    TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, motion, progress, tabular_nums,
+    DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
+    PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING, TEXT_SMALL,
+    ease_out, ease_snap, motion, progress, tabular_nums,
 };
 
 /// Width of the clock column; fits "12:59 PM" so the text column never shifts.
@@ -1179,6 +1179,11 @@ fn render_empty_with_hotkey(hotkey: &str, retention: bool, p: &Palette) -> AnyEl
 /// With History off, the empty state says why nothing will appear rather
 /// than promising that transcripts will.
 fn empty_card(keys: Div, retention: bool, p: &Palette) -> AnyElement {
+    let body = t(if retention {
+        "controlPanel.history.emptyDescription"
+    } else {
+        "controlPanel.history.emptyDescriptionOff"
+    });
     div()
         .flex()
         .flex_col()
@@ -1186,30 +1191,7 @@ fn empty_card(keys: Div, retention: bool, p: &Palette) -> AnyElement {
         .min_h(px(256.))
         .px(px(40.))
         .py(px(48.))
-        .child(empty_state_icon("mic", p))
-        .child(
-            div()
-                .mt(px(16.))
-                .text_size(px(TEXT_TITLE))
-                .line_height(px(LINE_TITLE))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(p.foreground)
-                .child(t("controlPanel.history.empty")),
-        )
-        .child(
-            div()
-                .mt(px(4.))
-                .max_w(px(320.))
-                .text_center()
-                .text_size(px(TEXT_SMALL))
-                .line_height(px(LINE_SMALL))
-                .text_color(p.muted_foreground)
-                .child(t(if retention {
-                    "controlPanel.history.emptyDescription"
-                } else {
-                    "controlPanel.history.emptyDescriptionOff"
-                })),
-        )
+        .child(empty_state("mic", t("controlPanel.history.empty"), body, p))
         .child(
             div()
                 .mt(px(20.))

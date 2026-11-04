@@ -307,7 +307,7 @@ pub const PAGE_TOP: f32 = 24.;
 
 /// A comfortable long-form reading measure. The canvas may be wider, but
 /// transcripts and their metadata stay in one scan-friendly column.
-pub const READING_MAX_WIDTH: f32 = 680.;
+pub const READING_MAX_WIDTH: f32 = 620.;
 
 /// Motion durations, in ms. Five steps replace one-off timings:
 ///
