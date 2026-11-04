@@ -294,6 +294,13 @@ pub fn tabular_nums() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
 
+/// Every main-window page (Home, Insights, Upload, Dictionary) sits in one
+/// centered column of this width with the same side gutter and top inset,
+/// so content starts at the same x on every page.
+pub const PAGE_MAX_WIDTH: f32 = 960.;
+pub const PAGE_GUTTER: f32 = 32.;
+pub const PAGE_TOP: f32 = 24.;
+
 /// A comfortable long-form reading measure. The canvas may be wider, but
 /// transcripts and their metadata stay in one scan-friendly column.
 pub const READING_MAX_WIDTH: f32 = 736.;

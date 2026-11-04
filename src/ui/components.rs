@@ -8,8 +8,9 @@ use gpui_kit::*;
 
 use super::theme::{
     CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE,
-    NAV_ROW_HEIGHT, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY,
-    TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
+    NAV_ROW_HEIGHT, PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG,
+    RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css,
+    ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -573,6 +574,17 @@ pub fn section_header(
                     .child(desc),
             )
         })
+}
+
+/// The shared page column: centered, [`PAGE_MAX_WIDTH`] wide, with the
+/// standard gutter and top inset. Pages add their own bottom padding.
+pub fn page_container() -> Div {
+    div()
+        .w_full()
+        .max_w(px(PAGE_MAX_WIDTH))
+        .mx_auto()
+        .px(px(PAGE_GUTTER))
+        .pt(px(PAGE_TOP))
 }
 
 /// A rounded card with a soft border on a faint fill: the frame shared by
