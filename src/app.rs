@@ -268,6 +268,16 @@ pub fn run() {
             log::error!("failed to open the recording pill window: {err}");
         }
         start_hotkeys(cx);
+        #[cfg(debug_assertions)]
+        {
+            let task = cx.spawn(async |cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(800))
+                    .await;
+                cx.update(ui::dev_scene::apply_pill);
+            });
+            task.detach();
+        }
         cx.background_spawn(async { crate::native::mic::watch_laptop_lid() })
             .detach();
         tray::init(cx);

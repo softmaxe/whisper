@@ -112,7 +112,8 @@ impl ControlPanel {
             },
         )
         .detach();
-        Self {
+        #[allow(unused_mut)]
+        let mut this = Self {
             active: PanelView::Home,
             sidebar_collapsed: collapsed,
             peek: false,
@@ -125,6 +126,22 @@ impl ControlPanel {
             upload,
             settings: None,
             scroll,
+        };
+        #[cfg(debug_assertions)]
+        this.apply_dev_scene(window, cx);
+        this
+    }
+
+    #[cfg(debug_assertions)]
+    fn apply_dev_scene(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use super::dev_scene::{Scene, scene};
+        match scene() {
+            Some(Scene::View(view)) => self.active = view,
+            Some(Scene::Settings(section)) => self.open_settings(Some(section), window, cx),
+            Some(Scene::Search) => window.on_next_frame(|window, cx| {
+                window.dispatch_action(Box::new(OpenSearch), cx)
+            }),
+            _ => {}
         }
     }
 
