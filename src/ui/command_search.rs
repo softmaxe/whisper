@@ -13,7 +13,11 @@ use crate::text::format::{RelativeTime, relative_time};
 
 use crate::app_state::AppState;
 
-use super::components::{backdrop, dialog_shadow, icon, kbd};
+use gpui_kit::base::FocusTrapElement;
+
+use super::components::{
+    KeyboardFocusable, backdrop, dialog_shadow, icon, kbd, keyed_focus_handle, text_tooltip,
+};
 use super::overlays::close_custom;
 use super::theme::{
     CONTROL_HEIGHT, FONT_VOICE, PaletteExt, RADIUS_2XL, RADIUS_LG, TEXT_BODY, TEXT_SMALL,
@@ -194,10 +198,12 @@ impl Render for CommandSearch {
                     .justify_center()
                     .text_size(px(TEXT_SMALL))
                     .text_color(p.muted_foreground)
-                    .child(if query.trim().is_empty() {
-                        t("commandSearch.emptyState")
-                    } else {
+                    .child(if !query.trim().is_empty() {
                         t("commandSearch.noResults")
+                    } else if AppState::global(cx).read(cx).history.is_empty() {
+                        t("controlPanel.history.empty")
+                    } else {
+                        t("commandSearch.emptyState")
                     }),
             );
         } else {
@@ -228,7 +234,7 @@ impl Render for CommandSearch {
                 list = list.child(
                     div()
                         .id(("search-row", idx))
-                        .role(Role::ListItem)
+                        .role(Role::ListBoxOption)
                         .aria_selected(selected)
                         .flex()
                         .items_center()
@@ -285,8 +291,11 @@ impl Render for CommandSearch {
             }
         }
 
+        let trap = keyed_focus_handle("command-search-trap".into(), cx);
         let card = div()
             .id("command-search")
+            .role(Role::Dialog)
+            .aria_label(t("commandSearch.placeholder"))
             .occlude()
             .w(px(576.))
             .rounded(px(RADIUS_2XL))
@@ -318,10 +327,17 @@ impl Render for CommandSearch {
                         d.child(
                             div()
                                 .id("search-clear")
+                                .keyboard_focusable(
+                                    "search-clear",
+                                    Role::Button,
+                                    t("commandSearch.clear"),
+                                    cx,
+                                )
+                                .tooltip(text_tooltip(t("commandSearch.clear")))
                                 .flex()
                                 .items_center()
                                 .justify_center()
-                                .size(px(24.))
+                                .size(px(28.))
                                 .rounded(px(RADIUS_LG))
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(p.foreground.opacity(0.06)))
@@ -332,7 +348,7 @@ impl Render for CommandSearch {
                         )
                     }),
             )
-            .child(list)
+            .child(list.role(Role::ListBox))
             .child(
                 div()
                     .flex()
@@ -346,7 +362,8 @@ impl Render for CommandSearch {
                     .child(hint(&["↑", "↓"], t("commandSearch.footer.navigate")))
                     .child(hint(&["↵"], t("commandSearch.footer.open")))
                     .child(hint(&["Esc"], t("commandSearch.footer.dismiss"))),
-            );
+            )
+            .focus_trap("command-search-focus-trap", &trap);
 
         let content_left = if AppState::settings(cx).sidebar_collapsed {
             0.

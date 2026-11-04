@@ -11,8 +11,8 @@ use gpui_kit::*;
 use gpui_kit::base::FocusTrapElement;
 
 use super::components::{
-    Button, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, icon, keyed_focus_handle,
-    text_tooltip,
+    Button, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, focus_ring, icon,
+    keyed_focus_handle, text_tooltip,
 };
 use super::theme::{
     DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
@@ -478,12 +478,22 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             })
         });
     }
+    // Close-button focus handles, fetched before the toasts are borrowed.
+    let ids: Vec<u64> = overlays.read(cx).toasts.iter().map(|t| t.id).collect();
+    let close_handles: Vec<FocusHandle> = ids
+        .iter()
+        .map(|id| keyed_focus_handle(("toast-close", *id as usize).into(), cx))
+        .collect();
+    let close_label = crate::i18n::t("common.close");
     let o = overlays.read(cx);
     if o.toasts.is_empty() {
         return None;
     }
     let p = cx.palette();
+    // A polite live region, so VoiceOver reads each toast as it arrives.
     let mut stack = div()
+        .id("toast-stack")
+        .role(Role::Status)
         .absolute()
         .bottom(px(24.))
         .right(px(24.))
@@ -491,7 +501,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .flex_col()
         .gap(px(8.))
         .w(px(360.));
-    for active in &o.toasts {
+    for (active, close_handle) in o.toasts.iter().zip(close_handles) {
         let id = active.id;
         let toast = &active.toast;
         let (type_icon, progress) = match toast.variant {
@@ -515,6 +525,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let overlays_hover = overlays.clone();
         let group: SharedString = format!("toast-{id}").into();
         let close_hover = p.hover_wash(0.08);
+        let close_focused = close_handle.is_focused(window);
         let card = div()
             .id(("toast", id as usize))
             .group(group.clone())
@@ -592,16 +603,22 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             )
             .child(
                 div()
-                    .id("toast-close")
+                    .id(("toast-close", id as usize))
+                    .track_focus(&close_handle.tab_stop(true))
+                    .role(Role::Button)
+                    .aria_label(close_label.clone())
+                    .focus_visible(move |s| s.shadow(focus_ring(&p)))
                     .absolute()
-                    .top(px(8.))
-                    .right(px(8.))
-                    .size(px(24.))
+                    .top(px(6.))
+                    .right(px(6.))
+                    .size(px(28.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(RADIUS_SM))
-                    .opacity(0.)
+                    // Hidden until the toast is hovered or the button holds
+                    // keyboard focus.
+                    .opacity(if close_focused { 1. } else { 0. })
                     .group_hover(group, |s| s.opacity(1.))
                     .hover(move |s| s.bg(close_hover))
                     .cursor_pointer()

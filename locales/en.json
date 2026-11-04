@@ -273,7 +273,8 @@
       "clearAllErrorDescription": "Something went wrong. Please try again.",
       "copyRaw": "Copy raw transcript",
       "moreActions": "More actions",
-      "clearHistory": "Clear History…"
+      "clearHistory": "Clear History…",
+      "clearHistoryConfirm": "Clear History"
     }
   },
   "reasoning": {
@@ -691,7 +692,8 @@
     },
     "placeholder": "Search transcripts",
     "resultCount_one": "{{count}} result",
-    "resultCount_other": "{{count}} results"
+    "resultCount_other": "{{count}} results",
+    "clear": "Clear search"
   },
   "transcriptionPreview": {
     "recovery": {

@@ -270,7 +270,8 @@
       "rawTranscript": "原始转录",
       "copyRaw": "复制原始转录",
       "moreActions": "更多操作",
-      "clearHistory": "清空历史记录…"
+      "clearHistory": "清空历史记录…",
+      "clearHistoryConfirm": "清空历史记录"
     }
   },
   "reasoning": {
@@ -670,7 +671,8 @@
       "daysAgo": "{{count}} 天前"
     },
     "placeholder": "搜索转录",
-    "resultCount": "{{count}} 条结果"
+    "resultCount": "{{count}} 条结果",
+    "clear": "清除搜索"
   },
   "transcriptionPreview": {
     "recovery": {

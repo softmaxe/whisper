@@ -243,7 +243,7 @@ impl HistoryView {
     /// Asks before removing every transcript, its audio and the Insights
     /// counters. Reached from the top bar while Home shows.
     pub fn clear_all(cx: &mut App) {
-        let request = DialogRequest::confirm(
+        let mut request = DialogRequest::confirm(
             t("controlPanel.history.clearAllTitle"),
             Some(t("controlPanel.history.clearAllDescriptionDevice").into()),
             true,
@@ -267,6 +267,7 @@ impl HistoryView {
                 }
             },
         );
+        request.confirm_label = t("controlPanel.history.clearHistoryConfirm").into();
         show_dialog(request, cx);
     }
 
@@ -781,6 +782,12 @@ impl HistoryView {
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 match e.keystroke.key.as_str() {
                     "escape" => this.close_menu(id, window, cx),
+                    // Tab leaves the menu: close it so it never floats over
+                    // the page while focus is elsewhere.
+                    "tab" => {
+                        this.close_menu(id, window, cx);
+                        return;
+                    }
                     "down" => window.focus_next(cx),
                     "up" => window.focus_prev(cx),
                     _ => return,
