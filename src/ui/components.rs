@@ -21,15 +21,17 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
         .text_color(color)
 }
 
-/// The keyboard focus ring: a 2 px ring color halo hugging the element's
-/// corners, shown only when focus arrived from the keyboard.
+/// The keyboard focus ring: a 2 px ring color band just inside the
+/// element's edge, following its corners, shown only when focus arrived
+/// from the keyboard. It is inset because GPUI paints an outer shadow as a
+/// filled shape under the element, which would flood a transparent control.
 pub fn focus_ring(p: &Palette) -> Vec<BoxShadow> {
     vec![BoxShadow {
-        color: p.ring.opacity(if p.dark { 0.85 } else { 0.7 }),
+        color: p.ring.opacity(if p.dark { 0.9 } else { 0.75 }),
         offset: point(px(0.), px(0.)),
         blur_radius: px(0.),
         spread_radius: px(2.),
-        inset: false,
+        inset: true,
     }]
 }
 
