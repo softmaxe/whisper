@@ -422,8 +422,8 @@ impl ControlPanel {
                     .id("search-trigger")
                     .keyboard_focusable(
                         "panel-search-trigger",
-                        Role::SearchInput,
-                        t("commandSearch.placeholder"),
+                        Role::Button,
+                        format!("{} (⌘K)", t("commandSearch.placeholder")),
                         cx,
                     )
                     .flex_none()
@@ -646,6 +646,35 @@ impl Render for ControlPanel {
             window,
             cx,
         );
+        let mut sidebar_host = Some(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(offset))
+                .when(peeking, |d| {
+                    d.shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.2),
+                        offset: point(px(10.), px(0.)),
+                        blur_radius: px(40.),
+                        spread_radius: px(-18.),
+                        inset: false,
+                    }])
+                })
+                .id("sidebar-host")
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    if !this.sidebar_collapsed {
+                        return;
+                    }
+                    if *hovered {
+                        this.show_peek(cx);
+                    } else {
+                        this.hide_peek(cx);
+                    }
+                }))
+                .child(sidebar)
+                .into_any_element(),
+        );
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();
         let dialog = render_dialog(window, cx);
@@ -670,6 +699,7 @@ impl Render for ControlPanel {
                     .flex_1()
                     .flex()
                     .overflow_hidden()
+                    .children((!collapsed).then(|| sidebar_host.take()).flatten())
                     .child(div().flex_none().w(px(spacer)))
                     .child(
                         div().flex_1().flex().flex_col().overflow_hidden().child(
@@ -721,36 +751,10 @@ impl Render for ControlPanel {
                                 ),
                         ),
                     )
-                    // Painted after the main column so the peeking sidebar
-                    // overlays it.
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(px(offset))
-                            .when(peeking, |d| {
-                                d.shadow(vec![BoxShadow {
-                                    color: hsla(0., 0., 0., 0.2),
-                                    offset: point(px(10.), px(0.)),
-                                    blur_radius: px(40.),
-                                    spread_radius: px(-18.),
-                                    inset: false,
-                                }])
-                            })
-                            .id("sidebar-host")
-                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                if !this.sidebar_collapsed {
-                                    return;
-                                }
-                                if *hovered {
-                                    this.show_peek(cx);
-                                } else {
-                                    this.hide_peek(cx);
-                                }
-                            }))
-                            .child(sidebar),
-                    ),
+                    // A peeking sidebar paints after the main column to
+                    // overlay it; a docked one comes first so Tab reaches
+                    // navigation before the page.
+                    .when(collapsed, |d| d.children(sidebar_host.take())),
             )
             .when_some(settings_modal, |d, modal| d.child(modal))
             .children(custom)

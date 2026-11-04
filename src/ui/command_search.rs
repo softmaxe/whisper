@@ -329,7 +329,9 @@ impl Render for CommandSearch {
             .role(Role::Dialog)
             .aria_label(t("commandSearch.placeholder"))
             .occlude()
-            .w(px(576.))
+            // Narrow windows shrink the palette instead of clipping it.
+            .w_full()
+            .max_w(px(576.))
             .rounded(px(RADIUS_2XL))
             .border_1()
             .border_color(p.border)

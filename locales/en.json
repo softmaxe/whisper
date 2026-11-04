@@ -288,7 +288,8 @@
       "clearHistoryConfirm": "Clear History",
       "showRaw": "Show raw transcript",
       "hideRaw": "Hide raw transcript",
-      "pageActions": "History actions"
+      "pageActions": "History actions",
+      "emptyDescriptionOff": "History is off, so new dictations are pasted but not saved here. Turn on Save history in Settings to keep them."
     }
   },
   "reasoning": {

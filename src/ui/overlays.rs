@@ -114,6 +114,8 @@ struct ActiveToast {
     /// When the countdown last resumed; `None` while the pointer rests on
     /// the toast, so a message being read never disappears under it.
     running_since: Option<Instant>,
+    /// Paused because its close button holds keyboard focus.
+    held_by_focus: bool,
     closing: bool,
 }
 
@@ -292,6 +294,7 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
             duration,
             banked: Duration::ZERO,
             running_since: Some(Instant::now()),
+            held_by_focus: false,
             closing: false,
         });
         // Keep the toast stack short.
@@ -486,6 +489,19 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .map(|id| keyed_focus_handle(("toast-close", *id as usize).into(), cx))
         .collect();
     let close_label = crate::i18n::t("common.close");
+    // A focused close button holds its toast, as a resting pointer does.
+    let focused: Vec<bool> = close_handles.iter().map(|h| h.is_focused(window)).collect();
+    overlays.update(cx, |o, _| {
+        for (t, focused) in o.toasts.iter_mut().zip(&focused) {
+            if *focused && !t.held_by_focus {
+                t.held_by_focus = true;
+                t.set_paused(true);
+            } else if !*focused && t.held_by_focus {
+                t.held_by_focus = false;
+                t.set_paused(false);
+            }
+        }
+    });
     let o = overlays.read(cx);
     if o.toasts.is_empty() {
         return None;

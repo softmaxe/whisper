@@ -79,7 +79,7 @@ pub fn copy_with_toast(text: String, cx: &mut App) {
         Toast::new(t("controlPanel.history.copiedTitle"))
             .description(t("controlPanel.history.copiedDescription"))
             .variant(ToastVariant::Success)
-            .duration(Duration::from_millis(2000)),
+            .duration(Duration::from_millis(4000)),
         cx,
     );
 }
@@ -256,7 +256,7 @@ impl HistoryView {
                     show_toast(
                         Toast::new(t("controlPanel.history.clearAllSuccess"))
                             .variant(ToastVariant::Success)
-                            .duration(Duration::from_millis(2000)),
+                            .duration(Duration::from_millis(4000)),
                         cx,
                     );
                 } else {
@@ -916,7 +916,7 @@ impl Render for HistoryView {
         }
 
         if history.is_empty() && pending.is_none() {
-            content = content.child(render_empty_with_hotkey(&hotkey, &p));
+            content = content.child(render_empty_with_hotkey(&hotkey, retention, &p));
         } else {
             // Group consecutive rows by local day.
             let mut groups: Vec<(String, Vec<TranscriptionItem>)> = Vec::new();
@@ -1007,7 +1007,7 @@ fn spotlight_level(elapsed: Duration, reduce_motion: bool) -> f32 {
     fade_in * (1. - fade_out)
 }
 
-fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
+fn render_empty_with_hotkey(hotkey: &str, retention: bool, p: &Palette) -> AnyElement {
     let mut keys = div().flex().items_center().gap(px(4.));
     for (i, key) in crate::text::hotkeys::parse_hotkey_list(hotkey)
         .iter()
@@ -1021,10 +1021,12 @@ fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
             p,
         ));
     }
-    empty_card(keys, p)
+    empty_card(keys, retention, p)
 }
 
-fn empty_card(keys: Div, p: &Palette) -> AnyElement {
+/// With History off, the empty state says why nothing will appear rather
+/// than promising that transcripts will.
+fn empty_card(keys: Div, retention: bool, p: &Palette) -> AnyElement {
     div()
         .flex()
         .flex_col()
@@ -1050,7 +1052,11 @@ fn empty_card(keys: Div, p: &Palette) -> AnyElement {
                 .text_size(px(TEXT_SMALL))
                 .line_height(px(LINE_SMALL))
                 .text_color(p.muted_foreground)
-                .child(t("controlPanel.history.emptyDescription")),
+                .child(t(if retention {
+                    "controlPanel.history.emptyDescription"
+                } else {
+                    "controlPanel.history.emptyDescriptionOff"
+                })),
         )
         .child(
             div()

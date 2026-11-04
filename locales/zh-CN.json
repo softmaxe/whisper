@@ -285,7 +285,8 @@
       "clearHistoryConfirm": "清空历史记录",
       "showRaw": "显示原始转录",
       "hideRaw": "隐藏原始转录",
-      "pageActions": "历史记录操作"
+      "pageActions": "历史记录操作",
+      "emptyDescriptionOff": "历史记录已关闭，新的听写只会粘贴，不会保存在这里。在设置中打开“保存历史记录”即可保留。"
     }
   },
   "reasoning": {
