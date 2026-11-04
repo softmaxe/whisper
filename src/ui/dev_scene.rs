@@ -9,6 +9,7 @@ use gpui_kit::*;
 
 use crate::app_state::AppState;
 use crate::dictation::{Dictation, DictationNotice};
+use crate::i18n::t;
 
 use super::control_panel::PanelView;
 use super::settings_modal::SettingsSection;
@@ -61,8 +62,8 @@ pub fn apply_pill(cx: &mut App) {
         }
         "error" => Dictation::global(cx).update(cx, |_, cx| {
             cx.emit(DictationNotice::Error {
-                title: "Transcription failed".into(),
-                description: "The speech server did not answer within 30 seconds.".into(),
+                title: t("dictation.errorTitles.transcriptionTimeout"),
+                description: t("dictation.errorDescriptions.transcriptionTimeout"),
             })
         }),
         _ => Dictation::global(cx).update(cx, |_, cx| {

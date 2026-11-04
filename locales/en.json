@@ -307,6 +307,14 @@
       "title": "Transcription not pasted",
       "description": "Dictation stopped while the shortcut was still held. The text is on your clipboard.",
       "descriptionClipboardFailed": "Dictation stopped while the shortcut was still held, and the text couldn’t be copied to the clipboard."
+    },
+    "pill": {
+      "recording": "Recording",
+      "transcribing": "Transcribing",
+      "starting": "Starting microphone",
+      "finish": "Click to finish",
+      "cancel": "Cancel",
+      "dismiss": "Dismiss"
     }
   },
   "hotkeyInput": {
@@ -610,12 +618,10 @@
   "transcriptionPreview": {
     "recovery": {
       "title": "Transcription ready",
-      "pasteFailed": "Could not paste automatically. Copy the text below.",
-      "pasteFailedCopied": "Could not paste automatically. Text copied to clipboard.",
-      "copyFailed": "Copy failed. Try again or select the text to copy it.",
-      "copy": "Copy text",
-      "copied": "Copied",
-      "pasteHint": "⌘V to paste"
+      "pasteFailed": "Couldn’t paste into the active app.",
+      "copyFailed": "Copy failed. Try again.",
+      "copy": "Copy Text",
+      "copiedHint": "Copied. Press ⌘V to paste."
     }
   }
 }

@@ -4,9 +4,14 @@
 //! the screen. It has no idle presence: it appears for a Dictation and its
 //! feedback and orders out afterwards. Clicks fall through everywhere except
 //! over the pill and its panels.
+//!
+//! The pill, its panels and its hints share one dark HUD surface in both
+//! themes, like the system volume HUD, so they read as one component over any
+//! wallpaper or app. The window never takes keyboard focus: Escape reaches it
+//! through a global shortcut registered only while something can take it.
 
 use std::cell::RefCell;
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -21,10 +26,11 @@ use crate::backend;
 use crate::dictation::{Dictation, DictationNotice};
 use crate::macos;
 
-use super::components::{f32_tx, icon};
+use super::components::{KeyboardFocusable, f32_tx, icon, kbd};
 use super::theme::{
-    DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, PaletteExt,
-    TEXT_READING, ease_out, ease_overshoot, ease_snap, progress,
+    DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
+    RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_READING, TEXT_SMALL, ease_out, ease_overshoot,
+    ease_snap, progress,
 };
 
 pub const WINDOW_SIZE: Size<Pixels> = Size {
@@ -33,16 +39,23 @@ pub const WINDOW_SIZE: Size<Pixels> = Size {
 };
 const DOCK_INSET: f32 = 12.;
 const SCREEN_MARGIN: f32 = 4.;
-const PILL_W: f32 = 84.;
+const PILL_W: f32 = 92.;
 const PILL_H: f32 = 30.;
 const CANCEL_SIZE: f32 = 28.;
 const CANCEL_GAP: f32 = 8.;
 const TOAST_W: f32 = 300.;
+/// Inner padding of the error and recovery panels.
+const PANEL_PAD: f32 = 16.;
+/// The dismiss button of a panel, ringed by its countdown.
+const DISMISS_SIZE: f32 = 24.;
 const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
 const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
 const RESOLVE_EXIT_AT: u64 = 620;
-const RECOVERY_HIDE: Duration = Duration::from_millis(5000);
+/// The recovery panel holds the user's words; it stays longer while they
+/// still need to copy them than once they are on the clipboard.
+const RECOVERY_COPIED: Duration = Duration::from_millis(6000);
+const RECOVERY_UNCOPIED: Duration = Duration::from_millis(12_000);
 
 // Waveform constants.
 const BARS: usize = 10;
@@ -59,12 +72,25 @@ const LEVEL_CEIL_DB: f32 = -20.;
 const BREATH: f32 = 0.05;
 const RISE: f32 = 0.45;
 const FALL: f32 = 0.16;
+/// The record dot that says the microphone is live.
+const REC_DOT: f32 = 6.;
+const REC_GAP: f32 = 7.;
+/// The three-dot motif that replaces the bars while transcribing.
+const THINK_DOTS: usize = 3;
+const THINK_DOT: f32 = 4.;
+const THINK_GAP: f32 = 5.;
+
+/// The pill's surfaces always use the dark palette; see the module docs.
+fn hud() -> Palette {
+    Palette::dark()
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Motion {
+    /// Bars follow the input level.
     Live,
+    /// A dim highlight sweeps the bars while the microphone opens.
     Sweep,
-    Wave,
 }
 
 /// Maps an RMS level to 0..1 linearly in decibels between
@@ -94,8 +120,21 @@ fn sweep_opacity(index: usize, now_ms: f32) -> f32 {
     0.16 + 0.84 * (-(d * d) / 2.2).exp()
 }
 
-fn wave_phase(index: usize, now_ms: f32) -> f32 {
-    0.5 + 0.5 * (((now_ms - index as f32 * 69.) / 700.) * TAU).sin()
+/// Opacity of transcribing dot `index`: a highlight that walks left to right.
+fn think_opacity(index: usize, now_ms: f32, reduce: bool) -> f32 {
+    if reduce {
+        return 0.8;
+    }
+    let phase = ((now_ms / 1100.) - index as f32 * 0.18) * TAU;
+    0.3 + 0.7 * (0.5 + 0.5 * phase.sin()).powi(2)
+}
+
+/// The record dot's slow pulse; held steady when motion is reduced.
+fn rec_pulse(now_ms: f32, reduce: bool) -> f32 {
+    if reduce {
+        return 1.;
+    }
+    0.7 + 0.3 * (0.5 + 0.5 * ((now_ms / 1600.) * TAU).cos())
 }
 
 /// The pill's one-shot motion at an instant, layered over the waveform.
@@ -175,12 +214,56 @@ fn pill_motion(
     m
 }
 
+/// An auto-dismiss timer that stands still while the pointer rests on the
+/// pill's surfaces, so nothing leaves while it is being read.
+#[derive(Clone, Copy, Debug)]
+struct Countdown {
+    started: Instant,
+    paused_at: Option<Instant>,
+    duration: Duration,
+}
+
+impl Countdown {
+    fn new(duration: Duration, now: Instant) -> Self {
+        Self {
+            started: now,
+            paused_at: None,
+            duration,
+        }
+    }
+
+    fn elapsed(&self, now: Instant) -> Duration {
+        self.paused_at
+            .unwrap_or(now)
+            .saturating_duration_since(self.started)
+    }
+
+    fn set_paused(&mut self, paused: bool, now: Instant) {
+        match (paused, self.paused_at) {
+            (true, None) => self.paused_at = Some(now),
+            (false, Some(at)) => {
+                self.started += now.saturating_duration_since(at);
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// The share of the countdown still to run, from 1 down to 0.
+    fn remaining(&self, now: Instant) -> f32 {
+        (1. - self.elapsed(now).as_secs_f32() / self.duration.as_secs_f32()).clamp(0., 1.)
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        self.elapsed(now) >= self.duration
+    }
+}
+
 struct ErrorCard {
     title: String,
     description: String,
     transcript: Option<String>,
-    shown_at: Instant,
-    duration: Duration,
+    countdown: Countdown,
 }
 
 impl ErrorCard {
@@ -191,8 +274,7 @@ impl ErrorCard {
             title,
             description,
             transcript,
-            shown_at: Instant::now(),
-            duration,
+            countdown: Countdown::new(duration, Instant::now()),
         }
     }
 }
@@ -201,29 +283,49 @@ struct Recovery {
     text: String,
     copied: bool,
     copy_failed: bool,
-    shown_at: Instant,
+    countdown: Countdown,
+}
+
+impl Recovery {
+    fn new(text: String, copied: bool) -> Self {
+        let duration = if copied {
+            RECOVERY_COPIED
+        } else {
+            RECOVERY_UNCOPIED
+        };
+        Self {
+            text,
+            copied,
+            copy_failed: false,
+            countdown: Countdown::new(duration, Instant::now()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ToastKind {
+    Destructive,
+    Success,
+    Hint,
 }
 
 struct PillToast {
     title: String,
     description: Option<String>,
-    destructive: bool,
-    success: bool,
-    shown_at: Instant,
-    duration: Duration,
+    kind: ToastKind,
+    countdown: Countdown,
     undo_words: Option<Vec<String>>,
-    hint: bool,
 }
 
 /// Duration of the dictation error card, by message length.
 fn error_duration(title: &str, description: &str) -> Duration {
     let len = format!("{title} {description}").trim().chars().count();
     Duration::from_millis(if len <= 80 {
-        3000
-    } else if len <= 160 {
         4000
-    } else {
+    } else if len <= 160 {
         5000
+    } else {
+        6000
     })
 }
 
@@ -236,8 +338,8 @@ pub struct PillView {
     was_active: bool,
     error: Option<ErrorCard>,
     recovery: Option<Recovery>,
-    /// Whether Escape is registered for the open copy-recovery panel.
-    recovery_escape: bool,
+    /// Whether Escape is registered to dismiss the open error or recovery panel.
+    panel_escape: bool,
     toasts: Vec<PillToast>,
     shown: bool,
     regions: Rc<RefCell<Vec<Bounds<Pixels>>>>,
@@ -278,7 +380,7 @@ impl PillView {
             was_active: false,
             error: None,
             recovery: None,
-            recovery_escape: false,
+            panel_escape: false,
             toasts: Vec::new(),
             shown: false,
             regions: Rc::new(RefCell::new(Vec::new())),
@@ -375,9 +477,25 @@ impl PillView {
         } else if !want && self.shown {
             macos::order_out(window, cx);
             self.shown = false;
-            self.hovered = false;
+            self.set_hovered(false);
         }
         cx.notify();
+    }
+
+    /// Records whether the pointer rests on a surface and holds every
+    /// countdown still while it does.
+    fn set_hovered(&mut self, hovered: bool) {
+        self.hovered = hovered;
+        let now = Instant::now();
+        let countdowns = self
+            .error
+            .iter_mut()
+            .map(|e| &mut e.countdown)
+            .chain(self.recovery.iter_mut().map(|r| &mut r.countdown))
+            .chain(self.toasts.iter_mut().map(|t| &mut t.countdown));
+        for countdown in countdowns {
+            countdown.set_paused(hovered, now);
+        }
     }
 
     /// Polls the pointer so the transparent window only takes clicks over its
@@ -410,28 +528,28 @@ impl PillView {
         if !self.shown {
             return;
         }
-        // Expire timed surfaces.
+        // Expire timed surfaces. Paused countdowns never expire.
         let now = Instant::now();
         let before = (
             self.error.is_some(),
             self.recovery.is_some(),
             self.toasts.len(),
         );
-        let hovering_panel = self.hovered;
-        if let Some(error) = &self.error
-            && !hovering_panel
-            && now.duration_since(error.shown_at) > error.duration
+        if self
+            .error
+            .as_ref()
+            .is_some_and(|e| e.countdown.expired(now))
         {
             self.error = None;
         }
-        if let Some(recovery) = &self.recovery
-            && !hovering_panel
-            && now.duration_since(recovery.shown_at) > RECOVERY_HIDE
+        if self
+            .recovery
+            .as_ref()
+            .is_some_and(|r| r.countdown.expired(now))
         {
             self.recovery = None;
         }
-        self.toasts
-            .retain(|toast| now.duration_since(toast.shown_at) < toast.duration);
+        self.toasts.retain(|toast| !toast.countdown.expired(now));
         if before
             != (
                 self.error.is_some(),
@@ -450,7 +568,7 @@ impl PillView {
         let over = self.regions.borrow().iter().any(|r| r.contains(&local));
         macos::set_ignores_mouse_events(window, !over);
         if over != self.hovered {
-            self.hovered = over;
+            self.set_hovered(over);
             if !over {
                 self.drag_origin = None;
             }
@@ -458,10 +576,33 @@ impl PillView {
         }
     }
 
+    fn push_toast(
+        &mut self,
+        title: String,
+        description: Option<String>,
+        kind: ToastKind,
+        duration: Duration,
+        undo_words: Option<Vec<String>>,
+    ) {
+        self.toasts.push(PillToast {
+            title,
+            description,
+            kind,
+            countdown: Countdown::new(duration, Instant::now()),
+            undo_words,
+        });
+    }
+
     fn on_notice(&mut self, notice: DictationNotice, window: &mut Window, cx: &mut Context<Self>) {
         match notice {
             DictationNotice::DismissError => self.error = None,
-            DictationNotice::DismissRecovery => self.recovery = None,
+            // Sent when Escape is pressed. It closes the panel on top: an
+            // error card covers the recovery panel while both are open.
+            DictationNotice::DismissRecovery => {
+                if self.error.take().is_none() {
+                    self.recovery = None;
+                }
+            }
             DictationNotice::Error { title, description } => {
                 self.error = Some(ErrorCard::new(title, description, None));
             }
@@ -489,24 +630,16 @@ impl PillView {
                 ));
             }
             DictationNotice::DeliveryFallback { text, copied } => {
-                self.recovery = Some(Recovery {
-                    text,
-                    copied,
-                    copy_failed: false,
-                    shown_at: Instant::now(),
-                });
+                self.recovery = Some(Recovery::new(text, copied));
             }
             DictationNotice::CleanupFailed { title, description } => {
-                self.toasts.push(PillToast {
+                self.push_toast(
                     title,
                     description,
-                    destructive: true,
-                    success: false,
-                    shown_at: Instant::now(),
-                    duration: Duration::from_millis(10_000),
-                    undo_words: None,
-                    hint: false,
-                });
+                    ToastKind::Destructive,
+                    Duration::from_millis(10_000),
+                    None,
+                );
             }
             DictationNotice::LearnedWords(words) => {
                 let list = words
@@ -514,16 +647,13 @@ impl PillView {
                     .map(|w| format!("“{w}”"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                self.toasts.push(PillToast {
-                    title: crate::i18n::t_with("app.toasts.addedToDict", &[("words", &list)]),
-                    description: None,
-                    destructive: false,
-                    success: true,
-                    shown_at: Instant::now(),
-                    duration: Duration::from_millis(6000),
-                    undo_words: Some(words),
-                    hint: false,
-                });
+                self.push_toast(
+                    crate::i18n::t_with("app.toasts.addedToDict", &[("words", &list)]),
+                    None,
+                    ToastKind::Success,
+                    Duration::from_millis(6000),
+                    Some(words),
+                );
             }
             DictationNotice::Delivered => {
                 self.resolved_at = Some(Instant::now());
@@ -539,20 +669,19 @@ impl PillView {
             }
             DictationNotice::HotkeyHint { hold } => {
                 // Each hint replaces the last, so repeated presses do not stack.
-                self.toasts.retain(|t| !t.hint);
+                self.toasts.retain(|t| t.kind != ToastKind::Hint);
                 let key = if hold { "push" } else { "tap" };
-                self.toasts.push(PillToast {
-                    title: t(&format!("app.toasts.hotkeyHint.{key}.title")),
-                    description: Some(t(&format!("app.toasts.hotkeyHint.{key}.description"))),
-                    destructive: false,
-                    success: false,
-                    shown_at: Instant::now(),
-                    duration: Duration::from_millis(3000),
-                    undo_words: None,
-                    hint: true,
-                });
+                self.push_toast(
+                    t(&format!("app.toasts.hotkeyHint.{key}.title")),
+                    Some(t(&format!("app.toasts.hotkeyHint.{key}.description"))),
+                    ToastKind::Hint,
+                    Duration::from_millis(4000),
+                    None,
+                );
             }
         }
+        // A surface that appears under the pointer starts out paused.
+        self.set_hovered(self.hovered);
         self.update_visibility(window, cx);
     }
 
@@ -575,7 +704,12 @@ impl PillView {
         )
     }
 
-    fn update_lanes(&mut self, motion: Option<Motion>, level: Option<f32>) -> [f32; BARS] {
+    fn update_lanes(
+        &mut self,
+        motion: Option<Motion>,
+        level: Option<f32>,
+        reduce: bool,
+    ) -> [f32; BARS] {
         let now = Instant::now();
         let now_ms = now.duration_since(self.started).as_secs_f32() * 1000.;
         let frames = self
@@ -592,13 +726,12 @@ impl PillView {
                     None => 0.,
                 },
                 Motion::Sweep => {
-                    opacity[i] = sweep_opacity(i, now_ms);
-                    0.16 * opacity[i]
-                }
-                Motion::Wave => {
-                    let phase = wave_phase(i, now_ms);
-                    opacity[i] = 0.45 + 0.55 * phase;
-                    0.4 * phase
+                    opacity[i] = if reduce {
+                        0.4
+                    } else {
+                        sweep_opacity(i, now_ms)
+                    };
+                    0.
                 }
             };
             let rate = if target > self.lanes[i] { RISE } else { FALL };
@@ -607,6 +740,10 @@ impl PillView {
         opacity
     }
 
+    /// The pill. Each phase has its own silhouette, so a still frame tells
+    /// them apart without relying on color: a record dot beside level bars
+    /// while the microphone is live, a dim sweep over the bars while it
+    /// opens, and three pulsing dots alone while transcribing.
     fn render_pill(
         &mut self,
         snapshot: &DictationSnapshot,
@@ -614,12 +751,14 @@ impl PillView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let p = hud();
+        let reduce = cx.reduce_motion();
         let finishing = !snapshot.is_active();
+        let recording = snapshot.is_recording;
+        let processing = snapshot.is_processing;
         let motion = if finishing {
             None
-        } else if snapshot.is_processing {
-            Some(Motion::Wave)
-        } else if snapshot.is_recording {
+        } else if recording || processing {
             Some(Motion::Live)
         } else {
             Some(Motion::Sweep)
@@ -627,25 +766,63 @@ impl PillView {
         if motion.is_some() {
             window.request_animation_frame();
         }
+        let now_ms = self.started.elapsed().as_secs_f32() * 1000.;
         let level = Dictation::global(cx).read(cx).level();
-        let opacity = self.update_lanes(motion, level);
-        let mut bars = div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(BAR_GAP))
-            .w(px(52.))
-            .h(px(24.));
+        let opacity = self.update_lanes(motion, level, reduce);
+        let thinking = f32_tx(
+            "pill-thinking",
+            if processing { 1. } else { 0. },
+            if reduce { DUR_FAST } else { DUR_BASE },
+            ease_out,
+            window,
+            cx,
+        );
+        let bars_alpha = (1. - thinking) * motion_fx.bars;
+
+        let mut bars = div().flex().items_center().gap(px(BAR_GAP)).h(px(24.));
         for i in 0..BARS {
             bars = bars.child(
                 div()
                     .w(px(BAR_W))
                     .h(px(BAR_MIN + self.lanes[i] * (BAR_MAX - BAR_MIN)))
                     .rounded_full()
-                    .bg(hsla(0., 0., 1., opacity[i] * motion_fx.bars)),
+                    .bg(p.white.opacity(opacity[i] * bars_alpha)),
             );
         }
-        let processing = snapshot.is_processing;
+        // The dot is red only while the microphone is live; while it opens
+        // the dot waits in a dim neutral so the bars do not shift.
+        let dot_color = if recording {
+            p.destructive
+                .opacity(rec_pulse(now_ms, reduce) * bars_alpha)
+        } else {
+            p.white.opacity(0.3 * bars_alpha)
+        };
+        let meter = div()
+            .flex()
+            .items_center()
+            .gap(px(REC_GAP))
+            .child(div().size(px(REC_DOT)).rounded_full().bg(dot_color))
+            .child(bars);
+
+        let think_alpha = thinking * motion_fx.bars;
+        let think = (think_alpha > 0.001).then(|| {
+            let mut dots = div().flex().items_center().gap(px(THINK_GAP));
+            for i in 0..THINK_DOTS {
+                dots = dots.child(
+                    div().size(px(THINK_DOT)).rounded_full().bg(p
+                        .white
+                        .opacity(think_opacity(i, now_ms, reduce) * think_alpha)),
+                );
+            }
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(dots)
+        });
+
         let check = motion_fx.check.map(|(scale, alpha)| {
             div()
                 .absolute()
@@ -654,15 +831,24 @@ impl PillView {
                 .items_center()
                 .justify_center()
                 .child(
-                    icon("check", 15., hsla(0., 0., 1., 0.92 * alpha))
+                    icon("check", 15., p.white.opacity(0.92 * alpha))
                         .with_transformation(Transformation::scale(size(scale, scale))),
                 )
         });
+        let label = if recording {
+            t("dictation.pill.recording")
+        } else if processing {
+            t("dictation.pill.transcribing")
+        } else {
+            t("dictation.pill.starting")
+        };
         let scale = motion_fx.scale;
         // GPUI has no paint transforms on divs, so the pill scales by size
         // inside a fixed slot, which keeps it centered and the row still.
         let pill = div()
             .id("voice-pill")
+            .role(Role::Button)
+            .aria_label(label)
             .relative()
             .flex_none()
             .w(px(PILL_W * scale))
@@ -672,8 +858,8 @@ impl PillView {
             .justify_center()
             .rounded_full()
             .border_1()
-            .border_color(hsla(0., 0., 1., 0.16))
-            .bg(rgb(0x0c0c0e))
+            .border_color(p.border_hover)
+            .bg(p.toast_surface)
             .shadow(vec![BoxShadow {
                 color: hsla(0., 0., 0., 0.28),
                 offset: point(px(0.), px(2.)),
@@ -682,7 +868,8 @@ impl PillView {
                 inset: false,
             }])
             .when(!processing && !finishing, |d| d.cursor_pointer())
-            .child(bars)
+            .child(meter)
+            .children(think)
             .children(check)
             .on_mouse_down(
                 MouseButton::Left,
@@ -730,17 +917,24 @@ impl PillView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (AnyElement, f32) {
+        let p = hud();
+        let reduce = cx.reduce_motion();
         let t_in = f32_tx(
             "cancel-emerge",
             if visible { 1. } else { 0. },
-            if visible { DUR_BASE } else { DUR_FAST },
+            if visible && !reduce {
+                DUR_BASE
+            } else {
+                DUR_FAST
+            },
             if visible { ease_out } else { ease_snap },
             window,
             cx,
         );
-        let scale = 0.8 + 0.2 * t_in;
+        let scale = if reduce { 1. } else { 0.8 + 0.2 * t_in };
         let button = div()
             .id("pill-cancel")
+            .keyboard_focusable("pill-cancel", Role::Button, t("dictation.pill.cancel"), cx)
             .flex_none()
             .size(px(CANCEL_SIZE * scale))
             .flex()
@@ -748,13 +942,13 @@ impl PillView {
             .justify_center()
             .rounded_full()
             .border_1()
-            .border_color(hsla(0., 0., 1., 0.16))
-            .bg(rgb(0x0c0c0e))
+            .border_color(p.border_hover)
+            .bg(p.toast_surface)
             .opacity(t_in)
             .cursor_pointer()
-            .hover(|s| s.bg(rgb(0x1f1f22)))
+            .hover(move |s| s.bg(p.surface_raised))
             .child(
-                icon("x", 12., hsla(0., 0., 1., 0.85))
+                icon("x", 12., p.foreground)
                     .with_transformation(Transformation::scale(size(scale, scale))),
             )
             .when(visible, |d| {
@@ -778,313 +972,399 @@ impl PillView {
         (slot, t_in)
     }
 
-    fn render_error(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let p = cx.palette();
-        let error = self.error.as_ref()?;
-        let elapsed = error.shown_at.elapsed().as_secs_f32();
-        let remaining = (1. - elapsed / error.duration.as_secs_f32()).clamp(0., 1.);
-        let transcript = error.transcript.clone();
-        let action = |id: &'static str, icon_name: &'static str, label: String, primary: bool| {
-            div()
-                .id(id)
-                .h(px(32.))
-                .flex()
-                .flex_none()
-                .items_center()
-                .justify_center()
-                .gap(px(6.))
-                .px(px(16.))
-                .rounded(px(6.))
-                .text_size(px(14.))
-                .font_weight(FontWeight::MEDIUM)
-                .cursor_pointer()
-                .when(primary, |d| {
-                    d.bg(p.foreground)
-                        .text_color(p.background)
-                        .hover(move |s| s.bg(p.foreground.opacity(0.9)))
-                })
-                .when(!primary, |d| {
-                    d.bg(p.foreground.opacity(0.15))
-                        .text_color(p.foreground)
-                        .hover(move |s| s.bg(p.foreground.opacity(0.2)))
-                })
-                .child(icon(
-                    icon_name,
-                    14.,
-                    if primary { p.background } else { p.foreground },
-                ))
-                .child(label)
+    /// What the pill is doing and how to act on it, shown above it on hover.
+    fn render_hint(snapshot: &DictationSnapshot) -> Div {
+        let p = hud();
+        let caption = |text: String, color: Hsla| div().text_color(color).child(text);
+        let row = div()
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .h(px(28.))
+            .px(px(10.))
+            .rounded(px(RADIUS_MD))
+            .border_1()
+            .border_color(p.border_hover)
+            .bg(p.toast_surface)
+            .text_size(px(TEXT_SMALL))
+            .whitespace_nowrap();
+        if snapshot.is_recording {
+            // Escape is bound globally for as long as the recording runs.
+            row.child(caption(t("dictation.pill.finish"), p.foreground))
+                .child(caption("·".into(), p.subtle_foreground))
+                .child(caption(t("dictation.pill.cancel"), p.muted_foreground))
+                .child(kbd("Esc", &p))
+        } else if snapshot.is_processing {
+            row.child(caption(t("dictation.pill.transcribing"), p.foreground))
+        } else {
+            row.child(caption(t("dictation.pill.starting"), p.foreground))
+        }
+    }
+
+    /// The dismiss control shared by both panels: the Escape key chip, then a
+    /// close button ringed by the panel's countdown.
+    fn dismiss_cluster(
+        id: &'static str,
+        remaining: f32,
+        on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        cx: &mut App,
+    ) -> Div {
+        let p = hud();
+        let ring = canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| {
+                let center = bounds.center();
+                let r = f32::from(bounds.size.width.min(bounds.size.height)) / 2. - 1.;
+                let arc = |share: f32, color: Hsla, window: &mut Window| {
+                    let steps = ((48. * share).ceil() as usize).max(2);
+                    let mut path = PathBuilder::stroke(px(1.5));
+                    for i in 0..=steps {
+                        // From twelve o'clock, clockwise.
+                        let a = -FRAC_PI_2 + TAU * share * i as f32 / steps as f32;
+                        let at = point(center.x + px(r * a.cos()), center.y + px(r * a.sin()));
+                        if i == 0 {
+                            path.move_to(at);
+                        } else {
+                            path.line_to(at);
+                        }
+                    }
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, color);
+                    }
+                };
+                arc(1., p.white.opacity(0.1), window);
+                if remaining > 0.005 {
+                    arc(remaining, p.white.opacity(0.5), window);
+                }
+            },
+        )
+        .absolute()
+        .inset_0();
+        let close = div()
+            .id(id)
+            .keyboard_focusable(id, Role::Button, t("dictation.pill.dismiss"), cx)
+            .relative()
+            .flex_none()
+            .size(px(DISMISS_SIZE))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .cursor_pointer()
+            .hover(move |s| s.bg(p.white.opacity(0.08)))
+            .child(ring)
+            .child(icon("x", 12., p.muted_foreground))
+            .on_click(on_close);
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .child(kbd("Esc", &p))
+            .child(close)
+    }
+
+    /// A compact panel action: white on the HUD when primary, a quiet wash
+    /// otherwise.
+    fn panel_action(
+        id: &'static str,
+        icon_name: &'static str,
+        label: String,
+        primary: bool,
+        cx: &mut App,
+    ) -> Stateful<Div> {
+        let p = hud();
+        let (bg, hover, fg) = if primary {
+            (p.foreground, p.white, p.toast_surface)
+        } else {
+            (p.white.opacity(0.1), p.white.opacity(0.16), p.foreground)
         };
-        let retry = action("error-retry", "rotate-ccw", t("common.retry"), true).on_click(
-            cx.listener(|this, _, _, cx| {
-                this.error = None;
-                Dictation::global(cx).update(cx, |d, cx| d.start(cx));
-            }),
-        );
-        let text = div()
-            .min_w_0()
-            .flex_1()
-            .px(px(8.))
-            .py(px(4.))
-            .child(
-                div()
-                    .text_size(px(16.))
-                    .line_height(px(22.))
-                    .text_color(p.foreground)
-                    .child(error.title.clone()),
-            )
-            .when(!error.description.is_empty(), |d| {
-                d.child(
-                    div()
-                        .mt(px(4.))
-                        .text_size(px(14.))
-                        .line_height(px(19.25))
-                        .text_color(p.muted_foreground)
-                        .child(error.description.clone()),
-                )
-            });
-        let body = if let Some(transcript) = transcript {
-            let view = action(
-                "error-transcript",
+        div()
+            .id(id)
+            .keyboard_focusable(id, Role::Button, label.clone(), cx)
+            .h(px(28.))
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .gap(px(6.))
+            .px(px(10.))
+            .rounded(px(RADIUS_LG))
+            .bg(bg)
+            .hover(move |s| s.bg(hover))
+            .text_size(px(TEXT_SMALL))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .whitespace_nowrap()
+            .cursor_pointer()
+            .child(icon(icon_name, 14., fg))
+            .child(label)
+    }
+
+    /// The HUD card both panels sit on.
+    fn panel_card(id: &'static str) -> Stateful<Div> {
+        let p = hud();
+        div()
+            .id(id)
+            .relative()
+            .w_full()
+            .rounded(px(RADIUS_XL))
+            .border_1()
+            .border_color(p.border_hover)
+            .bg(p.toast_surface)
+            .shadow(vec![BoxShadow {
+                color: hsla(0., 0., 0., 0.35),
+                offset: point(px(0.), px(12.)),
+                blur_radius: px(32.),
+                spread_radius: px(-12.),
+                inset: false,
+            }])
+    }
+
+    fn render_error(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let p = hud();
+        let reduce = cx.reduce_motion();
+        let error = self.error.as_ref()?;
+        let remaining = error.countdown.remaining(Instant::now());
+        let title = error.title.clone();
+        let description = error.description.clone();
+        let transcript = error.transcript.clone();
+
+        let retry = Self::panel_action(
+            "pill-error-retry",
+            "rotate-ccw",
+            t("common.retry"),
+            true,
+            cx,
+        )
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.error = None;
+            Dictation::global(cx).update(cx, |d, cx| d.start(cx));
+        }));
+        let view = transcript.map(|transcript| {
+            Self::panel_action(
+                "pill-error-transcript",
                 "scroll-text",
                 t("dictation.errorActions.viewTranscript"),
                 false,
+                cx,
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.error = None;
-                this.recovery = Some(Recovery {
-                    text: transcript.clone(),
-                    copied: false,
-                    copy_failed: false,
-                    shown_at: Instant::now(),
-                });
+                this.recovery = Some(Recovery::new(transcript.clone(), false));
+                this.set_hovered(this.hovered);
                 cx.notify();
-            }));
-            div().px(px(8.)).py(px(12.)).child(text).child(
+            }))
+        });
+        let dismiss = Self::dismiss_cluster(
+            "pill-error-close",
+            remaining,
+            cx.listener(|this, _, _, cx| {
+                this.error = None;
+                cx.notify();
+            }),
+            cx,
+        );
+        const ICON: f32 = 16.;
+        const ICON_GAP: f32 = 10.;
+        // The icon and the dismiss cluster center on the title line; the
+        // description runs under the cluster so it does not wrap early.
+        let header = div()
+            .flex()
+            .items_start()
+            .gap(px(ICON_GAP))
+            .child(div().h(px(LINE_SMALL)).flex().items_center().child(icon(
+                "alert-circle",
+                ICON,
+                p.destructive,
+            )))
+            .child(
                 div()
-                    .mt(px(12.))
-                    .flex()
-                    .gap(px(8.))
-                    .child(retry.flex_1())
-                    .child(view.flex_1()),
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(TEXT_BODY))
+                    .line_height(px(LINE_SMALL))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(p.foreground)
+                    .child(title),
             )
-        } else {
+            .child(div().mt(px(-3.)).child(dismiss));
+        let description = (!description.is_empty()).then(|| {
             div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .px(px(8.))
-                .py(px(12.))
-                .child(text)
-                .child(retry)
-        };
+                .mt(px(2.))
+                .pl(px(ICON + ICON_GAP))
+                .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
+                .text_color(p.muted_foreground)
+                .child(description)
+        });
+        let actions = div()
+            .mt(px(12.))
+            .flex()
+            .justify_end()
+            .gap(px(8.))
+            .children(view)
+            .child(retry);
         Some(
-            div()
-                .id("dictation-error")
-                .relative()
-                .w_full()
-                .rounded(px(10.))
-                .border_1()
-                .border_color(p.border)
-                .bg(p.surface_0)
-                .shadow(vec![BoxShadow {
-                    color: hsla(0., 0., 0., 0.5),
-                    offset: point(px(0.), px(20.)),
-                    blur_radius: px(40.),
-                    spread_radius: px(-16.),
-                    inset: false,
-                }])
-                .child(body)
-                // The countdown traces the card's top edge.
-                .child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left(px(10.))
-                        .h(px(2.))
-                        .w(relative(remaining * 0.95))
-                        .bg(p.foreground.opacity(0.85))
-                        .rounded_full(),
-                )
+            Self::panel_card("pill-error")
+                .p(px(PANEL_PAD))
+                .child(header)
+                .children(description)
+                .child(actions)
                 .with_animation(
-                    "error-in",
+                    "pill-error-in",
                     Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
-                    |d, t| d.opacity(t).mt(px(4. * (1. - t))),
+                    move |d, t| {
+                        let d = d.opacity(t);
+                        if reduce { d } else { d.mt(px(4. * (1. - t))) }
+                    },
                 )
                 .into_any_element(),
         )
     }
 
     fn render_recovery(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let p = cx.palette();
+        let p = hud();
+        let reduce = cx.reduce_motion();
         let recovery = self.recovery.as_ref()?;
+        let remaining = recovery.countdown.remaining(Instant::now());
         let ready = !recovery.copy_failed && recovery.copied;
-        let notice = if recovery.copy_failed {
-            "transcriptionPreview.recovery.copyFailed"
-        } else if ready {
-            "transcriptionPreview.recovery.pasteFailedCopied"
-        } else {
-            "transcriptionPreview.recovery.pasteFailed"
-        };
-        let text = recovery.text.clone();
         let failed = recovery.copy_failed;
+        let text = recovery.text.clone();
+
+        let dismiss = Self::dismiss_cluster(
+            "pill-recovery-close",
+            remaining,
+            cx.listener(|this, _, _, cx| {
+                this.recovery = None;
+                cx.notify();
+            }),
+            cx,
+        );
+        let header = div()
+            .flex()
+            .items_start()
+            .gap(px(12.))
+            .px(px(PANEL_PAD))
+            .pt(px(PANEL_PAD))
+            .pb(px(12.))
+            .border_b_1()
+            .border_color(p.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(TEXT_BODY))
+                            .line_height(px(LINE_SMALL))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(p.foreground)
+                            .child(t("transcriptionPreview.recovery.title")),
+                    )
+                    .child(
+                        div()
+                            .mt(px(4.))
+                            .text_size(px(TEXT_SMALL))
+                            .line_height(px(LINE_SMALL))
+                            .text_color(p.muted_foreground)
+                            .child(t("transcriptionPreview.recovery.pasteFailed")),
+                    ),
+            )
+            .child(div().mt(px(-3.)).child(dismiss));
+        let body = div()
+            .id("pill-recovery-text")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px(px(PANEL_PAD))
+            .py(px(12.))
+            .font_family(FONT_VOICE)
+            .text_size(px(TEXT_READING))
+            .line_height(px(LINE_READING))
+            .text_color(p.foreground)
+            .child(text.clone());
+        // One line says where the text stands; Copy shows only while the
+        // clipboard does not hold it.
+        let status = if ready {
+            Some((
+                "check",
+                p.success,
+                t("transcriptionPreview.recovery.copiedHint"),
+            ))
+        } else if failed {
+            Some((
+                "alert-circle",
+                p.destructive,
+                t("transcriptionPreview.recovery.copyFailed"),
+            ))
+        } else {
+            None
+        };
+        let footer = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .min_h(px(52.))
+            .px(px(PANEL_PAD))
+            .py(px(12.))
+            .border_t_1()
+            .border_color(p.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .min_w_0()
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .text_color(p.muted_foreground)
+                    .when_some(status, |d, (name, color, label)| {
+                        d.child(icon(name, 14., color)).child(label)
+                    }),
+            )
+            .when(!ready, |d| {
+                d.child(
+                    Self::panel_action(
+                        "pill-recovery-copy",
+                        "copy",
+                        t("transcriptionPreview.recovery.copy"),
+                        true,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        let ok = backend::write_clipboard(&text);
+                        if let Some(r) = this.recovery.as_mut() {
+                            r.copied = ok;
+                            r.copy_failed = !ok;
+                            if ok {
+                                // Copied: the panel only needs to stay long
+                                // enough to read the paste hint.
+                                r.countdown = Countdown::new(RECOVERY_COPIED, Instant::now());
+                            }
+                        }
+                        this.set_hovered(this.hovered);
+                        cx.notify();
+                    })),
+                )
+            });
         Some(
-            div()
-                .id("copy-recovery")
-                .w_full()
+            Self::panel_card("pill-recovery")
                 .max_h(px(420.))
                 .flex()
                 .flex_col()
-                .rounded(px(16.))
-                .border_1()
-                .border_color(p.border)
-                .bg(p.surface_0)
-                .shadow_xl()
                 .overflow_hidden()
-                .child(
-                    div()
-                        .flex()
-                        .items_start()
-                        .gap(px(12.))
-                        .px(px(16.))
-                        .pt(px(16.))
-                        .pb(px(12.))
-                        .border_b_1()
-                        .border_color(p.border.opacity(0.4))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .child(
-                                    div()
-                                        .text_size(px(14.))
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .line_height(px(20.))
-                                        .text_color(p.foreground)
-                                        .child(t("transcriptionPreview.recovery.title")),
-                                )
-                                .child(
-                                    div()
-                                        .mt(px(4.))
-                                        .text_size(px(12.))
-                                        .line_height(px(20.))
-                                        .text_color(if failed {
-                                            p.destructive
-                                        } else {
-                                            p.muted_foreground
-                                        })
-                                        .child(t(notice)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .items_center()
-                                .gap(px(2.))
-                                .child(
-                                    div()
-                                        .id("recovery-close")
-                                        .size(px(28.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .rounded(px(8.))
-                                        .cursor_pointer()
-                                        .hover(move |s| s.bg(p.surface_2))
-                                        .child(icon("x", 16., p.muted_foreground))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.recovery = None;
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    div()
-                                        .text_size(px(10.))
-                                        .text_color(p.muted_foreground)
-                                        .child("Esc"),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("recovery-text")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .px(px(16.))
-                        .py(px(12.))
-                        .font_family(FONT_VOICE)
-                        .text_size(px(TEXT_READING))
-                        .line_height(px(LINE_READING))
-                        .text_color(p.foreground)
-                        .child(text.clone()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap(px(12.))
-                        .px(px(16.))
-                        .py(px(12.))
-                        .border_t_1()
-                        .border_color(p.border.opacity(0.4))
-                        .child(
-                            div()
-                                .text_size(px(12.))
-                                .text_color(p.muted_foreground)
-                                .child(if ready {
-                                    t("transcriptionPreview.recovery.pasteHint")
-                                } else {
-                                    String::new()
-                                }),
-                        )
-                        .child(if ready {
-                            div()
-                                .h(px(32.))
-                                .flex()
-                                .items_center()
-                                .gap(px(6.))
-                                .text_size(px(12.))
-                                .text_color(p.muted_foreground)
-                                .child(icon("check", 14., p.success))
-                                .child(t("transcriptionPreview.recovery.copied"))
-                                .into_any_element()
-                        } else {
-                            div()
-                                .id("recovery-copy")
-                                .h(px(32.))
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .px(px(12.))
-                                .rounded(px(8.))
-                                .border_1()
-                                .border_color(p.border.opacity(0.8))
-                                .bg(p.surface_3)
-                                .text_size(px(12.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(p.foreground)
-                                .cursor_pointer()
-                                .hover(move |s| s.bg(p.surface_raised).border_color(p.border_hover))
-                                .child(icon("copy", 14., p.foreground))
-                                .child(t("transcriptionPreview.recovery.copy"))
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    let ok = backend::write_clipboard(&text);
-                                    if let Some(r) = this.recovery.as_mut() {
-                                        r.copied = ok;
-                                        r.copy_failed = !ok;
-                                    }
-                                    cx.notify();
-                                }))
-                                .into_any_element()
-                        }),
-                )
+                .child(header)
+                .child(body)
+                .child(footer)
                 .with_animation(
-                    "recovery-in",
+                    "pill-recovery-in",
                     Animation::new(Duration::from_millis(DUR_SLOW)).with_easing(ease_out),
-                    |d, t| d.opacity((t * 2.).min(1.)).mt(px(6. * (1. - t))),
+                    move |d, t| {
+                        let d = d.opacity((t * 2.).min(1.));
+                        if reduce { d } else { d.mt(px(6. * (1. - t))) }
+                    },
                 )
                 .into_any_element(),
         )
@@ -1094,69 +1374,71 @@ impl PillView {
         if self.toasts.is_empty() {
             return None;
         }
+        let p = hud();
         let mut stack = div().flex().flex_col().gap(px(6.)).w(px(TOAST_W));
         for (i, toast) in self.toasts.iter().enumerate() {
-            let accent: Hsla = if toast.destructive {
-                rgb(0xf87171).into()
-            } else if toast.success {
-                rgb(0x34d399).into()
-            } else {
-                hsla(0., 0., 1., 0.2)
+            let (icon_name, accent) = match toast.kind {
+                ToastKind::Destructive => ("alert-circle", p.destructive),
+                ToastKind::Success => ("check", p.success),
+                ToastKind::Hint => ("keyboard", p.muted_foreground),
             };
             let undo = toast.undo_words.clone();
-            let remaining = (1.
-                - toast.shown_at.elapsed().as_secs_f32() / toast.duration.as_secs_f32())
-            .clamp(0., 1.);
             stack = stack.child(
                 div()
                     .id(("pill-toast", i))
-                    .relative()
                     .flex()
-                    .rounded(px(5.))
+                    .items_start()
+                    .gap(px(10.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded(px(RADIUS_LG))
                     .border_1()
-                    .border_color(rgb(0x202225))
-                    .bg(rgb(0x0a0b0e))
+                    .border_color(p.border_hover)
+                    .bg(p.toast_surface)
                     .shadow_lg()
-                    .child(div().w(px(2.)).flex_none().bg(accent))
+                    .child(
+                        div()
+                            .h(px(LINE_SMALL))
+                            .flex()
+                            .items_center()
+                            .child(icon(icon_name, 14., accent)),
+                    )
                     .child(
                         div()
                             .flex_1()
                             // Let long descriptions wrap inside the card.
                             .min_w_0()
-                            .px(px(10.))
-                            .py(px(8.))
+                            .text_size(px(TEXT_SMALL))
+                            .line_height(px(LINE_SMALL))
                             .child(
                                 div()
-                                    .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
-                                    .text_color(hsla(0., 0., 1., 0.9))
+                                    .text_color(p.foreground)
                                     .child(toast.title.clone()),
                             )
                             .when_some(toast.description.clone(), |d, desc| {
-                                d.child(
-                                    div()
-                                        .mt(px(4.))
-                                        .text_size(px(12.))
-                                        .text_color(hsla(0., 0., 1., 0.45))
-                                        .child(desc),
-                                )
+                                d.child(div().mt(px(2.)).text_color(p.muted_foreground).child(desc))
                             }),
                     )
                     .when_some(undo, |d, words| {
+                        let id = ElementId::from(("pill-toast-undo", i));
                         d.child(
                             div()
-                                .id(("toast-undo", i))
+                                .id(id.clone())
+                                .keyboard_focusable(id, Role::Button, t("app.toasts.undo"), cx)
                                 .flex_none()
                                 .self_center()
-                                .mr(px(8.))
+                                .h(px(24.))
+                                .flex()
+                                .items_center()
                                 .px(px(8.))
-                                .py(px(4.))
-                                .rounded(px(4.))
-                                .bg(hsla(0., 0., 1., 0.1))
-                                .text_size(px(12.))
-                                .text_color(hsla(0., 0., 1., 0.9))
+                                .rounded(px(RADIUS_MD))
+                                .bg(p.white.opacity(0.1))
+                                .text_size(px(TEXT_SMALL))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(p.foreground)
                                 .cursor_pointer()
-                                .hover(|s| s.bg(hsla(0., 0., 1., 0.16)))
+                                .hover(move |s| s.bg(p.white.opacity(0.16)))
                                 .child(t("app.toasts.undo"))
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     backend::undo_learned_words(&words, cx);
@@ -1165,16 +1447,7 @@ impl PillView {
                                     cx.notify();
                                 })),
                         )
-                    })
-                    .child(
-                        div()
-                            .absolute()
-                            .bottom_0()
-                            .left(px(2.))
-                            .h(px(1.))
-                            .w(relative(remaining))
-                            .bg(accent.opacity(0.3)),
-                    ),
+                    }),
             );
         }
         Some(stack.into_any_element())
@@ -1184,15 +1457,17 @@ impl PillView {
 impl Render for PillView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.regions.borrow_mut().clear();
-        if self.recovery.is_some() != self.recovery_escape {
-            self.recovery_escape = self.recovery.is_some();
-            backend::set_recovery_cancel_hotkey(self.recovery_escape);
+        // Escape dismisses whichever panel is open. The binding is global
+        // because this window never takes keyboard focus.
+        let panel_open = self.error.is_some() || self.recovery.is_some();
+        if panel_open != self.panel_escape {
+            self.panel_escape = panel_open;
+            backend::set_recovery_cancel_hotkey(panel_open);
         }
         let snapshot = Self::snapshot(cx);
         let dock = Self::dock(cx);
         let active = snapshot.is_active();
         let finishing = self.finishing_until.is_some_and(|t| Instant::now() < t);
-        let error_or_recovery = self.error.is_some() || self.recovery.is_some();
         let now = Instant::now();
         if self.enter_pending && self.shown {
             self.enter_pending = false;
@@ -1214,7 +1489,7 @@ impl Render for PillView {
         }
         // The pill fades out for the finish and while an error/recovery card
         // owns the window; the delivered check runs its own exit.
-        let pill_shown = (active || resolving) && !error_or_recovery;
+        let pill_shown = (active || resolving) && !panel_open;
         let pill_alpha = f32_tx(
             "pill-alpha",
             if pill_shown { 1. } else { 0. },
@@ -1254,38 +1529,28 @@ impl Render for PillView {
             });
             root = root.child(positioned.child(tracked));
 
-            // Tooltip above the pill while hovered.
-            if self.hovered && active {
-                let p = cx.palette();
-                let label = if snapshot.is_recording {
-                    t("app.mic.recording")
-                } else if snapshot.is_processing {
-                    t("app.mic.processing")
-                } else {
-                    crate::text::hotkeys::format_hotkey_list_label(
-                        &AppState::settings(cx).effective_dictation_key(),
-                    )
-                };
+            // The hint sits above the pill, aligned with it; toasts take
+            // that spot when present.
+            if self.hovered && active && self.toasts.is_empty() {
+                let hint = Self::render_hint(&snapshot).with_animation(
+                    "pill-hint",
+                    Animation::new(Duration::from_millis(DUR_SNAP)),
+                    |d, t| d.opacity(t),
+                );
                 root = root.child(
                     div()
                         .absolute()
+                        .left_0()
+                        .right_0()
                         .bottom(px(DOCK_INSET + PILL_H + 8.))
+                        .px(px(DOCK_INSET))
+                        .flex()
                         .map(|d| match dock {
-                            PanelStartPosition::BottomLeft => d.left(px(DOCK_INSET)),
-                            _ => d.right(px(DOCK_INSET)),
+                            PanelStartPosition::BottomLeft => d.justify_start(),
+                            PanelStartPosition::Center => d.justify_center(),
+                            PanelStartPosition::BottomRight => d.justify_end(),
                         })
-                        .px(px(8.))
-                        .py(px(4.))
-                        .rounded(px(6.))
-                        .bg(p.toast_surface)
-                        .text_size(px(11.))
-                        .text_color(hsla(0., 0., 0.96, 1.))
-                        .child(label)
-                        .with_animation(
-                            "pill-tooltip",
-                            Animation::new(Duration::from_millis(DUR_SNAP)),
-                            |d, t| d.opacity(t),
-                        ),
+                        .child(hint),
                 );
             }
         }
@@ -1318,7 +1583,8 @@ impl Render for PillView {
                         PanelStartPosition::Center => {
                             d.left((WINDOW_SIZE.width - px(TOAST_W)) / 2.)
                         }
-                        _ => d.right(px(DOCK_INSET)),
+                        PanelStartPosition::BottomLeft => d.left(px(DOCK_INSET)),
+                        PanelStartPosition::BottomRight => d.right(px(DOCK_INSET)),
                     })
                     .child(tracked),
             );
@@ -1330,9 +1596,11 @@ impl Render for PillView {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use super::{BREATH, DUR_BASE, RESOLVE, bar_level, live_target, pill_motion};
+    use super::{
+        BREATH, Countdown, DUR_BASE, RESOLVE, bar_level, live_target, pill_motion, think_opacity,
+    };
 
     fn at(ms: u64) -> Option<Duration> {
         Some(Duration::from_millis(ms))
@@ -1363,6 +1631,33 @@ mod tests {
         };
         assert!(peak(0.) <= BREATH + 1e-4, "{}", peak(0.));
         assert!(peak(db(-30.)) > 0.6, "{}", peak(db(-30.)));
+    }
+
+    #[test]
+    fn transcribing_dots_walk_unless_motion_is_reduced() {
+        let spread = |reduce: bool| {
+            (0..3)
+                .map(|i| think_opacity(i, 300., reduce))
+                .fold((f32::MAX, 0f32), |(lo, hi), v| (lo.min(v), hi.max(v)))
+        };
+        let (lo, hi) = spread(false);
+        assert!(hi - lo > 0.1, "{lo}..{hi}");
+        let (lo, hi) = spread(true);
+        assert_eq!(lo, hi);
+    }
+
+    #[test]
+    fn countdown_stands_still_while_paused() {
+        let t0 = Instant::now();
+        let mut c = Countdown::new(Duration::from_secs(4), t0);
+        assert_eq!(c.remaining(t0), 1.);
+        c.set_paused(true, t0 + Duration::from_secs(1));
+        let later = t0 + Duration::from_secs(10);
+        assert!((c.remaining(later) - 0.75).abs() < 1e-4);
+        assert!(!c.expired(later));
+        c.set_paused(false, later);
+        assert!((c.remaining(later) - 0.75).abs() < 1e-4);
+        assert!(c.expired(later + Duration::from_secs(3)));
     }
 
     #[test]

@@ -307,6 +307,14 @@
       "title": "转录内容未粘贴",
       "description": "听写停止时快捷键仍被按住。文字已在剪贴板中。",
       "descriptionClipboardFailed": "听写停止时快捷键仍被按住，文字也未能复制到剪贴板。"
+    },
+    "pill": {
+      "recording": "正在录音",
+      "transcribing": "正在转录",
+      "starting": "正在打开麦克风",
+      "finish": "点按结束",
+      "cancel": "取消",
+      "dismiss": "关闭"
     }
   },
   "hotkeyInput": {
@@ -599,12 +607,10 @@
   "transcriptionPreview": {
     "recovery": {
       "title": "转录已完成",
-      "pasteFailed": "未能自动粘贴，请复制下方文字。",
-      "pasteFailedCopied": "未能自动粘贴，文字已复制到剪贴板。",
-      "copyFailed": "复制失败，请重试或选中文字后复制。",
+      "pasteFailed": "未能粘贴到当前应用。",
+      "copyFailed": "复制失败，请重试。",
       "copy": "复制文字",
-      "copied": "已复制",
-      "pasteHint": "按 ⌘V 粘贴"
+      "copiedHint": "已复制，按 ⌘V 粘贴。"
     }
   }
 }
