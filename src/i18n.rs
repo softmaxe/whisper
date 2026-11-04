@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn looks_up_nested_keys_in_both_languages() {
-        assert_eq!(t_in(Language::En, "sidebar.home", &[]), "Home");
+        assert_eq!(t_in(Language::En, "sidebar.home", &[]), "History");
         assert_ne!(t_in(Language::ZhCn, "sidebar.home", &[]), "sidebar.home");
     }
 

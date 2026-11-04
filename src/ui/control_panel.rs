@@ -60,7 +60,7 @@ impl PanelView {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Home => "home",
+            Self::Home => "clock",
             Self::Insights => "bar-chart3",
             Self::Upload => "upload",
             Self::Dictionary => "book-open",
