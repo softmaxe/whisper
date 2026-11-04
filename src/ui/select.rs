@@ -2,6 +2,9 @@
 //! select used for retention and pill position, the searchable language
 //! picker, and the full-height field select — through `SelectStyle`.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -72,6 +75,9 @@ pub struct Select {
     query: String,
     highlighted: usize,
     focus: FocusHandle,
+    /// The trigger's width at the last paint, so the menu is never narrower
+    /// than the control it drops from.
+    trigger_width: Rc<Cell<Pixels>>,
 }
 
 impl EventEmitter<SelectEvent> for Select {}
@@ -121,6 +127,7 @@ impl Select {
             query: String::new(),
             highlighted: 0,
             focus: cx.focus_handle(),
+            trigger_width: Rc::new(Cell::new(px(0.))),
         }
     }
 
@@ -243,6 +250,20 @@ impl Select {
             self.dismiss(window, cx);
             return;
         }
+        // Return and Space act on the root, which holds focus; in the
+        // search field they keep typing.
+        if matches!(key, "enter" | "space")
+            && !event.keystroke.modifiers.modified()
+            && self.focus.is_focused(window)
+        {
+            cx.stop_propagation();
+            if self.open {
+                self.choose_highlighted(window, cx);
+            } else {
+                self.toggle(window, cx);
+            }
+            return;
+        }
         if !matches!(key, "down" | "up") || event.keystroke.modifiers.modified() {
             return;
         }
@@ -269,9 +290,8 @@ impl Select {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.open && event.is_keyboard() {
-            self.choose_highlighted(window, cx);
-        } else {
+        // Keyboard activation is handled in `on_key`, on the focused root.
+        if !event.is_keyboard() {
             self.toggle(window, cx);
         }
     }
@@ -329,16 +349,9 @@ impl Render for Select {
             .as_ref()
             .map(|o| o.label.clone())
             .unwrap_or_default();
+        let radius = px(if compact { RADIUS_MD } else { RADIUS_LG });
         let trigger = div()
             .id("select-trigger")
-            .when(!self.disabled, |d| {
-                d.track_focus(&self.focus.clone().tab_stop(true))
-                    .focus_visible(move |s| s.shadow(focus_ring(&p)))
-            })
-            .role(Role::ComboBox)
-            .aria_label(aria_name)
-            .aria_value(value)
-            .aria_expanded(open)
             .flex()
             .items_center()
             .justify_between()
@@ -347,7 +360,7 @@ impl Render for Select {
             .when(self.width.is_none(), |d| d.w_full())
             .h(px(if compact { 28. } else { CONTROL_HEIGHT }))
             .px(px(if compact { 10. } else { 11. }))
-            .rounded(px(if compact { RADIUS_MD } else { RADIUS_LG }))
+            .rounded(radius)
             .border_1()
             .border_color(trigger_border)
             .bg(if p.dark {
@@ -401,13 +414,35 @@ impl Render for Select {
 
         let menu = open.then(|| self.render_menu(cx));
 
+        let measured = self.trigger_width.clone();
+        // Focus sits on the root, which holds both the trigger and the menu,
+        // so the highlighted option can report itself as the active
+        // descendant while the arrow keys move it.
         div()
             .id("select")
+            .when(!self.disabled, |d| {
+                d.track_focus(&self.focus.clone().tab_stop(true))
+                    .focus_visible(move |s| s.shadow(focus_ring(&p)))
+            })
+            .role(Role::ComboBox)
+            .aria_label(aria_name)
+            .aria_value(value)
+            .aria_expanded(open)
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(Self::on_close_overlay))
             .relative()
+            .rounded(radius)
             .when_some(self.width, |d, w| d.w(w))
+            .when(self.width.is_none(), |d| d.w_full())
             .child(trigger)
+            .child(
+                canvas(
+                    move |bounds, _, _| measured.set(bounds.size.width),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .when_some(menu, |d, menu| {
                 d.child(
                     deferred(anchored().snap_to_window_with_margin(px(8.)).child(menu))
@@ -424,7 +459,14 @@ impl Select {
         let filtered = self.filtered();
         let highlighted = self.highlighted;
         let selected = self.selected.clone();
-        let mut list = div().flex().flex_col().gap(px(2.)).p(px(4.));
+        let mut list = div()
+            .id("select-options")
+            .role(Role::ListBox)
+            .aria_label(self.label.clone())
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .p(px(4.));
         if filtered.is_empty() {
             list = list.child(
                 div()
@@ -443,6 +485,10 @@ impl Select {
             list = list.child(
                 div()
                     .id(("option", index))
+                    .role(Role::ListBoxOption)
+                    .aria_label(option.label.clone())
+                    .aria_selected(is_selected)
+                    .when(is_highlighted, |d| d.aria_active_descendant())
                     .flex()
                     .items_center()
                     .justify_between()
@@ -496,7 +542,7 @@ impl Select {
             .id("select-menu")
             .occlude()
             .mt(px(4.))
-            .min_w(self.menu_min_width)
+            .min_w(self.menu_min_width.max(self.trigger_width.get()))
             .when_some(self.width, |d, w| d.w(w.max(self.menu_min_width)))
             .flex()
             .flex_col()
