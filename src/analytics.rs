@@ -241,6 +241,86 @@ pub fn build_trend(daily: &[AnalyticsDailyBucket], start: NaiveDate, today: Naiv
     Trend { bucket_days, bars }
 }
 
+/// Day-level highlights over an inclusive range of local dates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DayHighlights {
+    /// Days in the range, active or not.
+    pub days: i64,
+    /// Days with at least one word.
+    pub active_days: i64,
+    pub words: i64,
+    pub spoken_duration_ms: i64,
+    /// The day with the most words and its count; the latest wins a tie so
+    /// the figure points at recent use.
+    pub busiest: Option<(NaiveDate, i64)>,
+}
+
+impl DayHighlights {
+    /// Words per active day, `None` before any use in the range.
+    pub fn words_per_active_day(&self) -> Option<i64> {
+        (self.active_days > 0).then(|| (self.words as f64 / self.active_days as f64).round() as i64)
+    }
+}
+
+/// Summarizes the days from `first` through `last`, both inclusive.
+pub fn day_highlights(
+    daily: &[AnalyticsDailyBucket],
+    first: NaiveDate,
+    last: NaiveDate,
+) -> DayHighlights {
+    let (first_key, last_key) = (date_key(first), date_key(last));
+    let mut highlights = DayHighlights {
+        days: (last - first).num_days().max(0) + 1,
+        active_days: 0,
+        words: 0,
+        spoken_duration_ms: 0,
+        busiest: None,
+    };
+    for bucket in daily
+        .iter()
+        .filter(|b| b.date >= first_key && b.date <= last_key && b.words > 0)
+    {
+        highlights.active_days += 1;
+        highlights.words += bucket.words;
+        highlights.spoken_duration_ms += bucket.spoken_duration_ms;
+        let Ok(date) = NaiveDate::parse_from_str(&bucket.date, "%Y-%m-%d") else {
+            continue;
+        };
+        if highlights
+            .busiest
+            .is_none_or(|(_, words)| bucket.words >= words)
+        {
+            highlights.busiest = Some((date, bucket.words));
+        }
+    }
+    highlights
+}
+
+/// Average words per weekday, Monday first, from `first` through `last`.
+/// Idle days count as zero, so a weekday used once in a month is not
+/// mistaken for a busy one.
+pub fn weekday_averages(
+    daily: &[AnalyticsDailyBucket],
+    first: NaiveDate,
+    last: NaiveDate,
+) -> [f64; 7] {
+    let by_date: HashMap<&str, i64> = daily.iter().map(|b| (b.date.as_str(), b.words)).collect();
+    let mut sums = [0i64; 7];
+    let mut occurrences = [0i64; 7];
+    for date in first.iter_days().take_while(|d| *d <= last) {
+        let weekday = date.weekday().num_days_from_monday() as usize;
+        occurrences[weekday] += 1;
+        sums[weekday] += by_date.get(date_key(date).as_str()).copied().unwrap_or(0);
+    }
+    std::array::from_fn(|i| {
+        if occurrences[i] > 0 {
+            sums[i] as f64 / occurrences[i] as f64
+        } else {
+            0.
+        }
+    })
+}
+
 fn day_number(value: &str) -> Option<i64> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .ok()
@@ -420,6 +500,35 @@ mod tests {
         );
         assert!(trend.bars[0].start <= date("2026-01-01"));
         assert_eq!(trend.bars.iter().map(|b| b.words).sum::<i64>(), 8);
+    }
+
+    #[test]
+    fn highlights_count_active_days_and_the_latest_busiest_day() {
+        let mut daily = vec![
+            bucket("2026-08-31", 90),
+            bucket("2026-09-01", 40),
+            bucket("2026-09-03", 40),
+            bucket("2026-09-04", 0),
+        ];
+        daily[2].spoken_duration_ms = 30_000;
+        let highlights = day_highlights(&daily, date("2026-09-01"), date("2026-09-07"));
+        assert_eq!(highlights.days, 7);
+        assert_eq!(highlights.active_days, 2);
+        assert_eq!(highlights.words, 80);
+        assert_eq!(highlights.spoken_duration_ms, 30_000);
+        assert_eq!(highlights.busiest, Some((date("2026-09-03"), 40)));
+        assert_eq!(highlights.words_per_active_day(), Some(40));
+        let idle = day_highlights(&daily, date("2026-10-01"), date("2026-10-07"));
+        assert_eq!((idle.active_days, idle.busiest), (0, None));
+        assert_eq!(idle.words_per_active_day(), None);
+    }
+
+    #[test]
+    fn weekday_averages_count_idle_days_as_zero() {
+        // Sep 7 2026 is a Monday; the range holds two of each weekday.
+        let daily = vec![bucket("2026-09-07", 30), bucket("2026-09-13", 8)];
+        let averages = weekday_averages(&daily, date("2026-09-07"), date("2026-09-20"));
+        assert_eq!(averages, [15., 0., 0., 0., 0., 0., 4.]);
     }
 
     #[test]
