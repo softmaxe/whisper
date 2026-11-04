@@ -35,6 +35,18 @@ pub fn focus_ring(p: &Palette) -> Vec<BoxShadow> {
     }]
 }
 
+/// The focus ring for controls filled with the accent or destructive color:
+/// a light band inside the edge, which stays visible on the fill.
+pub fn focus_ring_on_fill() -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: hsla(0., 0., 1., 0.9),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+        inset: true,
+    }]
+}
+
 /// Focus handles of [`KeyboardFocusable`] elements, by key. Kept app-wide so
 /// render helpers that only hold an `App` can make elements focusable.
 #[derive(Default)]
@@ -66,12 +78,26 @@ pub trait KeyboardFocusable: StatefulInteractiveElement + Sized {
         label: impl Into<SharedString>,
         cx: &mut App,
     ) -> Self {
-        let p = cx.palette();
+        let ring = focus_ring(&cx.palette());
+        self.keyboard_focusable_with_ring(key, role, label, ring, cx)
+    }
+
+    /// As [`keyboard_focusable`](Self::keyboard_focusable), with a caller's
+    /// ring: filled accent controls use [`focus_ring_on_fill`], since an
+    /// accent ring disappears on an accent fill.
+    fn keyboard_focusable_with_ring(
+        self,
+        key: impl Into<ElementId>,
+        role: Role,
+        label: impl Into<SharedString>,
+        ring: Vec<BoxShadow>,
+        cx: &mut App,
+    ) -> Self {
         let handle = keyed_focus_handle(key.into(), cx);
         self.track_focus(&handle.tab_stop(true))
             .role(role)
             .aria_label(label)
-            .focus_visible(move |s| s.shadow(focus_ring(&p)))
+            .focus_visible(move |s| s.shadow(ring))
     }
 }
 
@@ -191,7 +217,12 @@ impl RenderOnce for Toggle {
         div()
             .id(id.clone())
             .when(!disabled, |d| {
-                d.keyboard_focusable(id.clone(), Role::Switch, label, cx)
+                let ring = if checked {
+                    focus_ring_on_fill()
+                } else {
+                    focus_ring(&p)
+                };
+                d.keyboard_focusable_with_ring(id.clone(), Role::Switch, label, ring, cx)
                     .aria_toggled(if checked {
                         Toggled::True
                     } else {
@@ -393,7 +424,16 @@ impl RenderOnce for Button {
         let mut el = div()
             .id(self.id.clone())
             .when(!disabled, |d| {
-                d.keyboard_focusable(self.id.clone(), Role::Button, name, cx)
+                let filled = matches!(
+                    self.variant,
+                    ButtonVariant::Primary | ButtonVariant::Destructive
+                );
+                let ring = if filled {
+                    focus_ring_on_fill()
+                } else {
+                    focus_ring(&p)
+                };
+                d.keyboard_focusable_with_ring(self.id.clone(), Role::Button, name, ring, cx)
             })
             .flex()
             .flex_none()
@@ -497,6 +537,17 @@ pub fn backdrop(p: &Palette) -> Hsla {
     }
 }
 
+/// A destructive button's fill. Dark mode's destructive text color is bright
+/// for legibility on black, too bright under white text, so dark fills use
+/// a deeper red that keeps white labels at 4.5:1.
+fn destructive_fill(p: &Palette) -> Hsla {
+    if p.dark {
+        Hsla::from(rgb(0xdc2626))
+    } else {
+        p.destructive
+    }
+}
+
 struct ButtonStyle {
     bg: Option<Hsla>,
     hover_bg: Option<Hsla>,
@@ -562,14 +613,14 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
             shadows: Vec::new(),
         },
         ButtonVariant::Destructive => ButtonStyle {
-            bg: Some(p.destructive),
-            hover_bg: Some(p.destructive.opacity(0.9)),
+            bg: Some(destructive_fill(p)),
+            hover_bg: Some(destructive_fill(p).opacity(0.9)),
             fg: p.white,
             icon: p.white,
-            border: Some(p.destructive),
+            border: Some(destructive_fill(p)),
             shadows: vec![
                 BoxShadow {
-                    color: p.destructive.opacity(0.24),
+                    color: destructive_fill(p).opacity(0.24),
                     ..drop(0., 1., 2., 0.)
                 },
                 inset(0., 1., 0., p.white.opacity(0.16)),
@@ -937,7 +988,11 @@ pub fn segment(
     div()
         .id(id.clone())
         .keyboard_focusable(id, Role::RadioButton, label, cx)
-        .aria_selected(active)
+        .aria_toggled(if active {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
         .flex()
         .items_center()
         .px(px(10.))

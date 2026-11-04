@@ -64,7 +64,7 @@ impl Palette {
             muted: c(0xf4f4f5),
             muted_foreground: c(0x62626c),
             subtle_foreground: c(0x66666f),
-            destructive: c(0xfb2c36),
+            destructive: c(0xdc2626),
             border: c(0xe4e4e7),
             input: c(0xffffff),
             input_border: c(0xd4d4d8),
