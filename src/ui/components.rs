@@ -576,6 +576,35 @@ pub fn section_header(
         })
 }
 
+/// A one-line tooltip on the popover surface.
+struct Tip(SharedString);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = cx.palette();
+        div()
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(RADIUS_MD))
+            .bg(p.popover)
+            .border_1()
+            .border_color(p.border)
+            .shadow(vec![drop(0., 4., 12., if p.dark { 0.4 } else { 0.08 })])
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.foreground)
+            .child(self.0.clone())
+    }
+}
+
+/// A tooltip builder for `.tooltip(...)`: names icon-only controls for
+/// pointer users, as `aria_label` does for VoiceOver.
+pub fn text_tooltip(
+    text: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text: SharedString = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone())).into()
+}
+
 /// The shared page column: centered, [`PAGE_MAX_WIDTH`] wide, with the
 /// standard gutter and top inset. Pages add their own bottom padding.
 pub fn page_container() -> Div {

@@ -8,10 +8,15 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{Button, ButtonVariant, backdrop, dialog_shadow, icon};
+use gpui_kit::base::FocusTrapElement;
+
+use super::components::{
+    Button, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, icon, keyed_focus_handle,
+    text_tooltip,
+};
 use super::theme::{
-    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_2XL, RADIUS_LG,
-    RADIUS_SM, TEXT_BODY, TEXT_SMALL, ease_out, ease_snap,
+    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
+    RADIUS_LG, RADIUS_SM, TEXT_BODY, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap,
 };
 
 pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -109,6 +114,9 @@ struct ActiveToast {
 
 pub struct Overlays {
     dialog: Option<DialogRequest>,
+    /// Set when a dialog opens; its first render moves focus to the safe
+    /// button so Return and Escape act on the dialog, not the page behind.
+    dialog_needs_focus: bool,
     /// A view-specific modal (snippet editor, command search), drawn under dialogs.
     custom: Option<AnyView>,
     toasts: Vec<ActiveToast>,
@@ -122,6 +130,7 @@ impl Overlays {
     pub fn init(cx: &mut App) {
         let entity = cx.new(|_| Overlays {
             dialog: None,
+            dialog_needs_focus: false,
             custom: None,
             toasts: Vec::new(),
             next_id: 0,
@@ -181,6 +190,7 @@ impl Overlays {
 pub fn show_dialog(request: DialogRequest, cx: &mut App) {
     Overlays::global(cx).update(cx, |o, cx| {
         o.dialog = Some(request);
+        o.dialog_needs_focus = true;
         cx.notify();
     });
 }
@@ -202,9 +212,11 @@ pub fn modal_frame(
     width: f32,
     content: impl IntoElement,
     on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
-    cx: &App,
+    cx: &mut App,
 ) -> Stateful<Div> {
     let p = cx.palette();
+    let trap = keyed_focus_handle(SharedString::from(format!("{id}-trap")).into(), cx);
+    let close = close_button("modal-close", &p, cx);
     let on_dismiss = Rc::new(on_dismiss);
     let dismiss = on_dismiss.clone();
     div()
@@ -231,10 +243,8 @@ pub fn modal_frame(
                 .shadow(dialog_shadow(&p))
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(content)
-                .child(
-                    close_button("modal-close", &p)
-                        .on_click(move |_, window, cx| on_dismiss(window, cx)),
-                )
+                .child(close.on_click(move |_, window, cx| on_dismiss(window, cx)))
+                .focus_trap(SharedString::from(format!("{id}-focus-trap")), &trap)
                 .with_animation(
                     "modal-in",
                     Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
@@ -275,10 +285,23 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
 }
 
 /// Renders the dialog backdrop and card, or nothing.
-pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
+pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
     let request = overlays.read(cx).dialog.clone()?;
     let p = cx.palette();
+    if overlays.read(cx).dialog_needs_focus {
+        overlays.update(cx, |o, _| o.dialog_needs_focus = false);
+        // Destructive dialogs start on Cancel, as macOS alerts do, so a stray
+        // Return never deletes anything.
+        let key = if request.destructive && request.cancel_label.is_some() {
+            "dialog-cancel"
+        } else {
+            "dialog-confirm"
+        };
+        let handle = keyed_focus_handle(key.into(), cx);
+        window.on_next_frame(move |window, cx| window.focus(&handle, cx));
+    }
+    let trap = keyed_focus_handle("dialog-trap".into(), cx);
     let close = {
         let overlays = overlays.clone();
         move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -317,9 +340,9 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
                 .p(px(24.))
                 .child(
                     div()
-                        .text_size(px(20.))
+                        .text_size(px(TEXT_TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .line_height(px(24.))
+                        .line_height(px(LINE_TITLE))
                         .text_color(p.foreground)
                         .pr(px(28.))
                         .child(request.title.clone()),
@@ -367,7 +390,8 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
                         .on_click(confirm),
                 ),
         )
-        .child(close_button("dialog-close", &p).on_click(close.clone()))
+        .child(close_button("dialog-close", &p, cx).on_click(close.clone()))
+        .focus_trap("dialog-focus-trap", &trap)
         .with_animation(
             "dialog-in",
             Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
@@ -396,10 +420,12 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
 }
 
 /// A 28 px ghost close button pinned to a card's top-right corner.
-fn close_button(id: &'static str, p: &super::theme::Palette) -> Stateful<Div> {
+fn close_button(id: &'static str, p: &super::theme::Palette, cx: &mut App) -> Stateful<Div> {
     let hover = p.hover_wash(if p.dark { 0.06 } else { 0.05 });
     div()
         .id(id)
+        .keyboard_focusable(id, Role::Button, crate::i18n::t("common.close"), cx)
+        .tooltip(text_tooltip(crate::i18n::t("common.close")))
         .absolute()
         .top(px(14.))
         .right(px(14.))
