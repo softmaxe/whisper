@@ -303,7 +303,7 @@ pub const PAGE_TOP: f32 = 24.;
 
 /// A comfortable long-form reading measure. The canvas may be wider, but
 /// transcripts and their metadata stay in one scan-friendly column.
-pub const READING_MAX_WIDTH: f32 = 736.;
+pub const READING_MAX_WIDTH: f32 = 680.;
 
 /// Motion durations, in ms. Five steps replace one-off timings:
 ///
@@ -317,6 +317,14 @@ pub const DUR_SNAP: u64 = 120;
 pub const DUR_BASE: u64 = 200;
 pub const DUR_SHEET: u64 = 300;
 pub const DUR_SLOW: u64 = 450;
+
+/// An enter or exit animation lasting `ms`, or effectively none when the
+/// user asked macOS to reduce motion. GPUI Base transitions already honor
+/// that setting; `with_animation` does not, so its callers go through here.
+pub fn motion(ms: u64, cx: &gpui_kit::App) -> gpui_kit::Animation {
+    let ms = if cx.reduce_motion() { 1 } else { ms };
+    gpui_kit::Animation::new(std::time::Duration::from_millis(ms))
+}
 
 /// Strong ease-out shared by enter motion.
 pub fn ease_out(t: f32) -> f32 {

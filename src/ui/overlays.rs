@@ -16,7 +16,7 @@ use super::components::{
 };
 use super::theme::{
     DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
-    RADIUS_LG, RADIUS_SM, TEXT_BODY, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap,
+    RADIUS_LG, RADIUS_SM, TEXT_BODY, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, motion,
 };
 
 pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -108,8 +108,29 @@ struct ActiveToast {
     toast: Toast,
     /// The toast's duration with the variant default applied.
     duration: Duration,
-    shown_at: Instant,
+    /// Time shown before the current run of the countdown.
+    banked: Duration,
+    /// When the countdown last resumed; `None` while the pointer rests on
+    /// the toast, so a message being read never disappears under it.
+    running_since: Option<Instant>,
     closing: bool,
+}
+
+impl ActiveToast {
+    fn elapsed(&self) -> Duration {
+        self.banked + self.running_since.map_or(Duration::ZERO, |t| t.elapsed())
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        match (paused, self.running_since) {
+            (true, Some(since)) => {
+                self.banked += since.elapsed();
+                self.running_since = None;
+            }
+            (false, None) => self.running_since = Some(Instant::now()),
+            _ => {}
+        }
+    }
 }
 
 pub struct Overlays {
@@ -247,7 +268,7 @@ pub fn modal_frame(
                 .focus_trap(SharedString::from(format!("{id}-focus-trap")), &trap)
                 .with_animation(
                     "modal-in",
-                    Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                    motion(DUR_BASE, cx).with_easing(ease_out),
                     |d, t| d.opacity(t).mt(px(8. * (1. - t))),
                 ),
         )
@@ -268,7 +289,8 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
             id,
             toast,
             duration,
-            shown_at: Instant::now(),
+            banked: Duration::ZERO,
+            running_since: Some(Instant::now()),
             closing: false,
         });
         // Keep the toast stack short.
@@ -276,11 +298,6 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
             o.toasts.remove(0);
         }
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(duration).await;
-            let _ = this.update(cx, |this, cx| this.dismiss_toast(id, cx));
-        })
-        .detach();
     });
 }
 
@@ -394,7 +411,7 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .focus_trap("dialog-focus-trap", &trap)
         .with_animation(
             "dialog-in",
-            Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+            motion(DUR_BASE, cx).with_easing(ease_out),
             |d, t| d.opacity(t).mt(px(6. * (1. - t))),
         );
 
@@ -412,7 +429,7 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
             .child(card)
             .with_animation(
                 "dialog-backdrop-in",
-                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                motion(DUR_BASE, cx).with_easing(ease_out),
                 |d, t| d.opacity(t),
             )
             .into_any_element(),
@@ -443,6 +460,24 @@ fn close_button(id: &'static str, p: &super::theme::Palette, cx: &mut App) -> St
 /// with a colored type icon, a hover close button and a 1 px countdown.
 pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
+    // Expired toasts leave from here; the countdown pauses while hovered.
+    let expired: Vec<u64> = overlays
+        .read(cx)
+        .toasts
+        .iter()
+        .filter(|t| !t.closing && t.elapsed() >= t.duration)
+        .map(|t| t.id)
+        .collect();
+    if !expired.is_empty() {
+        let overlays = overlays.clone();
+        cx.defer(move |cx| {
+            overlays.update(cx, |o, cx| {
+                for id in expired {
+                    o.dismiss_toast(id, cx);
+                }
+            })
+        });
+    }
     let o = overlays.read(cx);
     if o.toasts.is_empty() {
         return None;
@@ -467,7 +502,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 p.destructive.opacity(0.35),
             ),
         };
-        let elapsed = active.shown_at.elapsed().as_secs_f32();
+        let elapsed = active.elapsed().as_secs_f32();
         let total = active.duration.as_secs_f32();
         let remaining = (1. - elapsed / total).clamp(0., 1.);
         let (message, detail) = match &toast.description {
@@ -477,11 +512,21 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         };
         let destructive = toast.variant == ToastVariant::Destructive;
         let overlays_close = overlays.clone();
+        let overlays_hover = overlays.clone();
         let group: SharedString = format!("toast-{id}").into();
         let close_hover = p.hover_wash(0.08);
         let card = div()
             .id(("toast", id as usize))
             .group(group.clone())
+            .on_hover(move |hovered: &bool, _, cx| {
+                let paused = *hovered;
+                overlays_hover.update(cx, |o, cx| {
+                    if let Some(t) = o.toasts.iter_mut().find(|t| t.id == id) {
+                        t.set_paused(paused);
+                        cx.notify();
+                    }
+                });
+            })
             .occlude()
             .relative()
             .flex()
@@ -577,12 +622,11 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let closing = active.closing;
         let card = card.with_animation(
             ("toast-anim", id as usize * 2 + closing as usize),
-            Animation::new(Duration::from_millis(if closing {
-                DUR_SNAP
+            motion(if closing { DUR_SNAP } else { DUR_SHEET }, cx).with_easing(if closing {
+                ease_snap
             } else {
-                DUR_SHEET
-            }))
-            .with_easing(if closing { ease_snap } else { ease_out }),
+                ease_out
+            }),
             // Slides in from the edge; leaves quickly with only a nudge.
             move |d, t| {
                 if closing {

@@ -21,7 +21,7 @@ use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG,
-    TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
+    TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap, motion,
 };
 use super::upload_view::{UploadEvent, UploadView};
 
@@ -531,7 +531,7 @@ impl Render for ControlPanel {
             .child(self.render_content(window, cx))
             .with_animation(
                 ("view-in", self.active as usize),
-                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                motion(DUR_BASE, cx).with_easing(ease_out),
                 |d, t| d.opacity(t).top(px(3. * (1. - t))),
             );
         let scrolled = self.scroll.offset().y < px(-4.);
