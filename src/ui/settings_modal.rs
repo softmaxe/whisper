@@ -27,9 +27,9 @@ use crate::text::url::{build_api_url, normalize_base_url};
 use super::components::f32_tx;
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, Toggle, backdrop,
-    dialog_shadow, icon, nav_row, page_container, panel_row, section_header, segment,
-    segmented_track, settings_field, settings_field_tagged, settings_row, settings_section,
-    status_label,
+    dialog_shadow, icon, keyed_focus_handle, nav_row, page_container, panel_row, section_header,
+    segment, segmented_track, settings_field, settings_field_tagged, settings_row,
+    settings_section, status_label,
 };
 use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH};
 use super::hotkey_input::{HotkeyListInput, hotkey_glyphs};
@@ -2708,7 +2708,14 @@ fn activation_mode_cards(
                 .id(id.clone())
                 .when(!disabled, |d| {
                     d.keyboard_focusable(id, Role::RadioButton, title.clone(), cx)
-                        .aria_selected(selected)
+                        .aria_toggled(if selected {
+                            Toggled::True
+                        } else {
+                            Toggled::False
+                        })
+                        .on_key_down(move |event, window, cx| {
+                            move_activation_mode(event, push_blocked, window, cx)
+                        })
                 })
                 .flex_1()
                 .min_w(px(200.))
@@ -2765,6 +2772,28 @@ fn activation_mode_cards(
     row
 }
 
+/// Arrow keys move between the activation cards like a radio group:
+/// selecting the neighbour and taking focus to it.
+fn move_activation_mode(
+    event: &KeyDownEvent,
+    push_blocked: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let (target, key) = match event.keystroke.key.as_str() {
+        "left" | "up" => (ActivationMode::Tap, "tap"),
+        "right" | "down" if !push_blocked => (ActivationMode::Push, "hold"),
+        _ => return,
+    };
+    cx.stop_propagation();
+    update_settings(cx, |s| s.activation_mode = target);
+    let handle = keyed_focus_handle(
+        SharedString::from(format!("settings-activation-{key}")).into(),
+        cx,
+    );
+    window.focus(&handle, cx);
+}
+
 /// The presses a card's diagram draws.
 #[derive(Clone, Copy)]
 enum PressPattern {
@@ -2773,15 +2802,33 @@ enum PressPattern {
     Hold,
 }
 
-/// A key press drawn on a timeline: one short tap, two, or one long hold.
+/// A key press drawn on a timeline: one short tap, two, or one long hold,
+/// over a faint 32 px track so every card's diagram spans the same width
+/// and a lone tap reads as a mark in time.
 fn press_diagram(pattern: PressPattern, color: Hsla) -> Div {
     let press = |width: f32| div().h(px(4.)).w(px(width)).rounded_full().bg(color);
-    let line = div().flex().items_center().gap(px(3.)).w(px(32.));
-    match pattern {
-        PressPattern::Single => line.child(press(6.)),
-        PressPattern::Double => line.child(press(6.)).child(press(6.)),
-        PressPattern::Hold => line.child(press(32.)),
-    }
+    let presses = div().relative().flex().items_center().gap(px(3.));
+    let presses = match pattern {
+        PressPattern::Single => presses.child(press(6.)),
+        PressPattern::Double => presses.child(press(6.)).child(press(6.)),
+        PressPattern::Hold => presses.child(press(32.)),
+    };
+    div()
+        .relative()
+        .flex_none()
+        .w(px(32.))
+        .h(px(4.))
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top(px(1.))
+                .w(px(32.))
+                .h(px(2.))
+                .rounded_full()
+                .bg(color.opacity(0.15)),
+        )
+        .child(presses)
 }
 
 /// How many listed speech models to offer as choices; a server that lists
