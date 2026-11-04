@@ -259,6 +259,8 @@ pub const TEXT_FIGURE: f32 = 34.;
 /// code-like values set beside SF text drop a step: `MONO_SMALL` next to
 /// `SMALL` text, `MONO_BODY` in inputs and beside `BODY` text.
 pub const TEXT_MONO_SMALL: f32 = 11.5;
+// Settings inputs adopt it; until then nothing else sets mono body text.
+#[allow(dead_code)]
 pub const TEXT_MONO_BODY: f32 = 13.;
 
 /// Line heights paired with the scale.

@@ -16,7 +16,8 @@ use super::components::{
 };
 use super::theme::{
     DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
-    RADIUS_LG, RADIUS_SM, TEXT_BODY, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap, motion,
+    RADIUS_LG, RADIUS_SM, TEXT_BODY, TEXT_MONO_SMALL, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap,
+    motion,
 };
 
 pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -584,7 +585,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                                     .rounded(px(RADIUS_SM))
                                     .bg(p.destructive.opacity(if p.dark { 0.12 } else { 0.06 }))
                                     .font_family(FONT_MONO)
-                                    .text_size(px(TEXT_SMALL))
+                                    .text_size(px(TEXT_MONO_SMALL))
                                     .line_height(px(LINE_SMALL))
                                     .text_color(p.destructive)
                                     .child(detail),
