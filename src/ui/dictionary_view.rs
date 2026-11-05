@@ -17,7 +17,7 @@ use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state, icon, kbd,
-    keyed_focus_handle, page_container, surface_card, text_tooltip,
+    keyed_focus_handle, page_container, segment, segmented_track, surface_card, text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
 use super::format::day_label;
@@ -108,9 +108,12 @@ const COL_TRIGGER: f32 = 200.;
 const HEADER_CONTROL: f32 = 28.;
 /// Height of the Words / Snippets tab bar; its underline sits on the bottom edge.
 const TAB_BAR: f32 = 40.;
-/// Side padding of a tab and of a filter chip. Each row is pulled out by the
-/// same amount, so the first label starts on the page edge, over the table.
+/// Side padding of a tab. The tab row is pulled out by the same amount, so
+/// the first label starts on the page edge, over the table.
 const TAB_PAD: f32 = 8.;
+/// Height of a Source filter segment; with the track's 2 pt inset the
+/// control stands 24 pt, a step below the 28 pt header controls.
+const FILTER_SEGMENT: f32 = 20.;
 /// Content width, in px, below which the search no longer fits in the tab
 /// bar and drops to the row under it.
 const HEADER_ONE_ROW: f32 = 440.;
@@ -337,6 +340,8 @@ pub struct DictionaryView {
     /// The content width on the last frame, which picks the header and
     /// table layouts.
     width: Option<f32>,
+    /// ⌘F to the Filter field while the page is on screen.
+    _find: Subscription,
 }
 
 fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
@@ -456,6 +461,42 @@ impl DictionaryView {
             next_removal: 0,
             row_keys: Vec::new(),
             width: None,
+            _find: Self::intercept_find(cx),
+        }
+    }
+
+    /// ⌘F focuses the Filter field, as in any Mac list. Key events only
+    /// reach the page when focus is inside it, and the window usually holds
+    /// focus at its root, so the shortcut is caught before dispatch. It acts
+    /// only while the page is rendered and focus is at or above it (the
+    /// window root), never while a dialog or palette holds focus.
+    fn intercept_find(cx: &mut Context<Self>) -> Subscription {
+        let this = cx.entity().downgrade();
+        cx.intercept_keystrokes(move |e, window, cx| {
+            if !is_find(&e.keystroke) {
+                return;
+            }
+            let page = keyed_focus_handle("dict-tab-words".into(), cx);
+            if !page.within_focused(window, cx) {
+                return;
+            }
+            let _ = this.update(cx, |this, cx| this.focus_filter(window, cx));
+            cx.stop_propagation();
+        })
+    }
+
+    /// Focuses the current tab's Filter field, which shows once there is a
+    /// row to filter.
+    fn focus_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = AppState::global(cx).read(cx);
+        let has_rows = match self.tab {
+            Tab::Words => !state.dictionary.is_empty(),
+            Tab::Snippets => !state.snippets.is_empty(),
+        };
+        if has_rows {
+            self.menu = None;
+            self.search().update(cx, |i, cx| i.focus(window, cx));
+            cx.notify();
         }
     }
 
@@ -1012,9 +1053,9 @@ impl DictionaryView {
         };
         // Only auto-learn makes words of two sources, so until it adds one
         // the filter has nothing to tell apart. Snippets have no source.
-        let learned = self.learned_count(cx);
+        let (total, learned) = self.source_counts(cx);
         let filter =
-            (self.tab == Tab::Words && learned > 0).then(|| self.render_filter(learned, cx));
+            (self.tab == Tab::Words && learned > 0).then(|| self.render_filter(total, learned, cx));
         let compact = self.content_width(window) < HEADER_ONE_ROW;
         let search = has_rows.then(|| self.render_search(compact, window, cx));
         let (bar_search, row_search) = if compact {
@@ -1029,8 +1070,9 @@ impl DictionaryView {
             .gap(px(8.))
             .child(add);
         // The view switch owns the page: an underlined tab bar that also holds
-        // the add action; the page's ⋮ menu lives in the window's top bar. The source filter only narrows the Words view,
-        // so it sits under the bar, smaller and without a track.
+        // the add action; the page's ⋮ menu lives in the window's top bar.
+        // The source filter only narrows the Words view, so it sits under
+        // the bar as a compact segmented control.
         let bar = div()
             .relative()
             .flex()
@@ -1835,93 +1877,85 @@ impl DictionaryView {
             .into_any_element()
     }
 
-    /// Learned words, leaving out a word waiting on Undo.
-    fn learned_count(&self, cx: &App) -> usize {
+    /// All words and learned words, leaving out a word waiting on Undo.
+    fn source_counts(&self, cx: &App) -> (usize, usize) {
         let pending = self.pending_word();
-        AppState::global(cx)
-            .read(cx)
-            .dictionary_entries
-            .iter()
-            .filter(|e| Some(e.word.as_str()) != pending)
+        let entries = &AppState::global(cx).read(cx).dictionary_entries;
+        let words = entries.iter().filter(|e| Some(e.word.as_str()) != pending);
+        let learned = words
+            .clone()
             .filter(|e| e.source == DictionarySource::Learned)
-            .count()
+            .count();
+        (words.count(), learned)
     }
 
     /// All / Manual / Learned, under the tab bar once auto-learn has added a
     /// word, so learned words can be reviewed without digging through a menu.
-    /// Quiet ghost chips; only Learned carries a count, since how many words
-    /// auto-learn has added is the one number the footer does not give.
-    fn render_filter(&self, learned: usize, cx: &mut Context<Self>) -> Div {
+    /// The same segmented control as the Insights range, compact since it
+    /// only narrows the list; underline tabs stay for switching views. Every
+    /// option carries its count, so the three read as parts of one whole.
+    fn render_filter(&self, total: usize, learned: usize, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let active_bg = p.hover_wash(if p.dark { 0.1 } else { 0.06 });
-        let hover_bg = p.hover_wash(if p.dark { 0.05 } else { 0.035 });
-        let hover_fg = p.foreground;
-        let mut row = div().flex_none().flex().items_center().gap(px(2.)).child(
-            div()
-                .mr(px(6.))
-                .text_size(px(TEXT_SMALL))
-                .text_color(p.subtle_foreground)
-                .child(t("dictionary.filterSource")),
-        );
-        for (filter, id, key) in [
-            (SourceFilter::All, "dict-filter-all", "dictionary.filterAll"),
+        let mut track = segmented_track(&p);
+        for (filter, id, key, count) in [
+            (
+                SourceFilter::All,
+                "dict-filter-all",
+                "dictionary.filterAll",
+                total,
+            ),
             (
                 SourceFilter::Manual,
                 "dict-filter-manual",
                 "dictionary.filterManual",
+                total - learned,
             ),
             (
                 SourceFilter::Learned,
                 "dict-filter-learned",
                 "dictionary.filterLearned",
+                learned,
             ),
         ] {
             let active = self.filter == filter;
-            let count = (filter == SourceFilter::Learned).then(|| learned.to_string());
-            let label = match &count {
-                Some(n) => t_with("dictionary.filterLearnedCount", &[("count", n)]),
-                None => t(key),
-            };
-            row = row.child(
-                div()
-                    .id(id)
-                    .keyboard_focusable(id, Role::RadioButton, label.clone(), cx)
-                    .aria_toggled(if active {
-                        Toggled::True
-                    } else {
-                        Toggled::False
-                    })
-                    .flex()
-                    .items_center()
+            let name = t(key);
+            let count = count.to_string();
+            let label = t_with(
+                "dictionary.filterOptionCount",
+                &[("label", &name), ("count", &count)],
+            );
+            track = track.child(
+                segment(id, label, active, cx)
+                    .h(px(FILTER_SEGMENT))
                     .gap(px(5.))
-                    .h(px(24.))
-                    .px(px(TAB_PAD))
-                    .rounded(px(RADIUS_MD))
-                    .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
-                    .cursor_pointer()
-                    .when(active, |d| d.bg(active_bg).text_color(p.foreground))
-                    .when(!active, |d| {
-                        d.text_color(p.muted_foreground)
-                            .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
-                    })
-                    .child(t(key))
-                    // The count is quieter than its label, in figures that
-                    // keep the chip's width steady as words are learned.
-                    .children(count.map(|n| {
+                    .child(name)
+                    // Quieter than its label, in figures that keep the
+                    // segment's width steady as words are learned.
+                    .child(
                         div()
                             .font_weight(FontWeight::NORMAL)
                             .font_features(tabular_nums())
                             .text_color(p.subtle_foreground)
-                            .child(n)
-                    }))
+                            .child(count),
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.filter = filter;
                         cx.notify();
                     })),
             );
         }
-        row
+        div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .text_size(px(TEXT_SMALL))
+                    .text_color(p.subtle_foreground)
+                    .child(t("dictionary.filterSource")),
+            )
+            .child(track)
     }
 
     /// A sortable column heading; a second click flips the direction. Idle
@@ -2921,6 +2955,13 @@ impl Render for DictionaryView {
             .gap(px(16.))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 let k = &e.keystroke;
+                // Focus already inside the page never reaches the window-level
+                // interceptor's root check, so ⌘F is handled here too.
+                if is_find(k) {
+                    this.focus_filter(window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
                 if k.key == "z"
                     && k.modifiers.platform
                     && !k.modifiers.shift
@@ -2936,6 +2977,12 @@ impl Render for DictionaryView {
             .children(context_menu)
             .children(undo)
     }
+}
+
+/// ⌘F with no other modifier.
+fn is_find(k: &Keystroke) -> bool {
+    let m = &k.modifiers;
+    k.key == "f" && m.platform && !m.shift && !m.alt && !m.control && !m.function
 }
 
 /// The "Edit snippet" dialog.
