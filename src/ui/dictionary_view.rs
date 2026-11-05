@@ -16,7 +16,7 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon, kbd,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state, icon, kbd,
     keyed_focus_handle, page_container, surface_card, text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
@@ -2392,61 +2392,43 @@ impl DictionaryView {
     }
 
     fn render_empty(p: &Palette, cx: &mut Context<Self>) -> Div {
-        surface_card(p).child(
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .py(px(40.))
-                .px(px(24.))
-                .child(empty_state_icon("book-open", p).mb(px(16.)))
-                .child(
-                    div()
-                        .mb(px(4.))
-                        .text_size(px(TEXT_TITLE))
-                        .line_height(px(24.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(p.foreground)
-                        .child(t("dictionary.emptyTitle")),
-                )
-                .child(
-                    div()
-                        .mb(px(20.))
-                        .max_w(px(320.))
-                        .text_center()
-                        .text_size(px(TEXT_BODY))
-                        .line_height(px(20.))
-                        .text_color(p.muted_foreground)
-                        .child(t_with(
-                            "dictionary.emptyDescription",
-                            &[("agentName", crate::text::DEFAULT_AGENT_NAME)],
-                        )),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(
-                            Button::new("dict-first")
-                                .icon("plus", 12.)
-                                .label(t("dictionary.addFirstWord"))
-                                .size(ButtonSize::Sm)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_panel(Panel::AddWords, window, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("dict-import-first")
-                                .icon("upload", 12.)
-                                .label(t("dictionary.importFirstList"))
-                                .variant(ButtonVariant::Ghost)
-                                .size(ButtonSize::Sm)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.open_panel(Panel::Import, window, cx)
-                                })),
-                        ),
+        // The shared empty state, bare like History's, with the two ways in.
+        div().flex().justify_center().py(px(48.)).px(px(24.)).child(
+            empty_state(
+                "book-open",
+                t("dictionary.emptyTitle"),
+                t_with(
+                    "dictionary.emptyDescription",
+                    &[("agentName", crate::text::DEFAULT_AGENT_NAME)],
                 ),
+                p,
+            )
+            .child(
+                div()
+                    .mt(px(20.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("dict-first")
+                            .icon("plus", 12.)
+                            .label(t("dictionary.addFirstWord"))
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_panel(Panel::AddWords, window, cx)
+                            })),
+                    )
+                    .child(
+                        Button::new("dict-import-first")
+                            .icon("upload", 12.)
+                            .label(t("dictionary.importFirstList"))
+                            .variant(ButtonVariant::Ghost)
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_panel(Panel::Import, window, cx)
+                            })),
+                    ),
+            ),
         )
     }
 
