@@ -137,6 +137,50 @@ mod tests {
         assert_ne!(t_in(Language::ZhCn, "sidebar.home", &[]), "sidebar.home");
     }
 
+    /// Every literal key passed to `t`/`t_with`/`try_t` in the sources must
+    /// resolve in both languages; a missing one renders as the raw key.
+    #[test]
+    fn every_literal_key_resolves() {
+        let pattern = regex::Regex::new(r#"\b(?:t|t_with|try_t)\(\s*"([A-Za-z][\w.]*)""#).unwrap();
+        let mut missing = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src"
+        ))];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|e| e != "rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                for capture in pattern.captures_iter(&source) {
+                    let key = &capture[1];
+                    // Keys with a dot only; single words are other functions' args.
+                    if !key.contains('.') || key == "no.such.key" {
+                        continue;
+                    }
+                    for language in [Language::En, Language::ZhCn] {
+                        let found = resolve(language, key, None).is_some()
+                            || resolve(language, key, Some(2)).is_some();
+                        if !found {
+                            missing.push(format!("{language:?} {key} ({})", path.display()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "missing locale keys:\n{}",
+            missing.join("\n")
+        );
+    }
+
     #[test]
     fn missing_keys_fall_back_to_key() {
         assert_eq!(t_in(Language::En, "no.such.key", &[]), "no.such.key");

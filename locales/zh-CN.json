@@ -610,7 +610,8 @@
     "notSorted": "未排序",
     "usesBar": "{{count}} / 最多 {{max}}",
     "editDuplicate": "“{{word}}”已在词典中",
-    "editEmpty": "请输入词语，或按 Esc 保留原词"
+    "editEmpty": "请输入词语，或按 Esc 保留原词",
+    "filterOptionCount": "{{label}}，{{count}}"
   },
   "insights": {
     "wordsSpoken": "已听写字数",

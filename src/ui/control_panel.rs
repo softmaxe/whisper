@@ -684,7 +684,9 @@ impl Render for ControlPanel {
         let fill = self.active == PanelView::Insights;
         let content = div()
             .relative()
-            .when(fill, |d| d.h_full())
+            // At least a viewport tall so short states can center, but free to
+            // grow: a fixed height would leave the scroll area nothing to scroll.
+            .when(fill, |d| d.min_h_full())
             .child(self.render_content(window, cx))
             .with_animation(
                 ("view-in", self.active as usize),

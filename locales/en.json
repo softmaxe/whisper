@@ -694,7 +694,8 @@
     "notSorted": "Not sorted",
     "usesBar": "{{count}} of {{max}} max",
     "editDuplicate": "“{{word}}” is already in your dictionary",
-    "editEmpty": "Enter a word, or press Esc to keep the old one"
+    "editEmpty": "Enter a word, or press Esc to keep the old one",
+    "filterOptionCount": "{{label}}, {{count}}"
   },
   "apiKeyInput": {
     "placeholder": "Paste your API key",
