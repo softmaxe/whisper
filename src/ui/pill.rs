@@ -49,13 +49,14 @@ const TIMER_GAP: f32 = 8.;
 const TIMER_W: f32 = 26.;
 const PILL_TIMED_W: f32 = PILL_W + TIMER_GAP + TIMER_W;
 /// The cancel control beside the pill. It stays from the first frame of a
-/// Dictation so aborting never depends on discovering a hover state, but
-/// its glyph rests at half strength so the pill stays the focus.
+/// Dictation so aborting never depends on discovering a hover state. Its
+/// glyph rests a step below full strength, so the pill stays the focus
+/// while the control still reads as enabled (4.5:1 on the HUD).
 const CANCEL_SIZE: f32 = 28.;
 const CANCEL_GAP: f32 = 6.;
-const CANCEL_REST: f32 = 0.5;
-/// Side padding of the processing pill, around its dots and label.
-const PILL_PAD: f32 = 14.;
+const CANCEL_REST: f32 = 0.65;
+/// Least side padding of the processing pill, around its dots and label.
+const PILL_PAD: f32 = 10.;
 const THINK_LABEL_GAP: f32 = 8.;
 const TOAST_W: f32 = 300.;
 /// Inner padding of the error and recovery panels.
@@ -93,7 +94,7 @@ const RECOVERY_UNCOPIED: Duration = Duration::from_millis(12_000);
 const BARS: usize = 10;
 const BAR_W: f32 = 2.5;
 const BAR_GAP: f32 = 3.;
-const BAR_MIN: f32 = 3.;
+const BAR_MIN: f32 = 4.;
 const BAR_MAX: f32 = 18.;
 const ENVELOPE: [f32; BARS] = [0.35, 0.55, 0.75, 0.92, 1., 1., 0.92, 0.75, 0.55, 0.35];
 /// Input levels mapped onto the bars: the quiet end of a laptop mic's
@@ -102,11 +103,12 @@ const LEVEL_FLOOR_DB: f32 = -55.;
 const LEVEL_CEIL_DB: f32 = -20.;
 /// Peak height of the idle breath while no speech is heard. It follows
 /// [`ENVELOPE`], so silence reads as a soft arch, not a flat row of dots.
-const BREATH: f32 = 0.24;
+const BREATH: f32 = 0.38;
 const RISE: f32 = 0.45;
 const FALL: f32 = 0.16;
-/// The record dot that says the microphone is live.
-const REC_DOT: f32 = 7.;
+/// The record dot that says the microphone is live: the pill's only state
+/// color, so it is sized to hold its own on a busy desktop.
+const REC_DOT: f32 = 8.;
 const REC_GAP: f32 = 7.;
 /// The three-dot motif that replaces the bars while transcribing.
 const THINK_DOTS: usize = 3;
@@ -249,7 +251,7 @@ fn rec_pulse(now_ms: f32, reduce: bool) -> f32 {
         return 1.;
     }
     // A shallow pulse: the dot stays a clear red at its dimmest.
-    0.75 + 0.25 * (0.5 + 0.5 * ((now_ms / 1600.) * TAU).cos())
+    0.8 + 0.2 * (0.5 + 0.5 * ((now_ms / 1600.) * TAU).cos())
 }
 
 /// The pill's one-shot motion at an instant, layered over the waveform.
@@ -1024,7 +1026,8 @@ impl PillView {
             .children(timer);
 
         // Transcribing names itself beside the dots, so the state reads
-        // without hovering; the pill widens to fit the label.
+        // without hovering. It keeps the timed recording pill's width, so
+        // the capsule does not jump sideways when recording ends.
         let think_label = t("dictation.pill.transcribing");
         let think_w = Self::processing_width(&think_label, window);
         let think_alpha = thinking * motion_fx.bars;
@@ -1146,8 +1149,8 @@ impl PillView {
             .into_any_element()
     }
 
-    /// The processing pill's width: its dots and label inside the side
-    /// padding, never narrower than the compact pill.
+    /// The processing pill's width: the timed recording pill's, unless its
+    /// dots and label need more inside the side padding.
     fn processing_width(label: &str, window: &Window) -> f32 {
         let run = TextRun {
             len: label.len(),
@@ -1168,12 +1171,12 @@ impl PillView {
         );
         let dots = THINK_DOTS as f32 * THINK_DOT + (THINK_DOTS - 1) as f32 * THINK_GAP;
         let content = dots + THINK_LABEL_GAP + f32::from(text.width).ceil();
-        (content + 2. * PILL_PAD).max(PILL_W)
+        (content + 2. * PILL_PAD).max(PILL_TIMED_W)
     }
 
     /// The cancel control and how far it has emerged: it pops in from .8
-    /// over 200 ms and leaves in 60 ms. At rest its glyph sits at half
-    /// strength; pointing at it brings it to full.
+    /// over 200 ms and leaves in 60 ms. At rest its glyph sits just below
+    /// full strength; pointing at it brings it to full.
     fn render_cancel(
         &mut self,
         visible: bool,
@@ -1992,8 +1995,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        BREATH, Countdown, DUR_BASE, ENVELOPE, ERROR_HOLD, ErrorActions, ErrorCard, RESOLVE,
-        RETRY_HOLD, bar_level, format_elapsed, live_target, pill_motion, think_opacity,
+        BAR_MAX, BAR_MIN, BAR_W, BREATH, Countdown, DUR_BASE, ENVELOPE, ERROR_HOLD, ErrorActions,
+        ErrorCard, RESOLVE, RETRY_HOLD, bar_level, format_elapsed, live_target, pill_motion,
+        think_opacity,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -2094,6 +2098,21 @@ mod tests {
         assert_eq!(ErrorCard::hold(retry), RETRY_HOLD);
         assert_eq!(ErrorCard::hold(ErrorActions::default()), ERROR_HOLD);
         assert!(RETRY_HOLD > ERROR_HOLD);
+    }
+
+    #[test]
+    fn silent_bars_stay_taller_than_wide() {
+        // At their lowest the bars still read as a meter, not as dots.
+        let height =
+            |i: usize, now: f32| BAR_MIN + live_target(0., i, now, false) * (BAR_MAX - BAR_MIN);
+        for t in (0..2400).step_by(100) {
+            assert!(
+                height(0, t as f32) >= BAR_W * 1.6,
+                "{}",
+                height(0, t as f32)
+            );
+            assert!(height(4, t as f32) >= 2. * BAR_W, "{}", height(4, t as f32));
+        }
     }
 
     #[test]
