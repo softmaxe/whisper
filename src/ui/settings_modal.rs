@@ -3424,7 +3424,10 @@ impl Render for SettingsModal {
             .flex()
             .items_center()
             .gap(px(8.))
-            .pl(px(20.))
+            // The breadcrumb starts where the main top bar's title does
+            // (its padding, sidebar toggle and gap), so opening Settings
+            // never shifts the title sideways.
+            .pl(px(if frame.compact { 20. } else { 50. }))
             .pr(px(10.))
             // No rule under it, like the main top bar it stands in for.
             .text_size(px(TEXT_BODY))

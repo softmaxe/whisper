@@ -2379,7 +2379,7 @@ impl DictionaryView {
                             .h_full()
                             .w(px(bar))
                             .rounded(px(2.))
-                            .bg(p.foreground.opacity(if p.dark { 0.45 } else { 0.4 })),
+                            .bg(p.foreground.opacity(if p.dark { 0.45 } else { 0.5 })),
                     ),
             );
         let last_used_cell = div()

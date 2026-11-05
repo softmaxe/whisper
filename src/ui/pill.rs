@@ -57,7 +57,8 @@ const PILL_LABEL: f32 = 0.8;
 /// Dictation so aborting never depends on discovering a hover state. Its
 /// glyph rests a step below full strength, so the pill stays the focus
 /// while the control still reads as enabled (4.5:1 on the HUD).
-const CANCEL_SIZE: f32 = 28.;
+// The pill's own height, so the two share top and bottom edges.
+const CANCEL_SIZE: f32 = PILL_H;
 const CANCEL_GAP: f32 = 6.;
 const CANCEL_REST: f32 = 0.65;
 /// Least side padding of the processing pill, around its dots and label.

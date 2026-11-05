@@ -28,8 +28,13 @@ use super::theme::{
 };
 
 const CHART_HEIGHT: f32 = 220.;
+/// One rhythm for every ruled section: from its rule to the heading, then
+/// from the heading to the content.
+const SECTION_RULE_GAP: f32 = 20.;
+const SECTION_HEAD_GAP: f32 = 16.;
 const AXIS_WIDTH: f32 = 40.;
-/// Room right of the plot so the average's end dot is never clipped.
+/// Room right of the plot. None: the average is labeled in the legend, so
+/// the plot runs to the column edge like everything above it.
 const END_GUTTER: f32 = 0.;
 /// Height of the inspected bar's value label.
 const VALUE_LABEL_HEIGHT: f32 = 24.;
@@ -317,7 +322,7 @@ fn period_tone(p: &Palette) -> Hsla {
 /// canvas, so every bar's height reads, while the saturated
 /// period tone keeps the current period in the lead.
 fn comparison_tone(p: &Palette) -> Hsla {
-    p.foreground.opacity(if p.dark { 0.42 } else { 0.45 })
+    p.foreground.opacity(if p.dark { 0.42 } else { 0.5 })
 }
 
 /// A heading inside the dashboard: one step above the body text it heads.
@@ -893,10 +898,12 @@ impl InsightsView {
                 .items_center()
                 .gap(px(6.))
                 .h(px(VALUE_LABEL_HEIGHT))
-                .px(px(8.))
                 .rounded(px(RADIUS_MD))
+                // Padded only as a raised tooltip; at rest the caption's text
+                // ends on the plot edge like the legend above it.
                 .when(accented, |d| {
-                    d.border_1()
+                    d.px(px(8.))
+                        .border_1()
                         .border_color(p.border_hover)
                         .bg(p.popover)
                         .shadow(vec![drop(0., 1., 3., if p.dark { 0.4 } else { 0.08 })])
@@ -1151,9 +1158,9 @@ impl InsightsView {
         div()
             .border_t_1()
             .border_color(p.border)
-            .pt(px(14.))
+            .pt(px(SECTION_RULE_GAP))
             .child(heading(t("insights.highlights"), p))
-            .child(grid.mt(px(12.)))
+            .child(grid.mt(px(SECTION_HEAD_GAP)))
     }
 
     /// The span the habits section covers: the last few weeks, or since the
@@ -1504,7 +1511,7 @@ impl InsightsView {
             .flex_col()
             .child(
                 div()
-                    .pt(px(20.))
+                    .pt(px(SECTION_RULE_GAP))
                     .border_t_1()
                     .border_color(p.border)
                     .flex()
@@ -1522,7 +1529,7 @@ impl InsightsView {
                             .child(span),
                     ),
             )
-            .child(div().mt(px(16.)).child(pair(
+            .child(div().mt(px(SECTION_HEAD_GAP)).child(pair(
                 Self::streak_card(summary, today, p),
                 self.weekly_rhythm(summary, today, p),
             )));
