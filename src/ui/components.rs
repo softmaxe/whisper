@@ -7,10 +7,9 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::theme::{
-    CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE,
-    NAV_ROW_HEIGHT, PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG,
-    RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_MONO_CAPTION, TEXT_SMALL, TEXT_TITLE,
-    ease_css, ease_out, spring,
+    CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, LINE_SMALL, LINE_TITLE, NAV_ROW_HEIGHT,
+    PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -839,8 +838,8 @@ pub fn settings_field(
     field_with_label(label.into_any_element(), description, action, control, p)
 }
 
-/// A settings field whose label carries a protocol tag such as
-/// `OpenAI · /chat/completions`, so users know what the server must speak.
+/// A settings field whose label carries a protocol note such as
+/// "OpenAI-compatible · no auth", so users know what the server must speak.
 pub fn settings_field_tagged(
     label: impl Into<SharedString>,
     tag: impl Into<SharedString>,
@@ -860,15 +859,11 @@ pub fn settings_field_tagged(
                 .text_color(p.foreground)
                 .child(label.into()),
         )
+        // Plain metadata in the UI face: a bordered chip would read as one
+        // more clickable preset, and the tag is prose, not a code value.
         .child(
             div()
-                .px(px(6.))
-                .rounded(px(RADIUS_SM))
-                .border_1()
-                .border_color(if p.dark { p.border_hover } else { p.border })
-                .bg(if p.dark { p.surface_3 } else { p.muted })
-                .font_family(FONT_MONO)
-                .text_size(px(TEXT_MONO_CAPTION))
+                .text_size(px(TEXT_CAPTION))
                 .line_height(px(LINE_SMALL))
                 .text_color(p.muted_foreground)
                 .child(tag.into()),
