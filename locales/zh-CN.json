@@ -664,7 +664,9 @@
     "calendarLabel": "最近 {{weeks}} 周中有 {{count}} 天活跃",
     "rhythmRow": "{{day}}，平均 {{count}} 字",
     "comparedWith": "与前 {{count}} 天相比",
-    "noComparison": "暂无可比数据"
+    "noComparison": "暂无可比数据",
+    "perDayValue": "每天 {{count}} 字",
+    "perWeekValue": "每周 {{count}} 字"
   },
   "sidebar": {
     "insights": "统计",

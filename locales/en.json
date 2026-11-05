@@ -547,7 +547,9 @@
     "rhythmRow_other": "{{day}}, {{count}} average words",
     "comparedWith_one": "Compared with the previous {{count}} day",
     "comparedWith_other": "Compared with the previous {{count}} days",
-    "noComparison": "Nothing to compare"
+    "noComparison": "Nothing to compare",
+    "perDayValue": "{{count}} words/day",
+    "perWeekValue": "{{count}} words/week"
   },
   "upload": {
     "chooseFiles": "Choose Files",

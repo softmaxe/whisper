@@ -37,8 +37,8 @@ use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog,
 use super::select::{Select, SelectEvent, SelectOption};
 use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
-    CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt,
-    RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION,
+    DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL,
+    RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY, TEXT_CAPTION,
     TEXT_MONO_BODY, TEXT_MONO_CAPTION, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT,
     ease_out, ease_snap, motion,
 };
@@ -1971,7 +1971,7 @@ impl SettingsModal {
         display
             .group("settings-api-key")
             .w_full()
-            .h(px(CONTROL_HEIGHT))
+            .h(px(ROW_CONTROL_HEIGHT))
             .flex()
             .items_center()
             .gap(px(8.))

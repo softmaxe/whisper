@@ -22,9 +22,9 @@ use super::components::{
 };
 use super::format::day_label;
 use super::theme::{
-    LINE_SMALL, LINE_TITLE, PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
-    TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT,
-    tabular_nums,
+    LINE_SMALL, LINE_TITLE, PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG,
+    RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE,
+    WORKSPACE_TOP_BAR_HEIGHT, tabular_nums,
 };
 
 const CHART_HEIGHT: f32 = 220.;
@@ -875,11 +875,17 @@ impl InsightsView {
         // The legend names the average with its latest value, which the
         // end dot marks, so no label crowds the last bar.
         let average_label = match bars.last().and_then(|b| b.average) {
+            // A rate, so it never reads as the WPM figure above or as an
+            // average dictation length.
             Some(value) => format!(
                 "{} · {}",
                 t(average),
                 t_with(
-                    "insights.wordCount",
+                    if bucket_days == 1 {
+                        "insights.perDayValue"
+                    } else {
+                        "insights.perWeekValue"
+                    },
                     &[("count", &compact_number(value.round() as i64))]
                 )
             ),
@@ -1120,13 +1126,17 @@ impl InsightsView {
                 .font_features(tabular_nums())
                 .child(
                     div()
+                        .min_w_0()
                         .flex()
                         .items_baseline()
                         .gap(px(6.))
                         .text_size(px(TEXT_TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(p.foreground)
-                        .child(value)
+                        // A narrow tile clips its value rather than spilling
+                        // into the next one.
+                        .overflow_hidden()
+                        .child(div().flex_none().child(value))
                         .children(detail.map(|d| {
                             div()
                                 .text_size(px(TEXT_SMALL))
@@ -1437,14 +1447,22 @@ impl InsightsView {
         p: &Palette,
         cx: &mut Context<Self>,
     ) -> Div {
-        let width = window.viewport_size().width;
+        // Wide or stacked by the content column's width, not the window's,
+        // so the sidebar being open or closed is accounted for.
+        let sidebar = if AppState::settings(cx).sidebar_collapsed {
+            0.
+        } else {
+            super::control_panel::SIDEBAR_WIDTH
+        };
+        let content = (f32::from(window.viewport_size().width) - sidebar).min(PAGE_MAX_WIDTH)
+            - 2. * PAGE_GUTTER;
+        let wide = content > 720.;
         let today = Local::now().date_naive();
         let metrics = div()
             .flex()
             .gap(px(16.))
-            .when(width <= px(900.), |d| d.flex_col().gap(px(20.)))
+            .when(!wide, |d| d.flex_col().gap(px(20.)))
             .children(self.metrics(summary, today, p));
-        let wide = width > px(900.);
         let pair = |a: Div, b: Div| {
             if wide {
                 div().flex().gap(px(16.)).child(a).child(b)
