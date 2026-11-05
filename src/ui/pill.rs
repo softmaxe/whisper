@@ -96,7 +96,8 @@ const RECOVERY_UNCOPIED: Duration = Duration::from_millis(12_000);
 
 // Waveform constants.
 const BARS: usize = 10;
-const BAR_W: f32 = 2.5;
+// Whole points, so every bar edge lands on a pixel on 1x displays.
+const BAR_W: f32 = 2.;
 const BAR_GAP: f32 = 3.;
 const BAR_MIN: f32 = 4.;
 const BAR_MAX: f32 = 18.;
@@ -1434,8 +1435,10 @@ impl PillView {
         cx: &mut App,
     ) -> Stateful<Div> {
         let p = hud();
+        // The primary action takes the app's accent, as primary actions do
+        // in the main window.
         let (bg, hover, fg) = if primary {
-            (p.foreground, p.foreground.opacity(0.88), p.toast_surface)
+            (p.primary, p.primary.opacity(0.88), p.primary_foreground)
         } else {
             (p.white.opacity(0.1), p.white.opacity(0.16), p.foreground)
         };

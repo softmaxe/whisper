@@ -543,7 +543,7 @@ pub fn backdrop(p: &Palette) -> Hsla {
     if p.dark {
         hsla(0., 0., 0., 0.72)
     } else {
-        hsla(240. / 360., 0.06, 0.1, 0.2)
+        hsla(240. / 360., 0.06, 0.1, 0.11)
     }
 }
 

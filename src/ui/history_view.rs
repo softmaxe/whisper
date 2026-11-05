@@ -1135,7 +1135,14 @@ impl Render for HistoryView {
                             .flex_1()
                             .bg(p.border.opacity(0.5)),
                     );
-                let mut rows = div().flex().flex_col().gap(px(2.)).mx(px(-12.));
+                // Rows stop where the reading column and its actions end,
+                // so actions sit beside the text; day headers span the page.
+                let mut rows = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .mx(px(-12.))
+                    .max_w(px(LIST_MAX_WIDTH + 24.));
                 if index == 0
                     && let Some(since) = pending
                 {
@@ -1162,7 +1169,7 @@ impl Render for HistoryView {
                     cx.listener(|this, _, _, cx| this.release_spotlight(cx)),
                 )
             })
-            .child(div().flex().max_w(px(LIST_MAX_WIDTH)).child(content))
+            .child(div().flex().child(content))
     }
 }
 

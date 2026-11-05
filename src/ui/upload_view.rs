@@ -26,9 +26,9 @@ use super::components::{
 use super::history_view::copy_with_toast;
 use super::settings_modal::SettingsSection;
 use super::theme::{
-    DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, Palette, PaletteExt,
-    RADIUS_LG, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_MONO_SMALL, TEXT_READING, TEXT_SMALL,
-    TEXT_TITLE, ease_out, motion, tabular_nums,
+    DUR_SHEET, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, Palette, PaletteExt, RADIUS_LG,
+    RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING, TEXT_SMALL, TEXT_TITLE, ease_out,
+    motion, tabular_nums,
 };
 
 pub enum UploadEvent {
@@ -901,17 +901,16 @@ impl UploadView {
                 )
                 .child(value.min_w_0().truncate().text_color(p.foreground))
         };
-        // Server and model are identifiers people match against their
-        // server's config, so they keep the code face, a step smaller and at
-        // regular weight because mono reads larger and heavier than SF.
+        // A summary, not an editor: all three values share the UI face, so
+        // none outweighs its neighbours. Settings keeps mono where they are
+        // edited.
         let code = |text: String| {
-            if text == "—" || text.is_empty() {
+            if text.is_empty() {
                 div().text_size(px(TEXT_SMALL)).child("—")
             } else {
                 div()
-                    .font_family(FONT_MONO)
-                    .text_size(px(TEXT_MONO_SMALL))
-                    .font_weight(FontWeight::NORMAL)
+                    .text_size(px(TEXT_SMALL))
+                    .font_features(tabular_nums())
                     .child(text)
             }
         };

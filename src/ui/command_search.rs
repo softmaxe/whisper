@@ -288,15 +288,6 @@ impl Render for CommandSearch {
                             }
                         }))
                         .on_click(cx.listener(move |this, _, _, cx| this.choose(idx, cx)))
-                        .child(icon(
-                            "mic",
-                            16.,
-                            if selected {
-                                p.foreground
-                            } else {
-                                p.subtle_foreground
-                            },
-                        ))
                         .child(
                             div()
                                 .flex_1()
