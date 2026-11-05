@@ -708,8 +708,9 @@ impl Render for HotkeyListInput {
                     .when(show_reset, |d| {
                         d.child(
                             Button::new("settings-reset-hotkey")
+                                .icon("rotate-ccw", 14.)
                                 .label(reset_label)
-                                .variant(ButtonVariant::Ghost)
+                                .variant(ButtonVariant::OutlineFlat)
                                 .size(ButtonSize::Sm)
                                 .on_click(cx.listener(|this, _, _, cx| this.reset_to_default(cx))),
                         )

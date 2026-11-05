@@ -123,8 +123,12 @@ impl ConnectionCheck {
     }
 }
 
-/// Wide enough for a typical device name such as "MacBook Pro Microphone";
-/// longer names truncate and show in full in the menu.
+/// One width for every select in a settings row, so the control column keeps
+/// a single left edge down the page.
+const SELECT_WIDTH: f32 = 200.;
+
+/// The input device select grows past `SELECT_WIDTH` up to this cap for long
+/// device names; longer ones truncate and show in full in the menu.
 const MIC_SELECT_WIDTH: f32 = 240.;
 
 const RETENTION_DAY_OPTIONS: [u32; 6] = [1, 7, 14, 30, 60, 90];
@@ -442,7 +446,7 @@ impl SettingsModal {
                 window,
                 cx,
             )
-            .with_width(px(140.))
+            .with_width(px(SELECT_WIDTH))
             .with_menu_min_width(px(240.))
             .with_label(t("settings.language.uiLabel"))
         });
@@ -459,7 +463,7 @@ impl SettingsModal {
                 window,
                 cx,
             )
-            .with_width(px(180.))
+            .with_width(px(SELECT_WIDTH))
             .with_menu_min_width(px(240.))
             .with_label(t("settings.language.transcriptionLabel"))
         });
@@ -476,7 +480,7 @@ impl SettingsModal {
                 window,
                 cx,
             )
-            .with_width(px(176.))
+            .with_width(px(SELECT_WIDTH))
             .with_label(t("settings.language.chineseScriptLabel"))
         });
         subscriptions.push(cx.subscribe(&chinese_script, |_, _, e: &SelectEvent, cx| {
@@ -492,7 +496,7 @@ impl SettingsModal {
                 window,
                 cx,
             )
-            .with_width(px(140.))
+            .with_width(px(SELECT_WIDTH))
             .with_label(t("settings.general.floatingIcon.startPosition"))
         });
         subscriptions.push(cx.subscribe(&pill_position, |_, _, e: &SelectEvent, cx| {
@@ -511,7 +515,7 @@ impl SettingsModal {
                 window,
                 cx,
             )
-            .with_width(px(124.))
+            .with_width(px(SELECT_WIDTH))
             .with_label(t("settings.privacy.keepAudioFor"))
         });
         subscriptions.push(cx.subscribe(&audio_retention, |_, _, e: &SelectEvent, cx| {
@@ -531,7 +535,7 @@ impl SettingsModal {
                 window,
                 cx,
             )
-            .with_width(px(124.))
+            .with_width(px(SELECT_WIDTH))
             .with_label(t("settings.privacy.transcriptRetention"))
         });
         subscriptions.push(
@@ -545,7 +549,7 @@ impl SettingsModal {
 
         let microphone = cx.new(|cx| {
             Select::new(Vec::new(), None, window, cx)
-                .with_width(px(MIC_SELECT_WIDTH))
+                .with_width_range(px(SELECT_WIDTH), px(MIC_SELECT_WIDTH))
                 .with_menu_min_width(px(280.))
                 .with_label(t("microphoneSettings.inputDevice"))
         });
@@ -1108,8 +1112,10 @@ impl SettingsModal {
                         .when(index > 0, |d| d.mt(px(16.)))
                         .px(px(10.))
                         .pb(px(4.))
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
+                        // A caption-size semibold tier, so group names never
+                        // read as one more row description.
+                        .text_size(px(TEXT_CAPTION))
+                        .font_weight(FontWeight::SEMIBOLD)
                         .text_color(p.subtle_foreground)
                         .child(t(group)),
                 );
@@ -1579,8 +1585,14 @@ impl SettingsModal {
             )
             .into_any_element(),
         ];
-        // A fixed Chinese language already names its script.
-        if settings(cx).preferred_language == "auto" {
+        // The script choice only applies to auto-detected Chinese: a fixed
+        // zh-CN or zh-TW already names its script, and any other language
+        // never produces Chinese characters.
+        let auto_language = {
+            let language = &settings(cx).preferred_language;
+            language.is_empty() || language == "auto"
+        };
+        if auto_language {
             language_rows.push(
                 settings_row(
                     t("settings.language.chineseScriptLabel"),
@@ -1707,8 +1719,8 @@ impl SettingsModal {
         )
     }
 
-    /// The page opens with its master switch under a section title like
-    /// every other page. The Server and Output groups dim and stop taking
+    /// The page opens with its master switch in a section named for what it
+    /// does, not repeating the page title from the breadcrumb. The Server and Output groups dim and stop taking
     /// input while cleanup is off, so the dependency reads at a glance.
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();

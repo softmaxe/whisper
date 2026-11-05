@@ -69,6 +69,10 @@ pub struct Select {
     label: SharedString,
     open: bool,
     width: Option<Pixels>,
+    /// When set, `width` is only the floor and the trigger grows with its
+    /// value up to this cap, so short values keep a shared column edge while
+    /// long ones (device names) get more room before truncating.
+    max_width: Option<Pixels>,
     menu_min_width: Pixels,
     disabled: bool,
     search: Option<Entity<InputState>>,
@@ -119,6 +123,7 @@ impl Select {
             label: "".into(),
             open: false,
             width: None,
+            max_width: None,
             menu_min_width: px(160.),
             disabled: false,
             search,
@@ -131,6 +136,13 @@ impl Select {
 
     pub fn with_width(mut self, width: Pixels) -> Self {
         self.width = Some(width);
+        self
+    }
+
+    /// Sizes the trigger to its value, between `min` and `max`.
+    pub fn with_width_range(mut self, min: Pixels, max: Pixels) -> Self {
+        self.width = Some(min);
+        self.max_width = Some(max);
         self
     }
 
@@ -359,8 +371,7 @@ impl Render for Select {
             .items_center()
             .justify_between()
             .gap(px(8.))
-            .when_some(self.width, |d, w| d.w(w))
-            .when(self.width.is_none(), |d| d.w_full())
+            .map(|d| self.size_trigger(d))
             .h(px(28.))
             .px(px(10.))
             .rounded(radius)
@@ -432,8 +443,7 @@ impl Render for Select {
             .on_action(cx.listener(Self::on_close_overlay))
             .relative()
             .rounded(radius)
-            .when_some(self.width, |d, w| d.w(w))
-            .when(self.width.is_none(), |d| d.w_full())
+            .map(|d| self.size_trigger(d))
             .child(trigger)
             .child(
                 canvas(
@@ -453,6 +463,14 @@ impl Render for Select {
 }
 
 impl Select {
+    fn size_trigger<E: Styled>(&self, el: E) -> E {
+        match (self.width, self.max_width) {
+            (Some(min), Some(max)) => el.min_w(min).max_w(max),
+            (Some(w), None) => el.w(w),
+            (None, _) => el.w_full(),
+        }
+    }
+
     fn render_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let filtered = self.filtered();
