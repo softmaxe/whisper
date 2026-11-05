@@ -345,9 +345,10 @@
     },
     "errorActions": {
       "viewTranscript": "查看转录",
-      "recordAgain": "重新录音",
-      "tryAgain": "重试",
-      "openSettings": "打开设置"
+      "recordNew": "新录音",
+      "resend": "重新发送",
+      "resendLength": "重新发送 {{time}}",
+      "openSettings": "语音转文字设置…"
     },
     "noAudio": {
       "title": "我们没听清",

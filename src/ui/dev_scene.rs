@@ -78,6 +78,7 @@ pub fn apply_pill(cx: &mut App) {
                 actions: ErrorActions::for_transcription_failure(Some(
                     crate::services::transcription::REQUEST_TIMEOUT_CODE,
                 )),
+                kept: Some(Duration::from_secs(42)),
             })
         }),
         _ => Dictation::global(cx).update(cx, |_, cx| {

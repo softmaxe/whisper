@@ -349,9 +349,10 @@
     },
     "errorActions": {
       "viewTranscript": "View Transcript",
-      "recordAgain": "Record Again",
-      "tryAgain": "Try Again",
-      "openSettings": "Open Settings"
+      "recordNew": "Record New",
+      "resend": "Resend Recording",
+      "resendLength": "Resend {{time}}",
+      "openSettings": "Speech Settings…"
     },
     "noAudio": {
       "title": "We didn’t catch that",

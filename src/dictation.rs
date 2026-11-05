@@ -90,6 +90,9 @@ pub enum DictationNotice {
         title: String,
         description: String,
         actions: ErrorActions,
+        /// The length of the recording held for a resend, so the panel can
+        /// say which words it would send.
+        kept: Option<Duration>,
     },
     NoAudio,
     PushForceStopped {
@@ -355,6 +358,7 @@ impl Dictation {
                                 title: t("dictation.errorTitles.microphoneUnavailable"),
                                 description: t("dictation.errorDescriptions.microphoneUnavailable"),
                                 actions: ErrorActions::default(),
+                                kept: None,
                             });
                         }
                     }
@@ -427,6 +431,7 @@ impl Dictation {
             title: t("dictation.errorTitles.microphoneUnavailable"),
             description: t("dictation.errorDescriptions.microphoneUnavailable"),
             actions: ErrorActions::default(),
+            kept: None,
         });
     }
 
@@ -569,6 +574,7 @@ impl Dictation {
                         )
                     });
                 let actions = ErrorActions::for_transcription_failure(code.as_deref());
+                let kept = actions.retry.then_some(duration);
                 self.failed = actions.retry.then_some(FailedRecording {
                     wav,
                     duration,
@@ -578,6 +584,7 @@ impl Dictation {
                     title,
                     description,
                     actions,
+                    kept,
                 });
             }
             PipelineOutcome::Transcribed(transcript) => {

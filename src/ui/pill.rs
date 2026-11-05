@@ -392,6 +392,8 @@ struct ErrorCard {
     /// Words the error kept, and whether they are already on the clipboard.
     transcript: Option<(String, bool)>,
     actions: ErrorActions,
+    /// The length of the recording kept for a resend, when known.
+    kept: Option<Duration>,
     countdown: Countdown,
 }
 
@@ -402,12 +404,14 @@ impl ErrorCard {
         description: String,
         transcript: Option<(String, bool)>,
         actions: ErrorActions,
+        kept: Option<Duration>,
     ) -> Self {
         Self {
             title,
             description,
             transcript,
             actions,
+            kept,
             countdown: Countdown::new(Self::hold(actions), Instant::now()),
         }
     }
@@ -804,8 +808,9 @@ impl PillView {
                 title,
                 description,
                 actions,
+                kept,
             } => {
-                self.error = Some(ErrorCard::new(title, description, None, actions));
+                self.error = Some(ErrorCard::new(title, description, None, actions, kept));
             }
             DictationNotice::NoAudio => {
                 self.error = Some(ErrorCard::new(
@@ -813,6 +818,7 @@ impl PillView {
                     t("dictation.noAudio.description"),
                     None,
                     ErrorActions::default(),
+                    None,
                 ));
             }
             DictationNotice::PushForceStopped {
@@ -830,6 +836,7 @@ impl PillView {
                     description,
                     Some((transcript, kept_in_clipboard)).filter(|(t, _)| !t.trim().is_empty()),
                     ErrorActions::default(),
+                    None,
                 ));
             }
             DictationNotice::DeliveryFallback { text, copied } => {
@@ -1532,29 +1539,33 @@ impl PillView {
         let description = error.description.clone();
         let transcript = error.transcript.clone();
         let actions = error.actions;
+        let kept = error.kept;
 
         // When the recording was kept, sending it again is the fix that
-        // costs the user nothing, so it leads.
+        // costs the user nothing, so it leads. It names the recording and,
+        // when known, its length, so it cannot be mistaken for Record New.
         let retry = actions.retry.then(|| {
-            Self::panel_action(
-                "pill-error-retry",
-                "rotate-ccw",
-                t("dictation.errorActions.tryAgain"),
-                true,
-                cx,
+            let label = match kept {
+                Some(length) => crate::i18n::t_with(
+                    "dictation.errorActions.resendLength",
+                    &[("time", &format_elapsed(length))],
+                ),
+                None => t("dictation.errorActions.resend"),
+            };
+            Self::panel_action("pill-error-retry", "rotate-ccw", label, true, cx).on_click(
+                cx.listener(|this, _, _, cx| {
+                    this.error = None;
+                    Dictation::global(cx).update(cx, |d, cx| d.retry_failed(cx));
+                    cx.notify();
+                }),
             )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.error = None;
-                Dictation::global(cx).update(cx, |d, cx| d.retry_failed(cx));
-                cx.notify();
-            }))
         });
         // Recording again leads only when nothing else can recover the
         // words: not when they were kept or survived as text.
         let record = Self::panel_action(
             "pill-error-record",
             "mic",
-            t("dictation.errorActions.recordAgain"),
+            t("dictation.errorActions.recordNew"),
             transcript.is_none() && !actions.retry,
             cx,
         )
