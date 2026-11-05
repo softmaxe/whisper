@@ -151,6 +151,10 @@ impl ControlPanel {
         }
     }
 
+    pub fn settings_open(&self) -> bool {
+        self.settings.is_some()
+    }
+
     pub fn open_settings(
         &mut self,
         section: Option<SettingsSection>,

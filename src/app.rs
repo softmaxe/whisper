@@ -93,6 +93,14 @@ pub fn show_settings(section: Option<SettingsSection>, cx: &mut App) {
     });
 }
 
+/// Whether the Settings sheet is open in the control panel. False once the
+/// panel window is closed, since its view goes with it.
+pub fn settings_open(cx: &App) -> bool {
+    cx.try_global::<ControlPanelWindow>()
+        .and_then(|w| w.1.upgrade())
+        .is_some_and(|panel| panel.read(cx).settings_open())
+}
+
 /// Shows the control panel, reopening it if it was closed.
 pub fn show_control_panel(cx: &mut App) {
     let existing = cx.try_global::<ControlPanelWindow>().map(|w| w.0);

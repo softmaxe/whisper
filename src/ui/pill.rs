@@ -80,8 +80,8 @@ const DISMISS_INSET: f32 = DISMISS_SIZE - DISMISS_OUTSET + 8.;
 /// it; hovering holds it longer still.
 const ERROR_HOLD: Duration = Duration::from_millis(12_000);
 /// A card that can resend the recording holds the user's words, which are
-/// lost when it closes, so it stays far longer. It still closes on its own
-/// because Escape is taken from every app while a card is open.
+/// lost when it closes, so it stays far longer, and it stands still while
+/// the Settings sheet is open to fix the server.
 const RETRY_HOLD: Duration = Duration::from_millis(30_000);
 const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
@@ -412,6 +412,11 @@ impl ErrorCard {
         }
     }
 
+    /// Starts the countdown over, for when the user comes back to the card.
+    fn restart(&mut self) {
+        self.countdown = Countdown::new(Self::hold(self.actions), Instant::now());
+    }
+
     fn hold(actions: ErrorActions) -> Duration {
         if actions.retry {
             RETRY_HOLD
@@ -473,8 +478,12 @@ pub struct PillView {
     was_active: bool,
     error: Option<ErrorCard>,
     recovery: Option<Recovery>,
-    /// Whether Escape is registered to dismiss the open error or recovery panel.
+    /// Whether Escape is registered to dismiss the copy-recovery panel.
     panel_escape: bool,
+    /// Whether the Settings sheet is open. The error card's countdown stands
+    /// still meanwhile, since Open Settings sends the user there to fix the
+    /// server and the card must still hold the recording when they return.
+    settings_open: bool,
     toasts: Vec<PillToast>,
     shown: bool,
     regions: Rc<RefCell<Vec<Bounds<Pixels>>>>,
@@ -526,6 +535,7 @@ impl PillView {
             error: None,
             recovery: None,
             panel_escape: false,
+            settings_open: false,
             toasts: Vec::new(),
             shown: false,
             regions: Rc::new(RefCell::new(Vec::new())),
@@ -638,19 +648,38 @@ impl PillView {
     }
 
     /// Records whether the pointer rests on a surface and holds every
-    /// countdown still while it does.
+    /// countdown still while it does. The error card also holds while the
+    /// Settings sheet is open.
     fn set_hovered(&mut self, hovered: bool) {
         self.hovered = hovered;
         let now = Instant::now();
+        if let Some(error) = self.error.as_mut() {
+            error
+                .countdown
+                .set_paused(hovered || self.settings_open, now);
+        }
         let countdowns = self
-            .error
+            .recovery
             .iter_mut()
-            .map(|e| &mut e.countdown)
-            .chain(self.recovery.iter_mut().map(|r| &mut r.countdown))
+            .map(|r| &mut r.countdown)
             .chain(self.toasts.iter_mut().map(|t| &mut t.countdown));
         for countdown in countdowns {
             countdown.set_paused(hovered, now);
         }
+    }
+
+    /// Follows the Settings sheet. Closing it gives the error card a fresh
+    /// countdown, so the user has the full time to resend after a fix.
+    fn track_settings(&mut self, cx: &App) {
+        let open = crate::app::settings_open(cx);
+        if open == self.settings_open {
+            return;
+        }
+        self.settings_open = open;
+        if !open && let Some(error) = self.error.as_mut() {
+            error.restart();
+        }
+        self.set_hovered(self.hovered);
     }
 
     /// Polls the pointer so the transparent window only takes clicks over its
@@ -683,6 +712,7 @@ impl PillView {
         if !self.shown {
             return;
         }
+        self.track_settings(cx);
         // Expire timed surfaces. Paused countdowns never expire.
         let now = Instant::now();
         let before = (
@@ -1533,7 +1563,8 @@ impl PillView {
             Dictation::global(cx).update(cx, |d, cx| d.start(cx));
         }));
         // The server is set in Settings → Speech to text. The card stays,
-        // with a fresh countdown, so the words can be resent after the fix.
+        // and its countdown holds while the sheet is open and starts over
+        // once it closes, so the words can be resent after the fix.
         let settings = actions.open_settings.then(|| {
             Self::panel_action(
                 "pill-error-settings",
@@ -1544,8 +1575,7 @@ impl PillView {
             )
             .on_click(cx.listener(|this, _, _, cx| {
                 if let Some(error) = this.error.as_mut() {
-                    error.countdown =
-                        Countdown::new(ErrorCard::hold(error.actions), Instant::now());
+                    error.restart();
                 }
                 this.set_hovered(this.hovered);
                 cx.defer(|cx| {
