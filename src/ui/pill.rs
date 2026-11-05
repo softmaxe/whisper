@@ -1557,22 +1557,29 @@ impl PillView {
         let error = self.error.as_ref()?;
         let countdown = error.countdown;
         let title = error.title.clone();
-        let description = error.description.clone();
         let transcript = error.transcript.clone();
         let actions = error.actions;
         let kept = error.kept;
+        // The kept recording's length belongs in the sentence, not on the
+        // button, where an m:ss figure next to the countdown ring reads as
+        // time left.
+        let description = match kept {
+            Some(length) if actions.retry => format!(
+                "{} {}",
+                error.description,
+                crate::i18n::t_with(
+                    "dictation.keptRecording",
+                    &[("time", &format_elapsed(length))]
+                )
+            ),
+            _ => error.description.to_string(),
+        };
 
         // When the recording was kept, sending it again is the fix that
-        // costs the user nothing, so it leads. It names the recording and,
-        // when known, its length, so it cannot be mistaken for Record New.
+        // costs the user nothing, so it leads, named so it cannot be
+        // mistaken for Record New.
         let retry = actions.retry.then(|| {
-            let label = match kept {
-                Some(length) => crate::i18n::t_with(
-                    "dictation.errorActions.resendLength",
-                    &[("time", &format_elapsed(length))],
-                ),
-                None => t("dictation.errorActions.resend"),
-            };
+            let label = t("dictation.errorActions.resend");
             Self::panel_action("pill-error-retry", "rotate-ccw", label, true, cx).on_click(
                 cx.listener(|this, _, _, cx| {
                     this.error = None;

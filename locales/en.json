@@ -351,8 +351,7 @@
       "viewTranscript": "View Transcript",
       "recordNew": "Record New",
       "resend": "Resend Recording",
-      "resendLength": "Resend {{time}}",
-      "openSettings": "Speech Settings…"
+      "openSettings": "Speech to Text Settings…"
     },
     "noAudio": {
       "title": "We didn’t catch that",
@@ -383,7 +382,8 @@
       "cancelDictation": "Cancel Dictation",
       "dismiss": "Close",
       "closesIn": "Closes in {{seconds}} s; hover to keep open"
-    }
+    },
+    "keptRecording": "Your {{time}} recording is kept, so nothing is lost."
   },
   "hotkeyInput": {
     "fnCaptureHint": "Press a key to combine, or release for Globe",

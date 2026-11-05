@@ -347,7 +347,6 @@
       "viewTranscript": "查看转录",
       "recordNew": "新录音",
       "resend": "重新发送",
-      "resendLength": "重新发送 {{time}}",
       "openSettings": "语音转文字设置…"
     },
     "noAudio": {
@@ -379,7 +378,8 @@
       "cancelDictation": "取消听写",
       "dismiss": "关闭",
       "closesIn": "{{seconds}} 秒后关闭；悬停可保持打开"
-    }
+    },
+    "keptRecording": "这段 {{time}} 的录音已保留，不会丢失。"
   },
   "hotkeyInput": {
     "fnCaptureHint": "按下一个键进行组合，或松开以使用 Globe",
