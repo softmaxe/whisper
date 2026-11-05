@@ -13,7 +13,7 @@ use crate::app_state::AppState;
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, drop, f32_tx, icon, inset,
-    kbd, keyed_focus_handle, nav_row, text_tooltip,
+    kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
@@ -85,6 +85,9 @@ pub struct ControlPanel {
     scroll: ScrollHandle,
     /// Whether the History page's ⋯ menu in the top bar is open.
     page_menu_open: bool,
+    /// The page whose scroll extent has been measured; a newly shown page
+    /// renders once more so its scroll thumb and fade show from the start.
+    measured_view: Option<PanelView>,
 }
 
 impl ControlPanel {
@@ -132,6 +135,7 @@ impl ControlPanel {
             settings: None,
             scroll,
             page_menu_open: false,
+            measured_view: None,
         };
         #[cfg(debug_assertions)]
         this.apply_dev_scene(window, cx);
@@ -688,6 +692,21 @@ impl Render for ControlPanel {
                 |d, t| d.opacity(t).top(px(3. * (1. - t))),
             );
         let scrolled = self.scroll.offset().y < px(-4.);
+        let max_scroll = self.scroll.max_offset().y;
+        let more_below = max_scroll > px(1.) && self.scroll.offset().y > -max_scroll + px(1.);
+        let bottom_fade = f32_tx(
+            "scroll-fade-bottom",
+            if more_below { 1. } else { 0. },
+            DUR_FAST,
+            ease_snap,
+            window,
+            cx,
+        );
+        let thumb = scroll_thumb(&self.scroll);
+        if self.measured_view != Some(self.active) {
+            self.measured_view = Some(self.active);
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+        }
         let fade = f32_tx(
             "scroll-fade",
             if scrolled { 1. } else { 0. },
@@ -790,6 +809,43 @@ impl Render for ControlPanel {
                                                     .opacity(fade)
                                                     .bg(linear_gradient(
                                                         180.,
+                                                        linear_color_stop(p.background, 0.),
+                                                        linear_color_stop(
+                                                            p.background.opacity(0.),
+                                                            1.,
+                                                        ),
+                                                    )),
+                                            )
+                                        })
+                                        // A quiet thumb and a short bottom fade say a long
+                                        // page continues, as the Settings sheet does.
+                                        .when_some(thumb, |d, (top, height)| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .right(px(3.))
+                                                    .top(top)
+                                                    .w(px(4.))
+                                                    .h(height)
+                                                    .rounded_full()
+                                                    .bg(p.foreground.opacity(if p.dark {
+                                                        0.22
+                                                    } else {
+                                                        0.18
+                                                    })),
+                                            )
+                                        })
+                                        .when(bottom_fade > 0.01, |d| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .bottom_0()
+                                                    .left_0()
+                                                    .right(px(12.))
+                                                    .h(px(16.))
+                                                    .opacity(bottom_fade)
+                                                    .bg(linear_gradient(
+                                                        0.,
                                                         linear_color_stop(p.background, 0.),
                                                         linear_color_stop(
                                                             p.background.opacity(0.),

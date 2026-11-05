@@ -704,6 +704,23 @@ pub fn text_tooltip(
     move |_, cx| cx.new(|_| Tip(text.clone())).into()
 }
 
+/// Where a scroll area's thumb sits: its top and height inside the area, or
+/// `None` when nothing overflows. Long pages show it at rest so a clipped
+/// last row reads as "more below".
+pub fn scroll_thumb(scroll: &ScrollHandle) -> Option<(Pixels, Pixels)> {
+    const INSET: f32 = 3.;
+    const MIN_THUMB: f32 = 32.;
+    let viewport = f32::from(scroll.bounds().size.height);
+    let max = f32::from(scroll.max_offset().y);
+    if max < 1. || viewport <= 2. * INSET + MIN_THUMB {
+        return None;
+    }
+    let track = viewport - 2. * INSET;
+    let height = (track * viewport / (viewport + max)).max(MIN_THUMB);
+    let progress = (-f32::from(scroll.offset().y) / max).clamp(0., 1.);
+    Some((px(INSET + (track - height) * progress), px(height)))
+}
+
 /// The shared page column: centered, [`PAGE_MAX_WIDTH`] wide, with the
 /// standard gutter and top inset. Pages add their own bottom padding.
 pub fn page_container() -> Div {
