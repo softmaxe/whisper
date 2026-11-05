@@ -346,6 +346,57 @@ impl ControlPanel {
         // Page-level actions sit at the top bar's end; Home's is Clear History.
         let page_actions =
             self.active == PanelView::Home && !AppState::global(cx).read(cx).history.is_empty();
+        let full_search = self.active == PanelView::Home;
+        let search_field = div()
+            .id("search-trigger")
+            .keyboard_focusable(
+                "panel-search-trigger",
+                Role::Button,
+                format!("{} (⌘K)", t("commandSearch.placeholder")),
+                cx,
+            )
+            .flex_none()
+            .w(px(360.))
+            .max_w(relative(0.34))
+            .h(px(CONTROL_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pl(px(10.))
+            .pr(px(6.))
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(p.control_border)
+            .bg(if p.dark {
+                p.white.opacity(0.035)
+            } else {
+                p.popover
+            })
+            .shadow(if p.dark {
+                vec![inset(0., 1., 0., p.white.opacity(0.05))]
+            } else {
+                vec![drop(0., 1., 2., 0.05)]
+            })
+            .hover(|s| {
+                s.bg(if p.dark {
+                    p.white.opacity(0.06)
+                } else {
+                    p.muted.opacity(0.6)
+                })
+            })
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(icon("search", 16., p.muted_foreground))
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(p.muted_foreground)
+                    .child(t("commandSearch.placeholder")),
+            )
+            .child(kbd("⌘K", &p))
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx));
 
         div()
             .h(px(WORKSPACE_TOP_BAR_HEIGHT))
@@ -417,76 +468,61 @@ impl ControlPanel {
                             .child(title),
                     ),
             )
+            // History, the page it searches, shows the full field; elsewhere
+            // a compact button keeps ⌘K at hand without a second search box
+            // competing with the page's own filter.
+            .when(full_search, |d| d.child(search_field))
             .child(
                 div()
-                    .id("search-trigger")
-                    .keyboard_focusable(
-                        "panel-search-trigger",
-                        Role::Button,
-                        format!("{} (⌘K)", t("commandSearch.placeholder")),
-                        cx,
-                    )
-                    .flex_none()
-                    .w(px(360.))
-                    .max_w(relative(0.34))
-                    .h(px(CONTROL_HEIGHT))
+                    .flex_1()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
-                    .pl(px(10.))
-                    .pr(px(6.))
-                    .rounded(px(RADIUS_LG))
-                    .border_1()
-                    .border_color(p.control_border)
-                    .bg(if p.dark {
-                        p.white.opacity(0.035)
-                    } else {
-                        p.popover
-                    })
-                    .shadow(if p.dark {
-                        vec![inset(0., 1., 0., p.white.opacity(0.05))]
-                    } else {
-                        vec![drop(0., 1., 2., 0.05)]
-                    })
-                    .hover(|s| {
-                        s.bg(if p.dark {
-                            p.white.opacity(0.06)
-                        } else {
-                            p.muted.opacity(0.6)
-                        })
-                    })
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(icon("search", 16., p.muted_foreground))
-                    .child(
-                        div()
-                            .flex_1()
-                            .truncate()
-                            .text_size(px(TEXT_BODY))
-                            .text_color(p.muted_foreground)
-                            .child(t("commandSearch.placeholder")),
-                    )
-                    .child(kbd("⌘K", &p))
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx)),
-            )
-            .child(div().flex_1().flex().justify_end().when(page_actions, |d| {
-                d.child(
-                    div()
-                        .relative()
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .child(
-                            Button::new("history-page-menu")
-                                .icon("more-vertical", 15.)
-                                .variant(ButtonVariant::Ghost)
-                                .size(ButtonSize::Sm)
-                                .aria_label(t("controlPanel.history.pageActions"))
-                                .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                                    this.toggle_page_menu(event.is_keyboard(), window, cx)
-                                })),
+                    .justify_end()
+                    .gap(px(4.))
+                    .when(!full_search, |d| {
+                        d.child(
+                            div()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(
+                                    Button::new("search-compact")
+                                        .icon("search", 15.)
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(ButtonSize::Sm)
+                                        .aria_label(format!(
+                                            "{} (⌘K)",
+                                            t("commandSearch.placeholder")
+                                        ))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(OpenSearch), cx)
+                                        }),
+                                ),
                         )
-                        .when(self.page_menu_open, |d| d.child(self.render_page_menu(cx))),
-                )
-            }))
+                    })
+                    .when(page_actions, |d| {
+                        d.child(
+                            div()
+                                .relative()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(
+                                    Button::new("history-page-menu")
+                                        .icon("more-vertical", 15.)
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(ButtonSize::Sm)
+                                        .aria_label(t("controlPanel.history.pageActions"))
+                                        .on_click(cx.listener(
+                                            |this, event: &ClickEvent, window, cx| {
+                                                this.toggle_page_menu(
+                                                    event.is_keyboard(),
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        )),
+                                )
+                                .when(self.page_menu_open, |d| d.child(self.render_page_menu(cx))),
+                        )
+                    }),
+            )
     }
 
     fn toggle_page_menu(&mut self, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {

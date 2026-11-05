@@ -303,7 +303,9 @@
       "hideRaw": "Hide raw transcript",
       "pageActions": "History actions",
       "emptyDescriptionOff": "History is off, so new dictations are pasted but not saved here. Turn on Save history in Settings to keep them.",
-      "deletedTitle": "Transcript deleted"
+      "deletedTitle": "Transcript deleted",
+      "dayCount_one": "{{day}}, {{count}} transcript",
+      "dayCount_other": "{{day}}, {{count}} transcripts"
     }
   },
   "reasoning": {

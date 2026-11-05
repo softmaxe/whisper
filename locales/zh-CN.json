@@ -300,7 +300,8 @@
       "hideRaw": "隐藏原始转录",
       "pageActions": "历史记录操作",
       "emptyDescriptionOff": "历史记录已关闭，新的听写只会粘贴，不会保存在这里。在设置中打开“保存历史记录”即可保留。",
-      "deletedTitle": "已删除转录"
+      "deletedTitle": "已删除转录",
+      "dayCount": "{{day}}，{{count}} 条转录"
     }
   },
   "reasoning": {

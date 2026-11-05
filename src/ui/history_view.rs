@@ -8,7 +8,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::db::TranscriptionItem;
-use crate::i18n::{self, Language, t};
+use crate::i18n::{self, Language, t, t_with};
 
 use crate::app_state::AppState;
 use crate::backend;
@@ -20,12 +20,15 @@ use super::components::{
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
-    PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_READING, TEXT_SMALL,
-    ease_out, ease_snap, motion, progress, tabular_nums,
+    PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_CAPTION, TEXT_READING,
+    TEXT_SMALL, ease_out, ease_snap, motion, progress, tabular_nums,
 };
 
 /// Width of the clock column; fits "12:59 PM" so the text column never shifts.
 const TIME_COLUMN: f32 = 64.;
+/// The list stops where its reading column and row actions end, so the
+/// actions sit beside the text they act on rather than at the window edge.
+const LIST_MAX_WIDTH: f32 = TIME_COLUMN + READING_MAX_WIDTH + 144.;
 
 /// How long a new row stays tinted.
 const FLASH: Duration = Duration::from_millis(1600);
@@ -760,6 +763,7 @@ impl HistoryView {
                     .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
+                    .text_right()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
                     .text_color(p.subtle_foreground)
@@ -799,6 +803,7 @@ impl HistoryView {
                     .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
+                    .text_right()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
                     .text_color(p.subtle_foreground)
@@ -1089,7 +1094,14 @@ impl Render for HistoryView {
                 .on_key_down(cx.listener(Self::on_list_key));
             for (index, (label, items)) in groups.into_iter().enumerate() {
                 // Day label with its count beside it, then a hairline to the edge.
+                let count = items.len();
                 let header = div()
+                    .id(SharedString::from(format!("history-day-{index}")))
+                    .role(Role::Heading)
+                    .aria_label(t_with(
+                        "controlPanel.history.dayCount",
+                        &[("day", &label), ("count", &count.to_string())],
+                    ))
                     .relative()
                     .flex()
                     .items_center()
@@ -1100,14 +1112,21 @@ impl Render for HistoryView {
                     .text_size(px(TEXT_SMALL))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(p.muted_foreground)
-                    .child(div().flex_none().child(label))
+                    .child(div().flex_none().child(label.clone()))
+                    // The count is a quiet badge, so "Nov 3 6" never reads as
+                    // part of the date.
                     .child(
                         div()
                             .flex_none()
+                            .px(px(6.))
+                            .rounded_full()
+                            .bg(p.hover_wash(if p.dark { 0.08 } else { 0.06 }))
+                            .text_size(px(TEXT_CAPTION))
+                            .line_height(px(16.))
                             .font_weight(FontWeight::MEDIUM)
                             .font_features(tabular_nums())
-                            .text_color(p.subtle_foreground)
-                            .child(items.len().to_string()),
+                            .text_color(p.muted_foreground)
+                            .child(count.to_string()),
                     )
                     .child(
                         div()
@@ -1143,7 +1162,7 @@ impl Render for HistoryView {
                     cx.listener(|this, _, _, cx| this.release_spotlight(cx)),
                 )
             })
-            .child(div().flex().child(content))
+            .child(div().flex().max_w(px(LIST_MAX_WIDTH)).child(content))
     }
 }
 

@@ -82,7 +82,7 @@ impl Palette {
             surface_1: c(0xfafafa),
             surface_3: c(0xf4f4f5),
             surface_raised: c(0xebebed),
-            surface_window: c(0xfafafa),
+            surface_window: c(0xf5f5f6),
             settings_sidebar: c(0xf4f4f5),
             border_subtle: c(0xe4e4e7),
             border_hover: c(0xd4d4d8),
