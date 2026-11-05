@@ -470,7 +470,7 @@
     "startOver": "重新开始",
     "transcriptionFailed": "转录失败",
     "noProviderTitle": "尚未设置转录服务器",
-    "noProviderAction": "打开语音转文字设置…",
+    "noProviderAction": "语音转文字设置…",
     "queueProgress": "已完成 {{completed}}/{{total}}",
     "queueTitle": "队列",
     "cancelAll": "取消全部",

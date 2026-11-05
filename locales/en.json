@@ -548,7 +548,7 @@
     "startOver": "Start Over",
     "transcriptionFailed": "Transcription failed",
     "noProviderTitle": "No transcription server set up",
-    "noProviderAction": "Open Speech Settings…",
+    "noProviderAction": "Speech Settings…",
     "queueProgress": "{{completed}} of {{total}} done",
     "queueTitle": "Queue",
     "cancelAll": "Cancel All",

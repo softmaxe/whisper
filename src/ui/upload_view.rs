@@ -20,15 +20,15 @@ use crate::services::upload::{
 use crate::app_state::AppState;
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, f32_tx, icon, page_container,
-    spinner, surface_card,
+    Button, ButtonSize, ButtonVariant, drop, empty_state, f32_tx, icon, page_container, spinner,
+    surface_card,
 };
 use super::history_view::copy_with_toast;
 use super::settings_modal::SettingsSection;
 use super::theme::{
     DUR_SHEET, FONT_MONO, FONT_VOICE, LINE_READING, LINE_SMALL, LINE_TITLE, Palette, PaletteExt,
-    RADIUS_LG, RADIUS_SM, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_MONO_SMALL, TEXT_READING,
-    TEXT_SMALL, TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT, ease_out, motion, tabular_nums,
+    RADIUS_LG, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY, TEXT_MONO_SMALL, TEXT_READING, TEXT_SMALL,
+    TEXT_TITLE, ease_out, motion, tabular_nums,
 };
 
 pub enum UploadEvent {
@@ -481,7 +481,7 @@ impl UploadView {
 
     // ---- Rendering -------------------------------------------------------------------------
 
-    fn render_stage_panel(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_stage_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let ready = Self::provider_ready(cx);
         let stage = self.stage.clone();
@@ -514,7 +514,7 @@ impl UploadView {
             // A queue below takes over as the page's focus, so the target shrinks.
             .when(!complete, |d| {
                 d.min_h(px(if self.queue.is_empty() {
-                    stage_height(window)
+                    STAGE_HEIGHT
                 } else {
                     STAGE_COMPACT_HEIGHT
                 }))
@@ -615,9 +615,12 @@ impl UploadView {
     fn render_no_provider(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         stage_body()
-            .child(glyph_tile("settings", p.muted_foreground, &p))
-            .child(stage_title(t("upload.noProviderTitle"), &p).mt(px(16.)))
-            .child(stage_text(t("upload.noProviderHint"), &p).mt(px(6.)))
+            .child(empty_state(
+                "settings",
+                t("upload.noProviderTitle"),
+                t("upload.noProviderHint"),
+                &p,
+            ))
             .child(
                 div().mt(px(20.)).flex().child(
                     Button::new("upload-no-provider")
@@ -864,7 +867,9 @@ impl UploadView {
     }
 
     /// One line naming where files go, with a shortcut to change it.
-    fn render_settings(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    /// The transcription settings in use and, while nothing else answers it,
+    /// where finished transcripts go: one card, one left edge.
+    fn render_settings(&mut self, show_destination: bool, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let s = AppState::settings(cx);
         let url = s.remote_transcription_url.trim();
@@ -910,7 +915,7 @@ impl UploadView {
                     .child(text)
             }
         };
-        surface_card(&p)
+        let settings = div()
             .flex()
             .flex_wrap()
             .items_center()
@@ -939,7 +944,18 @@ impl UploadView {
                     .on_click(cx.listener(|_, _, _, cx| {
                         cx.emit(UploadEvent::OpenSettings(SettingsSection::SpeechToText))
                     })),
-            )
+            );
+        surface_card(&p)
+            .flex()
+            .flex_col()
+            .child(settings)
+            .when(show_destination, |d| {
+                d.child(
+                    self.render_destination(cx)
+                        .border_t_1()
+                        .border_color(p.border),
+                )
+            })
             .into_any_element()
     }
 
@@ -1219,8 +1235,10 @@ impl UploadView {
             .flex_wrap()
             .items_center()
             .gap_x(px(6.))
-            .min_h(px(28.))
+            .min_h(px(44.))
             .pl(px(16.))
+            .pr(px(8.))
+            .py(px(7.))
             .text_size(px(TEXT_SMALL))
             .text_color(p.subtle_foreground)
             .when(!saving, |d| {
@@ -1232,18 +1250,14 @@ impl UploadView {
                 "upload.historyOff"
             }))
             .when(saving, |d| {
-                let label = t("upload.openHistory");
-                d.child(
-                    div()
-                        .id("upload-open-history")
-                        .keyboard_focusable("upload-open-history", Role::Link, label.clone(), cx)
-                        .px(px(4.))
-                        .rounded(px(RADIUS_SM))
-                        .cursor_pointer()
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.foreground)
-                        .hover(|s| s.underline())
-                        .child(label)
+                // Set like the settings action above it, so the card's two
+                // actions share one right edge and read as actions at rest.
+                d.child(div().flex_1()).child(
+                    Button::new("upload-open-history")
+                        .label(t("upload.openHistory"))
+                        .icon("clock", 13.)
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
                         .on_click(cx.listener(|_, _, _, cx| cx.emit(UploadEvent::OpenHistory))),
                 )
             })
@@ -1252,14 +1266,12 @@ impl UploadView {
 
 impl Render for UploadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let stage = self.render_stage_panel(window, cx);
-        let settings = self.render_settings(cx);
-        // Like every other page, the content starts at the top; the
-        // destination line only answers "where does this go" before a
+        let stage = self.render_stage_panel(cx);
+        // The destination line only answers "where does this go" before a
         // result or a queue answers it instead.
         let busy = !self.queue.is_empty() || matches!(self.stage, Stage::Complete { .. });
+        let settings = self.render_settings(!busy, cx);
         let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
-        let destination = (!busy).then(|| self.render_destination(cx).mt(px(4.)));
         page_container()
             .pb(px(32.))
             .flex()
@@ -1268,20 +1280,16 @@ impl Render for UploadView {
             .child(stage)
             .child(settings)
             .children(queue)
-            .children(destination)
     }
 }
 
 /// Drag-over styles on the stage panel's children key off this group.
 const STAGE_GROUP: &str = "upload-stage";
 
-/// The stage panel's floor: a target big enough to drop on that still
-/// leaves its settings and destination in view at the window's minimum size.
-const STAGE_MIN_HEIGHT: f32 = 280.;
-
-/// Share of the visible page the empty drop target fills: in a tall window
-/// the target grows instead of leaving an empty canvas under the page.
-const STAGE_VIEWPORT_SHARE: f32 = 0.58;
+/// The stage panel's floor while no queue is listed: a target big enough
+/// to drop on that keeps the settings card in view at the window's minimum
+/// size, without swelling into a poster in a tall window.
+const STAGE_HEIGHT: f32 = 280.;
 
 /// The stage panel's floor while a queue is listed below it.
 const STAGE_COMPACT_HEIGHT: f32 = 220.;
@@ -1301,12 +1309,6 @@ const WAVE: [f32; 28] = [
     0.25, 0.22, 0.24, 0.26, 0.54, 0.52, 0.73, 0.44, 0.55, 0.47, 0.4, 0.36, 0.63, 0.73, 0.83, 0.89,
     0.38, 0.87, 0.79, 0.8, 0.71, 0.58, 0.39, 0.56, 0.45, 0.43, 0.21, 0.18,
 ];
-
-/// The drop target's height while no queue is listed.
-fn stage_height(window: &Window) -> f32 {
-    let visible = f32::from(window.viewport_size().height) - WORKSPACE_TOP_BAR_HEIGHT;
-    (visible * STAGE_VIEWPORT_SHARE).max(STAGE_MIN_HEIGHT)
-}
 
 fn panel_border(p: &Palette) -> Hsla {
     p.border.opacity(if p.dark { 1. } else { 0.8 })
