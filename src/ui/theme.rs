@@ -71,7 +71,7 @@ impl Palette {
             border: c(0xe4e4e7),
             input: c(0xffffff),
             input_border: c(0x8e8e96),
-            control_border: c(0xd4d4d8),
+            control_border: c(0xc4c4ca),
             ring: c(0x1b4ed8),
             background: c(0xfcfcfc),
             foreground: c(0x18181b),

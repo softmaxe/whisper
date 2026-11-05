@@ -619,7 +619,7 @@ impl HistoryView {
                     "controlPanel.history.showRaw"
                 });
                 d.child(
-                    action_btn("raw-row", "scroll-text", label, cx)
+                    action_btn("raw-row", "eye", label, cx)
                         .aria_expanded(expanded)
                         .when(expanded, |d| d.bg(p.hover_wash(0.08)))
                         .on_click(cx.listener(move |this, _, _, cx| {

@@ -584,15 +584,17 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
             ],
         },
         ButtonVariant::Outline => ButtonStyle {
+            // Light outline buttons sit a step off white so they keep their
+            // shape inside white cards.
             bg: Some(if p.dark {
                 p.white.opacity(0.035)
             } else {
-                p.popover
+                p.surface_1
             }),
             hover_bg: Some(if p.dark {
                 p.white.opacity(0.06)
             } else {
-                p.muted.opacity(0.5)
+                p.muted
             }),
             fg: p.foreground,
             icon: p.muted_foreground,
@@ -718,8 +720,9 @@ pub fn page_container() -> Div {
 pub fn surface_card(p: &Palette) -> Div {
     div().rounded(px(RADIUS_XL)).border_1().map(|d| {
         if p.dark {
-            d.border_color(p.border.opacity(0.8))
-                .bg(p.card.opacity(0.4))
+            // The full card tone, so groups read as surfaces on black and
+            // not only as hairlines.
+            d.border_color(p.border).bg(p.card)
         } else {
             // Light cards are white on the off-white canvas with a full
             // hairline, so groups separate without relying on the tint.

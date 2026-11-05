@@ -275,7 +275,9 @@ impl Render for CommandSearch {
                         .py(px(6.))
                         .rounded(px(RADIUS_LG))
                         .cursor_pointer()
-                        .when(selected, |d| d.bg(p.foreground.opacity(0.09)))
+                        .when(selected, |d| {
+                            d.bg(p.hover_wash(if p.dark { 0.11 } else { 0.08 }))
+                        })
                         .when(!selected, |d| {
                             d.hover(move |s| s.bg(p.foreground.opacity(0.06)))
                         })
