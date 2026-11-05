@@ -347,6 +347,15 @@ impl ControlPanel {
         let page_actions =
             self.active == PanelView::Home && !AppState::global(cx).read(cx).history.is_empty();
         let full_search = self.active == PanelView::Home;
+        // Page menus share the top bar's trailing slot on every page. The
+        // view is created here when needed, so its menu shows on the first
+        // frame rather than one frame after the page.
+        let dictionary_menu = (self.active == PanelView::Dictionary).then(|| {
+            self.dictionary
+                .get_or_insert_with(|| cx.new(|cx| DictionaryView::new(window, cx)))
+                .clone()
+                .update(cx, |d, cx| d.render_page_menu(window, cx))
+        });
         let search_field = div()
             .id("search-trigger")
             .keyboard_focusable(
@@ -498,6 +507,7 @@ impl ControlPanel {
                                 ),
                         )
                     })
+                    .children(dictionary_menu)
                     .when(page_actions, |d| {
                         d.child(
                             div()

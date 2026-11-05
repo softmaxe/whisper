@@ -1097,8 +1097,6 @@ impl DictionaryView {
     /// Dictionary…), drawn in the window's top bar so every page keeps its
     /// page-level menu in the same place. Its items act on words, so it shows
     /// only on the Words view once there is a word to act on.
-    // Until control_panel.rs's top bar calls this, nothing in the crate does.
-    #[allow(dead_code)]
     pub fn render_page_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let has_words = !AppState::global(cx).read(cx).dictionary.is_empty();
         if self.tab != Tab::Words || !has_words {
