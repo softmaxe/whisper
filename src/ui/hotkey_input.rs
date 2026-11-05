@@ -21,7 +21,9 @@ use super::components::{
 };
 use super::control_panel::CloseOverlay;
 use super::overlays::{Toast, ToastVariant, show_toast};
-use super::theme::{LINE_SMALL, Palette, PaletteExt, RADIUS_MD, TEXT_BODY, TEXT_SMALL, motion};
+use super::theme::{
+    LINE_SMALL, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, TEXT_BODY, TEXT_SMALL, motion,
+};
 
 const MODIFIER_ONLY_HOLD_THRESHOLD: Duration = Duration::from_millis(200);
 const WARNING_TIMEOUT: Duration = Duration::from_secs(4);
@@ -537,24 +539,22 @@ fn recording_dot(p: &Palette, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// "Click to change", drawn as a quiet button that takes an outline while
-/// the pointer is over its row, so the whole row reads as clickable.
+/// "Click to change", drawn as a Ghost button: foreground medium text on a
+/// 28 pt face that takes the hover wash while the pointer is anywhere on its
+/// row, since the whole row is the button.
 fn change_affordance(group: SharedString, p: &Palette) -> AnyElement {
-    let (border, wash, fg) = (p.border, p.hover_wash(0.04), p.foreground);
+    let wash = p.hover_wash(if p.dark { 0.06 } else { 0.05 });
     div()
-        .px(px(8.))
-        .h(px(22.))
+        .px(px(10.))
+        .h(px(28.))
         .flex()
         .items_center()
-        .rounded(px(RADIUS_MD))
-        .border_1()
-        .border_color(transparent_black())
+        .rounded(px(RADIUS_LG))
         .text_size(px(TEXT_SMALL))
-        .text_color(p.muted_foreground)
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(p.foreground)
         .whitespace_nowrap()
-        .group_hover(group, move |s| {
-            s.border_color(border).bg(wash).text_color(fg)
-        })
+        .group_hover(group, move |s| s.bg(wash))
         .child(t("hotkeyInput.clickToChange"))
         .into_any_element()
 }
