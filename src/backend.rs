@@ -257,8 +257,9 @@ pub fn unregister_cancel_hotkey() {
     }
 }
 
-/// Shares Escape with the recording while a pill panel (error or copy
-/// recovery) is open.
+/// Shares Escape with the recording while the pill's copy-recovery panel is
+/// open. The error card never takes it, so a stray Escape cannot discard a
+/// kept recording.
 pub fn set_panel_cancel_hotkey(active: bool) {
     use crate::native::hotkeys::CancelHotkeyOwner;
     let Some(manager) = hotkeys() else { return };

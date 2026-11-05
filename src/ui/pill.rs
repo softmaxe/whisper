@@ -8,7 +8,9 @@
 //! The pill, its panels and its hints share one dark HUD surface in both
 //! themes, like the system volume HUD, so they read as one component over any
 //! wallpaper or app. The window never takes keyboard focus: Escape reaches it
-//! through a global shortcut registered only while something can take it.
+//! through a global shortcut registered only while the microphone is live or
+//! the lossless copy-recovery panel is open. The error card never takes it,
+//! since it can hold the only copy of a recording.
 
 use std::cell::RefCell;
 use std::f32::consts::{FRAC_PI_2, TAU};
@@ -761,12 +763,10 @@ impl PillView {
             // Dictation sends this as it starts over or resends, having
             // already settled the kept recording itself.
             DictationNotice::DismissError => self.error = None,
-            // Sent when Escape is pressed. It closes the panel on top: an
-            // error card covers the recovery panel while both are open.
+            // Sent when Escape is pressed. Only the recovery panel takes it,
+            // and not while an error card covers it.
             DictationNotice::DismissRecovery => {
-                if self.error.is_some() {
-                    self.close_error(cx);
-                } else {
+                if self.error.is_none() {
                     self.recovery = None;
                 }
             }
@@ -1293,15 +1293,16 @@ impl PillView {
         )
     }
 
-    /// The close button shared by both panels. A filled disc with a full
+    /// The close button shared by both panels. A filled disc with a faint
     /// track reads as a button; the panel's countdown drains brighter over
-    /// that track, so it never looks like an indeterminate spinner. Escape
-    /// also closes the panel; the tooltip says so rather than a second,
-    /// unclickable key chip beside it. VoiceOver hears the time left, which
-    /// the ring only shows.
+    /// that track from twelve o'clock, so it never looks like an
+    /// indeterminate spinner. When Escape also closes the panel, the tooltip
+    /// says so rather than a second, unclickable key chip beside it.
+    /// VoiceOver hears the time left, which the ring only shows.
     fn dismiss_button(
         id: &'static str,
         countdown: &Countdown,
+        escape: bool,
         on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut App,
     ) -> Stateful<Div> {
@@ -1348,7 +1349,7 @@ impl PillView {
             .id(id)
             .keyboard_focusable(id, Role::Button, label.clone(), cx)
             .aria_description(closes_in)
-            .aria_keyshortcuts("Escape")
+            .when(escape, |d| d.aria_keyshortcuts("Escape"))
             .relative()
             .flex_none()
             .size(px(DISMISS_SIZE))
@@ -1362,7 +1363,7 @@ impl PillView {
             .tooltip(move |_, cx| {
                 cx.new(|_| HudTip {
                     label: label.clone(),
-                    key: Some("Esc"),
+                    key: escape.then_some("Esc"),
                 })
                 .into()
             })
@@ -1580,6 +1581,7 @@ impl PillView {
         let dismiss = Self::dismiss_button(
             "pill-error-close",
             &countdown,
+            true,
             cx.listener(|this, _, _, cx| {
                 this.close_error(cx);
                 cx.notify();
@@ -1633,6 +1635,7 @@ impl PillView {
         let dismiss = Self::dismiss_button(
             "pill-recovery-close",
             &countdown,
+            false,
             cx.listener(|this, _, _, cx| {
                 this.recovery = None;
                 cx.notify();
@@ -1837,12 +1840,16 @@ impl PillView {
 impl Render for PillView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.regions.borrow_mut().clear();
-        // Escape dismisses whichever panel is open. The binding is global
-        // because this window never takes keyboard focus.
+        // Escape closes the copy-recovery panel, which loses nothing: its
+        // words are in History and usually on the clipboard. The binding is
+        // global because this window never takes keyboard focus, so the
+        // error card, which may hold the only copy of a recording, never
+        // takes it; a stray Escape meant for another app must not lose it.
         let panel_open = self.error.is_some() || self.recovery.is_some();
-        if panel_open != self.panel_escape {
-            self.panel_escape = panel_open;
-            backend::set_panel_cancel_hotkey(panel_open);
+        let escape = self.error.is_none() && self.recovery.is_some();
+        if escape != self.panel_escape {
+            self.panel_escape = escape;
+            backend::set_panel_cancel_hotkey(escape);
         }
         let snapshot = Self::snapshot(cx);
         let dock = Self::dock(cx);

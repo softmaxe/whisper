@@ -100,7 +100,9 @@ pub enum DictationNotice {
         text: String,
         copied: bool,
     },
-    /// Escape while the copy-recovery panel is open closes it.
+    /// Escape while only the copy-recovery panel is open closes it. The
+    /// error card never takes Escape: it can hold the only copy of a
+    /// recording, and a stray Escape meant for another app must not lose it.
     DismissRecovery,
     CleanupFailed {
         title: String,
