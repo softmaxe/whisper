@@ -527,7 +527,14 @@
     "hoursMinutes": "{{hours}} hr {{minutes}} min",
     "busiestWeekday": "Busiest: {{day}}",
     "historyOffTitle": "History is off",
-    "historyOffBody": "Turn on Save history in Settings › Privacy & data to see your words, streaks and daily activity here."
+    "historyOffBody": "Turn on Save history in Settings › Privacy & data to see your words, streaks and daily activity here.",
+    "habits": "Habits",
+    "legendStreak": "Current streak",
+    "legendActive": "Other active days",
+    "calendarLabel_one": "Active on {{count}} day in the last {{weeks}} weeks",
+    "calendarLabel_other": "Active on {{count}} days in the last {{weeks}} weeks",
+    "rhythmRow_one": "{{day}}, {{count}} average word",
+    "rhythmRow_other": "{{day}}, {{count}} average words"
   },
   "upload": {
     "chooseFiles": "Choose Files",

@@ -644,7 +644,12 @@
     "hoursMinutes": "{{hours}} 小时 {{minutes}} 分钟",
     "busiestWeekday": "最活跃：{{day}}",
     "historyOffTitle": "历史记录已关闭",
-    "historyOffBody": "在“设置 › 隐私与数据”中开启“保存历史记录”后，你的字数、连续记录和每日活动会显示在这里。"
+    "historyOffBody": "在“设置 › 隐私与数据”中开启“保存历史记录”后，你的字数、连续记录和每日活动会显示在这里。",
+    "habits": "使用习惯",
+    "legendStreak": "当前连续",
+    "legendActive": "其他活跃日",
+    "calendarLabel": "最近 {{weeks}} 周中有 {{count}} 天活跃",
+    "rhythmRow": "{{day}}，平均 {{count}} 字"
   },
   "sidebar": {
     "insights": "统计",

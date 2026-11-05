@@ -2,6 +2,8 @@
 //! words per day (or per week for long spans) with a trailing average, and
 //! day-level highlights.
 
+use std::collections::HashSet;
+
 use chrono::{Datelike, Days, Local, NaiveDate};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -33,9 +35,14 @@ const VALUE_LABEL_HEIGHT: f32 = 24.;
 /// A strip above the plot that holds the value label, so it never covers a
 /// bar or the average line; a leader drops from it to the inspected bar.
 const LABEL_STRIP: f32 = VALUE_LABEL_HEIGHT + 12.;
-/// Weeks the weekly rhythm averages over, whatever the selected range: a
-/// shorter span leaves one sample per weekday and repeats the trend chart.
-const RHYTHM_WEEKS: u64 = 8;
+/// Weeks the habits section (streak calendar and weekly rhythm) covers,
+/// whatever the selected range: a shorter span leaves too few samples per
+/// weekday and repeats the trend chart.
+const HABIT_WEEKS: u64 = 12;
+/// A streak calendar day, and the gap between days. A day plus its gap is
+/// one weekly-rhythm row, so the two cards line up row for row.
+const CELL: f32 = 18.;
+const CELL_GAP: f32 = 6.;
 /// How far the selected period's band rises above the plot.
 const BAND_LIFT: f32 = 8.;
 /// Room below the plot for the date axis.
@@ -296,35 +303,21 @@ fn axis_labels(bars: &[TrendBar], bucket_days: i64) -> Vec<Option<String>> {
 }
 
 /// A bar in the selected period, today included: the accent hue at a lower
-/// lightness and chroma that still clears 3:1 against the canvas, so the
-/// full accent stays free to mark the bar under the pointer or cursor. Its
-/// 1 px edge is a step stronger in the same hue, matching the comparison
-/// bars' edge so neither period looks more defined than the other.
-fn period_tone(p: &Palette) -> (Hsla, Hsla) {
+/// lightness and chroma that clears 3:1 against the canvas on its own
+/// (3.5:1 dark, 3.9:1 light), so the full accent stays free to mark the bar
+/// under the pointer or cursor. No edge: the fill alone carries the shape.
+fn period_tone(p: &Palette) -> Hsla {
     if p.dark {
-        (
-            hsla(p.primary.h, 0.45, 0.42, 1.),
-            hsla(p.primary.h, 0.5, 0.56, 1.),
-        )
+        hsla(p.primary.h, 0.55, 0.50, 1.)
     } else {
-        (
-            hsla(p.primary.h, 0.55, 0.60, 1.),
-            hsla(p.primary.h, 0.5, 0.48, 1.),
-        )
+        hsla(p.primary.h, 0.55, 0.60, 1.)
     }
 }
 
-/// A comparison-period bar: a neutral fill inside a stronger neutral 1 px
-/// edge. The edge clears 3:1 against the canvas (4:1 dark, 3.4:1 light) so
-/// the bar's shape reads on its own, while the grey keeps the period a step
-/// behind the tinted bars it is compared with. Dark mode needs a lighter
-/// fill than light mode for the same separation from the canvas.
-fn comparison_tone(p: &Palette) -> (Hsla, Hsla) {
-    if p.dark {
-        (p.foreground.opacity(0.3), p.foreground.opacity(0.5))
-    } else {
-        (p.foreground.opacity(0.14), p.foreground.opacity(0.5))
-    }
+/// A comparison-period bar: a flat neutral a clear step quieter than the
+/// period it is compared with, so the current period leads at a glance.
+fn comparison_tone(p: &Palette) -> Hsla {
+    p.foreground.opacity(if p.dark { 0.22 } else { 0.16 })
 }
 
 /// A weekday that is not the busiest: clearly recessive, so the one bar in
@@ -469,12 +462,10 @@ impl InsightsView {
     }
 
     /// A metric with its comparison line: an emphasized `change` (if any)
-    /// followed by a muted `note`. A `unit` sits after the figure in a
-    /// smaller, quieter face so the number leads.
+    /// followed by a muted `note`.
     fn metric(
         label: String,
         value: String,
-        unit: Option<String>,
         change: Option<String>,
         note: String,
         p: &Palette,
@@ -496,24 +487,12 @@ impl InsightsView {
             .child(
                 div()
                     .mt(px(6.))
-                    .flex()
-                    .items_baseline()
-                    .gap(px(6.))
                     .line_height(px(40.))
                     .font_features(tabular_nums())
-                    .child(
-                        div()
-                            .text_size(px(TEXT_FIGURE))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.foreground)
-                            .child(value),
-                    )
-                    .children(unit.map(|unit| {
-                        div()
-                            .text_size(px(TEXT_TITLE))
-                            .text_color(p.muted_foreground)
-                            .child(unit)
-                    })),
+                    .text_size(px(TEXT_FIGURE))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.foreground)
+                    .child(value),
             )
             .child(
                 div()
@@ -534,29 +513,14 @@ impl InsightsView {
             )
     }
 
-    fn metrics(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> [Div; 4] {
-        let streak = Self::metric(
-            t("insights.currentStreak"),
-            summary.current_streak_days.to_string(),
-            Some(t_with(
-                "insights.dayUnit",
-                &[("count", &summary.current_streak_days.to_string())],
-            )),
-            None,
-            // The streak runs up to today whatever the range, so its note
-            // names its own, all-time scope.
-            t_with(
-                "insights.longestStreak",
-                &[("count", &summary.longest_streak_days.to_string())],
-            ),
-            p,
-        );
+    /// The totals the range picker scopes. The streak is not one of them:
+    /// it always runs up to today, so it lives with the habits below.
+    fn metrics(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> [Div; 3] {
         let Some(days) = self.range.days() else {
             return [
                 Self::metric(
                     t("insights.wordsSpoken"),
                     compact_number(summary.total_words),
-                    None,
                     None,
                     t("insights.allTime"),
                     p,
@@ -564,7 +528,6 @@ impl InsightsView {
                 Self::metric(
                     t("insights.dictations"),
                     compact_number(summary.total_dictations),
-                    None,
                     None,
                     t("insights.allTime"),
                     p,
@@ -576,14 +539,12 @@ impl InsightsView {
                         .map(compact_number)
                         .unwrap_or_else(|| "—".into()),
                     None,
-                    None,
                     t_with(
                         "insights.wpmCoverage",
                         &[("count", &summary.wpm_coverage_percent.to_string())],
                     ),
                     p,
                 ),
-                streak,
             ];
         };
 
@@ -616,7 +577,6 @@ impl InsightsView {
             Self::metric(
                 t("insights.wordsSpoken"),
                 compact_number(current.words),
-                None,
                 words_change,
                 words_note,
                 p,
@@ -624,7 +584,6 @@ impl InsightsView {
             Self::metric(
                 t("insights.dictations"),
                 compact_number(current.dictations),
-                None,
                 dictations_change,
                 dictations_note,
                 p,
@@ -635,12 +594,10 @@ impl InsightsView {
                     .wpm()
                     .map(compact_number)
                     .unwrap_or_else(|| "—".into()),
-                None,
                 pace_change,
                 pace_note,
                 p,
             ),
-            streak,
         ]
     }
 
@@ -764,14 +721,12 @@ impl InsightsView {
         for (index, bar) in bars.iter().enumerate() {
             let in_period = index >= period_from;
             let is_selected = selected == index;
-            let (fill, edge) = if is_selected && accented {
-                (p.primary, None)
+            let fill = if is_selected && accented {
+                p.primary
             } else if in_period {
-                let (fill, edge) = period_tone(p);
-                (fill, Some(edge))
+                period_tone(p)
             } else {
-                let (fill, edge) = comparison_tone(p);
-                (fill, Some(edge))
+                comparison_tone(p)
             };
             let height = bar_height(bar, &y);
             let name = format!(
@@ -813,8 +768,7 @@ impl InsightsView {
                             .w_full()
                             .h(px(height))
                             .rounded_t(px(RADIUS_SM.min(height / 2.)))
-                            .bg(fill)
-                            .when_some(edge, |d, edge| d.border_1().border_color(edge)),
+                            .bg(fill),
                     ),
             );
         }
@@ -957,6 +911,8 @@ impl InsightsView {
         // centered over the bar and held inside the plot at either end, with
         // a hairline down to the bar. Pinned there, they never cover a bar.
         let value_label = bars.get(selected).map(|bar| {
+            // At rest it is a quiet caption for today; it becomes a raised
+            // tooltip only while a bar is pointed at or the chart has focus.
             let card = div()
                 .flex_none()
                 .flex()
@@ -965,10 +921,12 @@ impl InsightsView {
                 .h(px(VALUE_LABEL_HEIGHT))
                 .px(px(8.))
                 .rounded(px(RADIUS_MD))
-                .border_1()
-                .border_color(p.border_hover)
-                .bg(p.popover)
-                .shadow(vec![drop(0., 1., 3., if p.dark { 0.4 } else { 0.08 })])
+                .when(accented, |d| {
+                    d.border_1()
+                        .border_color(p.border_hover)
+                        .bg(p.popover)
+                        .shadow(vec![drop(0., 1., 3., if p.dark { 0.4 } else { 0.08 })])
+                })
                 .text_size(px(TEXT_SMALL))
                 .font_features(tabular_nums())
                 .whitespace_nowrap()
@@ -1018,18 +976,12 @@ impl InsightsView {
         });
         let (leader, value_label) = value_label.unzip();
 
-        let swatch = |fill: Hsla, edge: Option<Hsla>, label: String| {
+        let swatch = |fill: Hsla, label: String| {
             div()
                 .flex()
                 .items_center()
                 .gap(px(6.))
-                .child(
-                    div()
-                        .size(px(10.))
-                        .rounded(px(2.))
-                        .bg(fill)
-                        .when_some(edge, |d, edge| d.border_1().border_color(edge)),
-                )
+                .child(div().size(px(10.)).rounded(px(2.)).bg(fill))
                 .child(label)
         };
         let legend = div()
@@ -1041,23 +993,16 @@ impl InsightsView {
             .map(|d| match self.range.days().filter(|_| has_regions) {
                 Some(days) => {
                     let days = days.to_string();
-                    let (fill, edge) = comparison_tone(p);
-                    let (period_fill, period_edge) = period_tone(p);
                     d.child(swatch(
-                        period_fill,
-                        Some(period_edge),
+                        period_tone(p),
                         t_with("insights.lastDays", &[("count", &days)]),
                     ))
                     .child(swatch(
-                        fill,
-                        Some(edge),
+                        comparison_tone(p),
                         t_with("insights.previousDays", &[("count", &days)]),
                     ))
                 }
-                None => {
-                    let (fill, edge) = period_tone(p);
-                    d.child(swatch(fill, Some(edge), t(per_bar)))
-                }
+                None => d.child(swatch(period_tone(p), t(per_bar))),
             });
 
         let bar_count = bars.len();
@@ -1106,7 +1051,13 @@ impl InsightsView {
     }
 
     /// Day-level figures for the selected period.
-    fn highlights(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
+    fn highlights(
+        &self,
+        summary: &AnalyticsSummary,
+        today: NaiveDate,
+        wide: bool,
+        p: &Palette,
+    ) -> Div {
         let highlights = day_highlights(&summary.daily, self.period_start(summary, today), today);
         let per_active_day = highlights.words_per_active_day();
         let DayHighlights {
@@ -1151,16 +1102,15 @@ impl InsightsView {
                 None,
             ),
         ];
-        let mut card = panel(t("insights.highlights"), self.scope(), p).child(div().h(px(6.)));
-        for (index, (label, value, detail)) in rows.into_iter().enumerate() {
-            card = card.child(
+        let cells: Vec<Div> = rows
+            .into_iter()
+            .map(|(label, value, detail)| {
                 div()
                     .flex()
                     .items_center()
                     .justify_between()
                     .gap(px(12.))
                     .h(px(40.))
-                    .when(index > 0, |d| d.border_t_1().border_color(p.border))
                     .text_size(px(TEXT_BODY))
                     .font_features(tabular_nums())
                     .child(
@@ -1180,30 +1130,166 @@ impl InsightsView {
                             .children(
                                 detail.map(|d| div().text_color(p.subtle_foreground).child(d)),
                             ),
-                    ),
-            );
+                    )
+            })
+            .collect();
+        // Wide, the four figures sit in two columns so a label never sits
+        // half a page away from its value.
+        let columns = if wide { 2 } else { 1 };
+        let per_column = cells.len().div_ceil(columns);
+        let mut grid = div().flex().gap(px(32.));
+        let mut cells = cells.into_iter();
+        for _ in 0..columns {
+            let mut column = div().flex_1().min_w_0().flex().flex_col();
+            for (index, cell) in cells.by_ref().take(per_column).enumerate() {
+                column =
+                    column.child(cell.when(index > 0, |d| d.border_t_1().border_color(p.border)));
+            }
+            grid = grid.child(column);
         }
-        card
+        panel(t("insights.highlights"), self.scope(), p)
+            .child(grid.mt(px(6.)))
+            .child(div().h(px(6.)))
     }
 
-    /// Average words per weekday over the last eight weeks, or since the
-    /// first dictation if that is more recent, with the busiest weekday
-    /// called out. The span is fixed so each weekday averages several days.
-    fn weekly_rhythm(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
-        let window_start = today - Days::new(RHYTHM_WEEKS * 7 - 1);
-        let (start, scope) = match first_use(summary).filter(|first| *first > window_start) {
+    /// The span the habits section covers: the last few weeks, or since the
+    /// first dictation if that is more recent.
+    fn habits_span(summary: &AnalyticsSummary, today: NaiveDate) -> (NaiveDate, String) {
+        let window_start = today - Days::new(HABIT_WEEKS * 7 - 1);
+        match first_use(summary).filter(|first| *first > window_start) {
             Some(first) => (
                 first,
                 t_with("insights.since", &[("date", &short_date(first))]),
             ),
             None => (
                 window_start,
-                t_with(
-                    "insights.lastWeeks",
-                    &[("count", &RHYTHM_WEEKS.to_string())],
-                ),
+                t_with("insights.lastWeeks", &[("count", &HABIT_WEEKS.to_string())]),
             ),
+        }
+    }
+
+    /// The current streak as a figure, with a calendar of the last weeks
+    /// beside it: one column per week, Monday at the top so its rows line up
+    /// with the weekly rhythm. The days of the current streak take the accent.
+    fn streak_card(summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
+        let active: HashSet<NaiveDate> = summary
+            .daily
+            .iter()
+            .filter(|b| b.words > 0 || b.dictations > 0)
+            .filter_map(|b| NaiveDate::parse_from_str(&b.date, "%Y-%m-%d").ok())
+            .collect();
+        let streak = current_streak(&active, today);
+        let in_streak = |day: NaiveDate| streak.is_some_and(|(from, to)| from <= day && day <= to);
+        let first_monday = today
+            - Days::new(u64::from(today.weekday().num_days_from_monday()) + (HABIT_WEEKS - 1) * 7);
+        let idle = p.foreground.opacity(if p.dark { 0.07 } else { 0.05 });
+        let mut calendar = div().flex().gap(px(CELL_GAP));
+        let mut active_count = 0;
+        for week in 0..HABIT_WEEKS {
+            let mut column = div().flex().flex_col().gap(px(CELL_GAP));
+            for weekday in 0..7 {
+                let day = first_monday + Days::new(week * 7 + weekday);
+                let cell = div().size(px(CELL)).rounded(px(3.));
+                column = column.child(if day > today {
+                    cell
+                } else if in_streak(day) {
+                    active_count += 1;
+                    cell.bg(p.primary)
+                } else if active.contains(&day) {
+                    active_count += 1;
+                    cell.bg(rhythm_bar(p))
+                } else {
+                    cell.bg(idle)
+                });
+            }
+            calendar = calendar.child(column);
+        }
+        let calendar_label = t_with(
+            "insights.calendarLabel",
+            &[
+                ("count", &active_count.to_string()),
+                ("weeks", &HABIT_WEEKS.to_string()),
+            ],
+        );
+        let swatch = |fill: Hsla, label: String| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(div().size(px(8.)).rounded(px(2.)).bg(fill))
+                .child(label)
         };
+        let days = summary.current_streak_days.to_string();
+        let figure = div()
+            .flex()
+            .items_baseline()
+            .gap(px(6.))
+            .line_height(px(40.))
+            .font_features(tabular_nums())
+            .child(
+                div()
+                    .text_size(px(TEXT_FIGURE))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.foreground)
+                    .child(days.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(TEXT_TITLE))
+                    .text_color(p.muted_foreground)
+                    .child(t_with("insights.dayUnit", &[("count", &days)])),
+            );
+        let legend = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .text_size(px(TEXT_CAPTION))
+            .text_color(p.muted_foreground)
+            .child(swatch(p.primary, t("insights.legendStreak")))
+            .child(swatch(rhythm_bar(p), t("insights.legendActive")));
+        panel(
+            t("insights.currentStreak"),
+            t_with(
+                "insights.longestStreak",
+                &[("count", &summary.longest_streak_days.to_string())],
+            ),
+            p,
+        )
+        .child(
+            div()
+                .mt(px(22.))
+                .mb(px(6.))
+                .flex()
+                .justify_between()
+                .gap(px(24.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .justify_between()
+                        .gap(px(16.))
+                        .child(figure)
+                        .child(legend),
+                )
+                .child(
+                    div()
+                        .id("insights-streak-calendar")
+                        .role(Role::Image)
+                        .aria_label(calendar_label)
+                        .flex_none()
+                        // Centers each row of days on its weekday's row in
+                        // the weekly rhythm beside it.
+                        .mt(px(CELL_GAP / 2.))
+                        .child(calendar),
+                ),
+        )
+    }
+
+    /// Average words per weekday over the habits span, with the busiest
+    /// weekday called out. The span is fixed so each weekday averages several
+    /// days whatever range the trend above shows.
+    fn weekly_rhythm(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
+        let (start, scope) = Self::habits_span(summary, today);
         let averages = weekday_averages(&summary.daily, start, today);
         let max = averages.iter().copied().fold(0., f64::max);
         let busiest = averages
@@ -1212,13 +1298,9 @@ impl InsightsView {
             .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(i, _)| i)
             .filter(|_| max > 0.);
-        let description = match busiest {
-            Some(day) => format!(
-                "{scope} · {}",
-                t_with("insights.busiestWeekday", &[("day", &weekday_name(day))])
-            ),
-            None => scope,
-        };
+        let description = busiest.map_or(scope, |day| {
+            t_with("insights.busiestWeekday", &[("day", &weekday_name(day))])
+        });
         // The figures are averages, so their column says so once.
         let unit = div()
             .mt(px(6.))
@@ -1228,16 +1310,29 @@ impl InsightsView {
             .text_size(px(TEXT_CAPTION))
             .text_color(p.subtle_foreground)
             .child(t("insights.averageWords"));
-        let mut card = panel(t("insights.weeklyRhythm"), description, p).child(unit);
+        let mut rows = div()
+            .id("insights-rhythm")
+            .role(Role::List)
+            .aria_label(t("insights.weeklyRhythm"));
         for (index, average) in averages.into_iter().enumerate() {
             let strong = busiest == Some(index);
             let fraction = if max > 0. { (average / max) as f32 } else { 0. };
-            card = card.child(
+            let rounded = compact_number(average.round() as i64);
+            rows = rows.child(
                 div()
+                    .id(("insights-rhythm-day", index))
+                    .role(Role::ListItem)
+                    .aria_label(t_with(
+                        "insights.rhythmRow",
+                        &[
+                            ("day", &weekday_name(index)),
+                            ("count", &(average.round() as i64).to_string()),
+                        ],
+                    ))
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .h(px(24.))
+                    .h(px(CELL + CELL_GAP))
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
                     .child(
@@ -1273,11 +1368,14 @@ impl InsightsView {
                             .justify_end()
                             .text_color(p.foreground)
                             .when(strong, |d| d.font_weight(FontWeight::MEDIUM))
-                            .child(compact_number(average.round() as i64)),
+                            .child(rounded),
                     ),
             );
         }
-        card.child(div().h(px(6.)))
+        panel(t("insights.weeklyRhythm"), description, p)
+            .child(unit)
+            .child(rows)
+            .child(div().h(px(6.)))
     }
 
     /// A centered message with an icon tile, for the states without data.
@@ -1326,31 +1424,21 @@ impl InsightsView {
     ) -> Div {
         let width = window.viewport_size().width;
         let today = Local::now().date_naive();
-        let metrics = self.metrics(summary, today, p);
-        let grid = if width > px(1024.) {
-            div().flex().gap(px(16.)).children(metrics)
-        } else {
-            let [a, b, c, d] = metrics;
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(20.))
-                .child(div().flex().gap(px(16.)).child(a).child(b))
-                .child(div().flex().gap(px(16.)).child(c).child(d))
+        let metrics = div()
+            .flex()
+            .gap(px(16.))
+            .when(width <= px(900.), |d| d.flex_col().gap(px(20.)))
+            .children(self.metrics(summary, today, p));
+        let wide = width > px(900.);
+        let pair = |a: Div, b: Div| {
+            if wide {
+                div().flex().gap(px(16.)).child(a).child(b)
+            } else {
+                div().flex().flex_col().gap(px(16.)).child(a).child(b)
+            }
         };
-        let highlights = self.highlights(summary, today, p);
-        let rhythm = self.weekly_rhythm(summary, today, p);
-        let panels = if width > px(900.) {
-            div().flex().gap(px(16.)).child(highlights).child(rhythm)
-        } else {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(16.))
-                .child(highlights)
-                .child(rhythm)
-        };
-        div()
+        // Everything the range picker scopes shares one block under it.
+        let period = div()
             .flex()
             .flex_col()
             .child(
@@ -1372,14 +1460,72 @@ impl InsightsView {
                     )
                     .child(self.range_picker(p, cx)),
             )
-            .child(div().mt(px(20.)).child(grid))
+            .child(div().mt(px(20.)).child(metrics))
             .child(
                 div()
                     .mt(px(36.))
                     .child(self.chart(summary, today, p, window, cx)),
             )
-            .child(div().mt(px(32.)).child(panels))
+            .child(
+                div()
+                    .mt(px(28.))
+                    .child(self.highlights(summary, today, wide, p)),
+            );
+        // The habits keep their own span whatever the range, so they sit in
+        // a separate section that names it.
+        let (_, span) = Self::habits_span(summary, today);
+        let habits = div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .pt(px(20.))
+                    .border_t_1()
+                    .border_color(p.border)
+                    .flex()
+                    .items_baseline()
+                    .justify_between()
+                    .gap(px(16.))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_BODY))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.foreground)
+                            .child(t("insights.habits")),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(TEXT_SMALL))
+                            .font_features(tabular_nums())
+                            .text_color(p.subtle_foreground)
+                            .child(span),
+                    ),
+            )
+            .child(div().mt(px(16.)).child(pair(
+                Self::streak_card(summary, today, p),
+                self.weekly_rhythm(summary, today, p),
+            )));
+        div()
+            .flex()
+            .flex_col()
+            .child(period)
+            .child(div().mt(px(40.)).child(habits))
     }
+}
+
+/// The first and last day of the current streak: the run of active days that
+/// ends today, or yesterday while today is still open.
+fn current_streak(active: &HashSet<NaiveDate>, today: NaiveDate) -> Option<(NaiveDate, NaiveDate)> {
+    let end = [today, today.pred_opt()?]
+        .into_iter()
+        .find(|day| active.contains(day))?;
+    let mut start = end;
+    while let Some(before) = start.pred_opt().filter(|d| active.contains(d)) {
+        start = before;
+    }
+    Some((start, end))
 }
 
 /// The first day with any words.
@@ -1445,7 +1591,11 @@ impl Render for InsightsView {
 mod tests {
     use chrono::NaiveDate;
 
-    use super::{TrendBar, absolute_change, axis_labels, grid_step, relative_change};
+    use std::collections::HashSet;
+
+    use super::{
+        TrendBar, absolute_change, axis_labels, current_streak, grid_step, relative_change,
+    };
 
     #[test]
     fn changes_read_as_multiples_from_double_up() {
@@ -1500,5 +1650,25 @@ mod tests {
         assert_eq!(labels[56].as_deref(), Some("Nov 1"));
         assert_eq!(labels[9].as_deref(), Some("Sep 15"));
         assert_eq!(labels[59].as_deref(), Some("Today"));
+    }
+
+    #[test]
+    fn current_streak_ends_today_or_yesterday() {
+        let day = |d: &str| NaiveDate::parse_from_str(d, "%Y-%m-%d").unwrap();
+        let active: HashSet<NaiveDate> = ["2026-11-01", "2026-11-03", "2026-11-04"]
+            .into_iter()
+            .map(day)
+            .collect();
+        // Today still open: the run through yesterday counts.
+        assert_eq!(
+            current_streak(&active, day("2026-11-05")),
+            Some((day("2026-11-03"), day("2026-11-04")))
+        );
+        assert_eq!(
+            current_streak(&active, day("2026-11-04")),
+            Some((day("2026-11-03"), day("2026-11-04")))
+        );
+        // A full idle day ends it.
+        assert_eq!(current_streak(&active, day("2026-11-06")), None);
     }
 }
