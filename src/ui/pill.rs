@@ -31,8 +31,8 @@ use crate::macos;
 use super::components::{KeyboardFocusable, f32_tx, icon, kbd};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
-    RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_READING, TEXT_SMALL, ease_out,
-    ease_overshoot, ease_snap, progress, tabular_nums,
+    RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_READING, TEXT_SMALL, ease_out, ease_overshoot,
+    ease_snap, motion, progress, tabular_nums,
 };
 
 pub const WINDOW_SIZE: Size<Pixels> = Size {
@@ -47,9 +47,12 @@ const PILL_H: f32 = 30.;
 /// phrase, so short dictations keep the compact pill.
 const TIMER_AFTER: Duration = Duration::from_secs(3);
 const TIMER_GAP: f32 = 8.;
-/// Fits `m:ss` in tabular figures; longer times spill into the padding.
-const TIMER_W: f32 = 26.;
-const PILL_TIMED_W: f32 = PILL_W + TIMER_GAP + TIMER_W;
+/// The widest time the timer slot is sized for, so a recording that passes
+/// ten minutes keeps the capsule's width.
+const TIMER_WIDEST: &str = "00:00";
+/// The pill's two labels, the timer and "Transcribing…", sit a step below
+/// full strength so the record dot stays the pill's loudest mark.
+const PILL_LABEL: f32 = 0.8;
 /// The cancel control beside the pill. It stays from the first frame of a
 /// Dictation so aborting never depends on discovering a hover state. Its
 /// glyph rests a step below full strength, so the pill stays the focus
@@ -66,10 +69,13 @@ const PANEL_PAD: f32 = 16.;
 /// The panels' leading icon column; body, content and actions start after it.
 const PANEL_ICON: f32 = 16.;
 const PANEL_ICON_GAP: f32 = 10.;
-/// The dismiss button of a panel. A full track outlines it as a button,
-/// and the countdown drains over that track.
-const DISMISS_SIZE: f32 = 32.;
-const DISMISS_STROKE: f32 = 2.;
+/// The dismiss button of a panel, sized like the pill's cancel control. A
+/// faint track outlines it as a button, and the countdown drains over that
+/// track in a hairline, so it never reads as a loading spinner.
+const DISMISS_SIZE: f32 = 28.;
+const DISMISS_STROKE: f32 = 1.5;
+const DISMISS_TRACK: f32 = 0.14;
+const DISMISS_DRAIN: f32 = 0.4;
 /// How far the dismiss button reaches past the title line on each side. It
 /// pulls up and right by as much, so it sits the same distance from the
 /// card's top and right edges.
@@ -245,15 +251,6 @@ fn think_opacity(index: usize, now_ms: f32, reduce: bool) -> f32 {
     }
     let phase = ((now_ms / 1100.) - index as f32 * 0.18) * TAU;
     0.3 + 0.7 * (0.5 + 0.5 * phase.sin()).powi(2)
-}
-
-/// The record dot's slow pulse; held steady when motion is reduced.
-fn rec_pulse(now_ms: f32, reduce: bool) -> f32 {
-    if reduce {
-        return 1.;
-    }
-    // A shallow pulse: the dot stays a clear red at its dimmest.
-    0.8 + 0.2 * (0.5 + 0.5 * ((now_ms / 1600.) * TAU).cos())
 }
 
 /// The pill's one-shot motion at an instant, layered over the waveform.
@@ -1028,29 +1025,37 @@ impl PillView {
                     .bg(p.white.opacity(opacity[i] * bars_alpha)),
             );
         }
-        // The dot is red only while the microphone is live; while it opens
-        // the dot waits in a dim neutral so the bars do not shift.
+        // The dot is red only while the microphone is live, and at full
+        // strength: a dimmed red turns brick-brown on a dark desktop, and
+        // the moving bars already show the microphone is live. While it
+        // opens the dot waits in a dim neutral so the bars do not shift.
         let dot_color = if recording {
-            p.destructive
-                .opacity(rec_pulse(now_ms, reduce) * bars_alpha)
+            p.destructive.opacity(bars_alpha)
         } else {
             p.white.opacity(0.3 * bars_alpha)
         };
         // The timer slides in from the bars' side as the pill widens, and
         // fades with them when transcribing takes over.
+        let timed_w = Self::timed_width(window);
         let timer = (timed > 0.).then(|| {
             div()
                 .flex_none()
-                .w(px((TIMER_GAP + TIMER_W) * timed))
+                .w(px((timed_w - PILL_W) * timed))
                 .overflow_hidden()
+                // Digits hold the slot's trailing edge, as a clock's do, so the
+                // spare room for ten minutes and more sits beside the bars
+                // and the capsule's ends stay even.
                 .child(
                     div()
-                        .pl(px(TIMER_GAP))
+                        .flex_none()
+                        .w(px(timed_w - PILL_W))
+                        .flex()
+                        .justify_end()
                         .whitespace_nowrap()
-                        .text_size(px(TEXT_CAPTION))
+                        .text_size(px(TEXT_SMALL))
                         .font_weight(FontWeight::MEDIUM)
                         .font_features(tabular_nums())
-                        .text_color(p.muted_foreground.opacity(timed * bars_alpha))
+                        .text_color(p.foreground.opacity(PILL_LABEL * timed * bars_alpha))
                         .child(format_elapsed(self.recorded)),
                 )
         });
@@ -1066,7 +1071,7 @@ impl PillView {
         // without hovering. It keeps the timed recording pill's width, so
         // the capsule does not jump sideways when recording ends.
         let think_label = t("dictation.pill.transcribing");
-        let think_w = Self::processing_width(&think_label, window);
+        let think_w = Self::processing_width(&think_label, timed_w, window);
         let think_alpha = thinking * motion_fx.bars;
         let think = (think_alpha > 0.001).then(|| {
             let mut dots = div().flex().items_center().gap(px(THINK_GAP));
@@ -1088,9 +1093,9 @@ impl PillView {
                 .child(
                     div()
                         .whitespace_nowrap()
-                        .text_size(px(TEXT_CAPTION))
+                        .text_size(px(TEXT_SMALL))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground.opacity(think_alpha))
+                        .text_color(p.foreground.opacity(PILL_LABEL * think_alpha))
                         .child(think_label.clone()),
                 )
         });
@@ -1108,7 +1113,7 @@ impl PillView {
                 )
         });
         let scale = motion_fx.scale;
-        let meter_w = PILL_W + (PILL_TIMED_W - PILL_W) * timed;
+        let meter_w = PILL_W + (timed_w - PILL_W) * timed;
         let width = meter_w + (think_w - meter_w) * thinking;
         // GPUI has no paint transforms on divs, so the pill scales by size
         // inside a fixed slot, which keeps it centered and the row still.
@@ -1186,29 +1191,41 @@ impl PillView {
             .into_any_element()
     }
 
-    /// The processing pill's width: the timed recording pill's, unless its
-    /// dots and label need more inside the side padding.
-    fn processing_width(label: &str, window: &Window) -> f32 {
+    /// The width of a pill label set in the pill's label style.
+    fn label_width(label: &str, window: &Window) -> f32 {
         let run = TextRun {
             len: label.len(),
             font: Font {
                 weight: FontWeight::MEDIUM,
+                features: tabular_nums(),
                 ..font(FONT_UI)
             },
-            color: hud().muted_foreground,
+            color: hud().foreground,
             background_color: None,
             underline: None,
             strikethrough: None,
         };
         let text = window.text_system().shape_line(
             SharedString::from(label.to_string()),
-            px(TEXT_CAPTION),
+            px(TEXT_SMALL),
             &[run],
             None,
         );
+        f32::from(text.width).ceil()
+    }
+
+    /// The timed recording pill's width, with a timer slot that already
+    /// fits ten minutes and more.
+    fn timed_width(window: &Window) -> f32 {
+        PILL_W + TIMER_GAP + Self::label_width(TIMER_WIDEST, window)
+    }
+
+    /// The processing pill's width: the timed recording pill's, unless its
+    /// dots and label need more inside the side padding.
+    fn processing_width(label: &str, timed_w: f32, window: &Window) -> f32 {
         let dots = THINK_DOTS as f32 * THINK_DOT + (THINK_DOTS - 1) as f32 * THINK_GAP;
-        let content = dots + THINK_LABEL_GAP + f32::from(text.width).ceil();
-        (content + 2. * PILL_PAD).max(PILL_TIMED_W)
+        let content = dots + THINK_LABEL_GAP + Self::label_width(label, window);
+        (content + 2. * PILL_PAD).max(timed_w)
     }
 
     /// The cancel control and how far it has emerged: it pops in from .8
@@ -1373,9 +1390,9 @@ impl PillView {
                         window.paint_path(path, color);
                     }
                 };
-                arc(1., p.white.opacity(0.25), window);
+                arc(1., p.white.opacity(DISMISS_TRACK), window);
                 if remaining > 0.005 {
-                    arc(remaining, p.white.opacity(0.7), window);
+                    arc(remaining, p.white.opacity(DISMISS_DRAIN), window);
                 }
             },
         )
@@ -1397,6 +1414,7 @@ impl PillView {
             .bg(p.white.opacity(0.06))
             .cursor_pointer()
             .hover(move |s| s.bg(p.white.opacity(0.12)))
+            .active(move |s| s.bg(p.white.opacity(0.18)))
             .tooltip(move |_, cx| {
                 cx.new(|_| HudTip {
                     label: label.clone(),
@@ -1405,12 +1423,14 @@ impl PillView {
                 .into()
             })
             .child(ring)
-            .child(icon("x", 14., p.foreground))
+            .child(icon("x", 13., p.foreground))
             .on_click(on_close)
     }
 
     /// A compact panel action: white on the HUD when primary, a quiet wash
-    /// otherwise.
+    /// otherwise. The primary dims on hover, since a lighter white than its
+    /// near-white rest would not show; every action dims further while
+    /// pressed, so a click lands before the card closes.
     fn panel_action(
         id: &'static str,
         icon_name: &'static str,
@@ -1420,7 +1440,7 @@ impl PillView {
     ) -> Stateful<Div> {
         let p = hud();
         let (bg, hover, fg) = if primary {
-            (p.foreground, p.white, p.toast_surface)
+            (p.foreground, p.foreground.opacity(0.88), p.toast_surface)
         } else {
             (p.white.opacity(0.1), p.white.opacity(0.16), p.foreground)
         };
@@ -1437,6 +1457,7 @@ impl PillView {
             .rounded(px(RADIUS_LG))
             .bg(bg)
             .hover(move |s| s.bg(hover))
+            .active(|s| s.opacity(0.8))
             .text_size(px(TEXT_SMALL))
             .font_weight(FontWeight::MEDIUM)
             .text_color(fg)
@@ -1622,7 +1643,7 @@ impl PillView {
         let dismiss = Self::dismiss_button(
             "pill-error-close",
             &countdown,
-            true,
+            false,
             cx.listener(|this, _, _, cx| {
                 this.close_error(cx);
                 cx.notify();
@@ -1652,7 +1673,7 @@ impl PillView {
                 .child(actions)
                 .with_animation(
                     "pill-error-in",
-                    Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                    motion(DUR_BASE, cx).with_easing(ease_out),
                     move |d, t| {
                         let d = d.opacity(t);
                         if reduce { d } else { d.mt(px(4. * (1. - t))) }
@@ -1676,7 +1697,7 @@ impl PillView {
         let dismiss = Self::dismiss_button(
             "pill-recovery-close",
             &countdown,
-            false,
+            true,
             cx.listener(|this, _, _, cx| {
                 this.recovery = None;
                 cx.notify();
@@ -1784,7 +1805,7 @@ impl PillView {
                 .child(footer)
                 .with_animation(
                     "pill-recovery-in",
-                    Animation::new(Duration::from_millis(DUR_SLOW)).with_easing(ease_out),
+                    motion(DUR_SLOW, cx).with_easing(ease_out),
                     move |d, t| {
                         let d = d.opacity((t * 2.).min(1.));
                         if reduce { d } else { d.mt(px(6. * (1. - t))) }
@@ -1976,11 +1997,8 @@ impl Render for PillView {
                 .then(|| Self::render_hint(&snapshot, self.cancel_hovered))
                 .flatten();
             if let Some(hint) = hint {
-                let hint = hint.with_animation(
-                    "pill-hint",
-                    Animation::new(Duration::from_millis(DUR_SNAP)),
-                    |d, t| d.opacity(t),
-                );
+                let hint =
+                    hint.with_animation("pill-hint", motion(DUR_SNAP, cx), |d, t| d.opacity(t));
                 root = root.child(
                     div()
                         .absolute()
