@@ -3,17 +3,18 @@
     "language": {
       "sectionTitle": "Language",
       "uiLabel": "Interface language",
-      "uiDescription": "Transcription language is set in Speech to text",
+      "uiDescription": "Menus and labels. The language you speak is set in",
       "transcriptionLabel": "Transcription language",
       "transcriptionDescription": "Choose the language you speak for more accurate transcription",
-      "chineseScriptLabel": "Chinese script (dictation)",
-      "chineseScriptDescription": "Convert Chinese transcripts to Simplified or Traditional characters, since the server returns only one script",
+      "chineseScriptLabel": "Chinese characters",
+      "chineseScriptDescription": "Convert dictations to Simplified or Traditional. Uploaded files keep the server’s output.",
       "chineseScriptAsTranscribed": "Keep as transcribed",
       "chineseScriptSimplified": "Simplified (简体)",
       "chineseScriptTraditional": "Traditional (繁體)",
       "transcriptionSectionDescription": "The language you speak, and how Chinese is written",
       "uiSectionDescription": "The language of Whisper’s own interface",
-      "autoDetect": "Auto-detect"
+      "autoDetect": "Auto-detect",
+      "uiDescriptionLink": "Speech to text ›"
     },
     "groups": {
       "app": "App",
@@ -38,7 +39,7 @@
       }
     },
     "aiModels": {
-      "enableTextCleanup": "Enable text cleanup",
+      "enableTextCleanup": "Clean up dictated text",
       "enableTextCleanupDescription": "Use AI to remove filler words, fix grammar, and polish punctuation"
     },
     "dictionary": {
@@ -123,10 +124,10 @@
       "microphoneTitle": "Microphone",
       "resetAccessibility": {
         "description": "Whisper will be removed from Privacy & Security › Accessibility. macOS then asks you to turn it back on; auto-paste won’t work until you do.",
-        "label": "Reset Accessibility access",
-        "rowDescription": "If auto-paste stopped working after an update, remove Whisper’s entry so macOS can grant it again",
+        "label": "Auto-paste stopped working",
+        "rowDescription": "After an update, macOS can hold on to an outdated Accessibility entry. Reset it so macOS can grant access again.",
         "title": "Reset Accessibility access?",
-        "action": "Reset…",
+        "action": "Reset Accessibility Access…",
         "confirm": "Reset Access",
         "done": "Accessibility access reset",
         "doneDescription": "Turn Whisper back on in System Settings to restore auto-paste.",
@@ -164,26 +165,36 @@
       "audioStorageFiles_one": "{{count}} file, {{size}}",
       "audioStorageFiles_other": "{{count}} files, {{size}}",
       "needsHistory": "Turn on Save history to use this",
-      "historyDescription": "Which transcripts Whisper keeps, and for how long"
+      "historyDescription": "Which transcripts Whisper keeps, and for how long",
+      "keepAudioForDescription": "Lets you transcribe a dictation again, for example with another model",
+      "audioStorageOff": "No audio stored. Choose how long to keep audio to start saving it."
     },
     "prompts": {
       "title": "Prompt Studio",
       "description": "The instructions the cleanup model follows"
     },
     "speechToText": {
-      "sharedDescription": "OpenAI-compatible server that transcribes dictation and uploaded files",
-      "serverUrlHelp": "Base URL of a speech-to-text server such as speaches or vLLM, usually ending in /v1; a full endpoint URL is trimmed to its base",
+      "sharedDescription": "The server that transcribes dictation and uploaded files",
+      "serverUrlHelp": "Paste the server’s base address, usually ending in /v1. Full endpoint URLs work too.",
       "serverTitle": "Server",
-      "modelHelp": "The model name your server expects; Test Connection lists the ones it offers",
+      "modelHelp": "The model your server should run. Test Connection lists the ones it offers.",
       "serverModels": "Models on this server",
       "protocolTag": "OpenAI-compatible · no auth"
     },
     "llms": {
       "server": {
         "title": "Server",
-        "description": "OpenAI-compatible server that cleans up dictated text",
+        "description": "The server that cleans up dictated text",
         "fillIn": "Fill in {{server}}’s default address",
         "protocolTag": "OpenAI-compatible · optional key"
+      },
+      "cleanup": {
+        "title": "Text cleanup",
+        "description": "Polish what you dictate before it’s pasted"
+      },
+      "output": {
+        "title": "Output",
+        "description": "How the model answers"
       }
     },
     "transcription": {
@@ -314,18 +325,18 @@
       "httpsRequired": "HTTPS required (HTTP allowed for local network only).",
       "endpointUnauthorized": "Endpoint rejected the request (401/403). Add an API key or adjust server auth settings.",
       "apiKeyOptional": "API key",
-      "apiKeyHelp": "Optional; sent as a Bearer token to your text cleanup server",
+      "apiKeyHelp": "Only if your server asks for one. Whisper keeps it in your Keychain.",
       "unableToLoadModels": "Unable to load models from endpoint.",
       "columnTag": "Tag",
       "columnOwner": "Owner",
-      "modelHelp": "The model name your server expects; Test Connection lists the ones it offers"
+      "modelHelp": "The model your server should run. Test Connection lists the ones it offers."
     },
     "disableThinking": {
       "label": "Skip model reasoning",
-      "help": "Faster, cleaner output; some servers ignore it"
+      "help": "Ask the model to answer without thinking first. Faster, though some servers ignore it."
     },
     "selfHosted": {
-      "endpointHelp": "Any server that speaks OpenAI Chat Completions; pick one to fill in its default address, then change the host if it runs on another machine"
+      "endpointHelp": "Pick a server to fill in its usual address. If it runs on another machine, change the host."
     }
   },
   "dictation": {
@@ -374,7 +385,6 @@
     }
   },
   "hotkeyInput": {
-    "clickToSet": "Click to set hotkey",
     "fnCaptureHint": "Press a key to combine, or release for Globe",
     "hotkeyLabel": "Hotkey",
     "keyHint": "+ key",
@@ -387,9 +397,12 @@
     "remove": "Remove hotkey",
     "sideLeft": "Left",
     "sideRight": "Right",
-    "clickToChange": "Click to change",
     "listening": "Press keys…",
-    "saveFailed": "Couldn’t change the hotkey"
+    "saveFailed": "Couldn’t change the hotkey",
+    "change": "Change…",
+    "setShortcut": "Set Shortcut…",
+    "hotkeyDescription": "Press it anywhere to start dictating",
+    "extraHotkeyDescription": "Another way to start dictating"
   },
   "languageSelector": {
     "noLanguagesFound": "No languages found",
@@ -403,7 +416,7 @@
     "unknownDevice": "Unknown device",
     "auto": {
       "label": "Auto",
-      "description": "Auto uses the built-in microphone with the lid open; with it closed, iPhone, then another external microphone, then the system default"
+      "description": "Auto uses the built-in mic, or iPhone and then other mics when the lid is closed"
     },
     "builtInDevice": "Built-in Microphone",
     "unavailableDevice": "{{device}} (Unavailable)",

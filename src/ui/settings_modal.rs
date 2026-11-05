@@ -27,8 +27,8 @@ use crate::text::url::normalize_base_url;
 use super::components::f32_tx;
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, Toggle, backdrop,
-    dialog_shadow, icon, keyed_focus_handle, nav_row, page_container, panel_row, section_header,
-    segment, segmented_track, settings_field, settings_field_tagged, settings_panel, settings_row,
+    dialog_shadow, icon, kbd, keyed_focus_handle, nav_row, page_container, panel_row,
+    section_header, segment, segmented_track, settings_field, settings_field_tagged, settings_row,
     settings_section, status_label,
 };
 use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH, drag_region};
@@ -39,8 +39,8 @@ use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt,
     RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION,
-    TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
-    motion,
+    TEXT_MONO_BODY, TEXT_MONO_CAPTION, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT,
+    ease_out, ease_snap, motion,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1299,15 +1299,7 @@ impl SettingsModal {
             .child(settings_section(
                 t("settings.language.sectionTitle"),
                 Some(t("settings.language.uiSectionDescription").into()),
-                vec![
-                    settings_row(
-                        t("settings.language.uiLabel"),
-                        Some(t("settings.language.uiDescription").into()),
-                        self.ui_language.clone(),
-                        &p,
-                    )
-                    .into_any_element(),
-                ],
+                vec![self.render_ui_language(cx)],
                 &p,
             ))
             .child(settings_section(
@@ -1370,6 +1362,59 @@ impl SettingsModal {
                 )],
                 &p,
             ))
+            .into_any_element()
+    }
+
+    /// The interface language row. Its description points to where the
+    /// spoken language lives, and that pointer is a link to the page.
+    fn render_ui_language(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let link_id = "settings-ui-language-stt-link";
+        let link_label = t("settings.language.uiDescriptionLink");
+        let link = div()
+            .id(link_id)
+            .keyboard_focusable(link_id, Role::Link, link_label.clone(), cx)
+            .rounded(px(RADIUS_SM))
+            .cursor_pointer()
+            .text_color(p.foreground)
+            .hover(|s| s.underline())
+            .child(link_label)
+            .on_click(
+                cx.listener(|this, _, _, cx| this.set_section(SettingsSection::SpeechToText, cx)),
+            );
+        let description = div()
+            .mt(px(2.))
+            .max_w(px(super::components::DESCRIPTION_MAX_WIDTH))
+            .flex()
+            .flex_wrap()
+            .gap_x(px(3.5))
+            .text_size(px(TEXT_SMALL))
+            .line_height(px(LINE_SMALL))
+            .text_color(p.subtle_foreground)
+            .child(t("settings.language.uiDescription"))
+            .child(link);
+        panel_row()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(32.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(px(TEXT_BODY))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.foreground)
+                                    .child(t("settings.language.uiLabel")),
+                            )
+                            .child(description),
+                    )
+                    .child(div().flex_none().child(self.ui_language.clone())),
+            )
             .into_any_element()
     }
 
@@ -1662,13 +1707,16 @@ impl SettingsModal {
         )
     }
 
-    /// The master switch stands alone at the top; the Server group under it
-    /// dims and stops taking input while cleanup is off, so the dependency
-    /// reads at a glance.
+    /// The page opens with its master switch under a section title like
+    /// every other page. The Server and Output groups dim and stop taking
+    /// input while cleanup is off, so the dependency reads at a glance.
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let enabled = settings(cx).use_cleanup_model;
-        let master = settings_panel(
+        let s = settings(cx);
+        let enabled = s.use_cleanup_model;
+        let master = settings_section(
+            t("settings.llms.cleanup.title"),
+            Some(t("settings.llms.cleanup.description").into()),
             vec![toggle_row(
                 "use-cleanup",
                 t("settings.aiModels.enableTextCleanup"),
@@ -1681,6 +1729,23 @@ impl SettingsModal {
             &p,
         );
         let server_rows = self.render_cleanup_server(!enabled, window, cx);
+        // Reasoning shapes what the model sends back, not how Whisper
+        // reaches the server, so it sits with the prompt rather than the
+        // connection fields.
+        let output = settings_section(
+            t("settings.llms.output.title"),
+            Some(t("settings.llms.output.description").into()),
+            vec![toggle_row(
+                "disable-thinking",
+                t("reasoning.disableThinking.label"),
+                Some(t("reasoning.disableThinking.help")),
+                s.cleanup_disable_thinking,
+                !enabled,
+                |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
+                &p,
+            )],
+            &p,
+        );
         div()
             .flex()
             .flex_col()
@@ -1704,6 +1769,7 @@ impl SettingsModal {
                     ))
                     .child(self.render_prompt_studio(window, cx)),
             )
+            .child(output.when(!enabled, |d| d.opacity(0.5)))
             .into_any_element()
     }
 
@@ -1821,15 +1887,6 @@ impl SettingsModal {
                 can_test,
                 cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
                 cx,
-            ),
-            toggle_row(
-                "disable-thinking",
-                t("reasoning.disableThinking.label"),
-                Some(t("reasoning.disableThinking.help")),
-                s.cleanup_disable_thinking,
-                disabled,
-                |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
-                &p,
             ),
         ]
     }
@@ -2343,6 +2400,9 @@ impl SettingsModal {
                     ("size", &crate::text::format::format_bytes(bytes)),
                 ],
             )
+        } else if !s.data_retention_enabled || s.audio_retention_days == 0 {
+            // Says why Clear All Audio is unavailable and how to change it.
+            t("settings.privacy.audioStorageOff")
         } else {
             t("settings.privacy.audioStorageEmpty")
         };
@@ -2388,7 +2448,14 @@ impl SettingsModal {
                 vec![
                     settings_row(
                         t("settings.privacy.keepAudioFor"),
-                        (!history_on).then(|| t("settings.privacy.needsHistory").into()),
+                        Some(
+                            if history_on {
+                                t("settings.privacy.keepAudioForDescription")
+                            } else {
+                                t("settings.privacy.needsHistory")
+                            }
+                            .into(),
+                        ),
                         self.audio_retention.clone(),
                         &p,
                     )
@@ -2546,11 +2613,12 @@ impl SettingsModal {
 
 /// What Tap mode does with the saved hotkeys. Keys the native listener
 /// watches (Globe, a lone right-side modifier) start on a Double tap; key
-/// combinations toggle on a single press.
+/// combinations toggle on a single press. Each carries the hotkey's keycap
+/// glyphs, or none when several hotkeys share the sentence.
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TapStyle {
-    DoubleTap(String),
-    Toggle(String),
+    DoubleTap(Vec<String>),
+    Toggle(Vec<String>),
     /// Some hotkeys double-tap and others toggle.
     Mixed,
 }
@@ -2558,29 +2626,60 @@ enum TapStyle {
 impl TapStyle {
     /// Names the hotkey in the card copy when there is exactly one.
     fn of(hotkeys: &[Hotkey]) -> Self {
-        let name = match hotkeys {
+        let keys = match hotkeys {
             [only] => hotkey_glyphs(only),
-            _ => t("settings.general.hotkey.theHotkey"),
+            _ => Vec::new(),
         };
         let listened = hotkeys
             .iter()
             .filter(|h| h.listener_key().is_some())
             .count();
         if listened == hotkeys.len() {
-            Self::DoubleTap(name)
+            Self::DoubleTap(keys)
         } else if listened == 0 {
-            Self::Toggle(name)
+            Self::Toggle(keys)
         } else {
             Self::Mixed
         }
     }
 
-    fn name(&self) -> String {
+    fn keys(&self) -> &[String] {
         match self {
-            Self::DoubleTap(name) | Self::Toggle(name) => name.clone(),
-            Self::Mixed => t("settings.general.hotkey.theHotkey"),
+            Self::DoubleTap(keys) | Self::Toggle(keys) => keys,
+            Self::Mixed => &[],
         }
     }
+}
+
+/// A card sentence whose `{{hotkey}}` is drawn as keycaps, like the Hotkey
+/// row above, instead of a run of glyphs squeezed into the prose. Words wrap
+/// one at a time so the keycaps flow inline with the text.
+fn sentence_with_keys(key: &str, keys: &[String], p: &Palette) -> AnyElement {
+    if keys.is_empty() {
+        return div()
+            .child(t_with(
+                key,
+                &[("hotkey", &t("settings.general.hotkey.theHotkey"))],
+            ))
+            .into_any_element();
+    }
+    const SLOT: &str = "\u{1}";
+    let text = t_with(key, &[("hotkey", SLOT)]);
+    let mut row = div().flex().flex_wrap().items_center().gap_x(px(3.5));
+    for (index, part) in text.split(SLOT).enumerate() {
+        if index > 0 {
+            row = row.child(div().flex().gap(px(2.)).children(keys.iter().map(|k| {
+                kbd(k.clone(), p)
+                    .h(px(18.))
+                    .min_w(px(18.))
+                    .text_color(p.muted_foreground)
+            })));
+        }
+        for word in part.split_whitespace() {
+            row = row.child(div().child(word.to_string()));
+        }
+    }
+    row.into_any_element()
 }
 
 /// Two side-by-side cards, one per activation mode, each explaining itself
@@ -2595,25 +2694,37 @@ fn activation_mode_cards(
 ) -> impl IntoElement + use<> {
     let p = cx.palette();
     let push_blocked = push_disabled.is_some();
-    let hotkey = tap.name();
+    let keys = tap.keys();
     let (tap_title, tap_description) = match &tap {
-        TapStyle::DoubleTap(name) => (
+        TapStyle::DoubleTap(_) => (
             t("common.tap"),
-            t_with(
+            sentence_with_keys(
                 "settings.general.hotkey.activationModeDoubleTapDescription",
-                &[("hotkey", name)],
+                keys,
+                &p,
             ),
         ),
-        TapStyle::Toggle(name) => (
+        TapStyle::Toggle(_) => (
             t("settings.general.hotkey.toggle"),
-            t_with(
+            sentence_with_keys(
                 "settings.general.hotkey.activationModeToggleDescription",
-                &[("hotkey", name)],
+                keys,
+                &p,
             ),
         ),
         TapStyle::Mixed => (
             t("common.tap"),
-            t("settings.general.hotkey.activationModeTapDescription"),
+            div()
+                .child(t("settings.general.hotkey.activationModeTapDescription"))
+                .into_any_element(),
+        ),
+    };
+    let hold_description = match push_disabled {
+        Some(reason) => div().child(reason).into_any_element(),
+        None => sentence_with_keys(
+            "settings.general.hotkey.activationModeHoldDescription",
+            keys,
+            &p,
         ),
     };
     let options = [
@@ -2622,12 +2733,7 @@ fn activation_mode_cards(
             ActivationMode::Push,
             "hold",
             t("common.hold"),
-            push_disabled.unwrap_or_else(|| {
-                t_with(
-                    "settings.general.hotkey.activationModeHoldDescription",
-                    &[("hotkey", &hotkey)],
-                )
-            }),
+            hold_description,
         ),
     ];
     let mut row = div().flex().flex_wrap().gap(px(8.));
@@ -2936,11 +3042,16 @@ fn suggestion_chip(
     let id: ElementId = id.into();
     let (fg, hover_fg) = (p.foreground, p.foreground);
     let hover_border = p.border_hover;
+    let hover_wash = p.hover_wash(0.04);
     let chip = div().id(id.clone());
     let chip = if enabled {
         chip.keyboard_focusable(id, Role::Button, label, cx)
             .cursor_pointer()
-            .hover(move |s| s.border_color(hover_border).text_color(hover_fg))
+            .hover(move |s| {
+                s.border_color(hover_border)
+                    .text_color(hover_fg)
+                    .bg(hover_wash)
+            })
     } else {
         chip
     };
@@ -3240,7 +3351,8 @@ fn model_card_list(
                         tag.to_string()
                     })
                     .w(px(MODEL_TAG_W))
-                    .font_family(FONT_MONO),
+                    .font_family(FONT_MONO)
+                    .text_size(px(TEXT_MONO_CAPTION)),
                 )
                 .child(
                     muted(model.owned_by.clone().unwrap_or_else(|| "—".to_string()))
@@ -3333,9 +3445,11 @@ impl Render for SettingsModal {
                     .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
             );
 
-        // A soft edge along the sheet's bottom says the page continues below.
-        // It spans the whole column, edge to edge, so it reads as the sheet's
-        // edge rather than a fade inside whichever card sits there.
+        // A short soft edge along the sheet's bottom, with the overlay scroll
+        // thumb, says the page continues below without washing out the last
+        // visible row. It spans the whole column, edge to edge, so it reads
+        // as the sheet's edge rather than a fade inside whichever card sits
+        // there.
         let max_scroll = self.scroll.max_offset().y;
         // The scroll extent is only known after layout; look again next frame
         // so the fade shows on a page that opens with more below.
@@ -3370,6 +3484,18 @@ impl Render for SettingsModal {
                             .child(content),
                     ),
             )
+            .when_some(scroll_thumb(&self.scroll), |d, (top, height)| {
+                d.child(
+                    div()
+                        .absolute()
+                        .right(px(3.))
+                        .top(top)
+                        .w(px(4.))
+                        .h(height)
+                        .rounded_full()
+                        .bg(p.foreground.opacity(if p.dark { 0.22 } else { 0.18 })),
+                )
+            })
             .when(fade > 0.01, |d| {
                 d.child(
                     div()
@@ -3377,7 +3503,7 @@ impl Render for SettingsModal {
                         .left_0()
                         .right_0()
                         .bottom_0()
-                        .h(px(40.))
+                        .h(px(16.))
                         .opacity(fade)
                         .when(!frame.attached, |d| d.rounded_br(radius))
                         .bg(linear_gradient(
@@ -3474,6 +3600,23 @@ impl Render for SettingsModal {
     }
 }
 
+/// The overlay scroll thumb's top and height inside the content viewport,
+/// when the page is taller than the sheet. It stays visible rather than
+/// fading like a trackpad scroller, so a clipped row reads as more below.
+fn scroll_thumb(scroll: &ScrollHandle) -> Option<(Pixels, Pixels)> {
+    const INSET: f32 = 3.;
+    const MIN_THUMB: f32 = 32.;
+    let viewport = f32::from(scroll.bounds().size.height);
+    let max = f32::from(scroll.max_offset().y);
+    if max < 1. || viewport <= 2. * INSET + MIN_THUMB {
+        return None;
+    }
+    let track = viewport - 2. * INSET;
+    let height = (track * viewport / (viewport + max)).max(MIN_THUMB);
+    let progress = (-f32::from(scroll.offset().y) / max).clamp(0., 1.);
+    Some((px(INSET + (track - height) * progress), px(height)))
+}
+
 /// Where the sheet sits in the window, and whether it uses the narrow layout.
 struct SheetFrame {
     bounds: Bounds<Pixels>,
@@ -3560,11 +3703,11 @@ mod tests {
     fn tap_mode_names_what_the_saved_hotkey_does() {
         assert_eq!(
             TapStyle::of(&parse_hotkey_list("RightOption")),
-            TapStyle::DoubleTap("Right ⌥".into())
+            TapStyle::DoubleTap(vec!["Right ⌥".into()])
         );
         assert_eq!(
             TapStyle::of(&parse_hotkey_list("Control+Shift+K")),
-            TapStyle::Toggle("⌃⇧K".into())
+            TapStyle::Toggle(vec!["⌃".into(), "⇧".into(), "K".into()])
         );
         assert_eq!(
             TapStyle::of(&parse_hotkey_list("RightOption,Control+Shift+K")),

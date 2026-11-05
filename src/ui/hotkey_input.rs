@@ -389,7 +389,7 @@ impl HotkeyListInput {
                 &[("hotkey", &spoken_label(&value.label_parts()))],
             )
             .into(),
-            None => t("hotkeyInput.clickToSet").into(),
+            None => t("hotkeyInput.setShortcut").into(),
         };
         let group = SharedString::from(format!("{key}-group"));
         let row = div()
@@ -470,33 +470,52 @@ impl HotkeyListInput {
             } else {
                 keycaps(&value.label_parts(), &p).into_any_element()
             };
-            line.child(label_text(t("hotkeyInput.hotkeyLabel"), p.foreground))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(keys)
-                        .child(change_affordance(group.clone(), &p))
-                        .when_some(removable, |d, index| {
-                            d.child(
-                                Button::new(("settings-remove-hotkey", index))
-                                    .icon("trash2", 14.)
-                                    .aria_label(t("hotkeyInput.remove"))
-                                    .variant(ButtonVariant::Ghost)
-                                    .size(ButtonSize::Sm)
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        // The row behind the button would start a capture.
-                                        cx.stop_propagation();
-                                        this.remove(index, cx);
-                                    })),
-                            )
-                        }),
-                )
-                .into_any_element()
+            // Every row in the group carries a description, so the first
+            // says what the key does and any extra one says it does the same.
+            let description = match slot {
+                Slot::Existing(0) => t("hotkeyInput.hotkeyDescription"),
+                _ => t("hotkeyInput.extraHotkeyDescription"),
+            };
+            line.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(label_text(t("hotkeyInput.hotkeyLabel"), p.foreground))
+                    .child(
+                        div()
+                            .mt(px(2.))
+                            .text_size(px(TEXT_SMALL))
+                            .line_height(px(LINE_SMALL))
+                            .text_color(p.subtle_foreground)
+                            .child(description),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(keys)
+                    .child(row_button(t("hotkeyInput.change"), group.clone(), &p))
+                    .when_some(removable, |d, index| {
+                        d.child(
+                            Button::new(("settings-remove-hotkey", index))
+                                .icon("trash2", 14.)
+                                .aria_label(t("hotkeyInput.remove"))
+                                .variant(ButtonVariant::Ghost)
+                                .size(ButtonSize::Sm)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    // The row behind the button would start a capture.
+                                    cx.stop_propagation();
+                                    this.remove(index, cx);
+                                })),
+                        )
+                    }),
+            )
+            .into_any_element()
         } else {
             line.justify_center()
-                .child(label_text(t("hotkeyInput.clickToSet"), p.muted_foreground))
+                .child(row_button(t("hotkeyInput.setShortcut"), group.clone(), &p))
                 .into_any_element()
         };
         row.child(content)
@@ -539,23 +558,25 @@ fn recording_dot(p: &Palette, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// "Click to change", drawn as a Ghost button: foreground medium text on a
-/// 28 pt face that takes the hover wash while the pointer is anywhere on its
-/// row, since the whole row is the button.
-fn change_affordance(group: SharedString, p: &Palette) -> AnyElement {
-    let wash = p.hover_wash(if p.dark { 0.06 } else { 0.05 });
+/// The row's action drawn as an outline button face, like Add Another
+/// Hotkey beside it. The whole row is the real button, so the face takes
+/// the hover wash while the pointer is anywhere on the row.
+fn row_button(label: String, group: SharedString, p: &Palette) -> AnyElement {
+    let wash = p.hover_wash(0.05);
     div()
         .px(px(10.))
         .h(px(28.))
         .flex()
         .items_center()
         .rounded(px(RADIUS_LG))
+        .border_1()
+        .border_color(p.border)
         .text_size(px(TEXT_SMALL))
         .font_weight(FontWeight::MEDIUM)
         .text_color(p.foreground)
         .whitespace_nowrap()
         .group_hover(group, move |s| s.bg(wash))
-        .child(t("hotkeyInput.clickToChange"))
+        .child(label)
         .into_any_element()
 }
 
@@ -603,8 +624,8 @@ fn key_glyph(part: &str) -> String {
     }
 }
 
-/// The hotkey as one run of macOS glyphs, like a menu shortcut: `⌃⌥⇧F19`.
-pub fn hotkey_glyphs(hotkey: &Hotkey) -> String {
+/// The hotkey's keys as macOS glyphs, one per keycap: `["⌃", "⌥", "F19"]`.
+pub fn hotkey_glyphs(hotkey: &Hotkey) -> Vec<String> {
     hotkey
         .label_parts()
         .iter()

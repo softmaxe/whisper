@@ -3,17 +3,18 @@
     "language": {
       "sectionTitle": "语言",
       "uiLabel": "界面语言",
-      "uiDescription": "转录语言在“语音转文字”中设置",
+      "uiDescription": "菜单与界面文字。说话的语言请前往",
       "transcriptionLabel": "转录语言",
       "transcriptionDescription": "选择你说话的语言，以提高转录准确率",
-      "chineseScriptLabel": "中文书写（听写）",
-      "chineseScriptDescription": "将中文转录结果转换为简体或繁体，因为服务器只会输出一种字形",
+      "chineseScriptLabel": "中文字形",
+      "chineseScriptDescription": "将听写结果转换为简体或繁体。上传的文件保留服务器的输出。",
       "chineseScriptAsTranscribed": "保持转录原样",
       "chineseScriptSimplified": "简体",
       "chineseScriptTraditional": "繁体",
       "transcriptionSectionDescription": "你说的语言，以及中文的书写方式",
       "uiSectionDescription": "Whisper 自身界面使用的语言",
-      "autoDetect": "自动检测"
+      "autoDetect": "自动检测",
+      "uiDescriptionLink": "语音转文字 ›"
     },
     "groups": {
       "app": "应用",
@@ -38,7 +39,7 @@
       }
     },
     "aiModels": {
-      "enableTextCleanup": "启用文本整理",
+      "enableTextCleanup": "整理听写文本",
       "enableTextCleanupDescription": "AI 去除语气词，修正语法和标点"
     },
     "dictionary": {
@@ -123,10 +124,10 @@
       "microphoneTitle": "麦克风",
       "resetAccessibility": {
         "description": "Whisper 将从“隐私与安全性 › 辅助功能”中移除，随后 macOS 会请你重新开启。重新开启前，自动粘贴无法使用。",
-        "label": "重置辅助功能权限",
-        "rowDescription": "更新后自动粘贴失效时，移除 Whisper 的授权记录，让 macOS 重新授权",
+        "label": "自动粘贴失效",
+        "rowDescription": "更新后，macOS 可能保留过时的辅助功能授权记录。重置后 macOS 即可重新授权。",
         "title": "重置辅助功能权限？",
-        "action": "重置…",
+        "action": "重置辅助功能权限…",
         "confirm": "重置权限",
         "done": "已重置辅助功能权限",
         "doneDescription": "在系统设置中重新开启 Whisper，即可恢复自动粘贴。",
@@ -161,26 +162,36 @@
       "clearAudioConfirm": "删除音频",
       "audioCleared": "已删除 {{count}} 个音频文件（{{size}}）",
       "needsHistory": "开启“保存历史记录”后可用",
-      "historyDescription": "Whisper 保留哪些转录，以及保留多久"
+      "historyDescription": "Whisper 保留哪些转录，以及保留多久",
+      "keepAudioForDescription": "可重新转录听写，例如换用其他模型",
+      "audioStorageOff": "未保存录音。选择音频保留时长后即可开始保存。"
     },
     "prompts": {
       "title": "提示词工作室",
       "description": "整理模型遵循的指令"
     },
     "speechToText": {
-      "sharedDescription": "用于转录听写和上传文件的 OpenAI 兼容服务",
-      "serverUrlHelp": "语音转文字服务（如 speaches、vLLM）的基础地址，通常以 /v1 结尾；填完整的接口地址也会自动截成基础地址",
+      "sharedDescription": "用于转录听写和上传文件的服务器",
+      "serverUrlHelp": "粘贴服务器的基础地址，通常以 /v1 结尾。也可以填完整的接口地址。",
       "serverTitle": "服务器",
-      "modelHelp": "服务器使用的模型名称；点“测试连接”可列出它提供的模型",
+      "modelHelp": "服务器要运行的模型。点“测试连接”可列出它提供的模型。",
       "serverModels": "此服务器上的模型",
       "protocolTag": "OpenAI 兼容 · 无鉴权"
     },
     "llms": {
       "server": {
         "title": "服务器",
-        "description": "用于整理听写文本的 OpenAI 兼容服务",
+        "description": "用于整理听写文本的服务器",
         "fillIn": "填入 {{server}} 的默认地址",
         "protocolTag": "OpenAI 兼容 · 可选密钥"
+      },
+      "cleanup": {
+        "title": "文本整理",
+        "description": "在粘贴前润色你的听写内容"
+      },
+      "output": {
+        "title": "输出",
+        "description": "模型如何作答"
       }
     },
     "transcription": {
@@ -310,18 +321,18 @@
       "httpsRequired": "需要 HTTPS（仅本地网络允许 HTTP）。",
       "endpointUnauthorized": "端点拒绝了请求（401/403）。请添加 API Key 或调整服务器认证设置。",
       "apiKeyOptional": "API 密钥",
-      "apiKeyHelp": "可选，将作为 Bearer token 发送给文本整理服务器",
+      "apiKeyHelp": "仅在服务器需要时填写。Whisper 会把它保存在钥匙串中。",
       "unableToLoadModels": "无法从端点加载模型。",
       "columnTag": "标签",
       "columnOwner": "所有者",
-      "modelHelp": "服务器使用的模型名称；点“测试连接”可列出它提供的模型"
+      "modelHelp": "服务器要运行的模型。点“测试连接”可列出它提供的模型。"
     },
     "disableThinking": {
       "label": "跳过模型推理",
-      "help": "输出更快、更干净；部分服务器会忽略此设置"
+      "help": "让模型不经思考直接作答。速度更快，但部分服务器会忽略此设置。"
     },
     "selfHosted": {
-      "endpointHelp": "任何支持 OpenAI Chat Completions 的服务都可以；点下面的服务填入默认地址，服务跑在别的机器上时再改主机名"
+      "endpointHelp": "点选一个服务填入它的常用地址。服务跑在别的机器上时，再改主机名。"
     }
   },
   "dictation": {
@@ -370,7 +381,6 @@
     }
   },
   "hotkeyInput": {
-    "clickToSet": "点击设置快捷键",
     "fnCaptureHint": "按下一个键进行组合，或松开以使用 Globe",
     "hotkeyLabel": "快捷键",
     "keyHint": "+ 按键",
@@ -383,9 +393,12 @@
     "remove": "移除快捷键",
     "sideLeft": "左",
     "sideRight": "右",
-    "clickToChange": "点击更改",
     "listening": "请按下按键…",
-    "saveFailed": "无法更改快捷键"
+    "saveFailed": "无法更改快捷键",
+    "change": "更改…",
+    "setShortcut": "设置快捷键…",
+    "hotkeyDescription": "在任意位置按下即可开始听写",
+    "extraHotkeyDescription": "另一种开始听写的方式"
   },
   "languageSelector": {
     "noLanguagesFound": "未找到匹配的语言",
@@ -399,7 +412,7 @@
     "unknownDevice": "未知设备",
     "auto": {
       "label": "自动",
-      "description": "自动模式在开盖时使用内置麦克风；合盖时依次改用 iPhone、其他外接麦克风和系统默认麦克风"
+      "description": "自动模式使用内置麦克风；合盖时依次改用 iPhone 和其他麦克风"
     },
     "builtInDevice": "内置麦克风",
     "unavailableDevice": "{{device}}（不可用）",
