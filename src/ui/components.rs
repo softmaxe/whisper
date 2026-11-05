@@ -643,7 +643,7 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
 }
 
 /// Helper text wraps at about 90 characters instead of spanning a wide card.
-const DESCRIPTION_MAX_WIDTH: f32 = 560.;
+pub const DESCRIPTION_MAX_WIDTH: f32 = 560.;
 
 /// `SectionHeader`: a semibold title with an optional description.
 pub fn section_header(

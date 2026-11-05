@@ -184,7 +184,13 @@ pub fn init(preference: ThemePreference, cx: &mut App) {
 /// the input caret near-black. Point the caret at this palette's text color.
 fn sync_component_theme(palette: &Palette, cx: &mut App) {
     let caret = palette.foreground;
-    gpui_kit::component::Theme::update(cx, |theme| theme.caret = caret);
+    // Input placeholders use the kit's muted color; ours clears 4.5:1 in
+    // both themes where the kit's default dark grey does not.
+    let placeholder = palette.muted_foreground;
+    gpui_kit::component::Theme::update(cx, |theme| {
+        theme.caret = caret;
+        theme.muted_foreground = placeholder;
+    });
 }
 
 /// Re-resolves the palette after a preference or system appearance change.

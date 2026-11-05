@@ -123,10 +123,6 @@ impl ConnectionCheck {
     }
 }
 
-/// The measure `components` gives every settings description, so a note
-/// built here wraps where the row descriptions do.
-const DESCRIPTION_MEASURE: f32 = 560.;
-
 /// Wide enough for a typical device name such as "MacBook Pro Microphone";
 /// longer names truncate and show in full in the menu.
 const MIC_SELECT_WIDTH: f32 = 240.;
@@ -1431,7 +1427,7 @@ impl SettingsModal {
                             .child(
                                 div()
                                     .mt(px(2.))
-                                    .max_w(px(DESCRIPTION_MEASURE))
+                                    .max_w(px(super::components::DESCRIPTION_MAX_WIDTH))
                                     .text_size(px(TEXT_SMALL))
                                     .line_height(px(LINE_SMALL))
                                     .text_color(p.subtle_foreground)
