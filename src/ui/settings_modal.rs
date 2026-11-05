@@ -1446,33 +1446,13 @@ impl SettingsModal {
                             .flex_1()
                             .min_w_0()
                             .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .child(
-                                        div()
-                                            .text_size(px(TEXT_BODY))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(p.foreground)
-                                            .child(t("microphoneSettings.inputDevice")),
-                                    )
-                                    // Sits on the label so it never shifts the
-                                    // select off the shared right edge; the
-                                    // negative margin keeps the label's line
-                                    // height.
-                                    .child(
-                                        div().my(px(-6.)).child(
-                                            Button::new("settings-refresh-mics")
-                                                .icon("refresh-cw", 14.)
-                                                .aria_label(t("microphoneSettings.refresh"))
-                                                .variant(ButtonVariant::Ghost)
-                                                .size(ButtonSize::Sm)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.reload_microphones(cx)
-                                                })),
-                                        ),
-                                    ),
+                                div().flex().items_center().gap(px(4.)).child(
+                                    div()
+                                        .text_size(px(TEXT_BODY))
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(p.foreground)
+                                        .child(t("microphoneSettings.inputDevice")),
+                                ),
                             )
                             .child(
                                 div()
@@ -1484,7 +1464,25 @@ impl SettingsModal {
                                     .child(note),
                             ),
                     )
-                    .child(div().flex_none().child(self.microphone.clone())),
+                    // Refresh sits beside the list it reloads.
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                Button::new("settings-refresh-mics")
+                                    .icon("refresh-cw", 14.)
+                                    .aria_label(t("microphoneSettings.refresh"))
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(ButtonSize::Sm)
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.reload_microphones(cx)),
+                                    ),
+                            )
+                            .child(self.microphone.clone()),
+                    ),
             )
             .into_any_element()
     }
@@ -2777,15 +2775,15 @@ fn activation_mode_cards(
                 .map(|d| {
                     // Selection takes the accent, as an open select or a
                     // focused field does.
+                    // Both start from the card tone every settings group uses;
+                    // selection tints it with the accent rather than dimming it.
                     if selected {
-                        d.border_color(p.ring).bg(p.primary.opacity(if p.dark {
-                            0.08
-                        } else {
-                            0.04
-                        }))
+                        d.border_color(p.ring)
+                            .bg(p
+                                .card
+                                .blend(p.primary.opacity(if p.dark { 0.12 } else { 0.06 })))
                     } else {
-                        d.border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
-                            .bg(p.card.opacity(0.4))
+                        d.border_color(p.border).bg(p.card)
                     }
                 })
                 .when(disabled, |d| d.opacity(0.5))
@@ -3428,8 +3426,7 @@ impl Render for SettingsModal {
             .gap(px(8.))
             .pl(px(20.))
             .pr(px(10.))
-            .border_b_1()
-            .border_color(p.border)
+            // No rule under it, like the main top bar it stands in for.
             .text_size(px(TEXT_BODY))
             .font_weight(FontWeight::MEDIUM)
             .child(
@@ -3443,6 +3440,7 @@ impl Render for SettingsModal {
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(p.foreground)
                     .child(section_label),
             )

@@ -11,8 +11,7 @@ use gpui_kit::*;
 use super::components::{drop, f32_tx, focus_ring, icon};
 use super::control_panel::CloseOverlay;
 use super::theme::{
-    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_SMALL, ease_out,
-    ease_snap, motion,
+    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_SM, TEXT_SMALL, ease_out, ease_snap, motion,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -364,7 +363,8 @@ impl Render for Select {
             .as_ref()
             .map(|o| o.label.clone())
             .unwrap_or_default();
-        let radius = px(RADIUS_MD);
+        // The button radius, so a select sits beside buttons as their kin.
+        let radius = px(RADIUS_LG);
         let trigger = div()
             .id("select-trigger")
             .flex()

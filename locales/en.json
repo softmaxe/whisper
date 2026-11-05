@@ -148,7 +148,7 @@
       "retentionDays_other": "{{count}} days",
       "audioStorageUsage": "Storage used",
       "audioStorageEmpty": "No audio files stored",
-      "clearAllAudio": "Clear All Audio",
+      "clearAllAudio": "Clear All Audio…",
       "dataRetention": "Save history",
       "dataRetentionDescription": "Save transcripts to History on this Mac; when off, dictations are pasted but not saved",
       "transcriptRetention": "Keep transcripts for",
@@ -359,7 +359,7 @@
     },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "Couldn’t reach the transcription server within 3 seconds. Check that it’s running and reachable.",
-      "transcriptionTimeout": "No response from the transcription server after 30 seconds. Check that it’s running and reachable.",
+      "transcriptionTimeout": "The server didn’t answer within 30 seconds.",
       "microphoneUnavailable": "The selected microphone isn’t capturing audio. Reconnect it, check microphone access in System Settings, or choose another one in Settings.",
       "providerRateLimited": "The transcription server is limiting requests. Wait a moment, then retry.",
       "customEndpointInvalid": "Your custom transcription endpoint is not configured or its URL is invalid. Update it in Settings → Speech to text.",
