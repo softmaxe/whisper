@@ -39,6 +39,49 @@ enum Phase {
     Processing,
 }
 
+/// The recovery an error panel offers besides recording again.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ErrorActions {
+    /// The recording is kept, so it can be sent again without speaking again.
+    pub retry: bool,
+    /// The cause lives in Settings → Speech to text.
+    pub open_settings: bool,
+}
+
+impl ErrorActions {
+    /// What helps after a transcription failure with `code`. A slow or
+    /// unreachable server is often momentary, so the words are worth
+    /// resending, and its address may need fixing; a rate limit only needs
+    /// time; an invalid endpoint fails the same way until it is fixed.
+    pub fn for_transcription_failure(code: Option<&str>) -> Self {
+        match code {
+            Some(transcription::CONNECTION_FAILED_CODE | transcription::REQUEST_TIMEOUT_CODE) => {
+                Self {
+                    retry: true,
+                    open_settings: true,
+                }
+            }
+            Some(transcription::CUSTOM_ENDPOINT_INVALID_CODE) => Self {
+                retry: false,
+                open_settings: true,
+            },
+            _ => Self {
+                retry: true,
+                open_settings: false,
+            },
+        }
+    }
+}
+
+/// The audio of the last Dictation whose transcription failed, held in
+/// memory only so the error panel can send it again. A new Dictation, a
+/// resend, or the panel closing drops it.
+struct FailedRecording {
+    wav: Vec<u8>,
+    duration: Duration,
+    occurred_at: DateTime<Utc>,
+}
+
 /// What happened, for the pill window to present.
 #[derive(Clone, Debug)]
 pub enum DictationNotice {
@@ -46,6 +89,7 @@ pub enum DictationNotice {
     Error {
         title: String,
         description: String,
+        actions: ErrorActions,
     },
     NoAudio,
     PushForceStopped {
@@ -104,6 +148,7 @@ pub struct Dictation {
     /// depend on a setting changed mid-recording.
     media_paused: bool,
     push_force_stopped: bool,
+    failed: Option<FailedRecording>,
     status: StatusMirror,
     _device_events: Task<()>,
 }
@@ -143,6 +188,7 @@ impl Dictation {
                 effects_held: false,
                 media_paused: false,
                 push_force_stopped: false,
+                failed: None,
                 status: StatusMirror::default(),
                 _device_events: device_events,
             }
@@ -230,6 +276,8 @@ impl Dictation {
         if self.start_lock || self.phase != Phase::Idle {
             return;
         }
+        // A new Dictation replaces the one that failed.
+        self.failed = None;
         let device = backend::preferred_input_device(&AppState::settings(cx));
         self.recorder.prepare(device.as_deref());
         self.capture_target(cx);
@@ -270,6 +318,7 @@ impl Dictation {
         }
         self.start_lock = true;
         self.push_force_stopped = false;
+        self.failed = None;
         self.generation += 1;
         let generation = self.generation;
         let settings = AppState::settings(cx);
@@ -303,6 +352,7 @@ impl Dictation {
                             cx.emit(DictationNotice::Error {
                                 title: t("dictation.errorTitles.microphoneUnavailable"),
                                 description: t("dictation.errorDescriptions.microphoneUnavailable"),
+                                actions: ErrorActions::default(),
                             });
                         }
                     }
@@ -374,6 +424,7 @@ impl Dictation {
         cx.emit(DictationNotice::Error {
             title: t("dictation.errorTitles.microphoneUnavailable"),
             description: t("dictation.errorDescriptions.microphoneUnavailable"),
+            actions: ErrorActions::default(),
         });
     }
 
@@ -397,7 +448,6 @@ impl Dictation {
     }
 
     fn process(&mut self, audio: RecordedAudio, cx: &mut Context<Self>) {
-        let generation = self.generation;
         let (started, occurred_at) = self
             .started_at
             .take()
@@ -415,6 +465,39 @@ impl Dictation {
             cx.emit(DictationNotice::NoAudio);
             return;
         }
+        self.transcribe(wav, duration, occurred_at, cx);
+    }
+
+    /// Sends the last failed recording again, as if it had just stopped.
+    /// The paste goes to whichever app is frontmost now.
+    pub fn retry_failed(&mut self, cx: &mut Context<Self>) {
+        if self.start_lock || self.phase != Phase::Idle {
+            return;
+        }
+        let Some(failed) = self.failed.take() else {
+            return;
+        };
+        self.push_force_stopped = false;
+        self.generation += 1;
+        self.capture_target(cx);
+        self.set_phase(Phase::Processing, cx);
+        cx.emit(DictationNotice::DismissError);
+        self.transcribe(failed.wav, failed.duration, failed.occurred_at, cx);
+    }
+
+    /// Forgets the failed recording once its error panel closes.
+    pub fn discard_failed(&mut self) {
+        self.failed = None;
+    }
+
+    fn transcribe(
+        &mut self,
+        wav: Vec<u8>,
+        duration: Duration,
+        occurred_at: DateTime<Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.generation;
         let input = Self::pipeline_input(wav.clone(), cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
@@ -483,7 +566,17 @@ impl Dictation {
                             &[("message", &message)],
                         )
                     });
-                cx.emit(DictationNotice::Error { title, description });
+                let actions = ErrorActions::for_transcription_failure(code.as_deref());
+                self.failed = actions.retry.then_some(FailedRecording {
+                    wav,
+                    duration,
+                    occurred_at,
+                });
+                cx.emit(DictationNotice::Error {
+                    title,
+                    description,
+                    actions,
+                });
             }
             PipelineOutcome::Transcribed(transcript) => {
                 self.deliver(transcript, &recording, cx);
@@ -634,4 +727,46 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
             PipelineOutcome::Cancelled => Err("Cancelled".into()),
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ErrorActions;
+    use crate::services::transcription::{
+        CONNECTION_FAILED_CODE, CUSTOM_ENDPOINT_INVALID_CODE, RATE_LIMITED_CODE,
+        REQUEST_TIMEOUT_CODE,
+    };
+
+    fn actions(code: Option<&str>) -> (bool, bool) {
+        let a = ErrorActions::for_transcription_failure(code);
+        (a.retry, a.open_settings)
+    }
+
+    #[test]
+    fn an_unreachable_or_slow_server_keeps_the_words_and_points_to_settings() {
+        assert_eq!(actions(Some(CONNECTION_FAILED_CODE)), (true, true));
+        assert_eq!(actions(Some(REQUEST_TIMEOUT_CODE)), (true, true));
+    }
+
+    #[test]
+    fn a_rate_limit_or_server_error_only_needs_a_resend() {
+        assert_eq!(actions(Some(RATE_LIMITED_CODE)), (true, false));
+        assert_eq!(actions(None), (true, false));
+    }
+
+    #[test]
+    fn an_invalid_endpoint_is_fixed_in_settings_not_by_resending() {
+        assert_eq!(actions(Some(CUSTOM_ENDPOINT_INVALID_CODE)), (false, true));
+    }
+
+    #[test]
+    fn other_errors_offer_nothing_extra() {
+        assert_eq!(
+            ErrorActions::default(),
+            ErrorActions {
+                retry: false,
+                open_settings: false,
+            }
+        );
+    }
 }

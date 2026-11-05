@@ -12,6 +12,7 @@ use crate::dictation::{Dictation, DictationNotice, StatusMirror};
 use crate::ui::control_panel::{CloseOverlay, ControlPanel, OpenSearch, OpenSettings};
 use crate::ui::overlays::{Toast, ToastVariant, show_toast};
 use crate::ui::pill::{PillView, WINDOW_SIZE};
+use crate::ui::settings_modal::SettingsSection;
 use crate::{backend, macos, menu, tray, ui};
 
 actions!(whisper_app, [Quit, ShowSettings]);
@@ -28,11 +29,12 @@ impl DictationStatus for StatusAdapter {
     }
 }
 
-/// The control panel window, kept so the tray and Dock can bring it back.
-struct ControlPanelWindow(AnyWindowHandle);
+/// The control panel window, kept so the tray and Dock can bring it back,
+/// and its view, so other windows can open a Settings section in it.
+struct ControlPanelWindow(AnyWindowHandle, WeakEntity<ControlPanel>);
 impl Global for ControlPanelWindow {}
 
-fn open_control_panel(cx: &mut App) -> anyhow::Result<AnyWindowHandle> {
+fn open_control_panel(cx: &mut App) -> anyhow::Result<ControlPanelWindow> {
     let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
     let options = WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -45,7 +47,7 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<AnyWindowHandle> {
         app_id: Some("com.softmaxe.whisper".into()),
         ..Default::default()
     };
-    let (handle, _) = gpui_kit::open_window(options, cx, |window, cx| {
+    let (handle, panel) = gpui_kit::open_window(options, cx, |window, cx| {
         // Closing the panel drops it to the menu bar.
         window.on_window_should_close(cx, |_, _| {
             crate::native::dock::set_control_panel_visible(false);
@@ -54,7 +56,7 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<AnyWindowHandle> {
         ui::theme::follow_system_appearance(window);
         cx.new(|cx| ControlPanel::new(window, cx))
     })?;
-    Ok(handle)
+    Ok(ControlPanelWindow(handle, panel.downgrade()))
 }
 
 /// Closes the control panel window and hides the Dock icon. Deferred so it
@@ -70,16 +72,25 @@ pub fn close_control_panel(cx: &mut App) {
     });
 }
 
-/// Shows the control panel and opens Settings.
-fn show_settings(cx: &mut App) {
+/// Shows the control panel and opens Settings, at `section` when given.
+pub fn show_settings(section: Option<SettingsSection>, cx: &mut App) {
     show_control_panel(cx);
-    if let Some(handle) = cx.try_global::<ControlPanelWindow>().map(|w| w.0) {
-        let _ = handle.update(cx, |_, window, _| {
-            // A freshly opened panel has no rendered tree to dispatch into yet.
-            window.on_next_frame(|window, cx| window.dispatch_action(Box::new(OpenSettings), cx));
-            window.refresh();
+    let Some(ControlPanelWindow(handle, panel)) = cx.try_global::<ControlPanelWindow>() else {
+        return;
+    };
+    let (handle, panel) = (*handle, panel.clone());
+    let _ = handle.update(cx, |_, window, _| {
+        // A freshly opened panel has no rendered tree to dispatch into yet.
+        window.on_next_frame(move |window, cx| match section {
+            Some(section) => {
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.open_settings(Some(section), window, cx)
+                });
+            }
+            None => window.dispatch_action(Box::new(OpenSettings), cx),
         });
-    }
+        window.refresh();
+    });
 }
 
 /// Shows the control panel, reopening it if it was closed.
@@ -95,8 +106,8 @@ pub fn show_control_panel(cx: &mut App) {
         return;
     }
     match open_control_panel(cx) {
-        Ok(handle) => {
-            cx.set_global(ControlPanelWindow(handle));
+        Ok(window) => {
+            cx.set_global(window);
             cx.activate(true);
             crate::native::dock::set_control_panel_visible(true);
         }
@@ -262,7 +273,7 @@ pub fn run() {
             cx.quit();
         });
         // Deferred: Cmd+, dispatches while the control panel window is borrowed.
-        cx.on_action(|_: &ShowSettings, cx| cx.defer(show_settings));
+        cx.on_action(|_: &ShowSettings, cx| cx.defer(|cx| show_settings(None, cx)));
         menu::init(cx);
         if let Err(err) = open_pill_window(cx) {
             log::error!("failed to open the recording pill window: {err}");

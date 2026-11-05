@@ -336,7 +336,9 @@
     },
     "errorActions": {
       "viewTranscript": "View Transcript",
-      "recordAgain": "Record Again"
+      "recordAgain": "Record Again",
+      "tryAgain": "Try Again",
+      "openSettings": "Open Settings"
     },
     "noAudio": {
       "title": "We didn’t catch that",
@@ -365,7 +367,8 @@
       "elapsed": "Recording, {{time}}",
       "cancel": "Cancel",
       "cancelDictation": "Cancel Dictation",
-      "dismiss": "Close"
+      "dismiss": "Close",
+      "closesIn": "Closes in {{seconds}} s; hover to keep open"
     }
   },
   "hotkeyInput": {

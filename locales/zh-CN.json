@@ -333,7 +333,9 @@
     },
     "errorActions": {
       "viewTranscript": "查看转录",
-      "recordAgain": "重新录音"
+      "recordAgain": "重新录音",
+      "tryAgain": "重试",
+      "openSettings": "打开设置"
     },
     "noAudio": {
       "title": "我们没听清",
@@ -362,7 +364,8 @@
       "elapsed": "正在录音，{{time}}",
       "cancel": "取消",
       "cancelDictation": "取消听写",
-      "dismiss": "关闭"
+      "dismiss": "关闭",
+      "closesIn": "{{seconds}} 秒后关闭；悬停可保持打开"
     }
   },
   "hotkeyInput": {

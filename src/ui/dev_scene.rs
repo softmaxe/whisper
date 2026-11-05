@@ -10,7 +10,7 @@ use std::time::Duration;
 use gpui_kit::*;
 
 use crate::app_state::AppState;
-use crate::dictation::{Dictation, DictationNotice};
+use crate::dictation::{Dictation, DictationNotice, ErrorActions};
 use crate::i18n::t;
 
 use super::control_panel::PanelView;
@@ -75,6 +75,9 @@ pub fn apply_pill(cx: &mut App) {
             cx.emit(DictationNotice::Error {
                 title: t("dictation.errorTitles.transcriptionTimeout"),
                 description: t("dictation.errorDescriptions.transcriptionTimeout"),
+                actions: ErrorActions::for_transcription_failure(Some(
+                    crate::services::transcription::REQUEST_TIMEOUT_CODE,
+                )),
             })
         }),
         _ => Dictation::global(cx).update(cx, |_, cx| {

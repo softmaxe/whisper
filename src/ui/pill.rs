@@ -23,7 +23,7 @@ use crate::settings::PanelStartPosition;
 
 use crate::app_state::{AppState, DictationSnapshot};
 use crate::backend;
-use crate::dictation::{Dictation, DictationNotice};
+use crate::dictation::{Dictation, DictationNotice, ErrorActions};
 use crate::macos;
 
 use super::components::{KeyboardFocusable, f32_tx, icon, kbd};
@@ -76,6 +76,10 @@ const DISMISS_INSET: f32 = DISMISS_SIZE - DISMISS_OUTSET + 8.;
 /// Every error card offers an action, so it stays long enough to reach for
 /// it; hovering holds it longer still.
 const ERROR_HOLD: Duration = Duration::from_millis(12_000);
+/// A card that can resend the recording holds the user's words, which are
+/// lost when it closes, so it stays far longer. It still closes on its own
+/// because Escape is taken from every app while a card is open.
+const RETRY_HOLD: Duration = Duration::from_millis(30_000);
 const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
 const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
@@ -368,6 +372,14 @@ impl Countdown {
     fn expired(&self, now: Instant) -> bool {
         self.elapsed(now) >= self.duration
     }
+
+    /// Whole seconds still to run, rounded up, so it reads 1 until it ends.
+    fn seconds_left(&self, now: Instant) -> u64 {
+        self.duration
+            .saturating_sub(self.elapsed(now))
+            .as_secs_f32()
+            .ceil() as u64
+    }
 }
 
 struct ErrorCard {
@@ -375,17 +387,32 @@ struct ErrorCard {
     description: String,
     /// Words the error kept, and whether they are already on the clipboard.
     transcript: Option<(String, bool)>,
+    actions: ErrorActions,
     countdown: Countdown,
 }
 
 impl ErrorCard {
-    /// A card shown from now for [`ERROR_HOLD`].
-    fn new(title: String, description: String, transcript: Option<(String, bool)>) -> Self {
+    /// A card shown from now, for longer when it can resend the recording.
+    fn new(
+        title: String,
+        description: String,
+        transcript: Option<(String, bool)>,
+        actions: ErrorActions,
+    ) -> Self {
         Self {
             title,
             description,
             transcript,
-            countdown: Countdown::new(ERROR_HOLD, Instant::now()),
+            actions,
+            countdown: Countdown::new(Self::hold(actions), Instant::now()),
+        }
+    }
+
+    fn hold(actions: ErrorActions) -> Duration {
+        if actions.retry {
+            RETRY_HOLD
+        } else {
+            ERROR_HOLD
         }
     }
 }
@@ -664,7 +691,7 @@ impl PillView {
             .as_ref()
             .is_some_and(|e| e.countdown.expired(now))
         {
-            self.error = None;
+            self.close_error(cx);
         }
         if self
             .recovery
@@ -717,24 +744,43 @@ impl PillView {
         });
     }
 
+    /// Closes the error card by the user's hand or its timer. A recording
+    /// kept for it goes with it, so the words never outlive the offer.
+    fn close_error(&mut self, cx: &mut App) {
+        if let Some(error) = self.error.take()
+            && error.actions.retry
+        {
+            Dictation::global(cx).update(cx, |d, _| d.discard_failed());
+        }
+    }
+
     fn on_notice(&mut self, notice: DictationNotice, window: &mut Window, cx: &mut Context<Self>) {
         match notice {
+            // Dictation sends this as it starts over or resends, having
+            // already settled the kept recording itself.
             DictationNotice::DismissError => self.error = None,
             // Sent when Escape is pressed. It closes the panel on top: an
             // error card covers the recovery panel while both are open.
             DictationNotice::DismissRecovery => {
-                if self.error.take().is_none() {
+                if self.error.is_some() {
+                    self.close_error(cx);
+                } else {
                     self.recovery = None;
                 }
             }
-            DictationNotice::Error { title, description } => {
-                self.error = Some(ErrorCard::new(title, description, None));
+            DictationNotice::Error {
+                title,
+                description,
+                actions,
+            } => {
+                self.error = Some(ErrorCard::new(title, description, None, actions));
             }
             DictationNotice::NoAudio => {
                 self.error = Some(ErrorCard::new(
                     t("dictation.noAudio.title"),
                     t("dictation.noAudio.description"),
                     None,
+                    ErrorActions::default(),
                 ));
             }
             DictationNotice::PushForceStopped {
@@ -751,6 +797,7 @@ impl PillView {
                     title,
                     description,
                     Some((transcript, kept_in_clipboard)).filter(|(t, _)| !t.trim().is_empty()),
+                    ErrorActions::default(),
                 ));
             }
             DictationNotice::DeliveryFallback { text, copied } => {
@@ -1247,14 +1294,21 @@ impl PillView {
     /// track reads as a button; the panel's countdown drains brighter over
     /// that track, so it never looks like an indeterminate spinner. Escape
     /// also closes the panel; the tooltip says so rather than a second,
-    /// unclickable key chip beside it.
+    /// unclickable key chip beside it. VoiceOver hears the time left, which
+    /// the ring only shows.
     fn dismiss_button(
         id: &'static str,
-        remaining: f32,
+        countdown: &Countdown,
         on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut App,
     ) -> Stateful<Div> {
         let p = hud();
+        let now = Instant::now();
+        let remaining = countdown.remaining(now);
+        let closes_in = crate::i18n::t_with(
+            "dictation.pill.closesIn",
+            &[("seconds", &countdown.seconds_left(now).to_string())],
+        );
         let ring = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -1290,6 +1344,7 @@ impl PillView {
         div()
             .id(id)
             .keyboard_focusable(id, Role::Button, label.clone(), cx)
+            .aria_description(closes_in)
             .aria_keyshortcuts("Escape")
             .relative()
             .flex_none()
@@ -1438,26 +1493,66 @@ impl PillView {
         let p = hud();
         let reduce = cx.reduce_motion();
         let error = self.error.as_ref()?;
-        let remaining = error.countdown.remaining(Instant::now());
+        let countdown = error.countdown;
         let title = error.title.clone();
         let description = error.description.clone();
         let transcript = error.transcript.clone();
+        let actions = error.actions;
 
-        // The failed audio is not kept, so the action starts a new recording
-        // and says so rather than promising a retry of the same words. When
-        // the words survived, reading them matters more, so recording again
-        // steps back to the quiet treatment.
+        // When the recording was kept, sending it again is the fix that
+        // costs the user nothing, so it leads.
+        let retry = actions.retry.then(|| {
+            Self::panel_action(
+                "pill-error-retry",
+                "rotate-ccw",
+                t("dictation.errorActions.tryAgain"),
+                true,
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.error = None;
+                Dictation::global(cx).update(cx, |d, cx| d.retry_failed(cx));
+                cx.notify();
+            }))
+        });
+        // Recording again leads only when nothing else can recover the
+        // words: not when they were kept or survived as text.
         let record = Self::panel_action(
             "pill-error-record",
             "mic",
             t("dictation.errorActions.recordAgain"),
-            transcript.is_none(),
+            transcript.is_none() && !actions.retry,
             cx,
         )
         .on_click(cx.listener(|this, _, _, cx| {
             this.error = None;
             Dictation::global(cx).update(cx, |d, cx| d.start(cx));
         }));
+        // The server is set in Settings → Speech to text. The card stays,
+        // with a fresh countdown, so the words can be resent after the fix.
+        let settings = actions.open_settings.then(|| {
+            Self::panel_action(
+                "pill-error-settings",
+                "settings",
+                t("dictation.errorActions.openSettings"),
+                false,
+                cx,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                if let Some(error) = this.error.as_mut() {
+                    error.countdown =
+                        Countdown::new(ErrorCard::hold(error.actions), Instant::now());
+                }
+                this.set_hovered(this.hovered);
+                cx.defer(|cx| {
+                    crate::app::show_settings(
+                        Some(super::settings_modal::SettingsSection::SpeechToText),
+                        cx,
+                    )
+                });
+                cx.notify();
+            }))
+        });
         let view = transcript.map(|(transcript, copied)| {
             let recovery_title = title.clone();
             Self::panel_action(
@@ -1481,9 +1576,9 @@ impl PillView {
         });
         let dismiss = Self::dismiss_button(
             "pill-error-close",
-            remaining,
+            &countdown,
             cx.listener(|this, _, _, cx| {
-                this.error = None;
+                this.close_error(cx);
                 cx.notify();
             }),
             cx,
@@ -1493,9 +1588,12 @@ impl PillView {
         let actions = Self::panel_column()
             .mt(px(12.))
             .flex()
+            .flex_wrap()
             .gap(px(8.))
+            .children(retry)
             .children(view)
-            .child(record);
+            .child(record)
+            .children(settings);
         Some(
             Self::panel_card("pill-error")
                 .child(Self::panel_header(
@@ -1522,7 +1620,7 @@ impl PillView {
         let p = hud();
         let reduce = cx.reduce_motion();
         let recovery = self.recovery.as_ref()?;
-        let remaining = recovery.countdown.remaining(Instant::now());
+        let countdown = recovery.countdown;
         let ready = !recovery.copy_failed && recovery.copied;
         let failed = recovery.copy_failed;
         let title = recovery.title.clone();
@@ -1531,7 +1629,7 @@ impl PillView {
 
         let dismiss = Self::dismiss_button(
             "pill-recovery-close",
-            remaining,
+            &countdown,
             cx.listener(|this, _, _, cx| {
                 this.recovery = None;
                 cx.notify();
@@ -1894,8 +1992,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        BREATH, Countdown, DUR_BASE, ENVELOPE, RESOLVE, bar_level, format_elapsed, live_target,
-        pill_motion, think_opacity,
+        BREATH, Countdown, DUR_BASE, ENVELOPE, ERROR_HOLD, ErrorActions, ErrorCard, RESOLVE,
+        RETRY_HOLD, bar_level, format_elapsed, live_target, pill_motion, think_opacity,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -1975,6 +2073,27 @@ mod tests {
         c.set_paused(false, later);
         assert!((c.remaining(later) - 0.75).abs() < 1e-4);
         assert!(c.expired(later + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn countdown_names_whole_seconds_left() {
+        let t0 = Instant::now();
+        let c = Countdown::new(Duration::from_secs(12), t0);
+        assert_eq!(c.seconds_left(t0), 12);
+        assert_eq!(c.seconds_left(t0 + Duration::from_millis(8_200)), 4);
+        assert_eq!(c.seconds_left(t0 + Duration::from_millis(11_990)), 1);
+        assert_eq!(c.seconds_left(t0 + Duration::from_secs(13)), 0);
+    }
+
+    #[test]
+    fn a_card_holding_the_recording_stays_longer() {
+        let retry = ErrorActions {
+            retry: true,
+            open_settings: true,
+        };
+        assert_eq!(ErrorCard::hold(retry), RETRY_HOLD);
+        assert_eq!(ErrorCard::hold(ErrorActions::default()), ERROR_HOLD);
+        assert!(RETRY_HOLD > ERROR_HOLD);
     }
 
     #[test]
