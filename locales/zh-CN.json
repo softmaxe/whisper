@@ -186,7 +186,7 @@
         "protocolTag": "OpenAI 兼容 · 可选密钥"
       },
       "cleanup": {
-        "title": "文本整理",
+        "title": "整理",
         "description": "在粘贴前润色你的听写内容"
       },
       "output": {
@@ -413,7 +413,7 @@
     "unknownDevice": "未知设备",
     "auto": {
       "label": "自动",
-      "description": "自动模式使用内置麦克风；合盖时依次改用 iPhone 和其他麦克风"
+      "description": "自动模式使用内置麦克风。合盖时改用你的 iPhone，其次是其他麦克风。"
     },
     "builtInDevice": "内置麦克风",
     "unavailableDevice": "{{device}}（不可用）",
@@ -623,8 +623,6 @@
     "longestStreak_one": "历史最长：{{count}} 天",
     "longestStreak_other": "历史最长：{{count}} 天",
     "wpmCoverage": "基于 {{count}}% 已测量的字数",
-    "vsPrevious_other": "较前 {{count}} 天",
-    "noPrevious_other": "前 {{count}} 天没有记录",
     "noMeasured": "没有可测量时长的听写",
     "wpmChange": "{{change}} 字/分钟",
     "wordsPerDay": "每日字数",
@@ -663,7 +661,9 @@
     "legendStreak": "当前连续",
     "legendActive": "其他活跃日",
     "calendarLabel": "最近 {{weeks}} 周中有 {{count}} 天活跃",
-    "rhythmRow": "{{day}}，平均 {{count}} 字"
+    "rhythmRow": "{{day}}，平均 {{count}} 字",
+    "comparedWith": "与前 {{count}} 天相比",
+    "noComparison": "暂无可比数据"
   },
   "sidebar": {
     "insights": "统计",

@@ -189,7 +189,7 @@
         "protocolTag": "OpenAI-compatible · optional key"
       },
       "cleanup": {
-        "title": "Text cleanup",
+        "title": "Cleanup",
         "description": "Polish what you dictate before it’s pasted"
       },
       "output": {
@@ -417,7 +417,7 @@
     "unknownDevice": "Unknown device",
     "auto": {
       "label": "Auto",
-      "description": "Auto uses the built-in mic, or iPhone and then other mics when the lid is closed"
+      "description": "Auto uses the built-in mic. With the lid closed, it uses your iPhone, then any other mic."
     },
     "builtInDevice": "Built-in Microphone",
     "unavailableDevice": "{{device}} (Unavailable)",
@@ -496,10 +496,6 @@
     "longestStreak_one": "All-time longest: {{count}} day",
     "longestStreak_other": "All-time longest: {{count}} days",
     "wpmCoverage": "Based on {{count}}% of measured words",
-    "vsPrevious_one": "vs previous {{count}} day",
-    "vsPrevious_other": "vs previous {{count}} days",
-    "noPrevious_one": "Nothing in the previous {{count}} day",
-    "noPrevious_other": "Nothing in the previous {{count}} days",
     "noMeasured": "No measured dictations",
     "wpmChange": "{{change}} wpm",
     "wordsPerDay": "Words per day",
@@ -548,7 +544,10 @@
     "calendarLabel_one": "Active on {{count}} day in the last {{weeks}} weeks",
     "calendarLabel_other": "Active on {{count}} days in the last {{weeks}} weeks",
     "rhythmRow_one": "{{day}}, {{count}} average word",
-    "rhythmRow_other": "{{day}}, {{count}} average words"
+    "rhythmRow_other": "{{day}}, {{count}} average words",
+    "comparedWith_one": "Compared with the previous {{count}} day",
+    "comparedWith_other": "Compared with the previous {{count}} days",
+    "noComparison": "Nothing to compare"
   },
   "upload": {
     "chooseFiles": "Choose Files",

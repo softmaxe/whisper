@@ -22,14 +22,15 @@ use super::components::{
 };
 use super::format::day_label;
 use super::theme::{
-    PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_CAPTION,
-    TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT, tabular_nums,
+    LINE_SMALL, LINE_TITLE, PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    TEXT_BODY, TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT,
+    tabular_nums,
 };
 
 const CHART_HEIGHT: f32 = 220.;
 const AXIS_WIDTH: f32 = 40.;
-/// Room right of the plot for the average's end label.
-const END_GUTTER: f32 = 72.;
+/// Room right of the plot so the average's end dot is never clipped.
+const END_GUTTER: f32 = 8.;
 /// Height of the inspected bar's value label.
 const VALUE_LABEL_HEIGHT: f32 = 24.;
 /// A strip above the plot that holds the value label, so it never covers a
@@ -43,11 +44,11 @@ const HABIT_WEEKS: u64 = 12;
 /// one weekly-rhythm row, so the two cards line up row for row.
 const CELL: f32 = 18.;
 const CELL_GAP: f32 = 6.;
-/// How far the selected period's band rises above the plot.
-const BAND_LIFT: f32 = 8.;
 /// Room below the plot for the date axis.
 const AXIS_STRIP: f32 = 24.;
 const CHART_KEY: &str = "insights-chart";
+/// The widest a highlights column grows.
+const HIGHLIGHT_COLUMN: f32 = 320.;
 
 /// The period the metrics cover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,10 +315,23 @@ fn period_tone(p: &Palette) -> Hsla {
     }
 }
 
-/// A comparison-period bar: a flat neutral a clear step quieter than the
-/// period it is compared with, so the current period leads at a glance.
+/// A comparison-period bar: a flat neutral that still clears about 2.5:1
+/// against the canvas, so every bar's height reads, while the saturated
+/// period tone keeps the current period in the lead.
 fn comparison_tone(p: &Palette) -> Hsla {
-    p.foreground.opacity(if p.dark { 0.22 } else { 0.16 })
+    p.foreground.opacity(if p.dark { 0.34 } else { 0.30 })
+}
+
+/// A heading inside the dashboard: one step above the body text it heads.
+fn heading(text: String, p: &Palette) -> Div {
+    div()
+        .min_w_0()
+        .truncate()
+        .text_size(px(TEXT_TITLE))
+        .line_height(px(LINE_TITLE))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(p.foreground)
+        .child(text)
 }
 
 /// A weekday that is not the busiest: clearly recessive, so the one bar in
@@ -347,8 +361,8 @@ fn bar_figures(bar: &TrendBar) -> String {
     )
 }
 
-/// A card section with a title and a one-line description.
-fn panel(title: String, description: String, p: &Palette) -> Div {
+/// A card section with a title and an optional one-line description.
+fn panel(title: String, description: Option<String>, p: &Palette) -> Div {
     surface_card(p)
         .flex_1()
         .min_w_0()
@@ -357,21 +371,15 @@ fn panel(title: String, description: String, p: &Palette) -> Div {
         .px(px(16.))
         .pt(px(14.))
         .pb(px(8.))
-        .child(
-            div()
-                .text_size(px(TEXT_BODY))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(p.foreground)
-                .child(title),
-        )
-        .child(
+        .child(heading(title, p))
+        .children(description.map(|description| {
             div()
                 .mt(px(2.))
                 .text_size(px(TEXT_SMALL))
                 .text_color(p.subtle_foreground)
                 .truncate()
-                .child(description),
-        )
+                .child(description)
+        }))
 }
 
 impl InsightsView {
@@ -444,14 +452,6 @@ impl InsightsView {
         picker
     }
 
-    /// What the period-scoped cards cover: "Last 7 days" or "All time".
-    fn scope(&self) -> String {
-        match self.range.days() {
-            Some(days) => t_with("insights.lastDays", &[("count", &days.to_string())]),
-            None => t("insights.allTime"),
-        }
-    }
-
     /// The dates the selected period covers, e.g. "Oct 29 – Today".
     fn period_caption(&self, summary: &AnalyticsSummary, today: NaiveDate) -> String {
         let start = self.period_start(summary, today);
@@ -461,13 +461,13 @@ impl InsightsView {
         }
     }
 
-    /// A metric with its comparison line: an emphasized `change` (if any)
-    /// followed by a muted `note`.
+    /// A metric with its comparison line: the `change` against the period
+    /// the caption names, or a muted `note` when there is none.
     fn metric(
         label: String,
         value: String,
         change: Option<String>,
-        note: String,
+        note: Option<String>,
         p: &Palette,
     ) -> Div {
         div()
@@ -495,13 +495,15 @@ impl InsightsView {
                     .child(value),
             )
             .child(
+                // A fixed line, so every figure in the row ends level even
+                // when one has nothing to compare with.
                 div()
                     .mt(px(2.))
+                    .h(px(LINE_SMALL))
                     .flex()
-                    .gap(px(4.))
+                    .items_center()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
-                    .text_color(p.subtle_foreground)
                     .children(change.map(|c| {
                         div()
                             .flex_none()
@@ -509,7 +511,13 @@ impl InsightsView {
                             .text_color(p.foreground)
                             .child(c)
                     }))
-                    .child(div().min_w_0().truncate().child(note)),
+                    .children(note.map(|n| {
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(p.subtle_foreground)
+                            .child(n)
+                    })),
             )
     }
 
@@ -522,14 +530,14 @@ impl InsightsView {
                     t("insights.wordsSpoken"),
                     compact_number(summary.total_words),
                     None,
-                    t("insights.allTime"),
+                    None,
                     p,
                 ),
                 Self::metric(
                     t("insights.dictations"),
                     compact_number(summary.total_dictations),
                     None,
-                    t("insights.allTime"),
+                    None,
                     p,
                 ),
                 Self::metric(
@@ -539,10 +547,10 @@ impl InsightsView {
                         .map(compact_number)
                         .unwrap_or_else(|| "—".into()),
                     None,
-                    t_with(
+                    Some(t_with(
                         "insights.wpmCoverage",
                         &[("count", &summary.wpm_coverage_percent.to_string())],
-                    ),
+                    )),
                     p,
                 ),
             ];
@@ -551,27 +559,26 @@ impl InsightsView {
         let back = |n: i64| today - Days::new(n as u64);
         let current = period_totals(&summary.daily, back(days - 1), today);
         let previous = period_totals(&summary.daily, back(2 * days - 1), back(days));
-        let count = days.to_string();
-        let versus = t_with("insights.vsPrevious", &[("count", &count)]);
-        let nothing_before = t_with("insights.noPrevious", &[("count", &count)]);
+        // The period caption names what these compare with, once.
+        let nothing_before = || Some(t("insights.noComparison"));
         let compared = |now: i64, before: i64| match relative_change(now, before) {
-            Some(change) => (Some(change), versus.clone()),
-            None => (None, nothing_before.clone()),
+            Some(change) => (Some(change), None),
+            None => (None, nothing_before()),
         };
 
         let (words_change, words_note) = compared(current.words, previous.words);
         let (dictations_change, dictations_note) =
             compared(current.dictations, previous.dictations);
         let (pace_change, pace_note) = match (current.wpm(), previous.wpm()) {
-            (None, _) => (None, t("insights.noMeasured")),
+            (None, _) => (None, Some(t("insights.noMeasured"))),
             (Some(now), Some(before)) => (
                 Some(t_with(
                     "insights.wpmChange",
                     &[("change", &absolute_change(now, before))],
                 )),
-                versus.clone(),
+                None,
             ),
-            (Some(_), None) => (None, nothing_before.clone()),
+            (Some(_), None) => (None, nothing_before()),
         };
         [
             Self::metric(
@@ -645,6 +652,8 @@ impl InsightsView {
         };
         let has_regions = period_from > 0;
         let plot_top = LABEL_STRIP;
+        // Bar colour alone separates the two periods; a tinted band behind
+        // the current one would be a third cue saying the same thing.
 
         // The inspected bar: under the pointer, else the keyboard cursor
         // while the chart has focus, else today. It carries the value label.
@@ -671,25 +680,6 @@ impl InsightsView {
         let layer = || div().absolute().left(px(AXIS_WIDTH)).right(px(END_GUTTER));
 
         let mut plot = div().relative().h(px(plot_top + CHART_HEIGHT + AXIS_STRIP));
-
-        // The selected period sits on a tinted band so it reads as one unit
-        // against the period it is compared with; the legend names both.
-        if has_regions {
-            plot = plot.child(
-                layer()
-                    .top(px(plot_top - BAND_LIFT))
-                    .h(px(CHART_HEIGHT + BAND_LIFT))
-                    .flex()
-                    .child(div().w(relative(period_from as f32 / count as f32)))
-                    .child(
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .rounded_t(px(RADIUS_MD))
-                            .bg(p.foreground.opacity(if p.dark { 0.05 } else { 0.035 })),
-                    ),
-            );
-        }
 
         let mut tick = 0.;
         while tick <= top + step / 2. {
@@ -807,9 +797,10 @@ impl InsightsView {
         let end = points.last().copied().flatten();
         let runs = average_runs(&points, period_from);
         // The current period's average is the line people follow, so it
-        // takes the accent; the comparison period's is a muted dashed trace.
+        // takes the accent; the comparison period's is a quieter dashed
+        // trace that still clears 3:1 against the canvas.
         let period_line = p.primary;
-        let comparison_line = p.foreground.opacity(0.5);
+        let comparison_line = p.foreground.opacity(0.7);
         let ring = p.background;
         let line = canvas(
             move |_, _, _| {},
@@ -845,14 +836,6 @@ impl InsightsView {
                 }
                 if let Some(end) = end {
                     let center = at(end);
-                    // A hairline leader carries the latest average to its
-                    // label in the gutter.
-                    let mut leader = PathBuilder::stroke(px(1.));
-                    leader.move_to(center);
-                    leader.line_to(point(bounds.origin.x + bounds.size.width, center.y));
-                    if let Ok(leader) = leader.build() {
-                        window.paint_path(leader, period_line.opacity(0.45));
-                    }
                     for (radius, color) in [(px(4.), ring), (px(2.5), period_line)] {
                         let bounds = Bounds::new(
                             point(center.x - radius, center.y - radius),
@@ -875,37 +858,12 @@ impl InsightsView {
             ("insights.wordsPerWeek", "insights.weeklyAverage")
         };
 
-        // The average is labeled once, at its latest value, instead of in
-        // the legend: the label sits where the eye already is.
-        let end_label = end
-            .zip(bars.last().and_then(|b| b.average))
-            .map(|((_, fy), value)| {
-                div()
-                    .absolute()
-                    .right_0()
-                    .w(px(END_GUTTER))
-                    .top(px(plot_top + fy - 16.))
-                    .pl(px(8.))
-                    .flex()
-                    .flex_col()
-                    .font_features(tabular_nums())
-                    .child(
-                        div()
-                            .text_size(px(TEXT_SMALL))
-                            .line_height(px(16.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.foreground)
-                            .child(compact_number(value.round() as i64)),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(TEXT_CAPTION))
-                            .line_height(px(14.))
-                            .text_color(p.subtle_foreground)
-                            .whitespace_nowrap()
-                            .child(t(average)),
-                    )
-            });
+        // The legend names the average with its latest value, which the
+        // end dot marks, so no label crowds the last bar.
+        let average_label = match bars.last().and_then(|b| b.average) {
+            Some(value) => format!("{} · {}", t(average), compact_number(value.round() as i64)),
+            None => t(average),
+        };
 
         // The inspected bar's figures sit in the strip above the plot,
         // centered over the bar and held inside the plot at either end, with
@@ -956,25 +914,31 @@ impl InsightsView {
                         .child(card),
                 )
                 .child(div().min_w_0().flex_basis(relative(1. - center - reach)));
-            let bar_top = plot_top + CHART_HEIGHT - bar_height(bar, &y);
-            let mut leader = layer()
-                .top(px(VALUE_LABEL_HEIGHT))
-                .h(px(bar_top - VALUE_LABEL_HEIGHT - 2.))
-                .flex();
-            for index in 0..count {
-                leader = leader.child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .justify_center()
-                        .when(index == selected, |d| {
-                            d.child(div().w(px(1.)).h_full().bg(p.border_hover))
-                        }),
-                );
-            }
+            // Only an inspected bar gets a leader up to its tooltip; at rest
+            // the caption names today and stands on its own.
+            let leader = accented.then(|| {
+                let bar_top = plot_top + CHART_HEIGHT - bar_height(bar, &y);
+                let mut leader = layer()
+                    .top(px(VALUE_LABEL_HEIGHT))
+                    .h(px(bar_top - VALUE_LABEL_HEIGHT - 2.))
+                    .flex();
+                for index in 0..count {
+                    leader = leader.child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .justify_center()
+                            .when(index == selected, |d| {
+                                d.child(div().w(px(1.)).h_full().bg(p.border_hover))
+                            }),
+                    );
+                }
+                leader
+            });
             (leader, strip)
         });
         let (leader, value_label) = value_label.unzip();
+        let leader = leader.flatten();
 
         let swatch = |fill: Hsla, label: String| {
             div()
@@ -984,11 +948,27 @@ impl InsightsView {
                 .child(div().size(px(10.)).rounded(px(2.)).bg(fill))
                 .child(label)
         };
-        let legend = div()
+        // The average's swatch is a short stroke drawn as the line is: a
+        // dashed muted stretch for the comparison period, then the accent.
+        let stroke = |w: f32, color: Hsla| div().w(px(w)).h(px(2.)).rounded(px(1.)).bg(color);
+        let line_swatch = div()
+            .flex_none()
             .flex()
             .items_center()
-            .gap(px(16.))
+            .gap(px(2.))
+            .when(has_regions, |d| {
+                d.child(stroke(3., comparison_line))
+                    .child(stroke(3., comparison_line))
+            })
+            .child(stroke(if has_regions { 8. } else { 14. }, period_line));
+        let legend = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_x(px(16.))
+            .gap_y(px(4.))
             .text_size(px(TEXT_SMALL))
+            .font_features(tabular_nums())
             .text_color(p.muted_foreground)
             .map(|d| match self.range.days().filter(|_| has_regions) {
                 Some(days) => {
@@ -1003,6 +983,16 @@ impl InsightsView {
                     ))
                 }
                 None => d.child(swatch(period_tone(p), t(per_bar))),
+            })
+            .when(end.is_some(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(line_swatch)
+                        .child(average_label),
+                )
             });
 
         let bar_count = bars.len();
@@ -1030,13 +1020,7 @@ impl InsightsView {
                     .justify_between()
                     .gap_x(px(16.))
                     .gap_y(px(6.))
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.foreground)
-                            .child(t(per_bar)),
-                    )
+                    .child(heading(t(per_bar), p))
                     .child(legend),
             )
             .child(
@@ -1044,7 +1028,6 @@ impl InsightsView {
                     .children(leader)
                     .child(line)
                     .child(labels)
-                    .children(end_label)
                     .children(value_label),
             )
             .into_any_element()
@@ -1133,21 +1116,27 @@ impl InsightsView {
                     )
             })
             .collect();
-        // Wide, the four figures sit in two columns so a label never sits
-        // half a page away from its value.
+        // Wide, the four figures sit in two columns, each capped so a label
+        // stays within a short glance of its value however wide the window.
         let columns = if wide { 2 } else { 1 };
         let per_column = cells.len().div_ceil(columns);
-        let mut grid = div().flex().gap(px(32.));
+        let mut grid = div().flex().gap(px(48.));
         let mut cells = cells.into_iter();
         for _ in 0..columns {
-            let mut column = div().flex_1().min_w_0().flex().flex_col();
+            let mut column = div()
+                .flex_1()
+                .min_w_0()
+                .max_w(px(HIGHLIGHT_COLUMN))
+                .flex()
+                .flex_col();
             for (index, cell) in cells.by_ref().take(per_column).enumerate() {
                 column =
                     column.child(cell.when(index > 0, |d| d.border_t_1().border_color(p.border)));
             }
             grid = grid.child(column);
         }
-        panel(t("insights.highlights"), self.scope(), p)
+        // The range picker right above already names the span.
+        panel(t("insights.highlights"), None, p)
             .child(grid.mt(px(6.)))
             .child(div().h(px(6.)))
     }
@@ -1249,10 +1238,10 @@ impl InsightsView {
             .child(swatch(rhythm_bar(p), t("insights.legendActive")));
         panel(
             t("insights.currentStreak"),
-            t_with(
+            Some(t_with(
                 "insights.longestStreak",
                 &[("count", &summary.longest_streak_days.to_string())],
-            ),
+            )),
             p,
         )
         .child(
@@ -1372,7 +1361,7 @@ impl InsightsView {
                     ),
             );
         }
-        panel(t("insights.weeklyRhythm"), description, p)
+        panel(t("insights.weeklyRhythm"), Some(description), p)
             .child(unit)
             .child(rows)
             .child(div().h(px(6.)))
@@ -1451,12 +1440,29 @@ impl InsightsView {
                     .child(
                         div()
                             .min_w_0()
-                            .truncate()
-                            .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::MEDIUM)
+                            .flex()
+                            .items_baseline()
+                            .gap(px(10.))
                             .font_features(tabular_nums())
-                            .text_color(p.foreground)
-                            .child(self.period_caption(summary, today)),
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .text_size(px(TEXT_BODY))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(p.foreground)
+                                    .child(self.period_caption(summary, today)),
+                            )
+                            .children(self.range.days().map(|days| {
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(TEXT_SMALL))
+                                    .text_color(p.subtle_foreground)
+                                    .child(t_with(
+                                        "insights.comparedWith",
+                                        &[("count", &days.to_string())],
+                                    ))
+                            })),
                     )
                     .child(self.range_picker(p, cx)),
             )
@@ -1486,13 +1492,7 @@ impl InsightsView {
                     .items_baseline()
                     .justify_between()
                     .gap(px(16.))
-                    .child(
-                        div()
-                            .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.foreground)
-                            .child(t("insights.habits")),
-                    )
+                    .child(heading(t("insights.habits"), p))
                     .child(
                         div()
                             .min_w_0()
