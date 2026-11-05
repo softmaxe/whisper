@@ -47,8 +47,6 @@ const CELL_GAP: f32 = 6.;
 /// Room below the plot for the date axis.
 const AXIS_STRIP: f32 = 24.;
 const CHART_KEY: &str = "insights-chart";
-/// The widest a highlights column grows.
-const HIGHLIGHT_COLUMN: f32 = 320.;
 
 /// The period the metrics cover.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -444,7 +442,6 @@ impl InsightsView {
             let active = self.range == range;
             picker = picker.child(
                 segment(("insights-range", index), range.label(), active, cx)
-                    .h(px(28.))
                     .child(range.label())
                     .on_click(cx.listener(move |this, _, _, cx| this.set_range(range, cx))),
             );
@@ -753,13 +750,24 @@ impl InsightsView {
                             cx.notify();
                         }),
                     )
-                    .child(
+                    .child(if bar.words > 0 {
                         div()
                             .w_full()
                             .h(px(height))
                             .rounded_t(px(RADIUS_SM.min(height / 2.)))
-                            .bg(fill),
-                    ),
+                            .bg(fill)
+                    } else {
+                        // An idle day is a hollow dot on the baseline, a
+                        // different kind of mark from even the shortest bar.
+                        div().w_full().flex().justify_center().child(
+                            div()
+                                .size(px(5.))
+                                .mb(px(1.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(p.subtle_foreground),
+                        )
+                    }),
             );
         }
 
@@ -1085,60 +1093,55 @@ impl InsightsView {
                 None,
             ),
         ];
-        let cells: Vec<Div> = rows
-            .into_iter()
-            .map(|(label, value, detail)| {
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
-                    .h(px(40.))
-                    .text_size(px(TEXT_BODY))
-                    .font_features(tabular_nums())
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(p.muted_foreground)
-                            .child(label),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .gap(px(6.))
-                            .text_color(p.foreground)
-                            .child(value)
-                            .children(
-                                detail.map(|d| div().text_color(p.subtle_foreground).child(d)),
-                            ),
-                    )
-            })
-            .collect();
-        // Wide, the four figures sit in two columns, each capped so a label
-        // stays within a short glance of its value however wide the window.
-        let columns = if wide { 2 } else { 1 };
-        let per_column = cells.len().div_ceil(columns);
-        let mut grid = div().flex().gap(px(48.));
-        let mut cells = cells.into_iter();
-        for _ in 0..columns {
-            let mut column = div()
+        // Four equal tiles, figure over label like the metric strip above,
+        // so the card fills its width evenly instead of trailing off.
+        let tile = |(label, value, detail): (String, String, Option<String>)| {
+            div()
                 .flex_1()
                 .min_w_0()
-                .max_w(px(HIGHLIGHT_COLUMN))
                 .flex()
-                .flex_col();
-            for (index, cell) in cells.by_ref().take(per_column).enumerate() {
-                column =
-                    column.child(cell.when(index > 0, |d| d.border_t_1().border_color(p.border)));
+                .flex_col()
+                .gap(px(2.))
+                .font_features(tabular_nums())
+                .child(
+                    div()
+                        .flex()
+                        .items_baseline()
+                        .gap(px(6.))
+                        .text_size(px(TEXT_TITLE))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(p.foreground)
+                        .child(value)
+                        .children(detail.map(|d| {
+                            div()
+                                .text_size(px(TEXT_SMALL))
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(p.subtle_foreground)
+                                .child(d)
+                        })),
+                )
+                .child(
+                    div()
+                        .truncate()
+                        .text_size(px(TEXT_SMALL))
+                        .text_color(p.muted_foreground)
+                        .child(label),
+                )
+        };
+        let mut tiles = rows.into_iter().map(tile);
+        let grid = if wide {
+            div().flex().gap(px(24.)).children(tiles)
+        } else {
+            let mut grid = div().flex().flex_col().gap(px(16.));
+            for _ in 0..2 {
+                grid = grid.child(div().flex().gap(px(24.)).children(tiles.by_ref().take(2)));
             }
-            grid = grid.child(column);
-        }
+            grid
+        };
         // The range picker right above already names the span.
         panel(t("insights.highlights"), None, p)
-            .child(grid.mt(px(6.)))
-            .child(div().h(px(6.)))
+            .child(grid.mt(px(12.)))
+            .child(div().h(px(4.)))
     }
 
     /// The span the habits section covers: the last few weeks, or since the

@@ -111,9 +111,6 @@ const TAB_BAR: f32 = 40.;
 /// Side padding of a tab. The tab row is pulled out by the same amount, so
 /// the first label starts on the page edge, over the table.
 const TAB_PAD: f32 = 8.;
-/// Height of a Source filter segment; with the track's 2 pt inset the
-/// control stands 24 pt, a step below the 28 pt header controls.
-const FILTER_SEGMENT: f32 = 20.;
 /// Content width, in px, below which the search no longer fits in the tab
 /// bar and drops to the row under it.
 const HEADER_ONE_ROW: f32 = 440.;
@@ -1926,7 +1923,6 @@ impl DictionaryView {
             );
             track = track.child(
                 segment(id, label, active, cx)
-                    .h(px(FILTER_SEGMENT))
                     .gap(px(5.))
                     .child(name)
                     // Quieter than its label, in figures that keep the
@@ -2174,7 +2170,9 @@ impl DictionaryView {
             .text_size(px(TEXT_CAPTION))
             .font_weight(FontWeight::MEDIUM)
             .text_color(p.muted_foreground)
-            .child(div().size(px(5.)).rounded_full().bg(p.success))
+            // A category, not a state: the dot stays neutral so green keeps
+            // meaning "healthy" elsewhere.
+            .child(div().size(px(5.)).rounded_full().bg(p.subtle_foreground))
             .child(t("dictionary.filterLearned"))
     }
 

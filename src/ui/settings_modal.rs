@@ -1171,7 +1171,6 @@ impl SettingsModal {
                         cx,
                     )
                     .gap(px(4.))
-                    .py(px(4.))
                     .child(icon(
                         icon_name,
                         14.,
@@ -2080,7 +2079,6 @@ impl SettingsModal {
                     cx,
                 )
                 .gap(px(6.))
-                .py(px(4.))
                 .child(icon(
                     icon_name,
                     14.,
@@ -3439,7 +3437,7 @@ impl Render for SettingsModal {
                     .text_color(p.muted_foreground)
                     .child(t("sidebar.settings")),
             )
-            .child(div().text_color(p.subtle_foreground).child("/"))
+            .child(div().text_color(p.subtle_foreground).child("›"))
             .child(
                 div()
                     .flex_1()

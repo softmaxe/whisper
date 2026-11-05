@@ -1031,6 +1031,9 @@ pub fn segment(
         } else {
             Toggled::False
         })
+        // One height for every segmented control: with the track's 2 pt
+        // inset it stands 28 pt, level with small buttons.
+        .h(px(24.))
         .flex()
         .items_center()
         .px(px(10.))
