@@ -15,13 +15,13 @@ use crate::i18n::{self, Language, t, t_with};
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state_icon, icon,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state, icon,
     keyed_focus_handle, page_container, retention_banner, segment, segmented_track, surface_card,
 };
 use super::format::day_label;
 use super::theme::{
-    LINE_SMALL, PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY,
-    TEXT_CAPTION, TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT, tabular_nums,
+    PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_CAPTION,
+    TEXT_FIGURE, TEXT_SMALL, TEXT_TITLE, WORKSPACE_TOP_BAR_HEIGHT, tabular_nums,
 };
 
 const CHART_HEIGHT: f32 = 220.;
@@ -1282,29 +1282,7 @@ impl InsightsView {
 
     /// A centered message with an icon tile, for the states without data.
     fn notice(icon_name: &str, title: String, body: Option<String>, p: &Palette) -> Div {
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .child(empty_state_icon(icon_name, p))
-            .child(
-                div()
-                    .mt(px(14.))
-                    .text_size(px(TEXT_BODY))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(p.foreground)
-                    .child(title),
-            )
-            .children(body.map(|body| {
-                div()
-                    .mt(px(4.))
-                    .max_w(px(384.))
-                    .text_center()
-                    .text_size(px(TEXT_SMALL))
-                    .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground)
-                    .child(body)
-            }))
+        empty_state(icon_name, title, body.unwrap_or_default(), p)
     }
 
     /// With History off nothing new is counted, so the message says how to
