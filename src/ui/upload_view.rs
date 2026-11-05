@@ -879,11 +879,17 @@ impl UploadView {
             super::settings_modal::endpoint_host(url)
         };
         let model = s.remote_transcription_model.trim().to_string();
-        let language = crate::text::language::languages()
-            .iter()
-            .find(|l| l.code == s.preferred_language)
-            .map(|l| l.label.clone())
-            .unwrap_or_else(|| s.preferred_language.clone());
+        // Name the language the way the Speech to text select does: Auto-detect
+        // in the UI language, every other language by its own name.
+        let language = if s.preferred_language == "auto" {
+            t("settings.language.autoDetect")
+        } else {
+            crate::text::language::languages()
+                .iter()
+                .find(|l| l.code == s.preferred_language)
+                .map(|l| l.native.clone())
+                .unwrap_or_else(|| s.preferred_language.clone())
+        };
         // One label style and one value weight: the values are context for
         // the drop target, not headlines of their own.
         let pair = |label: String, value: Div| {
