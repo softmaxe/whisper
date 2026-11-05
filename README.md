@@ -22,24 +22,31 @@ typing in.
 - **Dictate anywhere.** Trigger with Globe/Fn, a single modifier such as Right
   Command, or any key combination. Double-tap a single key for hands-free
   recording (key combinations toggle with one press), or hold to talk. A
-  floating recording pill shows a live waveform; click it to finish, hover for a
-  cancel button, or press Escape to cancel.
+  floating recording pill shows a live waveform and the elapsed time, with a
+  cancel button beside it; click the pill to finish or press Escape to cancel.
+  If the server fails, the recording is kept so you can resend it.
 - **Self-hosted models.** Speech recognition goes to your own
   `/audio/transcriptions` endpoint; optional cleanup goes to a
   `/chat/completions` endpoint, with an editable prompt and a Prompt Studio to
-  test it.
+  test it. Test Connection checks each server and lists its models.
 - **Gets better with use.** A dictionary supplies spelling hints, corrections
   you make right after a paste are learned, and Snippets expand short phrases
-  into longer text.
-- **History.** Search with Cmd+K, view raw transcripts, retry from saved audio,
-  and set how long audio and transcripts are kept.
-- **File transcription.** Transcribe a single audio or video file, or a batch.
-- **Insights.** Words, dictations, words per minute and streaks for the last
-  7 or 30 days or all time, each compared with the previous period, plus a
-  daily trend chart with a 7-day average, all computed on device.
+  into longer text. Removing a word or snippet can be undone.
+- **History.** Search with Cmd+K, open raw transcripts, re-transcribe from
+  saved audio, undo a delete, and set how long audio and transcripts are kept.
+- **File transcription.** Drop in one audio or video file, or a batch; each
+  transcript is saved to History.
+- **Insights.** Words, dictations and words per minute for the last 7 or 30
+  days or all time, each compared with the previous period; a trend chart that
+  sets the period beside the one before it; highlights such as active days,
+  busiest day and time spoken; and a Habits section with your streak calendar
+  and weekly rhythm. Everything is computed on device.
 - **Fits into macOS.** Menu bar icon, standard app menu, start at login
   (macOS 13+), optional media pause while recording, English and Simplified
   Chinese UI, and light, dark or automatic themes.
+- **Keyboard and VoiceOver.** Every control is reachable with Tab and named for
+  VoiceOver, lists and charts move with the arrow keys, and animations follow
+  the macOS Reduce motion setting.
 
 Data lives in `~/Library/Application Support/com.softmaxe.whisper`.
 
@@ -49,11 +56,11 @@ The screenshots use sample data.
 
 | History | Insights |
 | --- | --- |
-| ![History grouped by day, with search](docs/images/en/home.png) | ![Words, words per minute and streaks compared with the previous period, and a daily trend chart](docs/images/en/insights.png) |
+| ![History grouped by day, with search](docs/images/en/home.png) | ![Words, dictations and words per minute compared with the previous period, a trend chart across both periods, and highlights](docs/images/en/insights.png) |
 | **Dictionary** | **Speech-to-text settings** |
-| ![Dictionary words used as spelling hints](docs/images/en/dictionary.png) | ![Self-hosted speech server URL and model](docs/images/en/settings.png) |
+| ![Dictionary words with their source, uses and last use](docs/images/en/dictionary.png) | ![Self-hosted speech server URL, connection test and model](docs/images/en/settings.png) |
 | **File transcription** | |
-| ![A finished transcript beside the transcription settings and a completed batch queue](docs/images/en/upload.png) | |
+| ![The file drop target above the transcription settings and where transcripts are saved](docs/images/en/upload.png) | |
 
 ## Install
 
@@ -145,6 +152,7 @@ Accessibility access for automatic paste and the Globe/modifier listeners.
 | `WHISPER_USER_DATA_DIR` | Use another data directory (tests, side-by-side runs) |
 | `WHISPER_HELPERS_DIR` | Load the native helpers from another directory |
 | `WHISPER_SKIP_NATIVE_BUILD` | Skip building the native helpers in `build.rs` |
+| `WHISPER_DEV_SCENE` | Debug builds: open a fixed view at launch for screenshots, such as `insights`, `settings:speech` or `pill:recording` (values in `src/ui/dev_scene.rs`) |
 | `RUST_LOG` | Log filter, for example `info,whisper::native=debug` |
 
 ## Layout
