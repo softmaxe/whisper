@@ -85,10 +85,6 @@ const DISMISS_INSET: f32 = DISMISS_SIZE - DISMISS_OUTSET + 8.;
 /// Every error card offers an action, so it stays long enough to reach for
 /// it; hovering holds it longer still.
 const ERROR_HOLD: Duration = Duration::from_millis(12_000);
-/// A card that can resend the recording holds the user's words, which are
-/// lost when it closes, so it stays far longer, and it stands still while
-/// the Settings sheet is open to fix the server.
-const RETRY_HOLD: Duration = Duration::from_millis(30_000);
 const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
 const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
@@ -391,7 +387,9 @@ struct ErrorCard {
     actions: ErrorActions,
     /// The length of the recording kept for a resend, when known.
     kept: Option<Duration>,
-    countdown: Countdown,
+    /// `None` while the card holds a recording to resend: closing it drops
+    /// the recording, so only the user may close it, never a timer.
+    countdown: Option<Countdown>,
 }
 
 impl ErrorCard {
@@ -409,21 +407,17 @@ impl ErrorCard {
             transcript,
             actions,
             kept,
-            countdown: Countdown::new(Self::hold(actions), Instant::now()),
+            countdown: Self::countdown(actions),
         }
     }
 
     /// Starts the countdown over, for when the user comes back to the card.
     fn restart(&mut self) {
-        self.countdown = Countdown::new(Self::hold(self.actions), Instant::now());
+        self.countdown = Self::countdown(self.actions);
     }
 
-    fn hold(actions: ErrorActions) -> Duration {
-        if actions.retry {
-            RETRY_HOLD
-        } else {
-            ERROR_HOLD
-        }
+    fn countdown(actions: ErrorActions) -> Option<Countdown> {
+        (!actions.retry).then(|| Countdown::new(ERROR_HOLD, Instant::now()))
     }
 }
 
@@ -654,10 +648,8 @@ impl PillView {
     fn set_hovered(&mut self, hovered: bool) {
         self.hovered = hovered;
         let now = Instant::now();
-        if let Some(error) = self.error.as_mut() {
-            error
-                .countdown
-                .set_paused(hovered || self.settings_open, now);
+        if let Some(countdown) = self.error.as_mut().and_then(|e| e.countdown.as_mut()) {
+            countdown.set_paused(hovered || self.settings_open, now);
         }
         let countdowns = self
             .recovery
@@ -724,7 +716,8 @@ impl PillView {
         if self
             .error
             .as_ref()
-            .is_some_and(|e| e.countdown.expired(now))
+            .and_then(|e| e.countdown.as_ref())
+            .is_some_and(|c| c.expired(now))
         {
             self.close_error(cx);
         }
@@ -1355,18 +1348,20 @@ impl PillView {
     /// VoiceOver hears the time left, which the ring only shows.
     fn dismiss_button(
         id: &'static str,
-        countdown: &Countdown,
+        countdown: Option<&Countdown>,
         escape: bool,
         on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut App,
     ) -> Stateful<Div> {
         let p = hud();
         let now = Instant::now();
-        let remaining = countdown.remaining(now);
-        let closes_in = crate::i18n::t_with(
-            "dictation.pill.closesIn",
-            &[("seconds", &countdown.seconds_left(now).to_string())],
-        );
+        let remaining = countdown.map_or(0., |c| c.remaining(now));
+        let closes_in = countdown.map(|c| {
+            crate::i18n::t_with(
+                "dictation.pill.closesIn",
+                &[("seconds", &c.seconds_left(now).to_string())],
+            )
+        });
         let ring = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
@@ -1402,7 +1397,7 @@ impl PillView {
         div()
             .id(id)
             .keyboard_focusable(id, Role::Button, label.clone(), cx)
-            .aria_description(closes_in)
+            .when_some(closes_in, |d, closes_in| d.aria_description(closes_in))
             .when(escape, |d| d.aria_keyshortcuts("Escape"))
             .relative()
             .flex_none()
@@ -1649,7 +1644,7 @@ impl PillView {
         });
         let dismiss = Self::dismiss_button(
             "pill-error-close",
-            &countdown,
+            countdown.as_ref(),
             false,
             cx.listener(|this, _, _, cx| {
                 this.close_error(cx);
@@ -1703,7 +1698,7 @@ impl PillView {
 
         let dismiss = Self::dismiss_button(
             "pill-recovery-close",
-            &countdown,
+            Some(&countdown),
             true,
             cx.listener(|this, _, _, cx| {
                 this.recovery = None;
@@ -2069,8 +2064,7 @@ mod tests {
 
     use super::{
         BAR_MAX, BAR_MIN, BAR_W, BREATH, Countdown, DUR_BASE, ENVELOPE, ERROR_HOLD, ErrorActions,
-        ErrorCard, RESOLVE, RETRY_HOLD, bar_level, format_elapsed, live_target, pill_motion,
-        think_opacity,
+        ErrorCard, RESOLVE, bar_level, format_elapsed, live_target, pill_motion, think_opacity,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -2163,14 +2157,15 @@ mod tests {
     }
 
     #[test]
-    fn a_card_holding_the_recording_stays_longer() {
+    fn a_card_holding_the_recording_never_times_out() {
         let retry = ErrorActions {
             retry: true,
             open_settings: true,
         };
-        assert_eq!(ErrorCard::hold(retry), RETRY_HOLD);
-        assert_eq!(ErrorCard::hold(ErrorActions::default()), ERROR_HOLD);
-        assert!(RETRY_HOLD > ERROR_HOLD);
+        // Closing drops the recording, so only the user may close it.
+        assert!(ErrorCard::countdown(retry).is_none());
+        let plain = ErrorCard::countdown(ErrorActions::default()).unwrap();
+        assert_eq!(plain.duration, ERROR_HOLD);
     }
 
     #[test]

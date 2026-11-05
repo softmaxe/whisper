@@ -379,7 +379,7 @@
       "dismiss": "关闭",
       "closesIn": "{{seconds}} 秒后关闭；悬停可保持打开"
     },
-    "keptRecording": "这段 {{time}} 的录音已保留，不会丢失。"
+    "keptRecording": "这段 {{time}} 的录音会一直保留，直到你关闭此卡片。"
   },
   "hotkeyInput": {
     "fnCaptureHint": "按下一个键进行组合，或松开以使用 Globe",

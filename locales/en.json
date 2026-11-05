@@ -383,7 +383,7 @@
       "dismiss": "Close",
       "closesIn": "Closes in {{seconds}} s; hover to keep open"
     },
-    "keptRecording": "Your {{time}} recording is kept, so nothing is lost."
+    "keptRecording": "Your {{time}} recording is kept until you close this card."
   },
   "hotkeyInput": {
     "fnCaptureHint": "Press a key to combine, or release for Globe",
