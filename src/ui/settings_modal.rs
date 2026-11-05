@@ -22,20 +22,20 @@ use crate::backend::{self, AutoStartState};
 use crate::native::mic::MicDevice;
 use crate::services::cleanup::ModelOption;
 use crate::text::prompts::default_cleanup_prompt;
-use crate::text::url::{build_api_url, normalize_base_url};
+use crate::text::url::normalize_base_url;
 
 use super::components::f32_tx;
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, Toggle, backdrop,
     dialog_shadow, icon, keyed_focus_handle, nav_row, page_container, panel_row, section_header,
-    segment, segmented_track, settings_field, settings_field_tagged, settings_row,
+    segment, segmented_track, settings_field, settings_field_tagged, settings_panel, settings_row,
     settings_section, status_label,
 };
-use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH};
+use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH, drag_region};
 use super::hotkey_input::{HotkeyListInput, hotkey_glyphs};
 use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog, show_toast};
-use super::select::{Select, SelectEvent, SelectOption, SelectStyle};
-use super::text_input::{text_field, textarea_field};
+use super::select::{Select, SelectEvent, SelectOption};
+use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt,
     RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY, TEXT_CAPTION,
@@ -101,14 +101,35 @@ enum PromptTab {
     Test,
 }
 
-/// The state of the Speech to text "Test Connection" check.
+/// What a server page's Connection row reports.
 #[derive(Clone, PartialEq)]
 enum ConnectionCheck {
     Idle,
     Checking,
-    Connected { model_listed: Option<bool> },
+    Connected {
+        model_listed: Option<bool>,
+    },
+    /// The raw error; the row words it for people and keeps it under Details.
     Failed(String),
 }
+
+impl ConnectionCheck {
+    /// Whether the server listed the model in the field, when both are known.
+    fn connected(models: &[String], model: &str) -> Self {
+        Self::Connected {
+            model_listed: (!model.is_empty() && !models.is_empty())
+                .then(|| models.iter().any(|m| m == model)),
+        }
+    }
+}
+
+/// The measure `components` gives every settings description, so a note
+/// built here wraps where the row descriptions do.
+const DESCRIPTION_MEASURE: f32 = 560.;
+
+/// Wide enough for a typical device name such as "MacBook Pro Microphone";
+/// longer names truncate and show in full in the menu.
+const MIC_SELECT_WIDTH: f32 = 240.;
 
 const RETENTION_DAY_OPTIONS: [u32; 6] = [1, 7, 14, 30, 60, 90];
 
@@ -149,6 +170,7 @@ pub struct SettingsModal {
     hotkeys: Entity<HotkeyListInput>,
 
     stt_check: ConnectionCheck,
+    stt_error_details: bool,
     /// Models the speech server listed on the last successful check.
     stt_models: Vec<String>,
     stt_request: Option<Task<()>>,
@@ -181,10 +203,20 @@ fn update_settings(cx: &mut App, f: impl FnOnce(&mut Settings)) {
     AppState::global(cx).update(cx, |s, cx| s.update_settings(cx, f));
 }
 
+/// Languages by their own names, which is how speakers look for them; the
+/// English name still matches a search. Auto-detect leads with a globe.
 fn language_options() -> Vec<SelectOption> {
     crate::text::language::languages()
         .iter()
-        .map(|l| SelectOption::new(l.code.clone(), l.label.clone()).prefix(l.flag.clone()))
+        .map(|l| {
+            if l.code == "auto" {
+                SelectOption::new("auto", t("settings.language.autoDetect"))
+                    .icon("globe")
+                    .keywords(l.label.clone())
+            } else {
+                SelectOption::new(l.code.clone(), l.native.clone()).keywords(l.label.clone())
+            }
+        })
         .collect()
 }
 
@@ -407,11 +439,10 @@ impl SettingsModal {
         let ui_language = cx.new(|cx| {
             Select::new(
                 vec![
-                    SelectOption::new("en", "English").prefix("🇺🇸"),
-                    SelectOption::new("zh-CN", "简体中文").prefix("🇨🇳"),
+                    SelectOption::new("en", "English"),
+                    SelectOption::new("zh-CN", "简体中文"),
                 ],
                 Some(s.ui_language.clone().into()),
-                SelectStyle::Compact,
                 window,
                 cx,
             )
@@ -429,7 +460,6 @@ impl SettingsModal {
             Select::new(
                 language_options(),
                 Some(s.preferred_language.clone().into()),
-                SelectStyle::Compact,
                 window,
                 cx,
             )
@@ -447,7 +477,6 @@ impl SettingsModal {
             Select::new(
                 chinese_script_options(),
                 Some(chinese_script_value(s.chinese_script_preference).into()),
-                SelectStyle::Compact,
                 window,
                 cx,
             )
@@ -464,7 +493,6 @@ impl SettingsModal {
             Select::new(
                 position_options(),
                 Some(s.panel_start_position.as_str().into()),
-                SelectStyle::Compact,
                 window,
                 cx,
             )
@@ -484,7 +512,6 @@ impl SettingsModal {
                     s.audio_retention_days,
                 ),
                 Some(s.audio_retention_days.to_string().into()),
-                SelectStyle::Compact,
                 window,
                 cx,
             )
@@ -505,7 +532,6 @@ impl SettingsModal {
                     s.transcript_retention_days,
                 ),
                 Some(s.transcript_retention_days.to_string().into()),
-                SelectStyle::Compact,
                 window,
                 cx,
             )
@@ -522,7 +548,9 @@ impl SettingsModal {
         );
 
         let microphone = cx.new(|cx| {
-            Select::new(Vec::new(), None, SelectStyle::Field, window, cx)
+            Select::new(Vec::new(), None, window, cx)
+                .with_width(px(MIC_SELECT_WIDTH))
+                .with_menu_min_width(px(280.))
                 .with_label(t("microphoneSettings.inputDevice"))
         });
         subscriptions.push(cx.subscribe(&microphone, |this, _, e: &SelectEvent, cx| {
@@ -586,6 +614,7 @@ impl SettingsModal {
             microphone,
             hotkeys,
             stt_check: ConnectionCheck::Idle,
+            stt_error_details: false,
             stt_models: Vec::new(),
             stt_request: None,
             auto_start: backend::auto_start_state(),
@@ -783,7 +812,7 @@ impl SettingsModal {
     /// Shortcuts that fill the Server URL with a known server's default
     /// address. They are not a selection: a custom address matches none, and
     /// the one whose address the field holds carries a check.
-    fn cleanup_presets(&self, draft: &str, cx: &mut Context<Self>) -> AnyElement {
+    fn cleanup_presets(&self, draft: &str, disabled: bool, cx: &mut Context<Self>) -> AnyElement {
         let current = normalize_base_url(draft);
         let mut row = div().flex().flex_wrap().gap(px(6.));
         for &(name, url) in CLEANUP_PRESETS.iter() {
@@ -794,13 +823,16 @@ impl SettingsModal {
                     t_with("settings.llms.server.fillIn", &[("server", name)]),
                     current == url,
                     false,
+                    !disabled,
                     cx,
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.cleanup_url
-                        .update(cx, |input, cx| input.set_value(url, window, cx));
-                    this.apply_cleanup_base(window, cx);
-                })),
+                .when(!disabled, |d| {
+                    d.on_click(cx.listener(move |this, _, window, cx| {
+                        this.cleanup_url
+                            .update(cx, |input, cx| input.set_value(url, window, cx));
+                        this.apply_cleanup_base(window, cx);
+                    }))
+                }),
             );
         }
         row.into_any_element()
@@ -896,9 +928,8 @@ impl SettingsModal {
     /// Keeps "model available" true to the field after a check, without
     /// another request, since the server's list is already known.
     fn recheck_model_listed(&mut self, model: &str) {
-        if let ConnectionCheck::Connected { model_listed } = &mut self.stt_check {
-            *model_listed = (!model.is_empty() && !self.stt_models.is_empty())
-                .then(|| self.stt_models.iter().any(|m| m == model));
+        if matches!(self.stt_check, ConnectionCheck::Connected { .. }) {
+            self.stt_check = ConnectionCheck::connected(&self.stt_models, model);
         }
     }
 
@@ -912,6 +943,7 @@ impl SettingsModal {
         }
         let model = s.remote_transcription_model.trim().to_string();
         self.stt_check = ConnectionCheck::Checking;
+        self.stt_error_details = false;
         cx.notify();
         let request = backend::list_models(base.clone(), String::new());
         self.stt_request = Some(cx.spawn(async move |this, cx| {
@@ -920,12 +952,9 @@ impl SettingsModal {
                 this.stt_check = match result {
                     Ok((_, models)) => {
                         this.stt_models = models.into_iter().map(|m| m.value).collect();
-                        ConnectionCheck::Connected {
-                            model_listed: (!model.is_empty() && !this.stt_models.is_empty())
-                                .then(|| this.stt_models.contains(&model)),
-                        }
+                        ConnectionCheck::connected(&this.stt_models, &model)
                     }
-                    Err(error) => ConnectionCheck::Failed(friendly_server_error(&error, &base).0),
+                    Err(error) => ConnectionCheck::Failed(error),
                 };
                 cx.notify();
             });
@@ -1061,9 +1090,19 @@ impl SettingsModal {
 
     // ---- Rendering --------------------------------------------------------------------------
 
-    fn render_nav(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The section list. Over the full window its top band is left to the
+    /// traffic lights and moves the window, like the app sidebar's.
+    fn render_nav(&mut self, attached: bool, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let p = cx.palette();
-        let mut nav = div().flex().flex_col().px(px(8.)).pt(px(12.)).pb(px(8.));
+        let mut nav = div()
+            .flex()
+            .flex_col()
+            .px(px(8.))
+            .pt(px(if attached { 0. } else { 12. }))
+            .pb(px(8.))
+            .when(attached, |d| {
+                d.child(drag_region().h(px(WORKSPACE_TOP_BAR_HEIGHT)).flex_none())
+            });
         let mut last_group = "";
         for (index, section) in SECTIONS.into_iter().enumerate() {
             let group = section.group();
@@ -1338,48 +1377,70 @@ impl SettingsModal {
             .into_any_element()
     }
 
-    fn render_microphone(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The input device row: the select sits inline like every other
+    /// select, and what Auto does is a quiet note under the label.
+    fn render_microphone(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let s = settings(cx);
         let is_auto = s.microphone_selection_mode == MicrophoneSelectionMode::Auto;
-
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(12.))
+        let note = if is_auto {
+            t("microphoneSettings.auto.description")
+        } else {
+            t("microphoneSettings.helpText")
+        };
+        panel_row()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .justify_between()
+                    .gap(px(32.))
                     .child(
                         div()
-                            .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(p.foreground)
-                            .child(t("microphoneSettings.inputDevice")),
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .child(
+                                        div()
+                                            .text_size(px(TEXT_BODY))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .text_color(p.foreground)
+                                            .child(t("microphoneSettings.inputDevice")),
+                                    )
+                                    // Sits on the label so it never shifts the
+                                    // select off the shared right edge; the
+                                    // negative margin keeps the label's line
+                                    // height.
+                                    .child(
+                                        div().my(px(-6.)).child(
+                                            Button::new("settings-refresh-mics")
+                                                .icon("refresh-cw", 14.)
+                                                .aria_label(t("microphoneSettings.refresh"))
+                                                .variant(ButtonVariant::Ghost)
+                                                .size(ButtonSize::Sm)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.reload_microphones(cx)
+                                                })),
+                                        ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .mt(px(2.))
+                                    .max_w(px(DESCRIPTION_MEASURE))
+                                    .text_size(px(TEXT_SMALL))
+                                    .line_height(px(LINE_SMALL))
+                                    .text_color(p.subtle_foreground)
+                                    .child(note),
+                            ),
                     )
-                    .child(
-                        Button::new("settings-refresh-mics")
-                            .icon("refresh-cw", 14.)
-                            .aria_label(t("microphoneSettings.refresh"))
-                            .variant(ButtonVariant::Ghost)
-                            .size(ButtonSize::Sm)
-                            .on_click(cx.listener(|this, _, _, cx| this.reload_microphones(cx))),
-                    ),
+                    .child(div().flex_none().child(self.microphone.clone())),
             )
-            .child(self.microphone.clone())
-            .child(
-                div()
-                    .text_size(px(TEXT_SMALL))
-                    .line_height(px(LINE_SMALL))
-                    .text_color(p.subtle_foreground)
-                    .child(if is_auto {
-                        t("microphoneSettings.auto.description")
-                    } else {
-                        t("microphoneSettings.helpText")
-                    }),
-            )
+            .into_any_element()
     }
 
     /// The row label and device name to report under the picker, when the
@@ -1394,10 +1455,10 @@ impl SettingsModal {
                     .map(|d| d.label.clone())
                     .or_else(|| self.mic_default.clone())
                     .unwrap_or_else(|| t("microphoneSettings.systemDefault"));
-                Some((t("microphoneSettings.auto.preferredDevice"), device))
+                Some((t("microphoneSettings.currentlyUsing"), device))
             }
             MicrophoneSelectionMode::BuiltIn => {
-                built_in.map(|d| (t("microphoneSettings.using"), d.label.clone()))
+                built_in.map(|d| (t("microphoneSettings.currentlyUsing"), d.label.clone()))
             }
             MicrophoneSelectionMode::Specific => None,
         }
@@ -1407,11 +1468,7 @@ impl SettingsModal {
     /// keys that start it to the microphone and the pill it shows.
     fn render_hotkeys(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let mut microphone_rows = vec![
-            panel_row()
-                .child(self.render_microphone(cx))
-                .into_any_element(),
-        ];
+        let mut microphone_rows = vec![self.render_microphone(cx)];
         if let Some((label, device)) = self.microphone_status(cx) {
             microphone_rows
                 .push(settings_row(label, None, status_label(device, &p), &p).into_any_element());
@@ -1558,6 +1615,7 @@ impl SettingsModal {
                     model.clone(),
                     *model == current,
                     true,
+                    true,
                     cx,
                 )
                 .on_click(cx.listener(move |this, _, window, cx| {
@@ -1586,91 +1644,61 @@ impl SettingsModal {
     }
 
     fn render_stt_check(&mut self, cx: &mut Context<Self>) -> AnyElement {
-        let p = cx.palette();
-        let has_url = !settings(cx).remote_transcription_url.trim().is_empty();
-        let status = match &self.stt_check {
-            ConnectionCheck::Idle => div()
-                .text_size(px(TEXT_SMALL))
-                .line_height(px(LINE_SMALL))
-                .text_color(p.subtle_foreground)
-                .child(t("settings.speechToText.connectionIdle"))
-                .into_any_element(),
-            ConnectionCheck::Checking => div()
-                .text_size(px(TEXT_SMALL))
-                .line_height(px(LINE_SMALL))
-                .text_color(p.muted_foreground)
-                .child(t("settings.speechToText.connectionChecking"))
-                .into_any_element(),
-            ConnectionCheck::Connected { model_listed } => status_label(
-                match model_listed {
-                    Some(true) => t("settings.speechToText.connectedWithModel"),
-                    Some(false) => t("settings.speechToText.connectedModelMissing"),
-                    None => t("settings.speechToText.connected"),
-                },
-                &p,
-            )
-            .into_any_element(),
-            ConnectionCheck::Failed(message) => error_line(message.clone(), &p),
-        };
-        panel_row()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(16.))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(TEXT_BODY))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(p.foreground)
-                                    .child(t("settings.speechToText.connection")),
-                            )
-                            .child(div().mt(px(2.)).child(status)),
-                    )
-                    .child(
-                        Button::new("settings-stt-test")
-                            .label(t("settings.speechToText.testConnection"))
-                            .variant(ButtonVariant::Outline)
-                            .size(ButtonSize::Sm)
-                            .disabled(!has_url || self.stt_check == ConnectionCheck::Checking)
-                            .on_click(cx.listener(|this, _, _, cx| this.test_stt_connection(cx))),
-                    ),
-            )
-            .into_any_element()
+        let s = settings(cx);
+        let base = normalize_base_url(&s.remote_transcription_url);
+        let status = connection_status(
+            &self.stt_check,
+            &base,
+            "settings-stt-error-details",
+            self.stt_error_details,
+            cx.listener(|this, _, _, cx| {
+                this.stt_error_details = !this.stt_error_details;
+                cx.notify();
+            }),
+            cx,
+        );
+        connection_row(
+            "settings-stt-test",
+            status,
+            !base.is_empty() && self.stt_check != ConnectionCheck::Checking,
+            cx.listener(|this, _, _, cx| this.test_stt_connection(cx)),
+            cx,
+        )
     }
 
-    /// The switch is the Server panel's master row: everything under it
-    /// only matters while cleanup is on.
+    /// The master switch stands alone at the top; the Server group under it
+    /// dims and stops taking input while cleanup is off, so the dependency
+    /// reads at a glance.
     fn render_llms(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let s = settings(cx);
-        let mut server_rows = vec![toggle_row(
-            "use-cleanup",
-            t("settings.aiModels.enableTextCleanup"),
-            Some(t("settings.aiModels.enableTextCleanupDescription")),
-            s.use_cleanup_model,
-            false,
-            |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
+        let enabled = settings(cx).use_cleanup_model;
+        let master = settings_panel(
+            vec![toggle_row(
+                "use-cleanup",
+                t("settings.aiModels.enableTextCleanup"),
+                Some(t("settings.aiModels.enableTextCleanupDescription")),
+                enabled,
+                false,
+                |v, _, cx| update_settings(cx, |s| s.use_cleanup_model = v),
+                &p,
+            )],
             &p,
-        )];
-        if s.use_cleanup_model {
-            server_rows.extend(self.render_cleanup_server(window, cx));
-        }
+        );
+        let server_rows = self.render_cleanup_server(!enabled, window, cx);
         div()
             .flex()
             .flex_col()
             .gap(px(24.))
-            .child(settings_section(
-                t("settings.llms.server.title"),
-                Some(t("settings.llms.server.description").into()),
-                server_rows,
-                &p,
-            ))
+            .child(master)
+            .child(
+                settings_section(
+                    t("settings.llms.server.title"),
+                    Some(t("settings.llms.server.description").into()),
+                    server_rows,
+                    &p,
+                )
+                .when(!enabled, |d| d.opacity(0.5)),
+            )
             .child(
                 div()
                     .child(section_header(
@@ -1683,8 +1711,24 @@ impl SettingsModal {
             .into_any_element()
     }
 
+    /// The cleanup server's Connection state, read off the model fetch that
+    /// Test Connection (and applying a new URL) runs.
+    fn cleanup_check(&self, is_dirty: bool, cx: &App) -> ConnectionCheck {
+        if self.models_loading {
+            ConnectionCheck::Checking
+        } else if let Some(error) = &self.models_error {
+            ConnectionCheck::Failed(error.clone())
+        } else if self.last_loaded_base.is_some() && !is_dirty {
+            let listed: Vec<String> = self.models.iter().map(|m| m.value.clone()).collect();
+            ConnectionCheck::connected(&listed, settings(cx).cleanup_model.trim())
+        } else {
+            ConnectionCheck::Idle
+        }
+    }
+
     fn render_cleanup_server(
         &mut self,
+        disabled: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
@@ -1693,63 +1737,30 @@ impl SettingsModal {
         let draft = self.cleanup_draft(cx);
         let is_dirty = draft != s.cleanup_remote_url.trim();
         let saved_base = normalize_base_url(&s.cleanup_remote_url);
-        let has_base = !saved_base.is_empty();
-        let query_base = if has_base {
-            saved_base.clone()
-        } else {
-            "http://192.168.1.126:11434/v1".to_string()
-        };
-        let query_url = build_api_url(&query_base, "/models").unwrap_or_default();
-
-        let refresh_label = if self.models_loading {
-            t("common.loading")
-        } else if is_dirty {
-            t("reasoning.custom.applyAndRefresh")
-        } else {
-            t("common.refresh")
-        };
-        let models = if is_dirty {
+        let model = s.cleanup_model.trim().to_string();
+        let models = if is_dirty || disabled {
             Vec::new()
         } else {
             self.models.clone()
         };
-        let model = s.cleanup_model.trim().to_string();
-        let small = |text: String, color: Hsla| {
-            div()
-                .text_size(px(TEXT_SMALL))
-                .line_height(px(LINE_SMALL))
-                .text_color(color)
-                .child(text)
-                .into_any_element()
-        };
-        // One message at a time, most actionable first. The field above
-        // always shows the saved model, so a failed fetch never hides it.
-        let status = if is_dirty {
-            Some(small(
-                t("reasoning.custom.modelsReloadHint"),
-                p.muted_foreground,
-            ))
-        } else if !has_base {
-            Some(small(
-                t("reasoning.custom.enterEndpoint"),
-                p.muted_foreground,
-            ))
-        } else if self.models_loading {
-            Some(small(
-                t("reasoning.custom.fetchingModels"),
-                p.muted_foreground,
-            ))
-        } else if let Some(error) = &self.models_error {
-            Some(self.render_models_error(error, &saved_base, cx))
-        } else if models.is_empty() {
-            Some(small(t("reasoning.custom.noModels"), p.warning))
-        } else if model.is_empty() {
-            Some(small(t("reasoning.custom.selectModelHint"), p.warning))
-        } else if !models.iter().any(|m| m.value == model) {
-            Some(small(t("reasoning.custom.modelNotListed"), p.warning))
+        let check = if disabled {
+            ConnectionCheck::Idle
         } else {
-            None
+            self.cleanup_check(is_dirty, cx)
         };
+        let status = connection_status(
+            &check,
+            &saved_base,
+            "settings-models-error-details",
+            self.models_error_details,
+            cx.listener(|this, _, _, cx| {
+                this.models_error_details = !this.models_error_details;
+                cx.notify();
+            }),
+            cx,
+        );
+        let can_test =
+            !disabled && !self.models_loading && !(draft.is_empty() && saved_base.is_empty());
 
         vec![
             settings_field_tagged(
@@ -1761,11 +1772,11 @@ impl SettingsModal {
                         .flex_col()
                         .gap(px(10.))
                         .child(t("reasoning.selfHosted.endpointHelp"))
-                        .child(self.cleanup_presets(&draft, cx))
+                        .child(self.cleanup_presets(&draft, disabled, cx))
                         .into_any_element(),
                 ),
                 endpoint_control(
-                    text_field(&self.cleanup_url, true, window, cx),
+                    text_field_disabled(&self.cleanup_url, true, disabled, window, cx),
                     &draft,
                     "/chat/completions",
                     &p,
@@ -1777,43 +1788,25 @@ impl SettingsModal {
                 t("reasoning.custom.apiKeyOptional"),
                 Some(t("reasoning.custom.apiKeyHelp").into_any_element()),
                 None,
-                self.render_api_key(window, cx),
+                self.render_api_key(disabled, window, cx),
                 &p,
             )
             .into_any_element(),
             settings_field(
                 t("common.model"),
-                Some(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(4.))
-                        .child(t("reasoning.custom.queryPrefix"))
-                        .child(
-                            div()
-                                .font_family(FONT_MONO)
-                                .text_size(px(TEXT_MONO_SMALL))
-                                .child(format!("GET {query_url}")),
-                        )
-                        .into_any_element(),
-                ),
-                Some(
-                    Button::new("settings-refresh-models")
-                        .label(refresh_label)
-                        .variant(ButtonVariant::Outline)
-                        .size(ButtonSize::Sm)
-                        .disabled(self.models_loading || (draft.is_empty() && !has_base))
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
-                        )
-                        .into_any_element(),
-                ),
+                Some(t("reasoning.custom.modelHelp").into_any_element()),
+                None,
                 div()
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(text_field(&self.cleanup_model, true, window, cx))
-                    .children(status)
+                    .child(text_field_disabled(
+                        &self.cleanup_model,
+                        true,
+                        disabled,
+                        window,
+                        cx,
+                    ))
                     .when(!models.is_empty(), |d| {
                         d.child(model_card_list(
                             &models,
@@ -1826,12 +1819,19 @@ impl SettingsModal {
                 &p,
             )
             .into_any_element(),
+            connection_row(
+                "settings-cleanup-test",
+                status,
+                can_test,
+                cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
+                cx,
+            ),
             toggle_row(
                 "disable-thinking",
                 t("reasoning.disableThinking.label"),
                 Some(t("reasoning.disableThinking.help")),
                 s.cleanup_disable_thinking,
-                false,
+                disabled,
                 |v, _, cx| update_settings(cx, |s| s.cleanup_disable_thinking = v),
                 &p,
             ),
@@ -1840,9 +1840,14 @@ impl SettingsModal {
 
     /// The API key reads as a field in both states: a masked key or a
     /// placeholder in an input frame, with a small outline button to edit.
-    fn render_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_api_key(
+        &mut self,
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = cx.palette();
-        if self.api_key_editing {
+        if self.api_key_editing && !disabled {
             return div()
                 .relative()
                 // Room for the two buttons, so a long key never runs under them.
@@ -1886,9 +1891,11 @@ impl SettingsModal {
         } else {
             p.border_hover.blend(p.foreground.opacity(0.08))
         };
-        div()
-            .id("settings-api-key-display")
-            .keyboard_focusable(
+        let display = div().id("settings-api-key-display");
+        let display = if disabled {
+            display
+        } else {
+            display.keyboard_focusable(
                 "settings-api-key-display",
                 Role::Button,
                 if has_key {
@@ -1898,6 +1905,8 @@ impl SettingsModal {
                 },
                 cx,
             )
+        };
+        display
             .group("settings-api-key")
             .w_full()
             .h(px(CONTROL_HEIGHT))
@@ -1914,8 +1923,11 @@ impl SettingsModal {
             } else {
                 p.input
             })
-            .hover(move |s| s.border_color(hover_border))
-            .cursor_pointer()
+            .when(!disabled, |d| {
+                d.hover(move |s| s.border_color(hover_border))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, window, cx| this.edit_api_key(window, cx)))
+            })
             .child(if has_key {
                 div()
                     .flex_1()
@@ -1963,65 +1975,6 @@ impl SettingsModal {
                         t("apiKeyInput.addButton")
                     }),
             )
-            .on_click(cx.listener(|this, _, window, cx| this.edit_api_key(window, cx)))
-            .into_any_element()
-    }
-
-    /// A failed model fetch: plain-language cause and next step, then Retry
-    /// and the server's own message one click away, both set under the text.
-    fn render_models_error(&self, error: &str, base: &str, cx: &mut Context<Self>) -> AnyElement {
-        let p = cx.palette();
-        let (headline, details) = friendly_server_error(error, base);
-        let open = self.models_error_details;
-        let mut actions = div().ml(px(20.)).flex().items_center().gap(px(12.)).child(
-            text_link("settings-models-retry", Role::Button, t("common.retry"), cx)
-                .on_click(cx.listener(|this, _, window, cx| this.refresh_models(window, cx))),
-        );
-        if details.is_some() {
-            actions = actions.child(
-                text_link(
-                    "settings-models-error-details",
-                    Role::DisclosureTriangle,
-                    t("reasoning.custom.errorDetails"),
-                    cx,
-                )
-                .aria_expanded(open)
-                .child(
-                    icon("chevron-down", 12., p.muted_foreground).with_transformation(
-                        Transformation::rotate(radians(if open {
-                            0.
-                        } else {
-                            -std::f32::consts::FRAC_PI_2
-                        })),
-                    ),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.models_error_details = !this.models_error_details;
-                    cx.notify();
-                })),
-            );
-        }
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .child(error_line(headline, &p))
-            .child(actions)
-            .when_some(details.filter(|_| open), |d, details| {
-                d.child(
-                    div()
-                        .ml(px(20.))
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(RADIUS_MD))
-                        .bg(p.hover_wash(0.04))
-                        .font_family(FONT_MONO)
-                        .text_size(px(TEXT_MONO_SMALL))
-                        .line_height(px(LINE_SMALL))
-                        .text_color(p.muted_foreground)
-                        .child(details),
-                )
-            })
             .into_any_element()
     }
 
@@ -2635,7 +2588,7 @@ impl TapStyle {
 }
 
 /// Two side-by-side cards, one per activation mode, each explaining itself
-/// with a small press diagram and marked by a radio like the model list. The
+/// in a sentence and marked by a radio like the model list. The
 /// Tap card describes what the saved hotkey really does: a key combination
 /// toggles on one press rather than waiting for a Double tap.
 fn activation_mode_cards(
@@ -2668,17 +2621,7 @@ fn activation_mode_cards(
         ),
     };
     let options = [
-        (
-            ActivationMode::Tap,
-            "tap",
-            tap_title,
-            tap_description,
-            if matches!(tap, TapStyle::Toggle(_)) {
-                PressPattern::Single
-            } else {
-                PressPattern::Double
-            },
-        ),
+        (ActivationMode::Tap, "tap", tap_title, tap_description),
         (
             ActivationMode::Push,
             "hold",
@@ -2689,18 +2632,12 @@ fn activation_mode_cards(
                     &[("hotkey", &hotkey)],
                 )
             }),
-            PressPattern::Hold,
         ),
     ];
     let mut row = div().flex().flex_wrap().gap(px(8.));
-    for (value, key, title, description, pattern) in options {
+    for (value, key, title, description) in options {
         let selected = mode == value;
         let disabled = value == ActivationMode::Push && push_blocked;
-        let accent = if selected {
-            p.foreground
-        } else {
-            p.muted_foreground
-        };
         let id = SharedString::from(format!("settings-activation-{key}"));
         row = row.child(
             div()
@@ -2726,9 +2663,14 @@ fn activation_mode_cards(
                 .rounded(px(RADIUS_XL))
                 .border_1()
                 .map(|d| {
+                    // Selection takes the accent, as an open select or a
+                    // focused field does.
                     if selected {
-                        d.border_color(p.foreground.opacity(if p.dark { 0.5 } else { 0.6 }))
-                            .bg(p.hover_wash(if p.dark { 0.05 } else { 0.03 }))
+                        d.border_color(p.ring).bg(p.primary.opacity(if p.dark {
+                            0.08
+                        } else {
+                            0.04
+                        }))
                     } else {
                         d.border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
                             .bg(p.card.opacity(0.4))
@@ -2755,8 +2697,7 @@ fn activation_mode_cards(
                                 .font_weight(FontWeight::MEDIUM)
                                 .text_color(p.foreground)
                                 .child(title),
-                        )
-                        .child(press_diagram(pattern, accent)),
+                        ),
                 )
                 .child(
                     div()
@@ -2793,54 +2734,18 @@ fn move_activation_mode(
     window.focus(&handle, cx);
 }
 
-/// The presses a card's diagram draws.
-#[derive(Clone, Copy)]
-enum PressPattern {
-    Single,
-    Double,
-    Hold,
-}
-
-/// A key press drawn on a timeline: one short tap, two, or one long hold,
-/// over a faint 32 px track so every card's diagram spans the same width
-/// and a lone tap reads as a mark in time.
-fn press_diagram(pattern: PressPattern, color: Hsla) -> Div {
-    let press = |width: f32| div().h(px(4.)).w(px(width)).rounded_full().bg(color);
-    let presses = div().relative().flex().items_center().gap(px(3.));
-    let presses = match pattern {
-        PressPattern::Single => presses.child(press(6.)),
-        PressPattern::Double => presses.child(press(6.)).child(press(6.)),
-        PressPattern::Hold => presses.child(press(32.)),
-    };
-    div()
-        .relative()
-        .flex_none()
-        .w(px(32.))
-        .h(px(4.))
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .top(px(1.))
-                .w(px(32.))
-                .h(px(2.))
-                .rounded_full()
-                .bg(color.opacity(0.15)),
-        )
-        .child(presses)
-}
-
 /// How many listed speech models to offer as choices; a server that lists
 /// more still accepts any name typed into the field.
 const STT_MODEL_CHOICES: usize = 12;
 
-/// The 12 px radio used by the activation cards and the model list.
+/// The 12 px radio used by the activation cards and the model list; a
+/// chosen one takes the accent like every other selection.
 fn radio_dot(selected: bool, p: &Palette) -> Div {
     div()
         .size(px(12.))
         .flex_none()
         .rounded_full()
-        .when(selected, |d| d.border_4().border_color(p.foreground))
+        .when(selected, |d| d.border_4().border_color(p.primary))
         .when(!selected, |d| {
             d.border_1().border_color(p.subtle_foreground)
         })
@@ -2868,23 +2773,155 @@ fn icon_action(
         .child(icon(name, 14., color))
 }
 
-/// A quiet text action under a status line, such as Retry or Details.
-fn text_link(id: &'static str, role: Role, label: String, cx: &mut App) -> Stateful<Div> {
+/// A text action set in a status line, such as Details: a Ghost button's
+/// 28 pt target and hover wash, so it reads as a control and not a label.
+fn ghost_action(id: &'static str, role: Role, label: String, cx: &mut App) -> Stateful<Div> {
     let p = cx.palette();
+    let wash = p.hover_wash(if p.dark { 0.06 } else { 0.05 });
     div()
         .id(id)
         .keyboard_focusable(id, role, label.clone(), cx)
+        .min_h(px(28.))
+        .px(px(8.))
         .flex()
         .items_center()
         .gap(px(4.))
-        .rounded(px(RADIUS_SM))
+        .rounded(px(RADIUS_LG))
         .text_size(px(TEXT_SMALL))
-        .line_height(px(LINE_SMALL))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(p.muted_foreground)
+        .text_color(p.foreground)
         .cursor_pointer()
-        .hover(move |s| s.text_color(p.foreground))
+        .hover(move |s| s.bg(wash))
         .child(label)
+}
+
+/// The status under a server page's Connection label. A failure leads with
+/// the cause and next step; the server's own text waits behind Details.
+fn connection_status(
+    check: &ConnectionCheck,
+    base: &str,
+    details_id: &'static str,
+    details_open: bool,
+    on_details: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &mut App,
+) -> AnyElement {
+    let p = cx.palette();
+    let small = |text: String, color: Hsla| {
+        div()
+            .text_size(px(TEXT_SMALL))
+            .line_height(px(LINE_SMALL))
+            .text_color(color)
+            .child(text)
+            .into_any_element()
+    };
+    match check {
+        ConnectionCheck::Idle => small(t("settings.connection.idle"), p.subtle_foreground),
+        ConnectionCheck::Checking => small(t("settings.connection.checking"), p.muted_foreground),
+        ConnectionCheck::Connected { model_listed } => match model_listed {
+            Some(false) => div()
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .child(icon("alert-triangle", 12., p.warning))
+                .child(small(t("settings.connection.modelMissing"), p.foreground))
+                .into_any_element(),
+            Some(true) => {
+                status_label(t("settings.connection.connectedWithModel"), &p).into_any_element()
+            }
+            None => status_label(t("settings.connection.connected"), &p).into_any_element(),
+        },
+        ConnectionCheck::Failed(raw) => {
+            let (headline, details) = friendly_server_error(raw, base);
+            let chevron = icon("chevron-down", 12., p.muted_foreground).with_transformation(
+                Transformation::rotate(radians(if details_open {
+                    0.
+                } else {
+                    -std::f32::consts::FRAC_PI_2
+                })),
+            );
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .child(error_line(headline, &p))
+                .when_some(details, |d, details| {
+                    // The negative inset lines the label up with the message
+                    // while the hover wash keeps its padding.
+                    d.child(
+                        div().ml(px(12.)).flex().child(
+                            ghost_action(
+                                details_id,
+                                Role::DisclosureTriangle,
+                                t("settings.connection.details"),
+                                cx,
+                            )
+                            .aria_expanded(details_open)
+                            .child(chevron)
+                            .on_click(on_details),
+                        ),
+                    )
+                    .when(details_open, |d| {
+                        d.child(
+                            div()
+                                .ml(px(20.))
+                                .mt(px(2.))
+                                .px(px(10.))
+                                .py(px(8.))
+                                .rounded(px(RADIUS_MD))
+                                .bg(p.hover_wash(0.04))
+                                .font_family(FONT_MONO)
+                                .text_size(px(TEXT_MONO_SMALL))
+                                .line_height(px(LINE_SMALL))
+                                .text_color(p.muted_foreground)
+                                .child(details),
+                        )
+                    })
+                })
+                .into_any_element()
+        }
+    }
+}
+
+/// The Connection row both server pages share: the status on the left,
+/// Test Connection on the right.
+fn connection_row(
+    button_id: &'static str,
+    status: AnyElement,
+    enabled: bool,
+    on_test: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &mut App,
+) -> AnyElement {
+    let p = cx.palette();
+    panel_row()
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .justify_between()
+                .gap(px(16.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_size(px(TEXT_BODY))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(p.foreground)
+                                .child(t("settings.connection.title")),
+                        )
+                        .child(div().mt(px(2.)).child(status)),
+                )
+                .child(
+                    Button::new(button_id)
+                        .label(t("settings.connection.test"))
+                        .variant(ButtonVariant::Outline)
+                        .size(ButtonSize::Sm)
+                        .disabled(!enabled)
+                        .on_click(on_test),
+                ),
+        )
+        .into_any_element()
 }
 
 /// A small outline chip that fills a field with a value. Chips are
@@ -2896,16 +2933,22 @@ fn suggestion_chip(
     label: impl Into<SharedString>,
     matches: bool,
     mono: bool,
+    enabled: bool,
     cx: &mut App,
 ) -> Stateful<Div> {
     let p = cx.palette();
     let id: ElementId = id.into();
     let (fg, hover_fg) = (p.foreground, p.foreground);
     let hover_border = p.border_hover;
-    div()
-        .id(id.clone())
-        .keyboard_focusable(id, Role::Button, label, cx)
-        .h(px(24.))
+    let chip = div().id(id.clone());
+    let chip = if enabled {
+        chip.keyboard_focusable(id, Role::Button, label, cx)
+            .cursor_pointer()
+            .hover(move |s| s.border_color(hover_border).text_color(hover_fg))
+    } else {
+        chip
+    };
+    chip.h(px(24.))
         .px(px(8.))
         .flex()
         .items_center()
@@ -2923,8 +2966,6 @@ fn suggestion_chip(
         .font_weight(FontWeight::MEDIUM)
         .text_color(if matches { fg } else { p.muted_foreground })
         .whitespace_nowrap()
-        .cursor_pointer()
-        .hover(move |s| s.border_color(hover_border).text_color(hover_fg))
         .when(matches, |d| d.child(icon("check", 12., fg)))
         .child(text.into())
 }
@@ -3243,7 +3284,8 @@ impl Focusable for SettingsModal {
 impl Render for SettingsModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
-        let nav = self.render_nav(cx);
+        let frame = sheet_frame(window.viewport_size());
+        let nav = self.render_nav(frame.attached, cx);
         let content = match self.section {
             SettingsSection::General => self.render_general(cx),
             SettingsSection::Hotkeys => self.render_hotkeys(cx),
@@ -3251,12 +3293,17 @@ impl Render for SettingsModal {
             SettingsSection::Llms => self.render_llms(window, cx),
             SettingsSection::PrivacyData => self.render_privacy(cx),
         };
-        let frame = sheet_frame(window.viewport_size());
         let closing = self.closing;
         let reduce_motion = cx.reduce_motion();
         let section_label = t(&format!("settings.sections.{}.label", self.section.key()));
-        let header = div()
-            .h(px(48.))
+        // Over the full window the header is the window's top bar: as tall,
+        // and it moves the window.
+        let header = if frame.attached {
+            drag_region().h(px(WORKSPACE_TOP_BAR_HEIGHT))
+        } else {
+            div().h(px(48.))
+        };
+        let header = header
             .flex_none()
             .flex()
             .items_center()
@@ -3290,7 +3337,9 @@ impl Render for SettingsModal {
                     .on_click(cx.listener(|this, _, window, cx| this.close(window, cx))),
             );
 
-        // A soft edge at the bottom says the page continues below.
+        // A soft edge along the sheet's bottom says the page continues below.
+        // It spans the whole column, edge to edge, so it reads as the sheet's
+        // edge rather than a fade inside whichever card sits there.
         let max_scroll = self.scroll.max_offset().y;
         // The scroll extent is only known after layout; look again next frame
         // so the fade shows on a page that opens with more below.
@@ -3330,9 +3379,9 @@ impl Render for SettingsModal {
                     div()
                         .absolute()
                         .left_0()
-                        .right(px(12.))
+                        .right_0()
                         .bottom_0()
-                        .h(px(24.))
+                        .h(px(40.))
                         .opacity(fade)
                         .when(!frame.attached, |d| d.rounded_br(radius))
                         .bg(linear_gradient(
@@ -3356,13 +3405,8 @@ impl Render for SettingsModal {
             .w(frame.bounds.size.width)
             .h(frame.bounds.size.height)
             .flex()
-            .map(|d| {
-                if frame.attached {
-                    d.rounded_t(px(RADIUS_2XL)).border_t_1()
-                } else {
-                    d.rounded(px(RADIUS_2XL)).border_1()
-                }
-            })
+            // Over the full window the window's own corners and edge frame it.
+            .when(!frame.attached, |d| d.rounded(px(RADIUS_2XL)).border_1())
             .overflow_hidden()
             .border_color(p.border)
             .bg(p.background)
@@ -3370,18 +3414,14 @@ impl Render for SettingsModal {
             .on_click(|_, _, cx| cx.stop_propagation())
             .child(
                 div()
-                    .w(px(if frame.compact { 196. } else { 240. }))
+                    // The app sidebar's width, so when the sheet hangs from
+                    // the top bar the two dividers continue as one line.
+                    .w(px(if frame.compact { 196. } else { SIDEBAR_WIDTH }))
                     .flex_none()
                     .h_full()
                     // The panel clips square, so the sidebar fill rounds its
                     // own outer corners to sit inside the border.
-                    .map(|d| {
-                        if frame.attached {
-                            d.rounded_tl(radius)
-                        } else {
-                            d.rounded_l(radius)
-                        }
-                    })
+                    .when(!frame.attached, |d| d.rounded_l(radius))
                     .border_r_1()
                     .border_color(p.border)
                     .bg(p.settings_sidebar)
@@ -3441,8 +3481,8 @@ impl Render for SettingsModal {
 /// Where the sheet sits in the window, and whether it uses the narrow layout.
 struct SheetFrame {
     bounds: Bounds<Pixels>,
-    /// Hangs from the top bar across the full window width instead of
-    /// floating centered.
+    /// Covers the whole window, top bar included, instead of floating
+    /// centered; the traffic lights sit over its navigation.
     attached: bool,
     compact: bool,
 }
@@ -3452,16 +3492,15 @@ const SHEET_MAX_WIDTH: f32 = 1120.;
 const SHEET_MAX_HEIGHT: f32 = 960.;
 
 /// A centered sheet when the window is wide enough for it to clear the app
-/// sidebar entirely. Otherwise the sheet hangs from the top bar and covers
-/// the window below it edge to edge, so no sidebar label or transcript line
-/// peeks out half cut beside it.
+/// sidebar entirely. Otherwise the sheet covers the whole window, top bar
+/// included, so no page title, search field, sidebar label or transcript
+/// line peeks out dimmed beside it.
 fn sheet_frame(viewport: Size<Pixels>) -> SheetFrame {
     let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
     let centered_inset = (vw - SHEET_MAX_WIDTH) / 2.;
     let attached = centered_inset < SIDEBAR_WIDTH + 24.;
     let (x, y, w, h) = if attached {
-        let top = WORKSPACE_TOP_BAR_HEIGHT;
-        (0., top, vw, vh - top)
+        (0., 0., vw, vh)
     } else {
         let h = (vh - 2. * WORKSPACE_TOP_BAR_HEIGHT).min(SHEET_MAX_HEIGHT);
         (centered_inset, (vh - h) / 2., SHEET_MAX_WIDTH, h)
@@ -3513,6 +3552,9 @@ mod tests {
         assert_eq!(narrow.bounds.origin.x, px(0.));
         let default = sheet_frame(size(px(1200.), px(800.)));
         assert!(default.attached && !default.compact);
+        // No dimmed strip of the top bar shows above it.
+        assert_eq!(default.bounds.origin.y, px(0.));
+        assert_eq!(default.bounds.size.height, px(800.));
         let wide = sheet_frame(size(px(1800.), px(1100.)));
         assert!(!wide.attached);
         assert!(f32::from(wide.bounds.origin.x) >= super::SIDEBAR_WIDTH + 24.);

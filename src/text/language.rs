@@ -10,8 +10,10 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Language {
     pub code: String,
+    /// English name, for searching and for English-only surfaces.
     pub label: String,
-    pub flag: String,
+    /// The language's name in itself, as pickers show it.
+    pub native: String,
     /// Hand-written cleanup instruction; others use the generic template.
     #[serde(default)]
     pub instruction: Option<String>,

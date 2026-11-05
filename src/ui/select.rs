@@ -1,6 +1,5 @@
-//! A dropdown select. One component covers three flavors — the compact
-//! select used for retention and pill position, the searchable language
-//! picker, and the full-height field select — through `SelectStyle`.
+//! A compact dropdown select, used inline in settings rows. Long lists, such
+//! as the transcription languages, get a search field.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -12,15 +11,19 @@ use gpui_kit::*;
 use super::components::{drop, f32_tx, focus_ring, icon};
 use super::control_panel::CloseOverlay;
 use super::theme::{
-    CONTROL_HEIGHT, DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY,
-    TEXT_SMALL, ease_out, ease_snap, motion,
+    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_SMALL, ease_out,
+    ease_snap, motion,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectOption {
     pub value: SharedString,
     pub label: SharedString,
-    pub prefix: Option<SharedString>,
+    /// A Lucide icon drawn before the label.
+    pub icon: Option<&'static str>,
+    /// Extra text the search field matches, such as a language's English
+    /// name beside its native one.
+    pub keywords: Option<SharedString>,
     pub disabled: bool,
 }
 
@@ -29,13 +32,19 @@ impl SelectOption {
         Self {
             value: value.into(),
             label: label.into(),
-            prefix: None,
+            icon: None,
+            keywords: None,
             disabled: false,
         }
     }
 
-    pub fn prefix(mut self, prefix: impl Into<SharedString>) -> Self {
-        self.prefix = Some(prefix.into());
+    pub fn icon(mut self, name: &'static str) -> Self {
+        self.icon = Some(name);
+        self
+    }
+
+    pub fn keywords(mut self, keywords: impl Into<SharedString>) -> Self {
+        self.keywords = Some(keywords.into());
         self
     }
 
@@ -43,14 +52,6 @@ impl SelectOption {
         self.disabled = disabled;
         self
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SelectStyle {
-    /// h-7 compact trigger (plain select / language picker).
-    Compact,
-    /// h-8 rounded-lg trigger (field select), styled like a text input.
-    Field,
 }
 
 pub enum SelectEvent {
@@ -67,7 +68,6 @@ pub struct Select {
     /// The name VoiceOver reads for the trigger, usually its row's label.
     label: SharedString,
     open: bool,
-    style: SelectStyle,
     width: Option<Pixels>,
     menu_min_width: Pixels,
     disabled: bool,
@@ -86,7 +86,6 @@ impl Select {
     pub fn new(
         options: Vec<SelectOption>,
         selected: Option<SharedString>,
-        style: SelectStyle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -119,7 +118,6 @@ impl Select {
             placeholder: "".into(),
             label: "".into(),
             open: false,
-            style,
             width: None,
             menu_min_width: px(160.),
             disabled: false,
@@ -181,7 +179,13 @@ impl Select {
         let q = self.query.to_lowercase();
         self.options
             .iter()
-            .filter(|o| o.label.to_lowercase().contains(&q) || o.value.to_lowercase().contains(&q))
+            .filter(|o| {
+                o.label.to_lowercase().contains(&q)
+                    || o.value.to_lowercase().contains(&q)
+                    || o.keywords
+                        .as_ref()
+                        .is_some_and(|k| k.to_lowercase().contains(&q))
+            })
             .cloned()
             .collect()
     }
@@ -318,9 +322,8 @@ impl Render for Select {
             .as_ref()
             .map(|o| o.label.clone())
             .unwrap_or_else(|| self.placeholder.clone());
-        let prefix = selected_option.as_ref().and_then(|o| o.prefix.clone());
+        let lead_icon = selected_option.as_ref().and_then(|o| o.icon);
         let open = self.open;
-        let compact = self.style == SelectStyle::Compact;
         let chevron_turn = f32_tx(
             ("select-chevron", cx.entity_id().as_u64() as usize),
             if open { 0.5 } else { 0.0 },
@@ -349,7 +352,7 @@ impl Render for Select {
             .as_ref()
             .map(|o| o.label.clone())
             .unwrap_or_default();
-        let radius = px(if compact { RADIUS_MD } else { RADIUS_LG });
+        let radius = px(RADIUS_MD);
         let trigger = div()
             .id("select-trigger")
             .flex()
@@ -358,8 +361,8 @@ impl Render for Select {
             .gap(px(8.))
             .when_some(self.width, |d, w| d.w(w))
             .when(self.width.is_none(), |d| d.w_full())
-            .h(px(if compact { 28. } else { CONTROL_HEIGHT }))
-            .px(px(if compact { 10. } else { 11. }))
+            .h(px(28.))
+            .px(px(10.))
             .rounded(radius)
             .border_1()
             .border_color(trigger_border)
@@ -369,8 +372,8 @@ impl Render for Select {
                 p.popover
             })
             .when(!trigger_shadow.is_empty(), |d| d.shadow(trigger_shadow))
-            .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
-            .when(compact, |d| d.font_weight(FontWeight::MEDIUM))
+            .text_size(px(TEXT_SMALL))
+            .font_weight(FontWeight::MEDIUM)
             .text_color(if selected_option.is_some() {
                 p.foreground
             } else {
@@ -397,18 +400,15 @@ impl Render for Select {
                     .gap(px(6.))
                     .min_w_0()
                     .overflow_hidden()
-                    .when_some(prefix, |d, prefix| d.child(prefix))
+                    .when_some(lead_icon, |d, name| {
+                        d.child(icon(name, 14., p.muted_foreground))
+                    })
                     .child(div().truncate().child(label)),
             )
             .child(
-                icon(
-                    "chevron-down",
-                    if compact { 14. } else { 16. },
-                    p.muted_foreground,
-                )
-                .with_transformation(Transformation::rotate(radians(
-                    chevron_turn * std::f32::consts::PI,
-                ))),
+                icon("chevron-down", 14., p.muted_foreground).with_transformation(
+                    Transformation::rotate(radians(chevron_turn * std::f32::consts::PI)),
+                ),
             )
             .on_click(cx.listener(Self::on_trigger_click));
 
@@ -455,7 +455,6 @@ impl Render for Select {
 impl Select {
     fn render_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let compact = self.style == SelectStyle::Compact;
         let filtered = self.filtered();
         let highlighted = self.highlighted;
         let selected = self.selected.clone();
@@ -496,7 +495,7 @@ impl Select {
                     .h(px(28.))
                     .px(px(8.))
                     .rounded(px(RADIUS_SM))
-                    .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
+                    .text_size(px(TEXT_SMALL))
                     .text_color(p.foreground)
                     .when_some(row_bg, |d, bg| d.bg(bg))
                     .when(option.disabled, |d| d.opacity(0.5))
@@ -513,7 +512,9 @@ impl Select {
                             .items_center()
                             .gap(px(6.))
                             .min_w_0()
-                            .when_some(option.prefix.clone(), |d, prefix| d.child(prefix))
+                            .when_some(option.icon, |d, name| {
+                                d.child(icon(name, 14., p.muted_foreground))
+                            })
                             .child(div().truncate().child(option.label.clone())),
                     )
                     .when(is_selected, |d| d.child(icon("check", 14., p.foreground))),
@@ -563,7 +564,7 @@ impl Select {
             .child(
                 div()
                     .id("select-list")
-                    .max_h(px(if compact { 192. } else { 384. }))
+                    .max_h(px(192.))
                     .overflow_y_scroll()
                     .child(list),
             )
