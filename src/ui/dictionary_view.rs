@@ -1010,43 +1010,11 @@ impl DictionaryView {
                     })),
             ),
         };
-        let overflow = (self.tab == Tab::Words && has_rows).then(|| {
-            let menu = self
-                .menu
-                .clone()
-                .filter(|m| m.position.is_none())
-                .map(|m| self.render_menu(m, cx));
-            div()
-                .flex()
-                .relative()
-                .child(
-                    Button::new(MORE_BUTTON)
-                        .icon("more-vertical", 14.)
-                        .aria_label(t("dictionary.moreActions"))
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Sm)
-                        .on_click(
-                            cx.listener(|this, _, window, cx| this.toggle_overflow(window, cx)),
-                        ),
-                )
-                .when_some(menu, |d, menu| {
-                    // Hangs from the button's right edge; deferred so it paints over the list.
-                    d.child(
-                        deferred(
-                            div()
-                                .absolute()
-                                .top(px(HEADER_CONTROL + 4.))
-                                .right_0()
-                                .child(menu),
-                        )
-                        .with_priority(2),
-                    )
-                })
-        });
         // Only auto-learn makes words of two sources, so until it adds one
         // the filter has nothing to tell apart. Snippets have no source.
+        let learned = self.learned_count(cx);
         let filter =
-            (self.tab == Tab::Words && self.learned_count(cx) > 0).then(|| self.render_filter(cx));
+            (self.tab == Tab::Words && learned > 0).then(|| self.render_filter(learned, cx));
         let compact = self.content_width(window) < HEADER_ONE_ROW;
         let search = has_rows.then(|| self.render_search(compact, window, cx));
         let (bar_search, row_search) = if compact {
@@ -1059,10 +1027,9 @@ impl DictionaryView {
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(add)
-            .children(overflow);
+            .child(add);
         // The view switch owns the page: an underlined tab bar that also holds
-        // the page's actions. The source filter only narrows the Words view,
+        // the add action; the page's ⋮ menu lives in the window's top bar. The source filter only narrows the Words view,
         // so it sits under the bar, smaller and without a track.
         let bar = div()
             .relative()
@@ -1124,6 +1091,52 @@ impl DictionaryView {
             .absolute()
             .size_full(),
         )
+    }
+
+    /// The page's ⋮ menu (Import, Export, Dictionary Settings…, Clear
+    /// Dictionary…), drawn in the window's top bar so every page keeps its
+    /// page-level menu in the same place. Its items act on words, so it shows
+    /// only on the Words view once there is a word to act on.
+    // Until control_panel.rs's top bar calls this, nothing in the crate does.
+    #[allow(dead_code)]
+    pub fn render_page_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let has_words = !AppState::global(cx).read(cx).dictionary.is_empty();
+        if self.tab != Tab::Words || !has_words {
+            return Empty.into_any_element();
+        }
+        let menu = self
+            .menu
+            .clone()
+            .filter(|m| m.position.is_none())
+            .map(|m| self.render_menu(m, cx));
+        div()
+            .relative()
+            .flex()
+            // The top bar drags the window on mouse-down; the menu must not.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                Button::new(MORE_BUTTON)
+                    .icon("more-vertical", 15.)
+                    .aria_label(t("dictionary.pageActions"))
+                    .variant(ButtonVariant::Ghost)
+                    .size(ButtonSize::Sm)
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_overflow(window, cx))),
+            )
+            .when_some(menu, |d, menu| {
+                // Hangs from the button's right edge; deferred so it paints
+                // over the page below the top bar.
+                d.child(
+                    deferred(
+                        div()
+                            .absolute()
+                            .top(px(HEADER_CONTROL + 4.))
+                            .right_0()
+                            .child(menu),
+                    )
+                    .with_priority(2),
+                )
+            })
+            .into_any_element()
     }
 
     /// The page's content width, measured from the header on the last frame;
@@ -1838,9 +1851,9 @@ impl DictionaryView {
 
     /// All / Manual / Learned, under the tab bar once auto-learn has added a
     /// word, so learned words can be reviewed without digging through a menu.
-    /// Quiet ghost chips with no counts: the footer already says how many
-    /// words show.
-    fn render_filter(&self, cx: &mut Context<Self>) -> Div {
+    /// Quiet ghost chips; only Learned carries a count, since how many words
+    /// auto-learn has added is the one number the footer does not give.
+    fn render_filter(&self, learned: usize, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
         let active_bg = p.hover_wash(if p.dark { 0.1 } else { 0.06 });
         let hover_bg = p.hover_wash(if p.dark { 0.05 } else { 0.035 });
@@ -1866,7 +1879,11 @@ impl DictionaryView {
             ),
         ] {
             let active = self.filter == filter;
-            let label = t(key);
+            let count = (filter == SourceFilter::Learned).then(|| learned.to_string());
+            let label = match &count {
+                Some(n) => t_with("dictionary.filterLearnedCount", &[("count", n)]),
+                None => t(key),
+            };
             row = row.child(
                 div()
                     .id(id)
@@ -1878,6 +1895,7 @@ impl DictionaryView {
                     })
                     .flex()
                     .items_center()
+                    .gap(px(5.))
                     .h(px(24.))
                     .px(px(TAB_PAD))
                     .rounded(px(RADIUS_MD))
@@ -1889,7 +1907,16 @@ impl DictionaryView {
                         d.text_color(p.muted_foreground)
                             .hover(move |s| s.bg(hover_bg).text_color(hover_fg))
                     })
-                    .child(label)
+                    .child(t(key))
+                    // The count is quieter than its label, in figures that
+                    // keep the chip's width steady as words are learned.
+                    .children(count.map(|n| {
+                        div()
+                            .font_weight(FontWeight::NORMAL)
+                            .font_features(tabular_nums())
+                            .text_color(p.subtle_foreground)
+                            .child(n)
+                    }))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.filter = filter;
                         cx.notify();
@@ -1942,9 +1969,17 @@ impl DictionaryView {
         } else {
             (None, Some(chevron))
         };
+        let state = match (active, self.descending) {
+            (false, _) => t("dictionary.notSorted"),
+            (true, true) => t("dictionary.sortedDescending"),
+            (true, false) => t("dictionary.sortedAscending"),
+        };
         div()
             .id(focus.clone())
             .keyboard_focusable(focus, Role::ColumnHeader, label, cx)
+            // AccessKit has no sort-direction property here, so VoiceOver
+            // hears the state after the heading's name.
+            .aria_description(state)
             .group(group)
             .flex()
             .items_center()
