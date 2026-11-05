@@ -13,12 +13,18 @@ pub struct Palette {
     pub primary_foreground: Hsla,
     pub muted: Hsla,
     pub muted_foreground: Hsla,
+    /// Tertiary text (descriptions, timestamps, axis labels): a step quieter
+    /// than `muted_foreground` that still clears 4.5:1 on every surface.
+    pub subtle_foreground: Hsla,
     pub destructive: Hsla,
     pub border: Hsla,
     pub input: Hsla,
     /// Border of text inputs, selects and outline buttons: a step stronger
     /// than `border` so controls read as interactive.
     pub input_border: Hsla,
+    /// Edge of outline buttons and the search trigger: quieter than
+    /// `input_border`, since their fill and shadow already mark them.
+    pub control_border: Hsla,
     pub ring: Hsla,
     pub background: Hsla,
     pub foreground: Hsla,
@@ -26,9 +32,7 @@ pub struct Palette {
     pub popover: Hsla,
     pub success: Hsla,
     pub warning: Hsla,
-    pub surface_0: Hsla,
     pub surface_1: Hsla,
-    pub surface_2: Hsla,
     pub surface_3: Hsla,
     pub surface_raised: Hsla,
     pub surface_window: Hsla,
@@ -61,11 +65,13 @@ impl Palette {
             primary: c(0x1b4ed8),
             primary_foreground: c(0xffffff),
             muted: c(0xf4f4f5),
-            muted_foreground: c(0x71717b),
-            destructive: c(0xfb2c36),
+            muted_foreground: c(0x52525b),
+            subtle_foreground: c(0x6b6b74),
+            destructive: c(0xdc2626),
             border: c(0xe4e4e7),
             input: c(0xffffff),
-            input_border: c(0xd4d4d8),
+            input_border: c(0x8e8e96),
+            control_border: c(0xc4c4ca),
             ring: c(0x1b4ed8),
             background: c(0xfcfcfc),
             foreground: c(0x18181b),
@@ -73,13 +79,11 @@ impl Palette {
             popover: c(0xffffff),
             success: c(0x007a55),
             warning: c(0xbb4d00),
-            surface_0: c(0xfcfcfc),
             surface_1: c(0xfafafa),
-            surface_2: c(0xffffff),
             surface_3: c(0xf4f4f5),
             surface_raised: c(0xebebed),
-            surface_window: c(0xfafafa),
-            settings_sidebar: c(0xfafafa),
+            surface_window: c(0xf5f5f6),
+            settings_sidebar: c(0xf4f4f5),
             border_subtle: c(0xe4e4e7),
             border_hover: c(0xd4d4d8),
             amber_border: c(0xfe9a00).opacity(0.3),
@@ -101,10 +105,12 @@ impl Palette {
             primary_foreground: c(0xffffff),
             muted: c(0x141414),
             muted_foreground: c(0xa1a1a1),
+            subtle_foreground: c(0x8b8b8b),
             destructive: c(0xfb414a),
             border: c(0xffffff).opacity(0.08),
             input: c(0x0a0a0a),
-            input_border: c(0xffffff).opacity(0.11),
+            input_border: c(0xffffff).opacity(0.3),
+            control_border: c(0xffffff).opacity(0.14),
             ring: c(0x346bf1),
             background: c(0x000000),
             foreground: c(0xf5f5f5),
@@ -112,9 +118,7 @@ impl Palette {
             popover: c(0x111111),
             success: c(0x00d492),
             warning: c(0xffb900),
-            surface_0: c(0x000000),
             surface_1: c(0x0a0a0a),
-            surface_2: c(0x111111),
             surface_3: c(0x141414),
             surface_raised: c(0x1e1e1e),
             surface_window: c(0x000000),
@@ -180,7 +184,13 @@ pub fn init(preference: ThemePreference, cx: &mut App) {
 /// the input caret near-black. Point the caret at this palette's text color.
 fn sync_component_theme(palette: &Palette, cx: &mut App) {
     let caret = palette.foreground;
-    gpui_kit::component::Theme::update(cx, |theme| theme.caret = caret);
+    // Input placeholders use the kit's muted color; ours clears 4.5:1 in
+    // both themes where the kit's default dark grey does not.
+    let placeholder = palette.muted_foreground;
+    gpui_kit::component::Theme::update(cx, |theme| {
+        theme.caret = caret;
+        theme.muted_foreground = placeholder;
+    });
 }
 
 /// Re-resolves the palette after a preference or system appearance change.
@@ -248,19 +258,24 @@ pub const FONT_MONO: &str = "JetBrainsMono Nerd Font Mono";
 /// - `BODY`: labels, navigation, buttons, inputs, list rows
 /// - `READING`: transcripts and other long-form content
 /// - `TITLE`: page, section and dialog titles
-/// - `DISPLAY`: hero titles
 /// - `FIGURE`: large numbers
 pub const TEXT_CAPTION: f32 = 11.;
 pub const TEXT_SMALL: f32 = 12.;
 pub const TEXT_BODY: f32 = 14.;
-pub const TEXT_READING: f32 = 15.5;
+pub const TEXT_READING: f32 = 15.;
 pub const TEXT_TITLE: f32 = 16.;
-pub const TEXT_DISPLAY: f32 = 24.;
 pub const TEXT_FIGURE: f32 = 34.;
+
+/// JetBrains Mono reads larger and heavier than SF at the same size, so
+/// code-like values set beside SF text drop a step: `MONO_SMALL` next to
+/// `SMALL` text, `MONO_BODY` in inputs and beside `BODY` text.
+pub const TEXT_MONO_CAPTION: f32 = 10.5;
+pub const TEXT_MONO_SMALL: f32 = 11.5;
+pub const TEXT_MONO_BODY: f32 = 13.;
 
 /// Line heights paired with the scale.
 pub const LINE_SMALL: f32 = 18.;
-pub const LINE_READING: f32 = 25.;
+pub const LINE_READING: f32 = 24.;
 pub const LINE_TITLE: f32 = 24.;
 
 /// Workspace geometry. These keep the top bar, sidebar rows and settings
@@ -270,6 +285,9 @@ pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 52.;
 pub const NAV_ROW_HEIGHT: f32 = 32.;
 /// Height of buttons, inputs and selects at their default size.
 pub const CONTROL_HEIGHT: f32 = 32.;
+/// Height of controls inside rows and cards: text fields, selects and small
+/// buttons, so a group's right edge never steps between rows.
+pub const ROW_CONTROL_HEIGHT: f32 = 28.;
 
 /// Corner radii. Every rounded surface picks one of these steps.
 ///
@@ -289,9 +307,16 @@ pub fn tabular_nums() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
 
+/// Every main-window page (Home, Insights, Upload, Dictionary) sits in one
+/// centered column of this width with the same side gutter and top inset,
+/// so content starts at the same x on every page.
+pub const PAGE_MAX_WIDTH: f32 = 960.;
+pub const PAGE_GUTTER: f32 = 32.;
+pub const PAGE_TOP: f32 = 24.;
+
 /// A comfortable long-form reading measure. The canvas may be wider, but
 /// transcripts and their metadata stay in one scan-friendly column.
-pub const READING_MAX_WIDTH: f32 = 736.;
+pub const READING_MAX_WIDTH: f32 = 620.;
 
 /// Motion durations, in ms. Five steps replace one-off timings:
 ///
@@ -305,6 +330,14 @@ pub const DUR_SNAP: u64 = 120;
 pub const DUR_BASE: u64 = 200;
 pub const DUR_SHEET: u64 = 300;
 pub const DUR_SLOW: u64 = 450;
+
+/// An enter or exit animation lasting `ms`, or effectively none when the
+/// user asked macOS to reduce motion. GPUI Base transitions already honor
+/// that setting; `with_animation` does not, so its callers go through here.
+pub fn motion(ms: u64, cx: &gpui_kit::App) -> gpui_kit::Animation {
+    let ms = if cx.reduce_motion() { 1 } else { ms };
+    gpui_kit::Animation::new(std::time::Duration::from_millis(ms))
+}
 
 /// Strong ease-out shared by enter motion.
 pub fn ease_out(t: f32) -> f32 {

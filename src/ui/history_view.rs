@@ -3,25 +3,32 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
-use chrono::{DateTime, Datelike, Local, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::db::TranscriptionItem;
-use crate::i18n::{self, Language, t};
+use crate::i18n::{self, Language, t, t_with};
 
 use crate::app_state::AppState;
 use crate::backend;
 
 use super::components::{
-    empty_state_icon, f32_tx, icon, kbd, retention_banner, shimmer_text, skeleton_line, spinner,
+    KeyboardFocusable, empty_state, f32_tx, icon, kbd, keyed_focus_handle, page_container,
+    retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
 };
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
-    PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, READING_MAX_WIDTH, TEXT_BODY,
-    TEXT_CAPTION, TEXT_READING, TEXT_SMALL, ease_out, ease_snap, progress, tabular_nums,
+    PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_CAPTION, TEXT_READING,
+    TEXT_SMALL, ease_out, ease_snap, motion, progress, tabular_nums,
 };
+
+/// Width of the clock column; fits "12:59 PM" so the text column never shifts.
+const TIME_COLUMN: f32 = 64.;
+/// The list stops where its reading column and row actions end, so the
+/// actions sit beside the text they act on rather than at the window edge.
+const LIST_MAX_WIDTH: f32 = TIME_COLUMN + READING_MAX_WIDTH + 144.;
 
 /// How long a new row stays tinted.
 const FLASH: Duration = Duration::from_millis(1600);
@@ -63,12 +70,21 @@ pub struct HistoryView {
     expanded: HashSet<i64>,
     retrying: HashSet<i64>,
     open_menu: Option<i64>,
-    hovering_list: bool,
     hovered_row: Option<i64>,
     pending: Option<PendingRow>,
     /// A row that just landed from Dictation; it reveals and tints briefly.
     arrived: Option<(i64, Instant)>,
+    /// A transcript removed from view whose deletion waits out the Undo
+    /// window; the database keeps it until then.
+    deleting: Option<i64>,
+    /// The row the arrow keys point at while the list has keyboard focus.
+    cursor: Option<i64>,
+    /// A row to scroll into view once it is laid out.
+    reveal_pending: Option<i64>,
 }
+
+/// How long a deleted transcript can be brought back.
+const UNDO_WINDOW: Duration = Duration::from_millis(6000);
 
 pub fn copy_with_toast(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -76,7 +92,7 @@ pub fn copy_with_toast(text: String, cx: &mut App) {
         Toast::new(t("controlPanel.history.copiedTitle"))
             .description(t("controlPanel.history.copiedDescription"))
             .variant(ToastVariant::Success)
-            .duration(Duration::from_millis(2000)),
+            .duration(Duration::from_millis(4000)),
         cx,
     );
 }
@@ -95,22 +111,12 @@ fn format_time(item: &TranscriptionItem) -> String {
 fn format_clock(time: DateTime<Local>) -> String {
     match i18n::language() {
         Language::ZhCn => time.format("%H:%M").to_string(),
-        Language::En => time.format("%I:%M %p").to_string(),
+        Language::En => time.format("%-I:%M %p").to_string(),
     }
 }
 
 pub fn format_date_group(date: NaiveDate) -> String {
-    let today = Local::now().date_naive();
-    if date == today {
-        return t("controlPanel.history.dateGroups.today");
-    }
-    if Some(date) == today.pred_opt() {
-        return t("controlPanel.history.dateGroups.yesterday");
-    }
-    match i18n::language() {
-        Language::ZhCn => format!("{}年{}月{}日", date.year(), date.month(), date.day()),
-        Language::En => date.format("%b %-d, %Y").to_string(),
-    }
+    super::format::day_label(date, Local::now().date_naive())
 }
 
 impl HistoryView {
@@ -137,10 +143,12 @@ impl HistoryView {
             expanded: HashSet::new(),
             retrying: HashSet::new(),
             open_menu: None,
-            hovering_list: false,
             hovered_row: None,
             pending: None,
             arrived: None,
+            deleting: None,
+            cursor: None,
+            reveal_pending: None,
         }
     }
 
@@ -210,39 +218,155 @@ impl HistoryView {
         }
     }
 
-    fn delete(id: i64, cx: &mut App) {
-        let mut request = DialogRequest::confirm(
-            t("controlPanel.history.deleteTitle"),
-            Some(t("controlPanel.history.deleteDescription").into()),
-            true,
-            move |_, cx| {
-                let result =
-                    AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
-                match result {
-                    Ok(true) => {}
-                    Ok(false) => show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.couldNotDeleteTitle"),
-                            Some(t("controlPanel.history.couldNotDeleteDescription").into()),
-                        ),
-                        cx,
-                    ),
-                    Err(_) => show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.couldNotDeleteTitle"),
-                            Some(t("controlPanel.history.couldNotDeleteDescriptionGeneric").into()),
-                        ),
-                        cx,
-                    ),
+    /// Removes a transcript from view at once and deletes it when the Undo
+    /// window closes, the way Dictionary removes a word. Clear History,
+    /// which cannot be undone, still asks first.
+    fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.commit_delete(cx);
+        self.deleting = Some(id);
+        if self.cursor == Some(id) {
+            self.cursor = None;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(UNDO_WINDOW).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.deleting == Some(id) {
+                    this.commit_delete(cx);
                 }
-            },
+            });
+        })
+        .detach();
+        let this = cx.weak_entity();
+        show_toast(
+            Toast::new(t("controlPanel.history.deletedTitle"))
+                .duration(UNDO_WINDOW)
+                .action(t("common.undo"), move |_, cx| {
+                    let _ = this.update(cx, |this, cx| {
+                        if this.deleting == Some(id) {
+                            this.deleting = None;
+                            cx.notify();
+                        }
+                    });
+                }),
+            cx,
         );
-        request.confirm_label = t("controlPanel.history.deleteItem").into();
-        show_dialog(request, cx);
+        cx.notify();
     }
 
-    fn clear_all(cx: &mut App) {
-        let request = DialogRequest::confirm(
+    /// Deletes the transcript waiting out its Undo window, if any.
+    fn commit_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.deleting.take() else {
+            return;
+        };
+        let result = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
+        let description = match result {
+            Ok(true) => return,
+            Ok(false) => t("controlPanel.history.couldNotDeleteDescription"),
+            Err(_) => t("controlPanel.history.couldNotDeleteDescriptionGeneric"),
+        };
+        show_dialog(
+            DialogRequest::alert(
+                t("controlPanel.history.couldNotDeleteTitle"),
+                Some(description.into()),
+            ),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Arrow keys move a row cursor through the list; Return copies the row,
+    /// Space shows its raw transcript, and ⌘⌫ deletes it.
+    fn on_list_key(&mut self, e: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let ids: Vec<i64> = AppState::global(cx)
+            .read(cx)
+            .history
+            .iter()
+            .map(|item| item.id)
+            .filter(|id| Some(*id) != self.deleting)
+            .collect();
+        if ids.is_empty() {
+            return;
+        }
+        let at = self.cursor.and_then(|c| ids.iter().position(|id| *id == c));
+        let key = e.keystroke.key.as_str();
+        let cmd = e.keystroke.modifiers.platform;
+        match key {
+            "down" | "up" if !keyed_focus_handle("history-list".into(), cx).is_focused(window) => {
+                // Arrows from a row's button hand focus back to the list.
+                let list = keyed_focus_handle("history-list".into(), cx);
+                window.focus(&list, cx);
+                self.cursor = self.cursor.or(ids.first().copied());
+                self.reveal_pending = self.cursor;
+            }
+            "down" => {
+                let next = at.map_or(0, |i| (i + 1).min(ids.len() - 1));
+                self.cursor = Some(ids[next]);
+                self.reveal_pending = self.cursor;
+            }
+            "up" => {
+                let prev = at.map_or(ids.len() - 1, |i| i.saturating_sub(1));
+                self.cursor = Some(ids[prev]);
+                self.reveal_pending = self.cursor;
+            }
+            "enter" => {
+                let Some(id) = self.cursor else { return };
+                let text = AppState::global(cx)
+                    .read(cx)
+                    .history
+                    .iter()
+                    .find(|item| item.id == id)
+                    .map(|item| item.text.clone());
+                if let Some(text) = text {
+                    copy_with_toast(text, cx);
+                }
+            }
+            "space" => {
+                let Some(id) = self.cursor else { return };
+                if !self.expanded.remove(&id) {
+                    self.expanded.insert(id);
+                }
+            }
+            "backspace" | "delete" if cmd => {
+                let Some(id) = self.cursor else { return };
+                // Keep the cursor in place on the next row.
+                let next = at.and_then(|i| {
+                    ids.get(i + 1)
+                        .or_else(|| i.checked_sub(1).and_then(|p| ids.get(p)))
+                });
+                let next = next.copied();
+                self.delete(id, cx);
+                self.cursor = next;
+            }
+            "escape" if self.cursor.is_some() => self.cursor = None,
+            _ => return,
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Scrolls just enough to show a row the keyboard moved to.
+    fn reveal_row(&mut self, row: Bounds<Pixels>) {
+        self.reveal_pending = None;
+        let view = self.scroll.bounds();
+        // Room for the top bar's fade above and a little air below.
+        let top = view.top() + px(40.);
+        let bottom = view.bottom() - px(16.);
+        let offset = self.scroll.offset();
+        let shift = if row.top() < top {
+            top - row.top()
+        } else if row.bottom() > bottom {
+            bottom - row.bottom()
+        } else {
+            return;
+        };
+        let to = (offset.y + shift).clamp(-self.scroll.max_offset().y, px(0.));
+        self.scroll.set_offset(point(offset.x, to));
+    }
+
+    /// Asks before removing every transcript, its audio and the Insights
+    /// counters. Reached from the top bar while Home shows.
+    pub fn clear_all(cx: &mut App) {
+        let mut request = DialogRequest::confirm(
             t("controlPanel.history.clearAllTitle"),
             Some(t("controlPanel.history.clearAllDescriptionDevice").into()),
             true,
@@ -252,7 +376,7 @@ impl HistoryView {
                     show_toast(
                         Toast::new(t("controlPanel.history.clearAllSuccess"))
                             .variant(ToastVariant::Success)
-                            .duration(Duration::from_millis(2000)),
+                            .duration(Duration::from_millis(4000)),
                         cx,
                     );
                 } else {
@@ -266,6 +390,7 @@ impl HistoryView {
                 }
             },
         );
+        request.confirm_label = t("controlPanel.history.clearHistoryConfirm").into();
         show_dialog(request, cx);
     }
 
@@ -341,6 +466,7 @@ impl HistoryView {
             .relative()
             .top(px(3. * (1. - reveal)))
             .opacity(reveal)
+            .max_w(px(READING_MAX_WIDTH))
             .font_family(FONT_VOICE)
             .text_size(px(TEXT_READING))
             .line_height(px(LINE_READING))
@@ -349,60 +475,81 @@ impl HistoryView {
             .into_any_element();
 
         // The toggle stays in place so the same click opens and closes the panel.
-        let raw_toggle = raw_text.as_ref().map(|raw| {
-            let copy_raw = raw.clone();
-            div()
-                .mt(px(4.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .id(("raw-toggle", id as usize))
-                        .h(px(24.))
-                        .ml(px(-6.))
-                        .px(px(6.))
-                        .flex()
-                        .items_center()
-                        .gap(px(4.))
-                        .rounded(px(RADIUS_MD))
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.muted_foreground)
-                        .cursor_pointer()
-                        .hover(|s| s.bg(p.hover_wash(0.06)).text_color(p.foreground))
-                        .child(t("controlPanel.history.rawTranscript"))
-                        .child(
-                            icon("chevron-down", 10., p.muted_foreground).with_transformation(
-                                Transformation::rotate(radians(
-                                    raw_progress * std::f32::consts::PI,
-                                )),
-                            ),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !this.expanded.remove(&id) {
-                                this.expanded.insert(id);
-                            }
-                            cx.notify();
-                        })),
-                )
-                .when(raw_progress > 0.001, |d| {
-                    d.child(
+        // The raw transcript opens from the row's actions; once open, its
+        // header here closes it again and copies it.
+        let has_raw = raw_text.is_some();
+        let raw_toggle = raw_text
+            .as_ref()
+            .filter(|_| raw_progress > 0.001)
+            .map(|raw| {
+                let copy_raw = raw.clone();
+                div()
+                    .mt(px(6.))
+                    .opacity(raw_progress)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
                         div()
-                            .id(("copy-raw", id as usize))
-                            .size(px(24.))
+                            .id(("raw-toggle", id as usize))
+                            .keyboard_focusable(
+                                ("history-raw", id as usize),
+                                Role::Button,
+                                t("controlPanel.history.rawTranscript"),
+                                cx,
+                            )
+                            .aria_expanded(expanded)
+                            .h(px(24.))
+                            .ml(px(-6.))
+                            .px(px(6.))
                             .flex()
                             .items_center()
-                            .justify_center()
+                            .gap(px(4.))
                             .rounded(px(RADIUS_MD))
-                            .opacity(raw_progress)
+                            .text_size(px(TEXT_SMALL))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(p.muted_foreground)
                             .cursor_pointer()
-                            .hover(|s| s.bg(p.hover_wash(0.06)))
-                            .child(icon("copy", 12., p.muted_foreground))
-                            .on_click(move |_, _, cx| copy_with_toast(copy_raw.clone(), cx)),
+                            .hover(|s| s.bg(p.hover_wash(0.06)).text_color(p.foreground))
+                            .child(t("controlPanel.history.rawTranscript"))
+                            .child(
+                                icon("chevron-down", 10., p.muted_foreground).with_transformation(
+                                    Transformation::rotate(radians(
+                                        raw_progress * std::f32::consts::PI,
+                                    )),
+                                ),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this.expanded.remove(&id) {
+                                    this.expanded.insert(id);
+                                }
+                                cx.notify();
+                            })),
                     )
-                })
-        });
+                    .when(raw_progress > 0.001, |d| {
+                        d.child(
+                            div()
+                                .id(("copy-raw", id as usize))
+                                .keyboard_focusable(
+                                    ("history-copy-raw", id as usize),
+                                    Role::Button,
+                                    t("controlPanel.history.copyRaw"),
+                                    cx,
+                                )
+                                .tooltip(text_tooltip(t("controlPanel.history.copyRaw")))
+                                .size(px(24.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(RADIUS_MD))
+                                .opacity(raw_progress)
+                                .cursor_pointer()
+                                .hover(|s| s.bg(p.hover_wash(0.06)))
+                                .child(icon("copy", 12., p.muted_foreground))
+                                .on_click(move |_, _, cx| copy_with_toast(copy_raw.clone(), cx)),
+                        )
+                    })
+            });
 
         let raw_section = raw_text.filter(|_| raw_progress > 0.001).map(|raw| {
             div()
@@ -417,14 +564,16 @@ impl HistoryView {
                         .font_family(FONT_VOICE)
                         .text_size(px(TEXT_BODY))
                         .line_height(px(20.))
-                        .text_color(p.muted_foreground.opacity(0.8))
+                        .text_color(p.subtle_foreground)
                         .child(raw),
                 )
         });
 
-        let action_btn = |id_str: &'static str, name: &'static str| {
+        let action_btn = |id_str: &'static str, name: &'static str, label: String, cx: &mut App| {
             div()
                 .id((id_str, id as usize))
+                .keyboard_focusable((id_str, id as usize), Role::Button, label.clone(), cx)
+                .tooltip(text_tooltip(label))
                 .size(px(28.))
                 .flex()
                 .items_center()
@@ -435,8 +584,15 @@ impl HistoryView {
                 .child(icon(name, 14., p.muted_foreground))
         };
 
-        // Row actions surface on hover in 120 ms and leave in 60 ms.
-        let actions_shown = menu_open || self.hovered_row == Some(id);
+        // Row actions surface on hover, or while one of them holds keyboard
+        // focus, in 120 ms and leave in 60 ms.
+        let focus_within = ["raw-row", "copy-row", "more-row"]
+            .iter()
+            .any(|key| keyed_focus_handle((*key, id as usize).into(), cx).is_focused(window));
+        let cursor_here = self.cursor == Some(id)
+            && keyed_focus_handle("history-list".into(), cx).contains_focused(window, cx);
+        let actions_shown =
+            menu_open || self.hovered_row == Some(id) || focus_within || cursor_here;
         let actions_t = f32_tx(
             ("row-actions", id as usize),
             if actions_shown { 1. } else { 0. },
@@ -456,8 +612,26 @@ impl HistoryView {
             .mt(px(-2.))
             .mr(px(-6.))
             .opacity(actions_t)
+            .when(has_raw, |d| {
+                let label = t(if expanded {
+                    "controlPanel.history.hideRaw"
+                } else {
+                    "controlPanel.history.showRaw"
+                });
+                d.child(
+                    action_btn("raw-row", "eye", label, cx)
+                        .aria_expanded(expanded)
+                        .when(expanded, |d| d.bg(p.hover_wash(0.08)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !this.expanded.remove(&id) {
+                                this.expanded.insert(id);
+                            }
+                            cx.notify();
+                        })),
+                )
+            })
             .child(
-                action_btn("copy-row", "copy")
+                action_btn("copy-row", "copy", t("controlPanel.history.copyText"), cx)
                     .on_click(move |_, _, cx| copy_with_toast(copy_text.clone(), cx)),
             )
             .child(
@@ -476,16 +650,17 @@ impl HistoryView {
                             ))
                             .into_any_element()
                     } else {
-                        action_btn("more-row", "more-vertical")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_menu = if this.open_menu == Some(id) {
-                                    None
-                                } else {
-                                    Some(id)
-                                };
-                                cx.notify();
-                            }))
-                            .into_any_element()
+                        action_btn(
+                            "more-row",
+                            "more-vertical",
+                            t("controlPanel.history.moreActions"),
+                            cx,
+                        )
+                        .aria_expanded(menu_open)
+                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                            this.toggle_menu(id, event.is_keyboard(), window, cx)
+                        }))
+                        .into_any_element()
                     })
                     .when(menu_open, |d| d.child(self.render_menu(item, cx))),
             );
@@ -507,8 +682,29 @@ impl HistoryView {
             .as_ref()
             .is_some_and(|s| s.id == id && s.center_pending);
         let this = cx.weak_entity();
+        let reveal = this.clone();
+        let row_wash = if p.dark {
+            p.white.opacity(0.04)
+        } else {
+            p.foreground.opacity(0.045)
+        };
         div()
             .id(("history-row", id as usize))
+            .role(Role::ListItem)
+            .aria_label(item.text.clone())
+            .when(cursor_here, |d| d.aria_active_descendant().bg(row_wash))
+            .when(self.reveal_pending == Some(id), |d| {
+                d.child(
+                    canvas(
+                        move |bounds, _, cx| {
+                            let _ = reveal.update(cx, |this, _| this.reveal_row(bounds));
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
             .relative()
             .when_some(landed, |d, f| d.bg(p.primary.opacity(f)))
             // The picked row keeps the palette's selection tint; the rest recede.
@@ -533,6 +729,15 @@ impl HistoryView {
                     .size_full(),
                 )
             })
+            // Right-click opens the same menu as the row's more button.
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, _, window, cx| {
+                    if this.open_menu != Some(id) {
+                        this.toggle_menu(id, false, window, cx);
+                    }
+                }),
+            )
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
                 if *hovered {
                     this.hovered_row = Some(id);
@@ -548,19 +753,20 @@ impl HistoryView {
             .py(px(10.))
             .hover(move |s| {
                 s.bg(if p.dark {
-                    p.white.opacity(0.03)
+                    p.white.opacity(0.04)
                 } else {
-                    p.foreground.opacity(0.025)
+                    p.foreground.opacity(0.045)
                 })
             })
             .child(
                 div()
-                    .w(px(56.))
+                    .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
+                    .text_right()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(format_time(item)),
             )
             .child(
@@ -588,17 +794,19 @@ impl HistoryView {
         div()
             .flex()
             .gap(px(12.))
-            .rounded(px(RADIUS_XL))
+            .rounded(px(RADIUS_LG))
             .px(px(12.))
             .py(px(10.))
             .overflow_hidden()
             .child(
                 div()
-                    .w(px(56.))
+                    .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
-                    .text_size(px(TEXT_CAPTION))
-                    .text_color(p.muted_foreground.opacity(0.65))
+                    .text_right()
+                    .text_size(px(TEXT_SMALL))
+                    .font_features(tabular_nums())
+                    .text_color(p.subtle_foreground)
                     .child(time),
             )
             .child(
@@ -630,7 +838,7 @@ impl HistoryView {
             )
             .with_animation(
                 "pending-in",
-                Animation::new(Duration::from_millis(DUR_SHEET)).with_easing(ease_snap),
+                motion(DUR_SHEET, cx).with_easing(ease_snap),
                 |d, t| d.opacity(t).max_h(px(96. * t)),
             )
             .into_any_element()
@@ -659,6 +867,47 @@ impl HistoryView {
                 arrived: false,
             });
         }
+    }
+
+    /// Opens or closes a row's menu. Opened from the keyboard, it focuses
+    /// its first item so arrows, Return and Escape work at once.
+    fn toggle_menu(
+        &mut self,
+        id: i64,
+        keyboard: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_menu = if self.open_menu == Some(id) {
+            None
+        } else {
+            Some(id)
+        };
+        if keyboard && self.open_menu.is_some() {
+            // Retry and Reveal need audio; Delete is always there.
+            let has_audio = AppState::global(cx)
+                .read(cx)
+                .history
+                .iter()
+                .any(|item| item.id == id && item.has_audio);
+            let first_action: usize = if has_audio { 0 } else { 2 };
+            let first = keyed_focus_handle(("history-menu-item", first_action).into(), cx);
+            window.on_next_frame(move |window, cx| window.focus(&first, cx));
+        }
+        cx.notify();
+    }
+
+    fn close_menu(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_menu = None;
+        // Hand focus back to the button that opened the menu.
+        let in_menu = (0..3usize).any(|action| {
+            keyed_focus_handle(("history-menu-item", action).into(), cx).is_focused(window)
+        });
+        if in_menu {
+            let more = keyed_focus_handle(("more-row", id as usize).into(), cx);
+            window.focus(&more, cx);
+        }
+        cx.notify();
     }
 
     fn render_menu(&self, item: &TranscriptionItem, cx: &mut Context<Self>) -> AnyElement {
@@ -703,6 +952,21 @@ impl HistoryView {
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.open_menu = None;
                 cx.notify();
+            }))
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
+                match e.keystroke.key.as_str() {
+                    "escape" => this.close_menu(id, window, cx),
+                    // Tab leaves the menu: close it so it never floats over
+                    // the page while focus is elsewhere.
+                    "tab" => {
+                        this.close_menu(id, window, cx);
+                        return;
+                    }
+                    "down" => window.focus_next(cx),
+                    "up" => window.focus_prev(cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
             }));
         for (icon_name, label, action, destructive) in entries {
             let color = if destructive {
@@ -713,6 +977,12 @@ impl HistoryView {
             menu = menu.child(
                 div()
                     .id(("row-menu-item", action as usize))
+                    .keyboard_focusable(
+                        ("history-menu-item", action as usize),
+                        Role::MenuItem,
+                        label.clone(),
+                        cx,
+                    )
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -733,12 +1003,12 @@ impl HistoryView {
                     })
                     .child(icon(icon_name, 14., color.opacity(0.7)))
                     .child(label)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_menu = None;
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_menu(id, window, cx);
                         match action {
                             0 => this.retry(id, cx),
                             1 => Self::show_in_folder(id, cx),
-                            _ => Self::delete(id, cx),
+                            _ => this.delete(id, cx),
                         }
                         cx.notify();
                     })),
@@ -791,8 +1061,13 @@ impl Render for HistoryView {
             );
         }
 
+        // A transcript waiting out its Undo window is already gone here.
+        let history: Vec<TranscriptionItem> = history
+            .into_iter()
+            .filter(|item| Some(item.id) != self.deleting)
+            .collect();
         if history.is_empty() && pending.is_none() {
-            content = content.child(render_empty_with_hotkey(&hotkey, &p));
+            content = content.child(render_empty_with_hotkey(&hotkey, retention, &p));
         } else {
             // Group consecutive rows by local day.
             let mut groups: Vec<(String, Vec<TranscriptionItem>)> = Vec::new();
@@ -810,17 +1085,23 @@ impl Render for HistoryView {
             if pending.is_some() && groups.first().is_none_or(|(label, _)| *label != today) {
                 groups.insert(0, (today, Vec::new()));
             }
-            let mut list =
-                div()
-                    .id("history-list")
-                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                        this.hovering_list = *hovered;
-                        cx.notify();
-                    }));
-            let show_controls = self.hovering_list;
+            let list_focus = keyed_focus_handle("history-list".into(), cx);
+            let mut list = div()
+                .id("history-list")
+                .track_focus(&list_focus.tab_stop(true))
+                .role(Role::List)
+                .aria_label(t("sidebar.home"))
+                .on_key_down(cx.listener(Self::on_list_key));
             for (index, (label, items)) in groups.into_iter().enumerate() {
-                // Day label, a hairline to the edge, then the day's count.
-                let mut header = div()
+                // Day label with its count beside it, then a hairline to the edge.
+                let count = items.len();
+                let header = div()
+                    .id(SharedString::from(format!("history-day-{index}")))
+                    .role(Role::Heading)
+                    .aria_label(t_with(
+                        "controlPanel.history.dayCount",
+                        &[("day", &label), ("count", &count.to_string())],
+                    ))
                     .relative()
                     .flex()
                     .items_center()
@@ -829,50 +1110,39 @@ impl Render for HistoryView {
                     .mb(px(4.))
                     .bg(p.background)
                     .text_size(px(TEXT_SMALL))
-                    .font_weight(FontWeight::MEDIUM)
+                    .font_weight(FontWeight::SEMIBOLD)
                     .text_color(p.muted_foreground)
-                    .child(div().flex_none().child(label))
-                    .child(div().h(px(1.)).flex_1().bg(p.border.opacity(0.5)))
+                    .child(div().flex_none().child(label.clone()))
+                    // The count is a quiet badge, so "Nov 3 6" never reads as
+                    // part of the date.
                     .child(
                         div()
                             .flex_none()
+                            .px(px(6.))
+                            .rounded_full()
+                            .bg(p.hover_wash(if p.dark { 0.08 } else { 0.06 }))
+                            .text_size(px(TEXT_CAPTION))
+                            .line_height(px(16.))
+                            .font_weight(FontWeight::MEDIUM)
                             .font_features(tabular_nums())
-                            .text_color(p.muted_foreground.opacity(0.8))
-                            .child(items.len().to_string()),
-                    );
-                if index == 0 {
-                    header = header.child(
+                            .text_color(p.muted_foreground)
+                            .child(count.to_string()),
+                    )
+                    .child(
                         div()
-                            .absolute()
-                            .right(px(0.))
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .pl(px(8.))
-                            .bg(p.background)
-                            .opacity(if show_controls { 1. } else { 0. })
-                            .child(
-                                div()
-                                    .id("clear-all")
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .px(px(6.))
-                                    .py(px(2.))
-                                    .rounded(px(RADIUS_SM))
-                                    .text_size(px(TEXT_SMALL))
-                                    .text_color(p.muted_foreground)
-                                    .cursor_pointer()
-                                    .hover(move |s| {
-                                        s.text_color(p.destructive).bg(p.destructive.opacity(0.08))
-                                    })
-                                    .child(icon("trash2", 12., p.muted_foreground))
-                                    .child(t("controlPanel.history.clearAll"))
-                                    .on_click(|_, _, cx| Self::clear_all(cx)),
-                            ),
+                            .ml(px(4.))
+                            .h(px(1.))
+                            .flex_1()
+                            .bg(p.border.opacity(0.5)),
                     );
-                }
-                let mut rows = div().flex().flex_col().gap(px(2.)).mx(px(-12.));
+                // Rows stop where the reading column and its actions end,
+                // so actions sit beside the text; day headers span the page.
+                let mut rows = div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .mx(px(-12.))
+                    .max_w(px(LIST_MAX_WIDTH + 24.));
                 if index == 0
                     && let Some(since) = pending
                 {
@@ -891,9 +1161,7 @@ impl Render for HistoryView {
             content = content.child(list);
         }
 
-        div()
-            .px(px(24.))
-            .pt(px(16.))
+        page_container()
             .pb(px(48.))
             .when(spotlit, |d| {
                 d.on_mouse_down(
@@ -901,13 +1169,7 @@ impl Render for HistoryView {
                     cx.listener(|this, _, _, cx| this.release_spotlight(cx)),
                 )
             })
-            .child(
-                div()
-                    .mx_auto()
-                    .max_w(px(READING_MAX_WIDTH))
-                    .flex()
-                    .child(content),
-            )
+            .child(div().flex().child(content))
     }
 }
 
@@ -923,7 +1185,7 @@ fn spotlight_level(elapsed: Duration, reduce_motion: bool) -> f32 {
     fade_in * (1. - fade_out)
 }
 
-fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
+fn render_empty_with_hotkey(hotkey: &str, retention: bool, p: &Palette) -> AnyElement {
     let mut keys = div().flex().items_center().gap(px(4.));
     for (i, key) in crate::text::hotkeys::parse_hotkey_list(hotkey)
         .iter()
@@ -937,10 +1199,17 @@ fn render_empty_with_hotkey(hotkey: &str, p: &Palette) -> AnyElement {
             p,
         ));
     }
-    empty_card(keys, p)
+    empty_card(keys, retention, p)
 }
 
-fn empty_card(keys: Div, p: &Palette) -> AnyElement {
+/// With History off, the empty state says why nothing will appear rather
+/// than promising that transcripts will.
+fn empty_card(keys: Div, retention: bool, p: &Palette) -> AnyElement {
+    let body = t(if retention {
+        "controlPanel.history.emptyDescription"
+    } else {
+        "controlPanel.history.emptyDescriptionOff"
+    });
     div()
         .flex()
         .flex_col()
@@ -948,26 +1217,7 @@ fn empty_card(keys: Div, p: &Palette) -> AnyElement {
         .min_h(px(256.))
         .px(px(40.))
         .py(px(48.))
-        .child(empty_state_icon("mic", p))
-        .child(
-            div()
-                .mt(px(16.))
-                .text_size(px(17.))
-                .line_height(px(24.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(p.foreground)
-                .child(t("controlPanel.history.empty")),
-        )
-        .child(
-            div()
-                .mt(px(4.))
-                .max_w(px(320.))
-                .text_center()
-                .text_size(px(13.))
-                .line_height(px(18.))
-                .text_color(p.muted_foreground)
-                .child(t("controlPanel.history.emptyDescription")),
-        )
+        .child(empty_state("mic", t("controlPanel.history.empty"), body, p))
         .child(
             div()
                 .mt(px(20.))

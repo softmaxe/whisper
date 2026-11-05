@@ -8,10 +8,16 @@ use std::time::{Duration, Instant};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{Button, ButtonVariant, backdrop, dialog_shadow, icon};
+use gpui_kit::base::FocusTrapElement;
+
+use super::components::{
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, focus_ring,
+    icon, keyed_focus_handle, text_tooltip,
+};
 use super::theme::{
-    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_2XL, RADIUS_LG,
-    RADIUS_SM, TEXT_BODY, TEXT_SMALL, ease_out, ease_snap,
+    DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
+    RADIUS_LG, RADIUS_SM, TEXT_BODY, TEXT_MONO_SMALL, TEXT_SMALL, TEXT_TITLE, ease_out, ease_snap,
+    motion,
 };
 
 pub type Callback = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -70,6 +76,8 @@ pub struct Toast {
     pub variant: ToastVariant,
     /// `None` uses the defaults: 6 s for destructive, else 3.5 s.
     pub duration: Option<Duration>,
+    /// One inline action, such as Undo. Running it also closes the toast.
+    pub action: Option<(SharedString, Callback)>,
 }
 
 impl Toast {
@@ -79,7 +87,17 @@ impl Toast {
             description: None,
             variant: ToastVariant::Default,
             duration: None,
+            action: None,
         }
+    }
+
+    pub fn action(
+        mut self,
+        label: impl Into<SharedString>,
+        f: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.action = Some((label.into(), Rc::new(f)));
+        self
     }
 
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
@@ -103,12 +121,38 @@ struct ActiveToast {
     toast: Toast,
     /// The toast's duration with the variant default applied.
     duration: Duration,
-    shown_at: Instant,
+    /// Time shown before the current run of the countdown.
+    banked: Duration,
+    /// When the countdown last resumed; `None` while the pointer rests on
+    /// the toast, so a message being read never disappears under it.
+    running_since: Option<Instant>,
+    /// Paused because its close button holds keyboard focus.
+    held_by_focus: bool,
     closing: bool,
+}
+
+impl ActiveToast {
+    fn elapsed(&self) -> Duration {
+        self.banked + self.running_since.map_or(Duration::ZERO, |t| t.elapsed())
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        match (paused, self.running_since) {
+            (true, Some(since)) => {
+                self.banked += since.elapsed();
+                self.running_since = None;
+            }
+            (false, None) => self.running_since = Some(Instant::now()),
+            _ => {}
+        }
+    }
 }
 
 pub struct Overlays {
     dialog: Option<DialogRequest>,
+    /// Set when a dialog opens; its first render moves focus to the safe
+    /// button so Return and Escape act on the dialog, not the page behind.
+    dialog_needs_focus: bool,
     /// A view-specific modal (snippet editor, command search), drawn under dialogs.
     custom: Option<AnyView>,
     toasts: Vec<ActiveToast>,
@@ -122,6 +166,7 @@ impl Overlays {
     pub fn init(cx: &mut App) {
         let entity = cx.new(|_| Overlays {
             dialog: None,
+            dialog_needs_focus: false,
             custom: None,
             toasts: Vec::new(),
             next_id: 0,
@@ -181,6 +226,7 @@ impl Overlays {
 pub fn show_dialog(request: DialogRequest, cx: &mut App) {
     Overlays::global(cx).update(cx, |o, cx| {
         o.dialog = Some(request);
+        o.dialog_needs_focus = true;
         cx.notify();
     });
 }
@@ -202,9 +248,11 @@ pub fn modal_frame(
     width: f32,
     content: impl IntoElement,
     on_dismiss: impl Fn(&mut Window, &mut App) + 'static,
-    cx: &App,
+    cx: &mut App,
 ) -> Stateful<Div> {
     let p = cx.palette();
+    let trap = keyed_focus_handle(SharedString::from(format!("{id}-trap")).into(), cx);
+    let close = close_button("modal-close", &p, cx);
     let on_dismiss = Rc::new(on_dismiss);
     let dismiss = on_dismiss.clone();
     div()
@@ -231,13 +279,11 @@ pub fn modal_frame(
                 .shadow(dialog_shadow(&p))
                 .on_click(|_, _, cx| cx.stop_propagation())
                 .child(content)
-                .child(
-                    close_button("modal-close", &p)
-                        .on_click(move |_, window, cx| on_dismiss(window, cx)),
-                )
+                .child(close.on_click(move |_, window, cx| on_dismiss(window, cx)))
+                .focus_trap(SharedString::from(format!("{id}-focus-trap")), &trap)
                 .with_animation(
                     "modal-in",
-                    Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                    motion(DUR_BASE, cx).with_easing(ease_out),
                     |d, t| d.opacity(t).mt(px(8. * (1. - t))),
                 ),
         )
@@ -258,7 +304,9 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
             id,
             toast,
             duration,
-            shown_at: Instant::now(),
+            banked: Duration::ZERO,
+            running_since: Some(Instant::now()),
+            held_by_focus: false,
             closing: false,
         });
         // Keep the toast stack short.
@@ -266,19 +314,27 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
             o.toasts.remove(0);
         }
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(duration).await;
-            let _ = this.update(cx, |this, cx| this.dismiss_toast(id, cx));
-        })
-        .detach();
     });
 }
 
 /// Renders the dialog backdrop and card, or nothing.
-pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
+pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
     let request = overlays.read(cx).dialog.clone()?;
     let p = cx.palette();
+    if overlays.read(cx).dialog_needs_focus {
+        overlays.update(cx, |o, _| o.dialog_needs_focus = false);
+        // Destructive dialogs start on Cancel, as macOS alerts do, so a stray
+        // Return never deletes anything.
+        let key = if request.destructive && request.cancel_label.is_some() {
+            "dialog-cancel"
+        } else {
+            "dialog-confirm"
+        };
+        let handle = keyed_focus_handle(key.into(), cx);
+        window.on_next_frame(move |window, cx| window.focus(&handle, cx));
+    }
+    let trap = keyed_focus_handle("dialog-trap".into(), cx);
     let close = {
         let overlays = overlays.clone();
         move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
@@ -317,9 +373,9 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
                 .p(px(24.))
                 .child(
                     div()
-                        .text_size(px(20.))
+                        .text_size(px(TEXT_TITLE))
                         .font_weight(FontWeight::SEMIBOLD)
-                        .line_height(px(24.))
+                        .line_height(px(LINE_TITLE))
                         .text_color(p.foreground)
                         .pr(px(28.))
                         .child(request.title.clone()),
@@ -367,10 +423,11 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
                         .on_click(confirm),
                 ),
         )
-        .child(close_button("dialog-close", &p).on_click(close.clone()))
+        .child(close_button("dialog-close", &p, cx).on_click(close.clone()))
+        .focus_trap("dialog-focus-trap", &trap)
         .with_animation(
             "dialog-in",
-            Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+            motion(DUR_BASE, cx).with_easing(ease_out),
             |d, t| d.opacity(t).mt(px(6. * (1. - t))),
         );
 
@@ -388,7 +445,7 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
             .child(card)
             .with_animation(
                 "dialog-backdrop-in",
-                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                motion(DUR_BASE, cx).with_easing(ease_out),
                 |d, t| d.opacity(t),
             )
             .into_any_element(),
@@ -396,10 +453,12 @@ pub fn render_dialog(cx: &mut App) -> Option<AnyElement> {
 }
 
 /// A 28 px ghost close button pinned to a card's top-right corner.
-fn close_button(id: &'static str, p: &super::theme::Palette) -> Stateful<Div> {
+fn close_button(id: &'static str, p: &super::theme::Palette, cx: &mut App) -> Stateful<Div> {
     let hover = p.hover_wash(if p.dark { 0.06 } else { 0.05 });
     div()
         .id(id)
+        .keyboard_focusable(id, Role::Button, crate::i18n::t("common.close"), cx)
+        .tooltip(text_tooltip(crate::i18n::t("common.close")))
         .absolute()
         .top(px(14.))
         .right(px(14.))
@@ -417,12 +476,53 @@ fn close_button(id: &'static str, p: &super::theme::Palette) -> Stateful<Div> {
 /// with a colored type icon, a hover close button and a 1 px countdown.
 pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
+    // Expired toasts leave from here; the countdown pauses while hovered.
+    let expired: Vec<u64> = overlays
+        .read(cx)
+        .toasts
+        .iter()
+        .filter(|t| !t.closing && t.elapsed() >= t.duration)
+        .map(|t| t.id)
+        .collect();
+    if !expired.is_empty() {
+        let overlays = overlays.clone();
+        cx.defer(move |cx| {
+            overlays.update(cx, |o, cx| {
+                for id in expired {
+                    o.dismiss_toast(id, cx);
+                }
+            })
+        });
+    }
+    // Close-button focus handles, fetched before the toasts are borrowed.
+    let ids: Vec<u64> = overlays.read(cx).toasts.iter().map(|t| t.id).collect();
+    let close_handles: Vec<FocusHandle> = ids
+        .iter()
+        .map(|id| keyed_focus_handle(("toast-close", *id as usize).into(), cx))
+        .collect();
+    let close_label = crate::i18n::t("common.close");
+    // A focused close button holds its toast, as a resting pointer does.
+    let focused: Vec<bool> = close_handles.iter().map(|h| h.is_focused(window)).collect();
+    overlays.update(cx, |o, _| {
+        for (t, focused) in o.toasts.iter_mut().zip(&focused) {
+            if *focused && !t.held_by_focus {
+                t.held_by_focus = true;
+                t.set_paused(true);
+            } else if !*focused && t.held_by_focus {
+                t.held_by_focus = false;
+                t.set_paused(false);
+            }
+        }
+    });
     let o = overlays.read(cx);
     if o.toasts.is_empty() {
         return None;
     }
     let p = cx.palette();
+    // A polite live region, so VoiceOver reads each toast as it arrives.
     let mut stack = div()
+        .id("toast-stack")
+        .role(Role::Status)
         .absolute()
         .bottom(px(24.))
         .right(px(24.))
@@ -430,7 +530,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         .flex_col()
         .gap(px(8.))
         .w(px(360.));
-    for active in &o.toasts {
+    for (active, close_handle) in o.toasts.iter().zip(close_handles) {
         let id = active.id;
         let toast = &active.toast;
         let (type_icon, progress) = match toast.variant {
@@ -441,7 +541,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                 p.destructive.opacity(0.35),
             ),
         };
-        let elapsed = active.shown_at.elapsed().as_secs_f32();
+        let elapsed = active.elapsed().as_secs_f32();
         let total = active.duration.as_secs_f32();
         let remaining = (1. - elapsed / total).clamp(0., 1.);
         let (message, detail) = match &toast.description {
@@ -451,11 +551,22 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         };
         let destructive = toast.variant == ToastVariant::Destructive;
         let overlays_close = overlays.clone();
+        let overlays_hover = overlays.clone();
         let group: SharedString = format!("toast-{id}").into();
         let close_hover = p.hover_wash(0.08);
+        let close_focused = close_handle.is_focused(window);
         let card = div()
             .id(("toast", id as usize))
             .group(group.clone())
+            .on_hover(move |hovered: &bool, _, cx| {
+                let paused = *hovered;
+                overlays_hover.update(cx, |o, cx| {
+                    if let Some(t) = o.toasts.iter_mut().find(|t| t.id == id) {
+                        t.set_paused(paused);
+                        cx.notify();
+                    }
+                });
+            })
             .occlude()
             .relative()
             .flex()
@@ -502,7 +613,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                                     .rounded(px(RADIUS_SM))
                                     .bg(p.destructive.opacity(if p.dark { 0.12 } else { 0.06 }))
                                     .font_family(FONT_MONO)
-                                    .text_size(px(TEXT_SMALL))
+                                    .text_size(px(TEXT_MONO_SMALL))
                                     .line_height(px(LINE_SMALL))
                                     .text_color(p.destructive)
                                     .child(detail),
@@ -519,18 +630,39 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                         }
                     }),
             )
+            .when_some(toast.action.clone(), |d, (label, f)| {
+                let overlays = overlays.clone();
+                d.child(
+                    div().mr(px(20.)).flex_none().child(
+                        Button::new(("toast-action", id as usize))
+                            .label(label)
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(move |_, window, cx| {
+                                overlays.update(cx, |o, cx| o.dismiss_toast(id, cx));
+                                f(window, cx);
+                            }),
+                    ),
+                )
+            })
             .child(
                 div()
-                    .id("toast-close")
+                    .id(("toast-close", id as usize))
+                    .track_focus(&close_handle.tab_stop(true))
+                    .role(Role::Button)
+                    .aria_label(close_label.clone())
+                    .focus_visible(move |s| s.shadow(focus_ring(&p)))
                     .absolute()
-                    .top(px(8.))
-                    .right(px(8.))
-                    .size(px(24.))
+                    .top(px(6.))
+                    .right(px(6.))
+                    .size(px(28.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(RADIUS_SM))
-                    .opacity(0.)
+                    // Hidden until the toast is hovered or the button holds
+                    // keyboard focus.
+                    .opacity(if close_focused { 1. } else { 0. })
                     .group_hover(group, |s| s.opacity(1.))
                     .hover(move |s| s.bg(close_hover))
                     .cursor_pointer()
@@ -551,12 +683,11 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let closing = active.closing;
         let card = card.with_animation(
             ("toast-anim", id as usize * 2 + closing as usize),
-            Animation::new(Duration::from_millis(if closing {
-                DUR_SNAP
+            motion(if closing { DUR_SNAP } else { DUR_SHEET }, cx).with_easing(if closing {
+                ease_snap
             } else {
-                DUR_SHEET
-            }))
-            .with_easing(if closing { ease_snap } else { ease_out }),
+                ease_out
+            }),
             // Slides in from the edge; leaves quickly with only a nudge.
             move |d, t| {
                 if closing {

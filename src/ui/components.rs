@@ -7,9 +7,10 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::theme::{
-    CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE,
-    NAV_ROW_HEIGHT, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, TEXT_BODY,
-    TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
+    CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, LINE_SMALL, LINE_TITLE, NAV_ROW_HEIGHT,
+    PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
+    RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css,
+    ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -19,6 +20,94 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
         .flex_none()
         .text_color(color)
 }
+
+/// The keyboard focus ring: a 2 px ring color band just inside the
+/// element's edge, following its corners, shown only when focus arrived
+/// from the keyboard. It is inset because GPUI paints an outer shadow as a
+/// filled shape under the element, which would flood a transparent control.
+pub fn focus_ring(p: &Palette) -> Vec<BoxShadow> {
+    vec![BoxShadow {
+        color: p.ring.opacity(if p.dark { 0.9 } else { 0.75 }),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(2.),
+        inset: true,
+    }]
+}
+
+/// The focus ring for opaque filled controls (accent buttons, an on
+/// switch): a ring color halo just outside the edge, parted from the fill
+/// by a 1 px gap in the canvas color, as macOS draws it. An outer shadow is
+/// safe here because the opaque fill hides the part GPUI paints beneath.
+pub fn focus_ring_on_fill(p: &Palette) -> Vec<BoxShadow> {
+    let ring = |color: Hsla, spread: f32| BoxShadow {
+        color,
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: px(spread),
+        inset: false,
+    };
+    vec![
+        ring(p.ring.opacity(if p.dark { 0.9 } else { 0.8 }), 3.),
+        ring(p.background, 1.),
+    ]
+}
+
+/// Focus handles of [`KeyboardFocusable`] elements, by key. Kept app-wide so
+/// render helpers that only hold an `App` can make elements focusable.
+#[derive(Default)]
+struct FocusHandles(std::collections::HashMap<ElementId, FocusHandle>);
+
+impl Global for FocusHandles {}
+
+/// The focus handle stored under `key`, created on first use.
+pub fn keyed_focus_handle(key: ElementId, cx: &mut App) -> FocusHandle {
+    if let Some(handle) = cx.default_global::<FocusHandles>().0.get(&key) {
+        return handle.clone();
+    }
+    let handle = cx.focus_handle();
+    cx.global_mut::<FocusHandles>()
+        .0
+        .insert(key, handle.clone());
+    handle
+}
+
+/// Makes a clickable element reachable with Tab, activatable with Return or
+/// Space (GPUI turns those into clicks on the focused element), named for
+/// VoiceOver, and ringed while keyboard-focused. `key` must be unique in the
+/// app.
+pub trait KeyboardFocusable: StatefulInteractiveElement + Sized {
+    fn keyboard_focusable(
+        self,
+        key: impl Into<ElementId>,
+        role: Role,
+        label: impl Into<SharedString>,
+        cx: &mut App,
+    ) -> Self {
+        let ring = focus_ring(&cx.palette());
+        self.keyboard_focusable_with_ring(key, role, label, ring, cx)
+    }
+
+    /// As [`keyboard_focusable`](Self::keyboard_focusable), with a caller's
+    /// ring: filled accent controls use [`focus_ring_on_fill`], since an
+    /// accent ring disappears on an accent fill.
+    fn keyboard_focusable_with_ring(
+        self,
+        key: impl Into<ElementId>,
+        role: Role,
+        label: impl Into<SharedString>,
+        ring: Vec<BoxShadow>,
+        cx: &mut App,
+    ) -> Self {
+        let handle = keyed_focus_handle(key.into(), cx);
+        self.track_focus(&handle.tab_stop(true))
+            .role(role)
+            .aria_label(label)
+            .focus_visible(move |s| s.shadow(ring))
+    }
+}
+
+impl<T: StatefulInteractiveElement + Sized> KeyboardFocusable for T {}
 
 /// A color transition keyed by `id`, 150 ms ease by default.
 pub fn color_tx(
@@ -54,12 +143,14 @@ pub fn f32_tx(
     )
 }
 
-/// Pill switch: 30×18 track, 14 px knob, 120 ms slide.
+/// Pill switch: 36×20 track (close to the macOS regular switch), 16 px
+/// knob, 120 ms slide.
 #[derive(IntoElement)]
 pub struct Toggle {
     id: ElementId,
     checked: bool,
     disabled: bool,
+    label: Option<SharedString>,
     on_change: Option<Box<dyn Fn(bool, &mut Window, &mut App) + 'static>>,
 }
 
@@ -69,12 +160,19 @@ impl Toggle {
             id: id.into(),
             checked,
             disabled: false,
+            label: None,
             on_change: None,
         }
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+
+    /// The name VoiceOver reads; usually the settings row's label.
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
         self
     }
 
@@ -96,34 +194,69 @@ impl RenderOnce for Toggle {
             }
         } else if self.checked {
             p.primary
+        } else if p.dark {
+            p.white.opacity(0.22)
         } else {
-            p.input_border
+            p.foreground.opacity(0.2)
         };
         let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
             (id.clone(), "knob"),
-            if self.checked { 14.0 } else { 2.0 },
+            if self.checked { 18.0 } else { 2.0 },
             DUR_SNAP,
             ease_css,
             window,
             cx,
         );
+        // The knob stays light in both themes, like the macOS switch, so the
+        // off state reads as a control and not an empty slot.
         let knob = if self.disabled {
             p.muted_foreground.opacity(0.5)
+        } else if p.dark {
+            p.foreground
         } else {
-            p.background
+            p.white
         };
         let checked = self.checked;
         let disabled = self.disabled;
         let on_change = self.on_change;
+        let label = self.label.unwrap_or_default();
         div()
-            .id(id)
+            .id(id.clone())
+            .when(!disabled, |d| {
+                let ring = if checked {
+                    focus_ring_on_fill(&p)
+                } else {
+                    focus_ring(&p)
+                };
+                d.keyboard_focusable_with_ring(id.clone(), Role::Switch, label, ring, cx)
+                    .aria_toggled(if checked {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    })
+            })
             .relative()
             .flex_none()
-            .w(px(30.))
-            .h(px(18.))
+            .w(px(36.))
+            .h(px(20.))
             .rounded_full()
             .bg(track)
+            // An off track is pale against its card; an inner edge keeps
+            // its outline at about 3:1, as WCAG 1.4.11 asks.
+            .when(!checked && !disabled, |d| {
+                d.shadow(vec![BoxShadow {
+                    color: if p.dark {
+                        p.white.opacity(0.32)
+                    } else {
+                        p.foreground.opacity(0.4)
+                    },
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(1.),
+                    inset: true,
+                }])
+            })
             .when(disabled, |d| d.opacity(0.5))
             .when(!disabled, |d| d.cursor_pointer())
             .child(
@@ -131,10 +264,21 @@ impl RenderOnce for Toggle {
                     .absolute()
                     .top(px(2.))
                     .left(px(knob_x))
-                    .size(px(14.))
+                    .size(px(16.))
                     .rounded_full()
                     .bg(knob)
-                    .when(!disabled, |d| d.shadow(vec![drop(0., 1., 2., 0.1)])),
+                    .when(!disabled, |d| {
+                        d.shadow(vec![
+                            drop(0., 1., 3., if p.dark { 0.3 } else { 0.25 }),
+                            BoxShadow {
+                                color: hsla(0., 0., 0., 0.12),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(0.5),
+                                inset: false,
+                            },
+                        ])
+                    }),
             )
             .when_some(on_change.filter(|_| !disabled), |d, f| {
                 d.on_click(move |_, window, cx| f(!checked, window, cx))
@@ -168,6 +312,7 @@ pub struct Button {
     size: ButtonSize,
     disabled: bool,
     full_width: bool,
+    aria_label: Option<SharedString>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
 
@@ -181,6 +326,7 @@ impl Button {
             size: ButtonSize::Default,
             disabled: false,
             full_width: false,
+            aria_label: None,
             on_click: None,
         }
     }
@@ -212,6 +358,12 @@ impl Button {
 
     pub fn full_width(mut self) -> Self {
         self.full_width = true;
+        self
+    }
+
+    /// The VoiceOver name of an icon-only button.
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
         self
     }
 
@@ -251,7 +403,7 @@ impl RenderOnce for Button {
         let p = cx.palette();
         let (height, pad_x, text) = match self.size {
             ButtonSize::Default => (CONTROL_HEIGHT, 12., TEXT_BODY),
-            ButtonSize::Sm => (28., 10., TEXT_SMALL),
+            ButtonSize::Sm => (ROW_CONTROL_HEIGHT, 10., TEXT_SMALL),
         };
         let style = variant_style(&p, self.variant);
         let disabled = self.disabled;
@@ -275,8 +427,25 @@ impl RenderOnce for Button {
         if depth > 0.01 && style.bg.is_some() {
             shadows.push(inset(0., 1., 0., hsla(0., 0., 0., 0.08 * depth)));
         }
+        let name = self
+            .aria_label
+            .clone()
+            .or_else(|| self.label.clone())
+            .unwrap_or_default();
         let mut el = div()
-            .id(self.id)
+            .id(self.id.clone())
+            .when(!disabled, |d| {
+                let filled = matches!(
+                    self.variant,
+                    ButtonVariant::Primary | ButtonVariant::Destructive
+                );
+                let ring = if filled {
+                    focus_ring_on_fill(&p)
+                } else {
+                    focus_ring(&p)
+                };
+                d.keyboard_focusable_with_ring(self.id.clone(), Role::Button, name, ring, cx)
+            })
             .flex()
             .flex_none()
             .items_center()
@@ -298,7 +467,7 @@ impl RenderOnce for Button {
             el = el.bg(bg);
         }
         if disabled {
-            el = el.opacity(0.64);
+            el = el.opacity(0.45);
         } else {
             el = el.cursor_pointer();
             if let Some(hover_bg) = style.hover_bg {
@@ -319,10 +488,17 @@ impl RenderOnce for Button {
                     set_pressed(&up_out, false, cx)
                 });
         }
-        el.when_some(self.icon, |d, (name, size)| {
-            d.child(icon(name, size, style.icon))
-        })
-        .when_some(self.label, |d, label| d.child(label))
+        // An icon-only button shows its name as a tooltip as well.
+        let tip = self
+            .label
+            .is_none()
+            .then(|| self.aria_label.clone())
+            .flatten();
+        el.when_some(tip, |d, tip| d.tooltip(text_tooltip(tip)))
+            .when_some(self.icon, |d, (name, size)| {
+                d.child(icon(name, size, style.icon))
+            })
+            .when_some(self.label, |d, label| d.child(label))
     }
 }
 
@@ -351,7 +527,7 @@ pub fn inset(x: f32, y: f32, blur: f32, color: Hsla) -> BoxShadow {
 /// Elevation of dialogs, the settings sheet and the command palette.
 pub fn dialog_shadow(p: &Palette) -> Vec<BoxShadow> {
     let mut shadows = vec![BoxShadow {
-        color: hsla(0., 0., 0., if p.dark { 0.65 } else { 0.3 }),
+        color: hsla(0., 0., 0., if p.dark { 0.65 } else { 0.34 }),
         offset: point(px(0.), px(24.)),
         blur_radius: px(64.),
         spread_radius: px(-24.),
@@ -368,7 +544,18 @@ pub fn backdrop(p: &Palette) -> Hsla {
     if p.dark {
         hsla(0., 0., 0., 0.72)
     } else {
-        hsla(240. / 360., 0.06, 0.1, 0.32)
+        hsla(240. / 360., 0.06, 0.1, 0.11)
+    }
+}
+
+/// A destructive button's fill. Dark mode's destructive text color is bright
+/// for legibility on black, too bright under white text, so dark fills use
+/// a deeper red that keeps white labels at 4.5:1.
+fn destructive_fill(p: &Palette) -> Hsla {
+    if p.dark {
+        Hsla::from(rgb(0xdc2626))
+    } else {
+        p.destructive
     }
 }
 
@@ -398,19 +585,23 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
             ],
         },
         ButtonVariant::Outline => ButtonStyle {
+            // Light outline buttons sit a step off white so they keep their
+            // shape inside white cards.
             bg: Some(if p.dark {
                 p.white.opacity(0.035)
             } else {
-                p.popover
+                p.surface_1
             }),
             hover_bg: Some(if p.dark {
                 p.white.opacity(0.06)
             } else {
-                p.muted.opacity(0.5)
+                p.muted
             }),
             fg: p.foreground,
             icon: p.muted_foreground,
-            border: Some(p.input_border),
+            // Buttons carry their own fill and lift; the stronger input
+            // edge is for fields, where the outline is the only cue.
+            border: Some(p.control_border),
             shadows: if p.dark {
                 vec![inset(0., 1., 0., p.white.opacity(0.06))]
             } else {
@@ -437,14 +628,14 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
             shadows: Vec::new(),
         },
         ButtonVariant::Destructive => ButtonStyle {
-            bg: Some(p.destructive),
-            hover_bg: Some(p.destructive.opacity(0.9)),
+            bg: Some(destructive_fill(p)),
+            hover_bg: Some(destructive_fill(p).opacity(0.9)),
             fg: p.white,
             icon: p.white,
-            border: Some(p.destructive),
+            border: Some(destructive_fill(p)),
             shadows: vec![
                 BoxShadow {
-                    color: p.destructive.opacity(0.24),
+                    color: destructive_fill(p).opacity(0.24),
                     ..drop(0., 1., 2., 0.)
                 },
                 inset(0., 1., 0., p.white.opacity(0.16)),
@@ -452,6 +643,9 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
         },
     }
 }
+
+/// Helper text wraps at about 90 characters instead of spanning a wide card.
+pub const DESCRIPTION_MAX_WIDTH: f32 = 560.;
 
 /// `SectionHeader`: a semibold title with an optional description.
 pub fn section_header(
@@ -461,7 +655,6 @@ pub fn section_header(
 ) -> Div {
     div()
         .mb(px(10.))
-        .px(px(4.))
         .child(
             div()
                 .text_size(px(TEXT_TITLE))
@@ -474,22 +667,86 @@ pub fn section_header(
             d.child(
                 div()
                     .mt(px(2.))
+                    .max_w(px(DESCRIPTION_MAX_WIDTH))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(desc),
             )
         })
 }
 
+/// A one-line tooltip on the popover surface.
+struct Tip(SharedString);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = cx.palette();
+        div()
+            .px(px(8.))
+            .py(px(4.))
+            .rounded(px(RADIUS_MD))
+            .bg(p.popover)
+            .border_1()
+            .border_color(p.border)
+            .shadow(vec![drop(0., 4., 12., if p.dark { 0.4 } else { 0.08 })])
+            .text_size(px(TEXT_SMALL))
+            .text_color(p.foreground)
+            .child(self.0.clone())
+    }
+}
+
+/// A tooltip builder for `.tooltip(...)`: names icon-only controls for
+/// pointer users, as `aria_label` does for VoiceOver.
+pub fn text_tooltip(
+    text: impl Into<SharedString>,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    let text: SharedString = text.into();
+    move |_, cx| cx.new(|_| Tip(text.clone())).into()
+}
+
+/// Where a scroll area's thumb sits: its top and height inside the area, or
+/// `None` when nothing overflows. Long pages show it at rest so a clipped
+/// last row reads as "more below".
+pub fn scroll_thumb(scroll: &ScrollHandle) -> Option<(Pixels, Pixels)> {
+    const INSET: f32 = 3.;
+    const MIN_THUMB: f32 = 32.;
+    let viewport = f32::from(scroll.bounds().size.height);
+    let max = f32::from(scroll.max_offset().y);
+    if max < 1. || viewport <= 2. * INSET + MIN_THUMB {
+        return None;
+    }
+    let track = viewport - 2. * INSET;
+    let height = (track * viewport / (viewport + max)).max(MIN_THUMB);
+    let progress = (-f32::from(scroll.offset().y) / max).clamp(0., 1.);
+    Some((px(INSET + (track - height) * progress), px(height)))
+}
+
+/// The shared page column: centered, [`PAGE_MAX_WIDTH`] wide, with the
+/// standard gutter and top inset. Pages add their own bottom padding.
+pub fn page_container() -> Div {
+    div()
+        .w_full()
+        .max_w(px(PAGE_MAX_WIDTH))
+        .mx_auto()
+        .px(px(PAGE_GUTTER))
+        .pt(px(PAGE_TOP))
+}
+
 /// A rounded card with a soft border on a faint fill: the frame shared by
 /// settings panels, the dictionary list and the Insights cards.
 pub fn surface_card(p: &Palette) -> Div {
-    div()
-        .rounded(px(RADIUS_XL))
-        .border_1()
-        .border_color(p.border.opacity(if p.dark { 0.8 } else { 0.6 }))
-        .bg(p.card.opacity(0.4))
+    div().rounded(px(RADIUS_XL)).border_1().map(|d| {
+        if p.dark {
+            // The full card tone, so groups read as surfaces on black and
+            // not only as hairlines.
+            d.border_color(p.border).bg(p.card)
+        } else {
+            // Light cards are white on the off-white canvas with a full
+            // hairline, so groups separate without relying on the tint.
+            d.border_color(p.border).bg(p.card)
+        }
+    })
 }
 
 /// `SettingsPanel`: a bordered group whose rows are separated by hairlines.
@@ -563,9 +820,10 @@ pub fn label_block(
             d.child(
                 div()
                     .mt(px(2.))
+                    .max_w(px(DESCRIPTION_MAX_WIDTH))
                     .text_size(px(TEXT_SMALL))
                     .line_height(px(LINE_SMALL))
-                    .text_color(p.muted_foreground.opacity(0.8))
+                    .text_color(p.subtle_foreground)
                     .child(desc),
             )
         })
@@ -601,8 +859,8 @@ pub fn settings_field(
     field_with_label(label.into_any_element(), description, action, control, p)
 }
 
-/// A settings field whose label carries a protocol tag such as
-/// `OpenAI · /chat/completions`, so users know what the server must speak.
+/// A settings field whose label carries a protocol note such as
+/// "OpenAI-compatible · no auth", so users know what the server must speak.
 pub fn settings_field_tagged(
     label: impl Into<SharedString>,
     tag: impl Into<SharedString>,
@@ -622,14 +880,10 @@ pub fn settings_field_tagged(
                 .text_color(p.foreground)
                 .child(label.into()),
         )
+        // Plain metadata in the UI face: a bordered chip would read as one
+        // more clickable preset, and the tag is prose, not a code value.
         .child(
             div()
-                .px(px(6.))
-                .rounded(px(RADIUS_SM))
-                .border_1()
-                .border_color(if p.dark { p.border_hover } else { p.border })
-                .bg(if p.dark { p.surface_3 } else { p.muted })
-                .font_family(FONT_MONO)
                 .text_size(px(TEXT_CAPTION))
                 .line_height(px(LINE_SMALL))
                 .text_color(p.muted_foreground)
@@ -662,9 +916,10 @@ fn field_with_label(
                             d.child(
                                 div()
                                     .mt(px(2.))
+                                    .max_w(px(DESCRIPTION_MAX_WIDTH))
                                     .text_size(px(TEXT_SMALL))
                                     .line_height(px(LINE_SMALL))
-                                    .text_color(p.muted_foreground.opacity(0.8))
+                                    .text_color(p.subtle_foreground)
                                     .child(desc),
                             )
                         },
@@ -691,23 +946,27 @@ pub fn nav_row(
     label: impl Into<SharedString>,
     active: bool,
     surface: NavSurface,
-    p: &Palette,
+    cx: &mut App,
 ) -> Stateful<Div> {
+    let p = &cx.palette();
+    let label: SharedString = label.into();
     let (fg, icon_color) = if active {
         (p.foreground, p.foreground)
     } else {
         (p.muted_foreground, p.muted_foreground.opacity(0.85))
     };
-    // Dark washes: the app sidebar uses 11% / 8% white over black; settings rows
-    // use T3 Code's muted (3%) / accent (4%) white over the card tone.
+    // Dark washes (active / hover): the selected row always reads stronger
+    // than a hovered one.
     let (active_wash, hover_wash) = match surface {
-        NavSurface::App => (0.09, 0.08),
-        NavSurface::Settings => (0.03, 0.04),
+        NavSurface::App => (0.1, 0.07),
+        NavSurface::Settings => (0.08, 0.05),
     };
     let hover_bg = p.hover_wash(if p.dark { hover_wash } else { 0.04 });
     let hover_fg = p.foreground;
     div()
-        .id(id)
+        .id(id.clone())
+        .keyboard_focusable(id.clone(), Role::Tab, label.clone(), cx)
+        .aria_selected(active)
         .flex()
         .items_center()
         .gap(px(8.))
@@ -719,21 +978,29 @@ pub fn nav_row(
         .text_size(px(TEXT_BODY))
         .font_weight(FontWeight::MEDIUM)
         .text_color(fg)
+        // Every row carries a 1 px border, transparent unless active, so the
+        // active row's outline never shifts its label.
+        .border_1()
+        .border_color(transparent_black())
         .when(active, |d| {
             if p.dark {
                 d.bg(p.white.opacity(active_wash))
             } else {
                 d.bg(p.card)
-                    .border_1()
-                    .border_color(p.border.opacity(0.7))
-                    .shadow(vec![drop(0., 1., 2., 0.04)])
+                    .border_color(p.border_hover)
+                    .shadow(vec![drop(0., 1., 2., 0.05)])
             }
         })
+        .group(id.clone())
         .when(!active, |d| {
             d.hover(move |s| s.bg(hover_bg).text_color(hover_fg))
         })
-        .child(icon(icon_name, 16., icon_color))
-        .child(div().flex_1().min_w_0().truncate().child(label.into()))
+        // The icon brightens with the label on hover.
+        .child(
+            icon(icon_name, 16., icon_color)
+                .group_hover(id.clone(), move |s| s.text_color(hover_fg)),
+        )
+        .child(div().flex_1().min_w_0().truncate().child(label))
 }
 
 /// The track of a segmented control: a 2 px inset on a faint wash. Callers
@@ -749,9 +1016,25 @@ pub fn segmented_track(p: &Palette) -> Div {
 /// One option in a `segmented_track`: raised with foreground text when
 /// active, muted until hovered otherwise. Callers add height, padding on the
 /// vertical axis, gap, children and the click handler.
-pub fn segment(id: impl Into<ElementId>, active: bool, p: &Palette) -> Stateful<Div> {
+pub fn segment(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let p = &cx.palette();
+    let id: ElementId = id.into();
     div()
-        .id(id)
+        .id(id.clone())
+        .keyboard_focusable(id, Role::RadioButton, label, cx)
+        .aria_toggled(if active {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+        // One height for every segmented control: with the track's 2 pt
+        // inset it stands 28 pt, level with small buttons.
+        .h(px(24.))
         .flex()
         .items_center()
         .px(px(10.))
@@ -759,12 +1042,19 @@ pub fn segment(id: impl Into<ElementId>, active: bool, p: &Palette) -> Stateful<
         .text_size(px(TEXT_SMALL))
         .font_weight(FontWeight::MEDIUM)
         .cursor_pointer()
+        // A transparent border on every segment, so the active one's edge
+        // never shifts its label.
+        .border_1()
+        .border_color(transparent_black())
         .when(active, |d| {
             d.text_color(p.foreground).map(|d| {
                 if p.dark {
-                    d.bg(p.white.opacity(0.1))
+                    d.bg(p.white.opacity(0.15))
+                        .border_color(p.white.opacity(0.08))
                 } else {
-                    d.bg(p.card).shadow(vec![drop(0., 1., 2., 0.08)])
+                    d.bg(p.card)
+                        .border_color(p.border_hover)
+                        .shadow(vec![drop(0., 1., 2., 0.08)])
                 }
             })
         })
@@ -821,6 +1111,40 @@ pub fn empty_state_icon(name: &str, p: &Palette) -> Div {
         .child(icon(name, 16., p.muted_foreground))
 }
 
+/// The one empty-state layout every page uses: the icon tile, a semibold
+/// title and a short muted body, centered. Callers append actions or hints.
+pub fn empty_state(
+    icon_name: &str,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    p: &Palette,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .items_center()
+        .text_center()
+        .child(empty_state_icon(icon_name, p))
+        .child(
+            div()
+                .mt(px(16.))
+                .text_size(px(TEXT_TITLE))
+                .line_height(px(LINE_TITLE))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(p.foreground)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .mt(px(4.))
+                .max_w(px(340.))
+                .text_size(px(TEXT_SMALL))
+                .line_height(px(LINE_SMALL))
+                .text_color(p.muted_foreground)
+                .child(body.into()),
+        )
+}
+
 /// A `<kbd>` chip: a flat 20 px tint, no border or shadow.
 pub fn kbd(text: impl Into<SharedString>, p: &Palette) -> Div {
     div()
@@ -839,13 +1163,37 @@ pub fn kbd(text: impl Into<SharedString>, p: &Palette) -> Div {
         .child(text.into())
 }
 
-/// A spinning loader icon.
+/// A spinning loader icon. Under Reduce motion it holds still, since
+/// `with_animation` would otherwise keep it turning.
 pub fn spinner(id: impl Into<ElementId>, size: f32, color: Hsla) -> impl IntoElement {
-    icon("loader2", size, color).with_animation(
-        id.into(),
-        Animation::new(Duration::from_millis(800)).repeat(),
-        |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-    )
+    Spinner {
+        id: id.into(),
+        size,
+        color,
+    }
+}
+
+#[derive(IntoElement)]
+struct Spinner {
+    id: ElementId,
+    size: f32,
+    color: Hsla,
+}
+
+impl RenderOnce for Spinner {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let loader = icon("loader2", self.size, self.color);
+        if cx.reduce_motion() {
+            return loader.into_any_element();
+        }
+        loader
+            .with_animation(
+                self.id,
+                Animation::new(Duration::from_millis(800)).repeat(),
+                |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
+            )
+            .into_any_element()
+    }
 }
 
 /// Brightness of the shimmer band at `x` (0..1 across the text), `ms` into

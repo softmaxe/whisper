@@ -11,7 +11,10 @@ use crate::i18n::t;
 use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
-use super::components::{NavSurface, drop, f32_tx, icon, inset, kbd, nav_row};
+use super::components::{
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, drop, f32_tx, icon, inset,
+    kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
+};
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
@@ -19,7 +22,7 @@ use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG,
-    TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap,
+    RADIUS_MD, TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap, motion,
 };
 use super::upload_view::{UploadEvent, UploadView};
 
@@ -57,7 +60,7 @@ impl PanelView {
 
     pub fn icon(self) -> &'static str {
         match self {
-            Self::Home => "home",
+            Self::Home => "clock",
             Self::Insights => "bar-chart3",
             Self::Upload => "upload",
             Self::Dictionary => "book-open",
@@ -80,6 +83,11 @@ pub struct ControlPanel {
     upload: Entity<UploadView>,
     settings: Option<Entity<SettingsModal>>,
     scroll: ScrollHandle,
+    /// Whether the History page's ⋯ menu in the top bar is open.
+    page_menu_open: bool,
+    /// The page whose scroll extent has been measured; a newly shown page
+    /// renders once more so its scroll thumb and fade show from the start.
+    measured_view: Option<PanelView>,
 }
 
 impl ControlPanel {
@@ -112,7 +120,8 @@ impl ControlPanel {
             },
         )
         .detach();
-        Self {
+        #[allow(unused_mut)]
+        let mut this = Self {
             active: PanelView::Home,
             sidebar_collapsed: collapsed,
             peek: false,
@@ -125,7 +134,29 @@ impl ControlPanel {
             upload,
             settings: None,
             scroll,
+            page_menu_open: false,
+            measured_view: None,
+        };
+        #[cfg(debug_assertions)]
+        this.apply_dev_scene(window, cx);
+        this
+    }
+
+    #[cfg(debug_assertions)]
+    fn apply_dev_scene(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use super::dev_scene::{Scene, scene};
+        match scene() {
+            Some(Scene::View(view)) => self.active = view,
+            Some(Scene::Settings(section)) => self.open_settings(Some(section), window, cx),
+            Some(Scene::Search) => {
+                window.on_next_frame(|window, cx| window.dispatch_action(Box::new(OpenSearch), cx))
+            }
+            _ => {}
         }
+    }
+
+    pub fn settings_open(&self) -> bool {
+        self.settings.is_some()
     }
 
     pub fn open_settings(
@@ -248,7 +279,7 @@ impl ControlPanel {
                     view.label(),
                     view == active,
                     NavSurface::App,
-                    &p,
+                    cx,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| this.set_view(view, cx))),
             );
@@ -289,7 +320,7 @@ impl ControlPanel {
                         t("sidebar.settings"),
                         false,
                         NavSurface::App,
-                        &p,
+                        cx,
                     )
                     .on_click(cx.listener(|_, _, window, cx| {
                         window.dispatch_action(Box::new(OpenSettings), cx)
@@ -320,6 +351,69 @@ impl ControlPanel {
         );
         let collapsed = self.sidebar_collapsed;
         let title = self.active.label();
+        // Page-level actions sit at the top bar's end; Home's is Clear History.
+        let page_actions =
+            self.active == PanelView::Home && !AppState::global(cx).read(cx).history.is_empty();
+        let full_search = self.active == PanelView::Home;
+        // Page menus share the top bar's trailing slot on every page. The
+        // view is created here when needed, so its menu shows on the first
+        // frame rather than one frame after the page.
+        let dictionary_menu = (self.active == PanelView::Dictionary).then(|| {
+            self.dictionary
+                .get_or_insert_with(|| cx.new(|cx| DictionaryView::new(window, cx)))
+                .clone()
+                .update(cx, |d, cx| d.render_page_menu(window, cx))
+        });
+        let search_field = div()
+            .id("search-trigger")
+            .keyboard_focusable(
+                "panel-search-trigger",
+                Role::Button,
+                format!("{} (⌘K)", t("commandSearch.placeholder")),
+                cx,
+            )
+            .flex_none()
+            .w(px(360.))
+            .max_w(relative(0.34))
+            .h(px(CONTROL_HEIGHT))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .pl(px(10.))
+            .pr(px(6.))
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(p.control_border)
+            .bg(if p.dark {
+                p.white.opacity(0.035)
+            } else {
+                p.popover
+            })
+            .shadow(if p.dark {
+                vec![inset(0., 1., 0., p.white.opacity(0.05))]
+            } else {
+                vec![drop(0., 1., 2., 0.05)]
+            })
+            .hover(|s| {
+                s.bg(if p.dark {
+                    p.white.opacity(0.06)
+                } else {
+                    p.muted.opacity(0.6)
+                })
+            })
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(icon("search", 16., p.muted_foreground))
+            .child(
+                div()
+                    .flex_1()
+                    .truncate()
+                    .text_size(px(TEXT_BODY))
+                    .text_color(p.muted_foreground)
+                    .child(t("commandSearch.placeholder")),
+            )
+            .child(kbd("⌘K", &p))
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx));
 
         div()
             .h(px(WORKSPACE_TOP_BAR_HEIGHT))
@@ -344,6 +438,21 @@ impl ControlPanel {
                     .child(
                         div()
                             .id("sidebar-toggle")
+                            .keyboard_focusable(
+                                "panel-sidebar-toggle",
+                                Role::Button,
+                                t(if collapsed {
+                                    "sidebar.show"
+                                } else {
+                                    "sidebar.hide"
+                                }),
+                                cx,
+                            )
+                            .tooltip(text_tooltip(t(if collapsed {
+                                "sidebar.show"
+                            } else {
+                                "sidebar.hide"
+                            })))
                             .flex()
                             .flex_none()
                             .items_center()
@@ -369,60 +478,148 @@ impl ControlPanel {
                     .child(
                         div()
                             .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::MEDIUM)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .line_height(px(20.))
                             .text_color(p.foreground)
                             .truncate()
                             .child(title),
                     ),
             )
+            // History, the page it searches, shows the full field; elsewhere
+            // a compact button keeps ⌘K at hand without a second search box
+            // competing with the page's own filter.
+            .when(full_search, |d| d.child(search_field))
             .child(
                 div()
-                    .id("search-trigger")
-                    .flex_none()
-                    .w(px(360.))
-                    .max_w(relative(0.34))
-                    .h(px(CONTROL_HEIGHT))
+                    .flex_1()
                     .flex()
                     .items_center()
-                    .gap(px(8.))
-                    .pl(px(10.))
-                    .pr(px(6.))
-                    .rounded(px(RADIUS_LG))
-                    .border_1()
-                    .border_color(p.input_border)
-                    .bg(if p.dark {
-                        p.white.opacity(0.035)
-                    } else {
-                        p.popover
+                    .justify_end()
+                    .gap(px(4.))
+                    .when(!full_search, |d| {
+                        d.child(
+                            div()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(
+                                    Button::new("search-compact")
+                                        .icon("search", 15.)
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(ButtonSize::Sm)
+                                        .aria_label(format!(
+                                            "{} (⌘K)",
+                                            t("commandSearch.placeholder")
+                                        ))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(Box::new(OpenSearch), cx)
+                                        }),
+                                ),
+                        )
                     })
-                    .shadow(if p.dark {
-                        vec![inset(0., 1., 0., p.white.opacity(0.05))]
-                    } else {
-                        vec![drop(0., 1., 2., 0.05)]
-                    })
-                    .hover(|s| {
-                        s.bg(if p.dark {
-                            p.white.opacity(0.06)
-                        } else {
-                            p.muted.opacity(0.6)
-                        })
-                    })
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(icon("search", 16., p.muted_foreground))
-                    .child(
-                        div()
-                            .flex_1()
-                            .truncate()
-                            .text_size(px(TEXT_BODY))
-                            .text_color(p.muted_foreground)
-                            .child(t("commandSearch.sections.transcripts")),
-                    )
-                    .child(kbd("⌘K", &p))
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSearch), cx)),
+                    .children(dictionary_menu)
+                    .when(page_actions, |d| {
+                        d.child(
+                            div()
+                                .relative()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(
+                                    Button::new("history-page-menu")
+                                        .icon("more-vertical", 15.)
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(ButtonSize::Sm)
+                                        .aria_label(t("controlPanel.history.pageActions"))
+                                        .on_click(cx.listener(
+                                            |this, event: &ClickEvent, window, cx| {
+                                                this.toggle_page_menu(
+                                                    event.is_keyboard(),
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        )),
+                                )
+                                .when(self.page_menu_open, |d| d.child(self.render_page_menu(cx))),
+                        )
+                    }),
             )
-            .child(div().flex_1())
+    }
+
+    fn toggle_page_menu(&mut self, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.page_menu_open = !self.page_menu_open;
+        if keyboard && self.page_menu_open {
+            let item = keyed_focus_handle("history-page-clear".into(), cx);
+            window.on_next_frame(move |window, cx| window.focus(&item, cx));
+        }
+        cx.notify();
+    }
+
+    fn close_page_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.page_menu_open = false;
+        if keyed_focus_handle("history-page-clear".into(), cx).is_focused(window) {
+            let trigger = keyed_focus_handle("history-page-menu".into(), cx);
+            window.focus(&trigger, cx);
+        }
+        cx.notify();
+    }
+
+    /// The History page's ⋯ menu. Its one item is destructive, so it sits
+    /// behind the menu rather than as a bare button in the toolbar.
+    fn render_page_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let label = t("controlPanel.history.clearHistory");
+        let item = div()
+            .id("history-page-clear")
+            .keyboard_focusable("history-page-clear", Role::MenuItem, label.clone(), cx)
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .px(px(8.))
+            .py(px(6.))
+            .rounded(px(RADIUS_MD))
+            .text_size(px(TEXT_BODY))
+            .text_color(p.destructive)
+            .cursor_pointer()
+            .hover(move |s| s.bg(p.destructive.opacity(0.08)))
+            .child(icon("trash2", 14., p.destructive))
+            .child(label)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.close_page_menu(window, cx);
+                HistoryView::clear_all(cx);
+            }));
+        let menu = div()
+            .id("history-page-menu-list")
+            .role(Role::Menu)
+            .occlude()
+            .mt(px(4.))
+            .min_w(px(200.))
+            .p(px(4.))
+            .rounded(px(RADIUS_LG))
+            .border_1()
+            .border_color(if p.dark {
+                p.border_hover
+            } else {
+                p.border.opacity(0.7)
+            })
+            .bg(if p.dark { p.surface_3 } else { p.popover })
+            .shadow_lg()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.page_menu_open = false;
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
+                if matches!(e.keystroke.key.as_str(), "escape" | "tab") {
+                    this.close_page_menu(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .child(item);
+        deferred(
+            anchored()
+                .anchor(Anchor::TopRight)
+                .snap_to_window_with_margin(px(8.))
+                .child(menu),
+        )
+        .with_priority(1)
+        .into_any_element()
     }
 
     fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -487,14 +684,31 @@ impl Render for ControlPanel {
         let fill = self.active == PanelView::Insights;
         let content = div()
             .relative()
-            .when(fill, |d| d.h_full())
+            // At least a viewport tall so short states can center, but free to
+            // grow: a fixed height would leave the scroll area nothing to scroll.
+            .when(fill, |d| d.min_h_full())
             .child(self.render_content(window, cx))
             .with_animation(
                 ("view-in", self.active as usize),
-                Animation::new(Duration::from_millis(DUR_BASE)).with_easing(ease_out),
+                motion(DUR_BASE, cx).with_easing(ease_out),
                 |d, t| d.opacity(t).top(px(3. * (1. - t))),
             );
         let scrolled = self.scroll.offset().y < px(-4.);
+        let max_scroll = self.scroll.max_offset().y;
+        let more_below = max_scroll > px(1.) && self.scroll.offset().y > -max_scroll + px(1.);
+        let bottom_fade = f32_tx(
+            "scroll-fade-bottom",
+            if more_below { 1. } else { 0. },
+            DUR_FAST,
+            ease_snap,
+            window,
+            cx,
+        );
+        let thumb = scroll_thumb(&self.scroll);
+        if self.measured_view != Some(self.active) {
+            self.measured_view = Some(self.active);
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+        }
         let fade = f32_tx(
             "scroll-fade",
             if scrolled { 1. } else { 0. },
@@ -503,9 +717,38 @@ impl Render for ControlPanel {
             window,
             cx,
         );
+        let mut sidebar_host = Some(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left(px(offset))
+                .when(peeking, |d| {
+                    d.shadow(vec![BoxShadow {
+                        color: hsla(0., 0., 0., 0.2),
+                        offset: point(px(10.), px(0.)),
+                        blur_radius: px(40.),
+                        spread_radius: px(-18.),
+                        inset: false,
+                    }])
+                })
+                .id("sidebar-host")
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    if !this.sidebar_collapsed {
+                        return;
+                    }
+                    if *hovered {
+                        this.show_peek(cx);
+                    } else {
+                        this.hide_peek(cx);
+                    }
+                }))
+                .child(sidebar)
+                .into_any_element(),
+        );
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();
-        let dialog = render_dialog(cx);
+        let dialog = render_dialog(window, cx);
         let toasts = render_toasts(window, cx);
 
         div()
@@ -527,6 +770,7 @@ impl Render for ControlPanel {
                     .flex_1()
                     .flex()
                     .overflow_hidden()
+                    .children((!collapsed).then(|| sidebar_host.take()).flatten())
                     .child(div().flex_none().w(px(spacer)))
                     .child(
                         div().flex_1().flex().flex_col().overflow_hidden().child(
@@ -574,40 +818,51 @@ impl Render for ControlPanel {
                                                         ),
                                                     )),
                                             )
+                                        })
+                                        // A quiet thumb and a short bottom fade say a long
+                                        // page continues, as the Settings sheet does.
+                                        .when_some(thumb, |d, (top, height)| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .right(px(3.))
+                                                    .top(top)
+                                                    .w(px(4.))
+                                                    .h(height)
+                                                    .rounded_full()
+                                                    .bg(p.foreground.opacity(if p.dark {
+                                                        0.22
+                                                    } else {
+                                                        0.18
+                                                    })),
+                                            )
+                                        })
+                                        .when(bottom_fade > 0.01, |d| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .bottom_0()
+                                                    .left_0()
+                                                    .right(px(12.))
+                                                    .h(px(16.))
+                                                    .opacity(bottom_fade)
+                                                    .bg(linear_gradient(
+                                                        0.,
+                                                        linear_color_stop(p.background, 0.),
+                                                        linear_color_stop(
+                                                            p.background.opacity(0.),
+                                                            1.,
+                                                        ),
+                                                    )),
+                                            )
                                         }),
                                 ),
                         ),
                     )
-                    // Painted after the main column so the peeking sidebar
-                    // overlays it.
-                    .child(
-                        div()
-                            .absolute()
-                            .top_0()
-                            .bottom_0()
-                            .left(px(offset))
-                            .when(peeking, |d| {
-                                d.shadow(vec![BoxShadow {
-                                    color: hsla(0., 0., 0., 0.2),
-                                    offset: point(px(10.), px(0.)),
-                                    blur_radius: px(40.),
-                                    spread_radius: px(-18.),
-                                    inset: false,
-                                }])
-                            })
-                            .id("sidebar-host")
-                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                if !this.sidebar_collapsed {
-                                    return;
-                                }
-                                if *hovered {
-                                    this.show_peek(cx);
-                                } else {
-                                    this.hide_peek(cx);
-                                }
-                            }))
-                            .child(sidebar),
-                    ),
+                    // A peeking sidebar paints after the main column to
+                    // overlay it; a docked one comes first so Tab reaches
+                    // navigation before the page.
+                    .when(collapsed, |d| d.children(sidebar_host.take())),
             )
             .when_some(settings_modal, |d, modal| d.child(modal))
             .children(custom)

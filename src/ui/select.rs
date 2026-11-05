@@ -1,22 +1,29 @@
-//! A dropdown select. One component covers three flavors — the compact
-//! select used for retention and pill position, the searchable language
-//! picker, and the full-height field select — through `SelectStyle`.
+//! A compact dropdown select, used inline in settings rows. Long lists, such
+//! as the transcription languages, get a search field.
+
+use std::cell::Cell;
+use std::rc::Rc;
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{drop, f32_tx, icon};
+use super::components::{drop, f32_tx, focus_ring, icon};
+use super::control_panel::CloseOverlay;
 use super::theme::{
-    CONTROL_HEIGHT, DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM, TEXT_BODY,
-    TEXT_SMALL, ease_out, ease_snap,
+    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT, TEXT_SMALL, ease_out,
+    ease_snap, motion,
 };
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SelectOption {
     pub value: SharedString,
     pub label: SharedString,
-    pub prefix: Option<SharedString>,
+    /// A Lucide icon drawn before the label.
+    pub icon: Option<&'static str>,
+    /// Extra text the search field matches, such as a language's English
+    /// name beside its native one.
+    pub keywords: Option<SharedString>,
     pub disabled: bool,
 }
 
@@ -25,13 +32,19 @@ impl SelectOption {
         Self {
             value: value.into(),
             label: label.into(),
-            prefix: None,
+            icon: None,
+            keywords: None,
             disabled: false,
         }
     }
 
-    pub fn prefix(mut self, prefix: impl Into<SharedString>) -> Self {
-        self.prefix = Some(prefix.into());
+    pub fn icon(mut self, name: &'static str) -> Self {
+        self.icon = Some(name);
+        self
+    }
+
+    pub fn keywords(mut self, keywords: impl Into<SharedString>) -> Self {
+        self.keywords = Some(keywords.into());
         self
     }
 
@@ -39,14 +52,6 @@ impl SelectOption {
         self.disabled = disabled;
         self
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SelectStyle {
-    /// h-7 compact trigger (plain select / language picker).
-    Compact,
-    /// h-8 rounded-lg trigger (field select), styled like a text input.
-    Field,
 }
 
 pub enum SelectEvent {
@@ -60,15 +65,23 @@ pub struct Select {
     options: Vec<SelectOption>,
     selected: Option<SharedString>,
     placeholder: SharedString,
+    /// The name VoiceOver reads for the trigger, usually its row's label.
+    label: SharedString,
     open: bool,
-    style: SelectStyle,
     width: Option<Pixels>,
+    /// When set, `width` is only the floor and the trigger grows with its
+    /// value up to this cap, so short values keep a shared column edge while
+    /// long ones (device names) get more room before truncating.
+    max_width: Option<Pixels>,
     menu_min_width: Pixels,
     disabled: bool,
     search: Option<Entity<InputState>>,
     query: String,
     highlighted: usize,
     focus: FocusHandle,
+    /// The trigger's width at the last paint, so the menu is never narrower
+    /// than the control it drops from.
+    trigger_width: Rc<Cell<Pixels>>,
 }
 
 impl EventEmitter<SelectEvent> for Select {}
@@ -77,7 +90,6 @@ impl Select {
     pub fn new(
         options: Vec<SelectOption>,
         selected: Option<SharedString>,
-        style: SelectStyle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -86,19 +98,16 @@ impl Select {
                 InputState::new(window, cx)
                     .placeholder(crate::i18n::t("languageSelector.searchPlaceholder"))
             });
-            cx.subscribe(
+            cx.subscribe_in(
                 &input,
-                |this: &mut Self, input, event: &InputEvent, cx| match event {
+                window,
+                |this: &mut Self, input, event: &InputEvent, window, cx| match event {
                     InputEvent::Change => {
                         this.query = input.read(cx).value().to_string();
                         this.highlighted = 0;
                         cx.notify();
                     }
-                    InputEvent::PressEnter { .. } => {
-                        if let Some(option) = this.filtered().get(this.highlighted).cloned() {
-                            this.choose(option.value, cx);
-                        }
-                    }
+                    InputEvent::PressEnter { .. } => this.choose_highlighted(window, cx),
                     _ => {}
                 },
             )
@@ -111,20 +120,34 @@ impl Select {
             options,
             selected,
             placeholder: "".into(),
+            label: "".into(),
             open: false,
-            style,
             width: None,
+            max_width: None,
             menu_min_width: px(160.),
             disabled: false,
             search,
             query: String::new(),
             highlighted: 0,
             focus: cx.focus_handle(),
+            trigger_width: Rc::new(Cell::new(px(0.))),
         }
     }
 
     pub fn with_width(mut self, width: Pixels) -> Self {
         self.width = Some(width);
+        self
+    }
+
+    /// Sizes the trigger to its value, between `min` and `max`.
+    pub fn with_width_range(mut self, min: Pixels, max: Pixels) -> Self {
+        self.width = Some(min);
+        self.max_width = Some(max);
+        self
+    }
+
+    pub fn with_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = label.into();
         self
     }
 
@@ -168,7 +191,13 @@ impl Select {
         let q = self.query.to_lowercase();
         self.options
             .iter()
-            .filter(|o| o.label.to_lowercase().contains(&q) || o.value.to_lowercase().contains(&q))
+            .filter(|o| {
+                o.label.to_lowercase().contains(&q)
+                    || o.value.to_lowercase().contains(&q)
+                    || o.keywords
+                        .as_ref()
+                        .is_some_and(|k| k.to_lowercase().contains(&q))
+            })
             .cloned()
             .collect()
     }
@@ -203,39 +232,92 @@ impl Select {
         }
     }
 
-    fn choose(&mut self, value: SharedString, cx: &mut Context<Self>) {
-        self.open = false;
+    /// Closes the menu and hands focus back to the trigger, so keyboard
+    /// users continue from where they opened it.
+    fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close(cx);
+        window.focus(&self.focus, cx);
+    }
+
+    fn choose(&mut self, value: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss(window, cx);
         self.selected = Some(value.clone());
         cx.emit(SelectEvent::Change(value));
         cx.notify();
     }
 
-    fn on_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn choose_highlighted(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(option) = self.filtered().get(self.highlighted).cloned()
+            && !option.disabled
+        {
+            self.choose(option.value, window, cx);
+        }
+    }
+
+    /// Arrow keys move through the open menu and open a closed one, like a
+    /// macOS pop-up button. Return and Space arrive as keyboard clicks on the
+    /// trigger instead (see `on_trigger_click`).
+    fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = event.keystroke.key.as_str();
+        // Tab leaves an open menu the way Escape does, back on the trigger,
+        // instead of moving on with the menu still floating behind.
+        if key == "tab" && self.open {
+            cx.stop_propagation();
+            self.dismiss(window, cx);
+            return;
+        }
+        // Return and Space act on the root, which holds focus; in the
+        // search field they keep typing.
+        if matches!(key, "enter" | "space")
+            && !event.keystroke.modifiers.modified()
+            && self.focus.is_focused(window)
+        {
+            cx.stop_propagation();
+            if self.open {
+                self.choose_highlighted(window, cx);
+            } else {
+                self.toggle(window, cx);
+            }
+            return;
+        }
+        if !matches!(key, "down" | "up") || event.keystroke.modifiers.modified() {
+            return;
+        }
+        cx.stop_propagation();
         if !self.open {
+            self.toggle(window, cx);
             return;
         }
         let count = self.filtered().len();
-        match event.keystroke.key.as_str() {
-            "down" if count > 0 => {
-                self.highlighted = (self.highlighted + 1) % count;
-                cx.notify();
-            }
-            "up" if count > 0 => {
-                self.highlighted = (self.highlighted + count - 1) % count;
-                cx.notify();
-            }
-            "enter" => {
-                if let Some(option) = self.filtered().get(self.highlighted).cloned()
-                    && !option.disabled
-                {
-                    self.choose(option.value, cx);
-                }
-            }
-            "escape" => {
-                self.close(cx);
-                cx.stop_propagation();
-            }
-            _ => {}
+        if count == 0 {
+            return;
+        }
+        self.highlighted = if key == "down" {
+            (self.highlighted + 1) % count
+        } else {
+            (self.highlighted + count - 1) % count
+        };
+        cx.notify();
+    }
+
+    fn on_trigger_click(
+        &mut self,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Keyboard activation is handled in `on_key`, on the focused root.
+        if !event.is_keyboard() {
+            self.toggle(window, cx);
+        }
+    }
+
+    /// Escape closes an open menu before it can close the sheet around it.
+    fn on_close_overlay(&mut self, _: &CloseOverlay, window: &mut Window, cx: &mut Context<Self>) {
+        if self.open {
+            self.dismiss(window, cx);
+        } else {
+            cx.propagate();
         }
     }
 }
@@ -252,9 +334,8 @@ impl Render for Select {
             .as_ref()
             .map(|o| o.label.clone())
             .unwrap_or_else(|| self.placeholder.clone());
-        let prefix = selected_option.as_ref().and_then(|o| o.prefix.clone());
+        let lead_icon = selected_option.as_ref().and_then(|o| o.icon);
         let open = self.open;
-        let compact = self.style == SelectStyle::Compact;
         let chevron_turn = f32_tx(
             ("select-chevron", cx.entity_id().as_u64() as usize),
             if open { 0.5 } else { 0.0 },
@@ -278,17 +359,23 @@ impl Render for Select {
         } else {
             vec![drop(0., 1., 2., 0.05)]
         };
+        let aria_name = self.label.clone();
+        let value = selected_option
+            .as_ref()
+            .map(|o| o.label.clone())
+            .unwrap_or_default();
+        // The button radius, so a select sits beside buttons as their kin.
+        let radius = px(RADIUS_LG);
         let trigger = div()
             .id("select-trigger")
             .flex()
             .items_center()
             .justify_between()
             .gap(px(8.))
-            .when_some(self.width, |d, w| d.w(w))
-            .when(self.width.is_none(), |d| d.w_full())
-            .h(px(if compact { 28. } else { CONTROL_HEIGHT }))
-            .px(px(if compact { 10. } else { 11. }))
-            .rounded(px(if compact { RADIUS_MD } else { RADIUS_LG }))
+            .map(|d| self.size_trigger(d))
+            .h(px(ROW_CONTROL_HEIGHT))
+            .px(px(10.))
+            .rounded(radius)
             .border_1()
             .border_color(trigger_border)
             .bg(if p.dark {
@@ -297,8 +384,8 @@ impl Render for Select {
                 p.popover
             })
             .when(!trigger_shadow.is_empty(), |d| d.shadow(trigger_shadow))
-            .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
-            .when(compact, |d| d.font_weight(FontWeight::MEDIUM))
+            .text_size(px(TEXT_SMALL))
+            .font_weight(FontWeight::MEDIUM)
             .text_color(if selected_option.is_some() {
                 p.foreground
             } else {
@@ -325,30 +412,48 @@ impl Render for Select {
                     .gap(px(6.))
                     .min_w_0()
                     .overflow_hidden()
-                    .when_some(prefix, |d, prefix| d.child(prefix))
+                    .when_some(lead_icon, |d, name| {
+                        d.child(icon(name, 14., p.muted_foreground))
+                    })
                     .child(div().truncate().child(label)),
             )
             .child(
-                icon(
-                    "chevron-down",
-                    if compact { 14. } else { 16. },
-                    p.muted_foreground,
-                )
-                .with_transformation(Transformation::rotate(radians(
-                    chevron_turn * std::f32::consts::PI,
-                ))),
+                icon("chevron-down", 14., p.muted_foreground).with_transformation(
+                    Transformation::rotate(radians(chevron_turn * std::f32::consts::PI)),
+                ),
             )
-            .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx)));
+            .on_click(cx.listener(Self::on_trigger_click));
 
         let menu = open.then(|| self.render_menu(cx));
 
+        let measured = self.trigger_width.clone();
+        // Focus sits on the root, which holds both the trigger and the menu,
+        // so the highlighted option can report itself as the active
+        // descendant while the arrow keys move it.
         div()
             .id("select")
-            .track_focus(&self.focus)
+            .when(!self.disabled, |d| {
+                d.track_focus(&self.focus.clone().tab_stop(true))
+                    .focus_visible(move |s| s.shadow(focus_ring(&p)))
+            })
+            .role(Role::ComboBox)
+            .aria_label(aria_name)
+            .aria_value(value)
+            .aria_expanded(open)
             .on_key_down(cx.listener(Self::on_key))
+            .on_action(cx.listener(Self::on_close_overlay))
             .relative()
-            .when_some(self.width, |d, w| d.w(w))
+            .rounded(radius)
+            .map(|d| self.size_trigger(d))
             .child(trigger)
+            .child(
+                canvas(
+                    move |bounds, _, _| measured.set(bounds.size.width),
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .when_some(menu, |d, menu| {
                 d.child(
                     deferred(anchored().snap_to_window_with_margin(px(8.)).child(menu))
@@ -359,13 +464,27 @@ impl Render for Select {
 }
 
 impl Select {
+    fn size_trigger<E: Styled>(&self, el: E) -> E {
+        match (self.width, self.max_width) {
+            (Some(min), Some(max)) => el.min_w(min).max_w(max),
+            (Some(w), None) => el.w(w),
+            (None, _) => el.w_full(),
+        }
+    }
+
     fn render_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let compact = self.style == SelectStyle::Compact;
         let filtered = self.filtered();
         let highlighted = self.highlighted;
         let selected = self.selected.clone();
-        let mut list = div().flex().flex_col().gap(px(2.)).p(px(4.));
+        let mut list = div()
+            .id("select-options")
+            .role(Role::ListBox)
+            .aria_label(self.label.clone())
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .p(px(4.));
         if filtered.is_empty() {
             list = list.child(
                 div()
@@ -384,6 +503,10 @@ impl Select {
             list = list.child(
                 div()
                     .id(("option", index))
+                    .role(Role::ListBoxOption)
+                    .aria_label(option.label.clone())
+                    .aria_selected(is_selected)
+                    .when(is_highlighted, |d| d.aria_active_descendant())
                     .flex()
                     .items_center()
                     .justify_between()
@@ -391,16 +514,16 @@ impl Select {
                     .h(px(28.))
                     .px(px(8.))
                     .rounded(px(RADIUS_SM))
-                    .text_size(px(if compact { TEXT_SMALL } else { TEXT_BODY }))
+                    .text_size(px(TEXT_SMALL))
                     .text_color(p.foreground)
                     .when_some(row_bg, |d, bg| d.bg(bg))
                     .when(option.disabled, |d| d.opacity(0.5))
                     .when(!option.disabled, |d| {
                         d.cursor_pointer()
                             .hover(|s| s.bg(p.foreground.opacity(0.08)))
-                            .on_click(
-                                cx.listener(move |this, _, _, cx| this.choose(value.clone(), cx)),
-                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.choose(value.clone(), window, cx)
+                            }))
                     })
                     .child(
                         div()
@@ -408,7 +531,9 @@ impl Select {
                             .items_center()
                             .gap(px(6.))
                             .min_w_0()
-                            .when_some(option.prefix.clone(), |d, prefix| d.child(prefix))
+                            .when_some(option.icon, |d, name| {
+                                d.child(icon(name, 14., p.muted_foreground))
+                            })
                             .child(div().truncate().child(option.label.clone())),
                     )
                     .when(is_selected, |d| d.child(icon("check", 14., p.foreground))),
@@ -437,7 +562,7 @@ impl Select {
             .id("select-menu")
             .occlude()
             .mt(px(4.))
-            .min_w(self.menu_min_width)
+            .min_w(self.menu_min_width.max(self.trigger_width.get()))
             .when_some(self.width, |d, w| d.w(w.max(self.menu_min_width)))
             .flex()
             .flex_col()
@@ -458,13 +583,13 @@ impl Select {
             .child(
                 div()
                     .id("select-list")
-                    .max_h(px(if compact { 192. } else { 384. }))
+                    .max_h(px(192.))
                     .overflow_y_scroll()
                     .child(list),
             )
             .with_animation(
                 "select-menu-in",
-                Animation::new(std::time::Duration::from_millis(DUR_SNAP)).with_easing(ease_snap),
+                motion(DUR_SNAP, cx).with_easing(ease_snap),
                 |d, t| d.opacity(t),
             )
             .into_any_element()
