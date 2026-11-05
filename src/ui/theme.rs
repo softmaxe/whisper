@@ -285,6 +285,9 @@ pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 52.;
 pub const NAV_ROW_HEIGHT: f32 = 32.;
 /// Height of buttons, inputs and selects at their default size.
 pub const CONTROL_HEIGHT: f32 = 32.;
+/// Height of controls inside rows and cards: text fields, selects and small
+/// buttons, so a group's right edge never steps between rows.
+pub const ROW_CONTROL_HEIGHT: f32 = 28.;
 
 /// Corner radii. Every rounded surface picks one of these steps.
 ///

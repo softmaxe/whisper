@@ -7,8 +7,8 @@ use gpui_kit::*;
 
 use super::components::{color_tx, drop};
 use super::theme::{
-    CONTROL_HEIGHT, DUR_BASE, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_LG, RADIUS_XL, TEXT_BODY,
-    TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL,
+    DUR_BASE, FONT_MONO, LINE_SMALL, PaletteExt, RADIUS_LG, RADIUS_XL, ROW_CONTROL_HEIGHT,
+    TEXT_BODY, TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL,
 };
 
 /// JetBrains Mono reads a step larger than SF, so mono fields drop a step.
@@ -174,7 +174,7 @@ fn field_frame(
         .when(mono, |d| d.font_family(FONT_MONO))
         .map(|d| match kind {
             FieldKind::Line => d
-                .h(px(CONTROL_HEIGHT))
+                .h(px(ROW_CONTROL_HEIGHT))
                 .rounded(px(RADIUS_LG))
                 .px(px(4.))
                 .text_size(px(field_size(TEXT_BODY, mono))),

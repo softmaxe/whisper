@@ -11,7 +11,8 @@ use gpui_kit::*;
 use super::components::{drop, f32_tx, focus_ring, icon};
 use super::control_panel::CloseOverlay;
 use super::theme::{
-    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_SM, TEXT_SMALL, ease_out, ease_snap, motion,
+    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT, TEXT_SMALL, ease_out,
+    ease_snap, motion,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -372,7 +373,7 @@ impl Render for Select {
             .justify_between()
             .gap(px(8.))
             .map(|d| self.size_trigger(d))
-            .h(px(28.))
+            .h(px(ROW_CONTROL_HEIGHT))
             .px(px(10.))
             .rounded(radius)
             .border_1()

@@ -9,7 +9,8 @@ use gpui_kit::*;
 use super::theme::{
     CONTROL_HEIGHT, DUR_FAST, DUR_SLOW, DUR_SNAP, LINE_SMALL, LINE_TITLE, NAV_ROW_HEIGHT,
     PAGE_GUTTER, PAGE_MAX_WIDTH, PAGE_TOP, Palette, PaletteExt, RADIUS_LG, RADIUS_MD, RADIUS_SM,
-    RADIUS_XL, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css, ease_out, spring,
+    RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, ease_css,
+    ease_out, spring,
 };
 
 pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
@@ -402,7 +403,7 @@ impl RenderOnce for Button {
         let p = cx.palette();
         let (height, pad_x, text) = match self.size {
             ButtonSize::Default => (CONTROL_HEIGHT, 12., TEXT_BODY),
-            ButtonSize::Sm => (28., 10., TEXT_SMALL),
+            ButtonSize::Sm => (ROW_CONTROL_HEIGHT, 10., TEXT_SMALL),
         };
         let style = variant_style(&p, self.variant);
         let disabled = self.disabled;
