@@ -685,7 +685,9 @@ impl Render for HotkeyListInput {
             );
             rows.push(
                 div()
-                    .px(px(12.))
+                    // The row inset every settings row uses, so these buttons
+                    // line up with the label and control above.
+                    .px(px(16.))
                     .py(px(8.))
                     .flex()
                     .items_center()

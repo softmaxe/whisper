@@ -351,7 +351,7 @@
       "viewTranscript": "View Transcript",
       "recordNew": "Record New",
       "resend": "Resend Recording",
-      "openSettings": "Speech to Text Settings…"
+      "openSettings": "Settings…"
     },
     "noAudio": {
       "title": "We didn’t catch that",
@@ -373,7 +373,7 @@
       "descriptionClipboardFailed": "Dictation stopped while the shortcut was still held, and the text couldn’t be copied to the clipboard."
     },
     "pill": {
-      "transcribing": "Transcribing…",
+      "transcribing": "Transcribing",
       "starting": "Starting microphone…",
       "finish": "Click to finish",
       "finishDictation": "Finish Dictation",
@@ -561,7 +561,7 @@
     "startOver": "Start Over",
     "transcriptionFailed": "Transcription failed",
     "noProviderTitle": "No transcription server set up",
-    "noProviderAction": "Speech Settings…",
+    "noProviderAction": "Speech to Text Settings…",
     "queueProgress": "{{completed}} of {{total}} done",
     "queueTitle": "Queue",
     "cancelAll": "Cancel All",
@@ -583,7 +583,7 @@
     "dropHere": "or drop files here",
     "releaseToAdd": "Release to add files",
     "noProviderHint": "Add a transcription server in Settings › Speech to text, then come back to transcribe files.",
-    "transcriptionSettings": "Speech Settings…",
+    "transcriptionSettings": "Speech to Text Settings…",
     "savesToHistory": "Finished transcripts are saved to History",
     "historyOff": "History is off. Transcripts show here but aren’t saved.",
     "openHistory": "Open History",

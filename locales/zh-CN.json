@@ -347,7 +347,7 @@
       "viewTranscript": "查看转录",
       "recordNew": "新录音",
       "resend": "重新发送",
-      "openSettings": "语音转文字设置…"
+      "openSettings": "设置…"
     },
     "noAudio": {
       "title": "我们没听清",
@@ -369,7 +369,7 @@
       "descriptionClipboardFailed": "听写停止时快捷键仍被按住，文字也未能复制到剪贴板。"
     },
     "pill": {
-      "transcribing": "正在转录…",
+      "transcribing": "正在转录",
       "starting": "正在打开麦克风…",
       "finish": "点按结束",
       "finishDictation": "结束听写",

@@ -496,7 +496,9 @@ impl ControlPanel {
                     .items_center()
                     .justify_end()
                     .gap(px(4.))
-                    .when(!full_search, |d| {
+                    // Dictionary has its own filter field right below; a second
+                    // magnifier there would compete with it. ⌘K still works.
+                    .when(!full_search && self.active != PanelView::Dictionary, |d| {
                         d.child(
                             div()
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
