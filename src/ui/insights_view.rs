@@ -30,7 +30,7 @@ use super::theme::{
 const CHART_HEIGHT: f32 = 220.;
 const AXIS_WIDTH: f32 = 40.;
 /// Room right of the plot so the average's end dot is never clipped.
-const END_GUTTER: f32 = 8.;
+const END_GUTTER: f32 = 0.;
 /// Height of the inspected bar's value label.
 const VALUE_LABEL_HEIGHT: f32 = 24.;
 /// A strip above the plot that holds the value label, so it never covers a
@@ -313,11 +313,11 @@ fn period_tone(p: &Palette) -> Hsla {
     }
 }
 
-/// A comparison-period bar: a flat neutral that still clears about 2.5:1
-/// against the canvas, so every bar's height reads, while the saturated
+/// A comparison-period bar: a flat neutral that clears 3:1 against the
+/// canvas, so every bar's height reads, while the saturated
 /// period tone keeps the current period in the lead.
 fn comparison_tone(p: &Palette) -> Hsla {
-    p.foreground.opacity(if p.dark { 0.34 } else { 0.30 })
+    p.foreground.opacity(if p.dark { 0.42 } else { 0.45 })
 }
 
 /// A heading inside the dashboard: one step above the body text it heads.
@@ -804,10 +804,11 @@ impl InsightsView {
             .collect();
         let end = points.last().copied().flatten();
         let runs = average_runs(&points, period_from);
-        // The current period's average is the line people follow, so it
-        // takes the accent; the comparison period's is a quieter dashed
+        // The current period's average is the line people follow. It is
+        // drawn in the text color, not the accent, so it separates from the
+        // blue bars it crosses; the comparison period's is a quieter dashed
         // trace that still clears 3:1 against the canvas.
-        let period_line = p.primary;
+        let period_line = p.foreground.opacity(0.9);
         let comparison_line = p.foreground.opacity(0.7);
         let ring = p.background;
         let line = canvas(
@@ -869,7 +870,14 @@ impl InsightsView {
         // The legend names the average with its latest value, which the
         // end dot marks, so no label crowds the last bar.
         let average_label = match bars.last().and_then(|b| b.average) {
-            Some(value) => format!("{} · {}", t(average), compact_number(value.round() as i64)),
+            Some(value) => format!(
+                "{} · {}",
+                t(average),
+                t_with(
+                    "insights.wordCount",
+                    &[("count", &compact_number(value.round() as i64))]
+                )
+            ),
             None => t(average),
         };
 
@@ -1138,10 +1146,14 @@ impl InsightsView {
             }
             grid
         };
-        // The range picker right above already names the span.
-        panel(t("insights.highlights"), None, p)
+        // A ruled row like the KPIs above, not a card: figures of the same
+        // period share one treatment. The range picker already names it.
+        div()
+            .border_t_1()
+            .border_color(p.border)
+            .pt(px(14.))
+            .child(heading(t("insights.highlights"), p))
             .child(grid.mt(px(12.)))
-            .child(div().h(px(4.)))
     }
 
     /// The span the habits section covers: the last few weeks, or since the
@@ -1186,7 +1198,7 @@ impl InsightsView {
                     cell
                 } else if in_streak(day) {
                     active_count += 1;
-                    cell.bg(p.primary)
+                    cell.bg(period_tone(p))
                 } else if active.contains(&day) {
                     active_count += 1;
                     cell.bg(rhythm_bar(p))
@@ -1237,7 +1249,7 @@ impl InsightsView {
             .gap(px(6.))
             .text_size(px(TEXT_CAPTION))
             .text_color(p.muted_foreground)
-            .child(swatch(p.primary, t("insights.legendStreak")))
+            .child(swatch(period_tone(p), t("insights.legendStreak")))
             .child(swatch(rhythm_bar(p), t("insights.legendActive")));
         panel(
             t("insights.currentStreak"),
@@ -1349,7 +1361,11 @@ impl InsightsView {
                                     .h_full()
                                     .w(relative(fraction))
                                     .rounded(px(RADIUS_SM))
-                                    .bg(if strong { p.primary } else { rhythm_bar(p) }),
+                                    .bg(if strong {
+                                        period_tone(p)
+                                    } else {
+                                        rhythm_bar(p)
+                                    }),
                             ),
                     )
                     .child(
