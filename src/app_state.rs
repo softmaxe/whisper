@@ -244,7 +244,7 @@ impl AppState {
     ) -> anyhow::Result<()> {
         let result = self.db.apply_dictionary_changes(add, remove, source);
         self.reload_dictionary(cx);
-        result.map(|_| ())
+        result
     }
 
     /// Forgets one way `term` was misheard.

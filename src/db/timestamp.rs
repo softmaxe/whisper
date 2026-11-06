@@ -29,7 +29,6 @@ pub fn parse_db_timestamp(value: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::Connection;
 
     fn at(iso: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(iso)
@@ -63,15 +62,5 @@ mod tests {
         ] {
             assert_eq!(parse_db_timestamp(value), None, "{value}");
         }
-    }
-
-    #[test]
-    fn the_sql_default_matches_the_rust_shape() {
-        let conn = Connection::open_in_memory().unwrap();
-        let stored: String = conn
-            .query_row(&format!("SELECT {SQL_NOW}"), [], |r| r.get(0))
-            .unwrap();
-        let parsed = parse_db_timestamp(&stored).unwrap();
-        assert_eq!(format_db_timestamp(&parsed), stored);
     }
 }

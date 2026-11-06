@@ -21,28 +21,6 @@ pub struct Database {
     conn: Mutex<Connection>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum TranscriptionStatus {
-    #[default]
-    Completed,
-    /// Transcription or cleanup failed; only older versions wrote it.
-    Failed,
-    /// A cancelled recording; only older versions wrote it.
-    Discarded,
-}
-
-impl TranscriptionStatus {
-    /// Unknown values read as `Completed`, the column's default, which is
-    /// also how History's status filter treats them.
-    pub fn parse(value: &str) -> Self {
-        match value {
-            "failed" => Self::Failed,
-            "discarded" => Self::Discarded,
-            _ => Self::Completed,
-        }
-    }
-}
-
 /// One History row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TranscriptionItem {
@@ -56,7 +34,6 @@ pub struct TranscriptionItem {
     pub created_at: String,
     pub has_audio: bool,
     pub audio_duration_ms: Option<i64>,
-    pub status: TranscriptionStatus,
 }
 
 impl TranscriptionItem {
@@ -66,7 +43,7 @@ impl TranscriptionItem {
 }
 
 const TRANSCRIPTION_COLUMNS: &str =
-    "id, text, raw_text, timestamp, created_at, has_audio, audio_duration_ms, status";
+    "id, text, raw_text, timestamp, created_at, has_audio, audio_duration_ms";
 
 fn transcription_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptionItem> {
     Ok(TranscriptionItem {
@@ -77,7 +54,6 @@ fn transcription_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptionItem> 
         created_at: row.get(4)?,
         has_audio: row.get(5)?,
         audio_duration_ms: row.get(6)?,
-        status: TranscriptionStatus::parse(&row.get::<_, String>(7)?),
     })
 }
 
