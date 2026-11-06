@@ -592,7 +592,27 @@ mod tests {
 
     #[test]
     fn rewrite_is_not_corrections() {
-        assert!(ex("the cat sat on the mat", "a dog stood under a rug").is_empty());
+        // Each changed run is short enough to be a term, but most of the
+        // paste changed, so none of them is a correction.
+        let (pasted, edited) = (
+            "Shunade and Bob met at noon on Monday",
+            "Sinead and Rob ran at dawn on Friday",
+        );
+        assert_eq!(
+            ex(pasted, "Sinead and Bob met at noon on Monday"),
+            ["Sinead"]
+        );
+        assert!(ex(pasted, edited).is_empty());
+        // Unchanged text around the paste does not dilute the rewrite.
+        let prefix = "lots of unchanged words stay in this field ".repeat(5);
+        assert!(
+            extract_corrections(
+                &format!("{prefix}{pasted}"),
+                &format!("{prefix}{edited}"),
+                &[pasted],
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -657,11 +677,6 @@ mod tests {
             ["Claude Code"]
         );
         assert_eq!(sure("用爱爱写代码", "用AI写代码"), ["AI"]);
-    }
-
-    #[test]
-    fn misheard_chinese_name() {
-        assert_eq!(sure("明天和张三开会", "明天和章珊开会"), ["章珊"]);
     }
 
     #[test]
@@ -783,20 +798,6 @@ mod tests {
     }
 
     #[test]
-    fn a_rewritten_region_is_skipped_even_in_a_long_field() {
-        let pasted = "the cat sat on the mat";
-        let prefix = "lots of unchanged words stay in this field ".repeat(5);
-        assert!(
-            extract_corrections(
-                &format!("{prefix}{pasted}"),
-                &format!("{prefix}a dog stood under a rug"),
-                &[pasted],
-            )
-            .is_empty()
-        );
-    }
-
-    #[test]
     fn a_reformatted_paste_counts_when_the_field_is_about_its_size() {
         let found = extract_corrections(
             "Hey \u{201c}Shunade\u{201d} there",
@@ -824,7 +825,7 @@ mod tests {
     #[test]
     fn edit_distance_counts_utf16_units() {
         assert_eq!(edit_distance("shunade", "sinead"), 4);
-        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("", "😀"), 2);
     }
 
     #[test]

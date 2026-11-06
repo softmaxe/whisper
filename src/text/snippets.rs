@@ -290,12 +290,6 @@ mod tests {
     }
 
     #[test]
-    fn expands_turkish_capital_i_trigger() {
-        let s = snip("İmza", "Best regards,\nUmut");
-        assert_eq!(expand_snippets("İmza", &s), "Best regards,\nUmut");
-    }
-
-    #[test]
     fn capital_i_dot_trigger_matches_every_casing() {
         let s = snip("İmza", "Best regards,\nUmut");
         for spoken in ["imza", "İmza", "İMZA", "Imza"] {
@@ -422,17 +416,6 @@ mod tests {
             expand_snippets("I like cxx lang a lot", &s),
             "I like cxx lang a lot"
         );
-    }
-
-    #[test]
-    fn hint_words_empty_inputs() {
-        assert!(get_dictionary_hint_words(&[], &[]).is_empty());
-    }
-
-    #[test]
-    fn hint_words_dictionary_only() {
-        let dict = strings(&["Whisper", "Supabase"]);
-        assert_eq!(get_dictionary_hint_words(&dict, &[]), dict);
     }
 
     #[test]

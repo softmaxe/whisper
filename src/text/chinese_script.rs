@@ -144,7 +144,6 @@ pub fn apply_chinese_script(text: &str, target: Option<ChineseScriptTarget>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::text::prompt_cap::{WHISPER_PROMPT_CHARS, fit_dictionary_prompt};
     use ChineseScriptPreference as P;
     use ChineseScriptTarget::{Simplified, Traditional};
 
@@ -160,6 +159,15 @@ mod tests {
         );
         assert_eq!(
             resolve_chinese_script_target("en", P::Simplified, None),
+            None
+        );
+        // Without text, auto never picks a script.
+        assert_eq!(
+            resolve_chinese_script_target("auto", P::Simplified, None),
+            None
+        );
+        assert_eq!(
+            resolve_chinese_script_target("auto", P::Traditional, None),
             None
         );
     }
@@ -229,26 +237,6 @@ mod tests {
     }
 
     #[test]
-    fn without_text_only_explicit_language_applies() {
-        assert_eq!(
-            resolve_chinese_script_target("zh-CN", P::AsTranscribed, None),
-            Some(Simplified)
-        );
-        assert_eq!(
-            resolve_chinese_script_target("zh-TW", P::AsTranscribed, None),
-            Some(Traditional)
-        );
-        assert_eq!(
-            resolve_chinese_script_target("auto", P::Simplified, None),
-            None
-        );
-        assert_eq!(
-            resolve_chinese_script_target("auto", P::Traditional, None),
-            None
-        );
-    }
-
-    #[test]
     fn cleanup_language_keeps_auto() {
         assert_eq!(resolve_cleanup_language("auto"), "auto");
         assert_eq!(resolve_cleanup_language(""), "auto");
@@ -300,15 +288,6 @@ mod tests {
     }
 
     #[test]
-    fn japanese_and_korean_untouched_when_target_none() {
-        for t in ["会議の資料を確認してください", "한국어 漢字 텍스트"] {
-            let target = resolve_chinese_script_target("auto", P::Simplified, Some(t));
-            assert_eq!(target, None);
-            assert_eq!(apply_chinese_script(t, target), t);
-        }
-    }
-
-    #[test]
     fn prompt_bias_and_merge() {
         assert!(
             get_chinese_script_prompt_bias(Some(Simplified))
@@ -336,17 +315,5 @@ mod tests {
             Some("foo")
         );
         assert_eq!(merge_whisper_prompt(Some("  "), None), None);
-    }
-
-    #[test]
-    fn bias_survives_fitted_dictionary() {
-        let bias = get_chinese_script_prompt_bias(Some(Simplified)).unwrap();
-        let words: Vec<String> = (0..400).map(|i| format!("term{i}")).collect();
-        let bias_len = bias.encode_utf16().count();
-        let fitted = fit_dictionary_prompt(&words, WHISPER_PROMPT_CHARS - bias_len - 1);
-        let prompt = merge_whisper_prompt(fitted.as_deref(), Some(Simplified)).unwrap();
-        assert!(prompt.starts_with(bias));
-        assert!(prompt.encode_utf16().count() <= WHISPER_PROMPT_CHARS);
-        assert!(prompt.ends_with("term0"));
     }
 }

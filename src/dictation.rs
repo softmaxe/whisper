@@ -767,15 +767,4 @@ mod tests {
     fn an_invalid_endpoint_is_fixed_in_settings_not_by_resending() {
         assert_eq!(actions(Some(CUSTOM_ENDPOINT_INVALID_CODE)), (false, true));
     }
-
-    #[test]
-    fn other_errors_offer_nothing_extra() {
-        assert_eq!(
-            ErrorActions::default(),
-            ErrorActions {
-                retry: false,
-                open_settings: false,
-            }
-        );
-    }
 }

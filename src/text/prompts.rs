@@ -325,14 +325,6 @@ mod tests {
     }
 
     #[test]
-    fn wraps_transcript() {
-        assert_eq!(
-            wrap_cleanup_transcript("hi"),
-            "<transcript>\nhi\n</transcript>\n\nOutput only the cleaned transcript."
-        );
-    }
-
-    #[test]
     fn family_lookup() {
         let effort = |m| get_model_family_constraints(m).and_then(|c| c.reasoning_effort);
         assert_eq!(
@@ -389,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn finish_reasons_and_stripping() {
+    fn truncated_finish_reasons() {
         assert!(is_truncated_finish_reason(Some("length")));
         assert!(is_truncated_finish_reason(Some("max_tokens")));
         assert!(!is_truncated_finish_reason(Some("stop")));

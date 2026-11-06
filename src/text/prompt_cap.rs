@@ -46,18 +46,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn most_important_word_last() {
-        assert_eq!(
-            fit_dictionary_prompt(&["first", "second", "third"], 900).as_deref(),
-            Some("third, second, first")
-        );
-    }
-
-    #[test]
     fn drops_overflowing_words_whole() {
-        let result = fit_dictionary_prompt(&["alpha", "beta", "gamma-long", "pi"], 15);
-        assert_eq!(result.as_deref(), Some("pi, beta, alpha"));
-        assert!(result.unwrap().len() <= 15);
+        assert_eq!(
+            fit_dictionary_prompt(&["alpha", "beta", "gamma-long", "pi"], 15).as_deref(),
+            Some("pi, beta, alpha")
+        );
     }
 
     #[test]

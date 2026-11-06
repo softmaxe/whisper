@@ -97,15 +97,6 @@ mod tests {
     }
 
     #[test]
-    fn registers_and_releases_escape() {
-        let mut h = Harness::new();
-        h.register(Recording).unwrap();
-        assert!(h.escape_bound());
-        h.unregister(Recording);
-        assert!(!h.escape_bound());
-    }
-
-    #[test]
     fn late_recording_release_keeps_copy_recovery_binding() {
         let mut h = Harness::new();
         h.register(Recording).unwrap();

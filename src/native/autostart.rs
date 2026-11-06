@@ -119,36 +119,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn awaiting_approval_reads_as_off_with_reason() {
-        assert_eq!(
-            resolve_auto_start_state(LoginItemStatus::RequiresApproval),
-            AutoStartState {
-                enabled: false,
-                requires_approval: true
-            }
-        );
-    }
-
-    #[test]
-    fn approved_item_is_enabled() {
-        assert_eq!(
-            resolve_auto_start_state(LoginItemStatus::Enabled),
-            AutoStartState {
-                enabled: true,
-                requires_approval: false
-            }
-        );
-    }
-
-    #[test]
-    fn disabled_item_is_neither() {
-        for status in [LoginItemStatus::NotRegistered, LoginItemStatus::NotFound] {
+    fn raw_status_maps_to_toggle_state() {
+        // (SMAppServiceStatus raw value, enabled, requires approval)
+        for (raw, enabled, requires_approval) in [
+            (0, false, false),
+            (1, true, false),
+            (2, false, true),
+            (3, false, false),
+        ] {
             assert_eq!(
-                resolve_auto_start_state(status),
+                resolve_auto_start_state(LoginItemStatus::from_raw(raw)),
                 AutoStartState {
-                    enabled: false,
-                    requires_approval: false
-                }
+                    enabled,
+                    requires_approval
+                },
+                "{raw}"
             );
         }
     }

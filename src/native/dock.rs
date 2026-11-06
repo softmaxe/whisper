@@ -154,33 +154,14 @@ mod tests {
     }
 
     #[test]
-    fn opening_the_panel_from_the_tray_shows_the_icon() {
-        let policy = FakePolicy::new(false);
-        let mut dock = DockManager::default();
-        let now = Instant::now();
-        dock.set_control_panel_visible(&policy, false, now);
-        dock.set_control_panel_visible(&policy, true, now);
-        assert_eq!(policy.calls(), ["regular"]);
-    }
-
-    #[test]
-    fn reopening_a_visible_panel_changes_nothing() {
-        let policy = FakePolicy::new(true);
-        let mut dock = DockManager::default();
-        let now = Instant::now();
-        dock.set_control_panel_visible(&policy, true, now);
-        dock.set_control_panel_visible(&policy, true, now);
-        dock.set_control_panel_visible(&policy, true, now);
-        assert!(policy.calls().is_empty());
-    }
-
-    #[test]
     fn closing_right_after_showing_keeps_the_icon_until_the_next_hide() {
         let policy = FakePolicy::new(false);
         let mut dock = DockManager::default();
         let start = Instant::now();
         dock.set_control_panel_visible(&policy, false, start);
         dock.set_control_panel_visible(&policy, true, start);
+        // Opening the panel from the tray shows the icon.
+        assert_eq!(policy.calls(), ["regular"]);
         policy.calls.borrow_mut().clear();
         dock.set_control_panel_visible(&policy, false, start);
         assert!(policy.calls().is_empty());

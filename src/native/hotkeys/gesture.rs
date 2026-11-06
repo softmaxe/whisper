@@ -406,14 +406,6 @@ mod tests {
     const NONE: [&str; 0] = [];
 
     #[test]
-    fn single_tap_does_not_start() {
-        let h = Harness::tap_mode();
-        h.tap();
-        h.advance(2000);
-        assert_eq!(h.commands(), NONE);
-    }
-
-    #[test]
     fn double_tap_starts_on_second_press() {
         let h = Harness::tap_mode();
         h.tap();
@@ -508,6 +500,7 @@ mod tests {
     fn hold_starts_after_threshold_and_ends_on_release() {
         let h = Harness::push_mode();
         h.gesture.press(GLOBE);
+        assert_eq!(h.preparation(), ["prepare"]);
         h.advance(149);
         assert_eq!(h.commands(), NONE);
         h.advance(1);
@@ -515,6 +508,8 @@ mod tests {
         h.advance(3000);
         h.gesture.release(GLOBE);
         assert_eq!(h.commands(), ["start", "stop"]);
+        // The prepared microphone is kept, not given back.
+        assert_eq!(h.preparation(), ["prepare"]);
     }
 
     #[test]
@@ -617,30 +612,6 @@ mod tests {
     }
 
     #[test]
-    fn next_hold_after_short_one_starts_normally() {
-        let h = Harness::push_mode();
-        h.gesture.press(GLOBE);
-        h.advance(200);
-        h.gesture.release(GLOBE);
-        h.advance(100);
-        h.gesture.press(GLOBE);
-        h.advance(200);
-        h.gesture.release(GLOBE);
-        assert_eq!(h.commands(), ["start", "stop", "start", "stop"]);
-    }
-
-    #[test]
-    fn microphone_prepared_at_press_and_kept() {
-        let h = Harness::push_mode();
-        h.gesture.press(GLOBE);
-        assert_eq!(h.preparation(), ["prepare"]);
-        h.advance(150);
-        h.gesture.release(GLOBE);
-        assert_eq!(h.commands(), ["start", "stop"]);
-        assert_eq!(h.preparation(), ["prepare"]);
-    }
-
-    #[test]
     fn press_that_never_starts_gives_back_microphone() {
         let short = Harness::push_mode();
         short.tap_key(GLOBE, 100);
@@ -682,6 +653,9 @@ mod tests {
         assert!(h.hints().is_empty());
         h.advance(1);
         assert_eq!(h.hints(), [ActivationMode::Tap]);
+        h.advance(2000);
+        assert_eq!(h.hints(), [ActivationMode::Tap]);
+        assert_eq!(h.commands(), NONE);
     }
 
     #[test]

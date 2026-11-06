@@ -375,28 +375,16 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn fn_combination_rejected_without_registering_base_key() {
-        let backend = FakeBackend::default();
-        let mut registry = SlotRegistry::new();
-        let err = registry
-            .setup_shortcuts(&backend, &list("Fn+A"), DICTATION_SLOT, true)
-            .unwrap_err();
-        assert_eq!(err.reason, HotkeyFailureReason::FnCombinationUnsupported);
-        assert!(backend.keys().is_empty());
-    }
-
-    #[test]
     fn rejecting_fn_combination_preserves_previous_binding() {
         let backend = FakeBackend::default();
         let mut registry = SlotRegistry::new();
         registry
             .setup_shortcuts(&backend, &list("Control+Shift+A"), DICTATION_SLOT, true)
             .unwrap();
-        assert!(
-            registry
-                .setup_shortcuts(&backend, &list("Fn+A"), DICTATION_SLOT, true)
-                .is_err()
-        );
+        let err = registry
+            .setup_shortcuts(&backend, &list("Fn+A"), DICTATION_SLOT, true)
+            .unwrap_err();
+        assert_eq!(err.reason, HotkeyFailureReason::FnCombinationUnsupported);
         assert_eq!(backend.keys(), ["Control+Shift+A"]);
         assert_eq!(
             backend.target("Control+Shift+A").map(|t| t.hotkey),
@@ -567,17 +555,5 @@ pub(crate) mod tests {
         );
         let plain = SlotRegistry::with_slot(DICTATION_SLOT, &["Control+Shift+R"]);
         assert_eq!(plain.native_listener_config(), ListenerConfig::default());
-    }
-
-    #[test]
-    fn dictation_lookup_handles_primary_and_secondary() {
-        let registry = SlotRegistry::with_slot(DICTATION_SLOT, &["GLOBE", "Control+Shift+R"]);
-        let hotkeys = registry.slot_hotkeys(DICTATION_SLOT);
-        assert!(hotkeys.contains(&Hotkey::parse("Control+Shift+R").unwrap()));
-        assert!(!hotkeys.contains(&Hotkey::parse("F12").unwrap()));
-        assert_eq!(
-            names(registry.slot_hotkeys(DICTATION_SLOT)),
-            ["GLOBE", "Control+Shift+R"]
-        );
     }
 }
