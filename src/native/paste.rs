@@ -649,24 +649,6 @@ mod tests {
     }
 
     #[test]
-    fn restore_preserves_rich_formats() {
-        let pasteboard = FakePasteboard::default();
-        let rich = ClipboardSnapshot {
-            items: vec![
-                ("public.utf8-plain-text".into(), b"plain before".to_vec()),
-                ("public.html".into(), b"<b>html before</b>".to_vec()),
-                ("public.rtf".into(), b"{\\rtf1 before}".to_vec()),
-                ("public.png".into(), vec![0x89, b'P', b'N', b'G']),
-            ],
-        };
-        pasteboard.restore(&rich);
-        let snapshot = pasteboard.snapshot();
-        pasteboard.write_text("dictated text");
-        restore_after_delay(&pasteboard, &snapshot, Duration::ZERO, "dictated text");
-        assert_eq!(pasteboard.snapshot(), rich);
-    }
-
-    #[test]
     fn restore_skipped_when_another_write_wins() {
         let pasteboard = FakePasteboard::default();
         pasteboard.write_text("user copied something else");

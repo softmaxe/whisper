@@ -147,8 +147,6 @@ impl Palette {
 /// The resolved theme, kept as a GPUI global.
 pub struct Theme {
     pub preference: ThemePreference,
-    /// Whether `palette` is the dark one.
-    pub dark: bool,
     pub palette: Palette,
 }
 
@@ -174,7 +172,6 @@ pub fn init(preference: ThemePreference, cx: &mut App) {
     };
     cx.set_global(Theme {
         preference,
-        dark,
         palette,
     });
     sync_component_theme(&palette, cx);
@@ -198,7 +195,6 @@ pub fn apply(preference: ThemePreference, cx: &mut App) {
     let dark = resolve_dark(preference, cx.window_appearance());
     let theme = cx.global_mut::<Theme>();
     theme.preference = preference;
-    theme.dark = dark;
     theme.palette = if dark {
         Palette::dark()
     } else {
@@ -218,7 +214,7 @@ pub fn follow_system_appearance(window: &Window) {
             let theme = cx.global::<Theme>();
             let preference = theme.preference;
             let dark = resolve_dark(preference, cx.window_appearance());
-            if preference == ThemePreference::Auto && dark != theme.dark {
+            if preference == ThemePreference::Auto && dark != theme.palette.dark {
                 apply(preference, cx);
             }
         })

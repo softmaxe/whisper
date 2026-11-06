@@ -267,6 +267,16 @@ mod tests {
         i.settings.preferred_language = "zh-CN".into();
         let (_, full) = build_whisper_prompt(&i);
         assert!(full.unwrap().starts_with("以下是简体中文"));
+
+        // The bias survives a dictionary that overflows the budget.
+        let words: Vec<String> = (0..400).map(|n| format!("term{n}")).collect();
+        let words: Vec<&str> = words.iter().map(String::as_str).collect();
+        let mut i = input(&words);
+        i.settings.preferred_language = "zh-CN".into();
+        let full = build_whisper_prompt(&i).1.unwrap();
+        assert!(full.starts_with("以下是简体中文"));
+        assert!(full.chars().count() <= WHISPER_PROMPT_CHARS);
+        assert!(full.ends_with("term0"));
     }
 
     #[test]
@@ -362,6 +372,7 @@ mod tests {
         let t = transcribed(run_test(run(i, CancellationToken::new())));
         assert_eq!(t.raw_text, "我用克劳德写 cloud 代码");
         assert_eq!(t.text, "我用Claude写 cloud 代码");
+        assert_eq!(t.cleanup_failure, None);
     }
 
     #[test]
@@ -394,14 +405,6 @@ mod tests {
         )));
         assert_eq!(t.text, "hello there");
         assert_eq!(t.cleanup_failure.unwrap().message, "bad key");
-    }
-
-    #[test]
-    fn without_cleanup_the_raw_transcript_is_delivered() {
-        let asr = asr("hello there");
-        let t = transcribed(run_test(run(served(&asr, None), CancellationToken::new())));
-        assert_eq!(t.text, "hello there");
-        assert_eq!(t.cleanup_failure, None);
     }
 
     #[test]

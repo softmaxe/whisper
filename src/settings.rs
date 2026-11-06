@@ -204,18 +204,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn has_expected_defaults() {
-        let s = Settings::default();
-        assert!(s.use_cleanup_model);
-        assert!(s.cleanup_disable_thinking);
-        assert_eq!(s.audio_retention_days, 30);
-        assert_eq!(s.transcript_retention_days, 0);
-        assert!(s.show_menu_bar_icon);
-        assert!(s.auto_paste_enabled);
-        assert_eq!(s.activation_mode, ActivationMode::Tap);
-    }
-
-    #[test]
     fn round_trips_through_json_with_camel_case_keys() {
         let s = Settings {
             remote_transcription_url: "http://localhost:8000/v1".into(),

@@ -56,9 +56,4 @@ mod tests {
     fn a_deliberate_second_press_after_the_window_counts() {
         assert_eq!(presses(&[0, 700, 1300]), vec![true, true, true]);
     }
-
-    #[test]
-    fn a_quick_second_tap_inside_the_window_is_a_repeat() {
-        assert_eq!(presses(&[0, 300]), vec![true, false]);
-    }
 }

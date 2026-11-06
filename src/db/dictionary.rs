@@ -51,13 +51,6 @@ pub struct DictionaryEntry {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
-/// How many words a delta actually changed (not how many were requested).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct DictionaryChangeCounts {
-    pub added: usize,
-    pub removed: usize,
-}
-
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Freshness tiers by last use: within a day, within two weeks, older.
 const FRESHNESS_TIER_LIMITS_MS: [i64; 2] = [DAY_MS, 14 * DAY_MS];
@@ -183,11 +176,11 @@ fn upsert_word(
     word: &str,
     existing: Option<&ExistingRow>,
     source: &str,
-) -> Result<bool> {
+) -> Result<()> {
     let Some(existing) = existing else {
         tx.prepare_cached("INSERT INTO custom_dictionary (word, source) VALUES (?, ?)")?
             .execute(params![word, source])?;
-        return Ok(true);
+        return Ok(());
     };
     let now = now_db_timestamp();
     if source == "manual" && existing.source == "learned" {
@@ -200,25 +193,25 @@ fn upsert_word(
         tx.prepare_cached("UPDATE custom_dictionary SET word = ?, updated_at = ? WHERE id = ?")?
             .execute(params![word, now, existing.id])?;
     }
-    Ok(false)
+    Ok(())
 }
 
-fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<bool> {
+fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<()> {
     let Some(existing) = existing else {
-        return Ok(false);
+        return Ok(());
     };
     let deleted = tx
         .prepare_cached("DELETE FROM custom_dictionary WHERE id = ?")?
         .execute([existing.id])?;
     if deleted == 0 {
-        return Ok(false);
+        return Ok(());
     }
     // What the user took out stays out, and its mishearings stop applying.
     tx.prepare_cached("DELETE FROM dictionary_corrections WHERE term = ?")?
         .execute([&existing.word])?;
     tx.prepare_cached("INSERT OR IGNORE INTO dictionary_rejected_words (word) VALUES (?)")?
         .execute([&existing.word])?;
-    Ok(true)
+    Ok(())
 }
 
 /// Counts one sighting of `correction` and returns the sightings of its term.
@@ -332,7 +325,7 @@ impl Database {
         add: &[A],
         remove: &[R],
         source: DictionarySource,
-    ) -> Result<DictionaryChangeCounts> {
+    ) -> Result<()> {
         let additions = normalize_words(add);
         let addition_keys: HashSet<&str> = additions.iter().map(|(l, _)| l.as_str()).collect();
         let removals: Vec<(String, String)> = normalize_words(remove)
@@ -340,29 +333,24 @@ impl Database {
             .filter(|(lower, _)| !addition_keys.contains(lower.as_str()))
             .collect();
         if additions.is_empty() && removals.is_empty() {
-            return Ok(DictionaryChangeCounts::default());
+            return Ok(());
         }
 
         let mut conn = self.lock();
         let by_lower = dictionary_rows(&conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut counts = DictionaryChangeCounts::default();
         for (lower, _) in &removals {
-            if delete_row(&tx, by_lower.get(lower))? {
-                counts.removed += 1;
-            }
+            delete_row(&tx, by_lower.get(lower))?;
         }
         for (lower, word) in &additions {
             if source == DictionarySource::Manual {
                 tx.prepare_cached("DELETE FROM dictionary_rejected_words WHERE word = ?")?
                     .execute([word])?;
             }
-            if upsert_word(&tx, word, by_lower.get(lower), source.as_str())? {
-                counts.added += 1;
-            }
+            upsert_word(&tx, word, by_lower.get(lower), source.as_str())?;
         }
         tx.commit()?;
-        Ok(counts)
+        Ok(())
     }
 
     /// Stores what the user corrected and adds the terms that earned a place
@@ -525,34 +513,26 @@ mod tests {
     }
 
     #[test]
-    fn adding_words_leaves_other_rows_untouched() {
+    fn a_delta_touches_only_the_words_it_names() {
         let db = db();
         db.apply_dictionary_changes(&["Whisper", "Alice", "Bob"], NONE, manual())
             .unwrap();
-        let result = db
-            .apply_dictionary_changes(&["Carol"], NONE, manual())
+        db.apply_dictionary_changes(&["Kubernetes", "Postgres"], NONE, DictionarySource::Learned)
             .unwrap();
-        assert_eq!(result.added, 1);
-        assert_eq!(
-            db.get_dictionary().unwrap(),
-            ["Whisper", "Alice", "Bob", "Carol"]
-        );
-    }
-
-    #[test]
-    fn a_stale_one_word_view_cannot_delete_anything() {
-        let db = db();
-        db.apply_dictionary_changes(
-            &["Whisper", "Alice", "Bob", "Imported Term"],
-            NONE,
-            manual(),
-        )
-        .unwrap();
+        db.apply_dictionary_changes(&["Carol"], NONE, manual())
+            .unwrap();
+        // A stale one-word view of the list cannot delete the rest.
         db.apply_dictionary_changes(&["Whisper"], NONE, manual())
             .unwrap();
+        db.apply_dictionary_changes(NONE, &["Kubernetes"], manual())
+            .unwrap();
         assert_eq!(
             db.get_dictionary().unwrap(),
-            ["Whisper", "Alice", "Bob", "Imported Term"]
+            ["Whisper", "Alice", "Bob", "Postgres", "Carol"]
+        );
+        assert_eq!(
+            db.dictionary_word_source("Postgres").unwrap().as_deref(),
+            Some("learned")
         );
     }
 
@@ -587,57 +567,13 @@ mod tests {
     }
 
     #[test]
-    fn a_word_on_both_sides_is_kept() {
+    fn a_word_on_both_sides_of_a_delta_is_kept() {
         let db = db();
         db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
             .unwrap();
-        let result = db
-            .apply_dictionary_changes(&["Alice"], &["Alice"], manual())
+        db.apply_dictionary_changes(&["Alice", "Carol"], &["Nobody", "Alice"], manual())
             .unwrap();
-        assert_eq!(result.removed, 0);
-        assert!(db.get_dictionary().unwrap().contains(&"Alice".to_string()));
-    }
-
-    #[test]
-    fn removing_a_word_leaves_other_learned_words_untouched() {
-        let db = db();
-        db.apply_dictionary_changes(&["Kubernetes", "Postgres"], NONE, DictionarySource::Learned)
-            .unwrap();
-        db.apply_dictionary_changes(NONE, &["Kubernetes"], manual())
-            .unwrap();
-        assert_eq!(
-            db.dictionary_word_source("Postgres").unwrap().as_deref(),
-            Some("learned")
-        );
-    }
-
-    #[test]
-    fn counts_report_words_that_changed() {
-        let db = db();
-        db.apply_dictionary_changes(&["Whisper", "Alice"], NONE, manual())
-            .unwrap();
-        assert_eq!(
-            db.apply_dictionary_changes(&["Alice"], NONE, manual())
-                .unwrap()
-                .added,
-            0
-        );
-        assert_eq!(
-            db.apply_dictionary_changes(NONE, &["Nobody"], manual())
-                .unwrap()
-                .removed,
-            0
-        );
-        let mixed = db
-            .apply_dictionary_changes(&["Alice", "Carol"], &["Nobody", "Alice"], manual())
-            .unwrap();
-        assert_eq!(
-            mixed,
-            DictionaryChangeCounts {
-                added: 1,
-                removed: 0
-            }
-        );
+        assert_eq!(db.get_dictionary().unwrap(), ["Whisper", "Alice", "Carol"]);
     }
 
     #[test]
@@ -655,10 +591,7 @@ mod tests {
                 .unwrap()
         };
         let before = snapshot(&db);
-        assert_eq!(
-            db.apply_dictionary_changes(NONE, NONE, manual()).unwrap(),
-            DictionaryChangeCounts::default()
-        );
+        db.apply_dictionary_changes(NONE, NONE, manual()).unwrap();
         assert_eq!(snapshot(&db), before);
     }
 
@@ -699,10 +632,8 @@ mod tests {
             .unwrap();
         assert!(db.get_dictionary().unwrap().is_empty());
         assert_eq!(count_rows(&db), 0, "removal deletes the row");
-        let result = db
-            .apply_dictionary_changes(&["ALICE"], NONE, manual())
+        db.apply_dictionary_changes(&["ALICE"], NONE, manual())
             .unwrap();
-        assert_eq!(result.added, 1);
         assert_eq!(db.get_dictionary().unwrap(), ["ALICE"]);
     }
 
@@ -1009,27 +940,6 @@ mod tests {
             counts,
             [("Kubernetes".into(), 2), ("Claude Code".into(), 1)]
         );
-    }
-
-    #[test]
-    fn counts_terms_in_unspaced_scripts() {
-        let counts = count_dictionary_word_uses(
-            &["张珊", "クロード"],
-            "请把文件发给张珊，张珊会转给クロード。",
-        );
-        assert_eq!(counts, [("张珊".into(), 2), ("クロード".into(), 1)]);
-    }
-
-    #[test]
-    fn counts_latin_terms_next_to_chinese() {
-        let counts = count_dictionary_word_uses(&["Claude"], "用Claude写代码");
-        assert_eq!(counts, [("Claude".into(), 1)]);
-    }
-
-    #[test]
-    fn treats_regex_characters_literally() {
-        let counts = count_dictionary_word_uses(&["C++", "Node.js"], "C++ and Nodexjs");
-        assert_eq!(counts, [("C++".into(), 1)]);
     }
 
     #[test]

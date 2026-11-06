@@ -847,7 +847,6 @@ pub fn status_label(label: impl Into<SharedString>, p: &Palette) -> Div {
 pub fn settings_field(
     label: impl Into<SharedString>,
     description: Option<AnyElement>,
-    action: Option<AnyElement>,
     control: impl IntoElement,
     p: &Palette,
 ) -> Div {
@@ -856,7 +855,7 @@ pub fn settings_field(
         .font_weight(FontWeight::MEDIUM)
         .text_color(p.foreground)
         .child(label.into());
-    field_with_label(label.into_any_element(), description, action, control, p)
+    field_with_label(label.into_any_element(), description, control, p)
 }
 
 /// A settings field whose label carries a protocol note such as
@@ -889,13 +888,12 @@ pub fn settings_field_tagged(
                 .text_color(p.muted_foreground)
                 .child(tag.into()),
         );
-    field_with_label(label.into_any_element(), description, None, control, p)
+    field_with_label(label.into_any_element(), description, control, p)
 }
 
 fn field_with_label(
     label: AnyElement,
     description: Option<AnyElement>,
-    action: Option<AnyElement>,
     control: impl IntoElement,
     p: &Palette,
 ) -> Div {
@@ -906,25 +904,19 @@ fn field_with_label(
             .gap(px(8.))
             .child(
                 div()
-                    .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap(px(16.))
-                    .child(div().flex_1().min_w_0().child(label).when_some(
-                        description,
-                        |d, desc| {
-                            d.child(
-                                div()
-                                    .mt(px(2.))
-                                    .max_w(px(DESCRIPTION_MAX_WIDTH))
-                                    .text_size(px(TEXT_SMALL))
-                                    .line_height(px(LINE_SMALL))
-                                    .text_color(p.subtle_foreground)
-                                    .child(desc),
-                            )
-                        },
-                    ))
-                    .when_some(action, |d, a| d.child(div().flex_none().child(a))),
+                    .min_w_0()
+                    .child(label)
+                    .when_some(description, |d, desc| {
+                        d.child(
+                            div()
+                                .mt(px(2.))
+                                .max_w(px(DESCRIPTION_MAX_WIDTH))
+                                .text_size(px(TEXT_SMALL))
+                                .line_height(px(LINE_SMALL))
+                                .text_color(p.subtle_foreground)
+                                .child(desc),
+                        )
+                    }),
             )
             .child(control),
     )

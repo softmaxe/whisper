@@ -301,12 +301,6 @@ impl TextEditMonitor {
         pid
     }
 
-    /// The pid captured most recently, if any.
-    #[cfg(test)]
-    pub fn last_target_pid(&self) -> Option<i32> {
-        lock(&self.inner.capture).last_pid
-    }
-
     /// Gives the Target app keyboard focus before pasting. True once it holds
     /// focus. An app already holding focus is left alone (re-activating a
     /// Chromium app drops its field's first responder); an app without a
@@ -801,7 +795,7 @@ mod tests {
         assert_eq!(first.join().unwrap(), Some(4242));
         assert_eq!(second, Some(4242));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert_eq!(monitor.last_target_pid(), Some(4242));
+        assert_eq!(lock(&monitor.inner.capture).last_pid, Some(4242));
     }
 
     #[test]
@@ -827,7 +821,7 @@ mod tests {
         lock(&monitor.inner.capture).last_capture_at =
             Some(Instant::now() - Duration::from_secs(10));
         assert_eq!(monitor.capture_target_pid(), Some(2222));
-        assert_eq!(monitor.last_target_pid(), Some(2222));
+        assert_eq!(lock(&monitor.inner.capture).last_pid, Some(2222));
     }
 
     #[test]
@@ -900,12 +894,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "activates real applications"]
-    fn activate_unmapped_pid_is_false() {
-        assert!(!TextEditMonitor::shared().activate_pid(Some(99_999_999)));
-    }
-
-    #[test]
     fn paste_target_verdicts() {
         for (output, expected) in [
             ("PASTEABLE", Some(true)),
@@ -952,7 +940,7 @@ mod tests {
     }
 
     #[test]
-    fn monitoring_without_target_or_for_cached_pid_stops_at_once() {
+    fn monitoring_without_target_helper_or_for_cached_pid_stops_at_once() {
         let monitor = TextEditMonitor::with_hooks(hooks(sh("echo"), Arc::new(|| None)));
         let reports = watch(&monitor, "pasted text", None);
         assert!(!monitor.is_monitoring());
@@ -961,10 +949,7 @@ mod tests {
         let reports = watch(&monitor, "pasted text", Some(42));
         assert!(!monitor.is_monitoring());
         assert!(!reports.try_recv().unwrap().readable);
-    }
 
-    #[test]
-    fn monitoring_without_the_helper_reports_an_unreadable_field() {
         let monitor = TextEditMonitor::with_hooks(hooks(no_helper(), Arc::new(|| None)));
         let reports = watch(&monitor, "pasted text", Some(42));
         assert!(!monitor.is_monitoring());

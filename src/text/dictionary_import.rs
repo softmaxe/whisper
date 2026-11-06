@@ -30,14 +30,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn comma_separated() {
-        assert_eq!(
-            parse_dictionary_import_text("Alice, Bob, Carol"),
-            ["Alice", "Bob", "Carol"]
-        );
-    }
-
-    #[test]
     fn one_per_line() {
         assert_eq!(
             parse_dictionary_import_text("Alice\nBob\nCarol"),

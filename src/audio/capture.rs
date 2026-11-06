@@ -73,15 +73,6 @@ pub struct RecordedAudio {
 }
 
 impl RecordedAudio {
-    /// Length of the captured audio itself.
-    #[cfg(test)]
-    pub fn audio_duration(&self) -> Duration {
-        if self.sample_rate == 0 {
-            return Duration::ZERO;
-        }
-        Duration::from_secs_f64(self.samples.len() as f64 / f64::from(self.sample_rate))
-    }
-
     /// 16 kHz mono PCM16 WAV for upload and storage.
     pub fn to_wav_16k(&self) -> Vec<u8> {
         encode_wav_16k(&self.samples, self.sample_rate)
@@ -889,21 +880,6 @@ mod tests {
     }
 
     #[test]
-    fn recorded_audio_helpers() {
-        let audio = RecordedAudio {
-            samples: vec![0.1; 48_000],
-            sample_rate: 48_000,
-            received_audio_data: true,
-            speech_gate: SpeechGate::default(),
-        };
-        assert_eq!(audio.audio_duration(), Duration::from_secs(1));
-        let wav = audio.to_wav_16k();
-        assert!(crate::audio::wav::is_pcm16_mono_16k_wav(&wav));
-        assert!(audio.is_usable(wav.len()));
-        assert!(!audio.is_usable(44));
-    }
-
-    #[test]
     fn unknown_device_fails_start() {
         let recorder = Recorder::new(None);
         let err = block_on(recorder.start(Some("no-such-microphone-xyz"))).unwrap_err();
@@ -928,12 +904,12 @@ mod tests {
         assert!(recorder.level().is_some());
         let audio = recorder.stop().expect("recording");
         assert!(audio.received_audio_data);
-        assert!(audio.audio_duration() > Duration::from_millis(1000));
+        let duration =
+            Duration::from_secs_f64(audio.samples.len() as f64 / f64::from(audio.sample_rate));
+        assert!(duration > Duration::from_millis(1000));
         eprintln!(
-            "captured {:?} at {} Hz, gate {:?}",
-            audio.audio_duration(),
-            audio.sample_rate,
-            audio.speech_gate
+            "captured {duration:?} at {} Hz, gate {:?}",
+            audio.sample_rate, audio.speech_gate
         );
     }
 }

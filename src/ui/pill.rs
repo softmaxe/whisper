@@ -29,6 +29,7 @@ use crate::dictation::{Dictation, DictationNotice, ErrorActions};
 use crate::macos;
 
 use super::components::{KeyboardFocusable, f32_tx, icon, kbd};
+use super::format::format_elapsed;
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
     RADIUS_LG, RADIUS_MD, RADIUS_XL, TEXT_BODY, TEXT_READING, TEXT_SMALL, ease_out, ease_overshoot,
@@ -152,12 +153,6 @@ fn hud_shadow(y: f32, blur: f32, spread: f32, alpha: f32) -> Vec<BoxShadow> {
             inset: true,
         },
     ]
-}
-
-/// Elapsed recording time as `m:ss`.
-fn format_elapsed(elapsed: Duration) -> String {
-    let secs = elapsed.as_secs();
-    format!("{}:{:02}", secs / 60, secs % 60)
 }
 
 /// A tooltip on the HUD surface, so it matches the panel it labels in
@@ -2068,7 +2063,7 @@ mod tests {
 
     use super::{
         BAR_MAX, BAR_MIN, BAR_W, BREATH, Countdown, DUR_BASE, ENVELOPE, ERROR_HOLD, ErrorActions,
-        ErrorCard, RESOLVE, bar_level, format_elapsed, live_target, pill_motion, think_opacity,
+        ErrorCard, RESOLVE, bar_level, live_target, pill_motion, think_opacity,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -2114,13 +2109,6 @@ mod tests {
         let still = |now: f32| live_target(0., 4, now, true);
         assert_eq!(still(0.), still(1200.));
         assert!((still(0.) - BREATH * ENVELOPE[4] * 0.8).abs() < 1e-5);
-    }
-
-    #[test]
-    fn elapsed_time_reads_as_minutes_and_seconds() {
-        assert_eq!(format_elapsed(Duration::from_millis(3_999)), "0:03");
-        assert_eq!(format_elapsed(Duration::from_secs(65)), "1:05");
-        assert_eq!(format_elapsed(Duration::from_secs(754)), "12:34");
     }
 
     #[test]

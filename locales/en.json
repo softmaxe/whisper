@@ -197,11 +197,6 @@
         "description": "How the model answers"
       }
     },
-    "transcription": {
-      "modes": {
-        "selfHosted": "Self-Hosted"
-      }
-    },
     "selfHosted": {
       "serverUrl": "Server URL"
     },
@@ -263,10 +258,8 @@
   },
   "common": {
     "retry": "Retry",
-    "refresh": "Refresh",
     "cancel": "Cancel",
     "model": "Model",
-    "loading": "Loading…",
     "hold": "Hold",
     "tap": "Double-tap",
     "save": "Save",
@@ -288,7 +281,6 @@
       "couldNotDeleteDescriptionGeneric": "Something went wrong. Please try again.",
       "empty": "No transcripts yet",
       "emptyDescription": "Press your hotkey in any app and start talking. Every transcript is saved privately here on your device.",
-      "sectionTitle": "Transcripts",
       "dataRetentionDisabled": "History is off. New dictations aren’t saved.",
       "press": "Press",
       "toStart": "to start",
@@ -473,9 +465,6 @@
       "modified": "Modified"
     }
   },
-  "models": {
-    "noneAvailable": "No models available"
-  },
   "sidebar": {
     "home": "History",
     "insights": "Insights",
@@ -609,12 +598,9 @@
     "filterAll": "All",
     "filterManual": "Manual",
     "filterLearned": "Learned",
-    "filterLearnedCount_one": "Learned, {{count}} word",
-    "filterLearnedCount_other": "Learned, {{count}} words",
     "columnWord": "Word",
     "columnUses": "Uses",
     "columnLastUsed": "Last used",
-    "export": "Export",
     "wordCount_one": "{{count}} word",
     "wordCount_other": "{{count}} words",
     "wordCountFiltered": "{{shown}} of {{total}} words",
@@ -728,10 +714,6 @@
         "description": "Original dictation pasted without AI cleanup."
       }
     },
-    "mic": {
-      "recording": "Recording…",
-      "processing": "Processing…"
-    },
     "commandMenu": {
       "stopListening": "Stop listening",
       "startListening": "Start listening"
@@ -739,7 +721,6 @@
   },
   "commandSearch": {
     "sections": {
-      "transcripts": "Transcripts",
       "recent": "Recent"
     },
     "noResults": "No results",

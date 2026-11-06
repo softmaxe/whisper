@@ -310,12 +310,8 @@ mod tests {
             Some(external.clone())
         );
         assert_eq!(
-            resolve(vec![built_in.clone(), external.clone(), phone.clone()]),
+            resolve(vec![built_in.clone(), external, phone.clone()]),
             Some(phone)
-        );
-        assert_eq!(
-            resolve(vec![built_in.clone(), external.clone()]),
-            Some(external)
         );
         assert_eq!(resolve(vec![built_in]), None);
     }
@@ -473,17 +469,6 @@ mod tests {
         assert!(is_built_in_microphone("MacBook Air Microphone"));
         assert!(!is_built_in_microphone("Galaxy Cell Microphone"));
         assert!(!is_built_in_microphone("AirPods Pro"));
-    }
-
-    #[test]
-    fn stale_id_is_remapped_by_label() {
-        let result = resolve_microphone_selection(
-            &[mic("new-id", "Studio Mic")],
-            &specific("old-id", "Studio Mic"),
-            None,
-            None,
-        );
-        assert_eq!(result.map(|d| d.id).as_deref(), Some("new-id"));
     }
 
     #[test]

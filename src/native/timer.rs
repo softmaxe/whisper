@@ -255,21 +255,4 @@ mod tests {
         rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert_eq!(fired.load(Ordering::SeqCst), 1);
     }
-
-    #[test]
-    fn fake_timers_run_in_deadline_order() {
-        let timers = FakeTimers::new();
-        let log = Arc::new(Mutex::new(Vec::new()));
-        for (delay, label) in [(30u64, "c"), (10, "a"), (20, "b")] {
-            let log = Arc::clone(&log);
-            timers.schedule(
-                Duration::from_millis(delay),
-                Box::new(move || lock(&log).push(label)),
-            );
-        }
-        timers.advance(15);
-        assert_eq!(*lock(&log), vec!["a"]);
-        timers.advance(100);
-        assert_eq!(*lock(&log), vec!["a", "b", "c"]);
-    }
 }

@@ -408,22 +408,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn spawn_args_carry_state_path_and_omit_suppression_by_default() {
-        let h = harness(true, true);
-        h.listener.start();
-        h.listener.stop();
-        assert_eq!(h.spawner.count(), 1);
-        assert_eq!(
-            lock(&h.spawner.calls)[0].program,
-            PathBuf::from(LISTENER_PATH)
-        );
-        assert_eq!(
-            h.spawner.args(0),
-            vec!["--globe-preference-state".to_string(), state_arg(&h)]
-        );
-    }
-
-    #[test]
     fn leftover_recovery_uses_one_shot_helper() {
         let h = harness(true, true);
         let listener = h.listener.clone();
@@ -505,42 +489,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn spawn_args_include_buttons_spaced_path_and_suppression() {
-        let h = harness(true, true);
-        h.listener.set_configuration(ListenerConfig {
-            mouse_buttons: vec!["MouseButton4".into(), "MouseButton5".into()],
-            suppress_globe_action: true,
-        });
-        h.listener.start();
-        h.listener.stop();
-        assert_eq!(
-            h.spawner.args(0),
-            vec![
-                "MouseButton4,MouseButton5".to_string(),
-                "--globe-preference-state".to_string(),
-                state_arg(&h),
-                "--suppress-system-globe-action".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn configuration_change_reconfigures_running_listener() {
-        let h = harness(true, true);
-        h.listener.start();
-        h.listener.set_configuration(ListenerConfig {
-            mouse_buttons: vec!["MouseButton4".into()],
-            suppress_globe_action: true,
-        });
-        assert_eq!(h.spawner.count(), 1);
-        assert_eq!(
-            lock(&h.spawner.child(0)).writes,
-            vec!["{\"mouseButtons\":[\"MouseButton4\"],\"suppressGlobeAction\":true}\n"]
-        );
-        h.listener.stop();
-    }
-
-    #[test]
     fn unchanged_configuration_writes_nothing() {
         let h = harness(true, true);
         let config = ListenerConfig {
@@ -608,15 +556,24 @@ pub(crate) mod tests {
         h.listener.start();
         h.listener.stop();
         h.listener.set_configuration(ListenerConfig {
-            mouse_buttons: vec!["MouseButton4".into()],
+            mouse_buttons: vec!["MouseButton4".into(), "MouseButton5".into()],
             suppress_globe_action: true,
         });
         h.listener.start();
         h.listener.stop();
         assert_eq!(
+            lock(&h.spawner.calls)[0].program,
+            PathBuf::from(LISTENER_PATH)
+        );
+        // The default configuration passes only the state path.
+        assert_eq!(
+            h.spawner.args(0),
+            vec!["--globe-preference-state".to_string(), state_arg(&h)]
+        );
+        assert_eq!(
             h.spawner.args(1),
             vec![
-                "MouseButton4".to_string(),
+                "MouseButton4,MouseButton5".to_string(),
                 "--globe-preference-state".to_string(),
                 state_arg(&h),
                 "--suppress-system-globe-action".to_string()

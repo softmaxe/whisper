@@ -736,14 +736,6 @@ mod tests {
         assert!(body.contains_key("reasoning_effort"));
     }
 
-    #[test]
-    fn deadline_error_shape() {
-        let err = llm_request_timeout_error(30);
-        assert_eq!(err.to_string(), "Request timed out after 30s");
-        assert_eq!(err.code(), Some(LLM_REQUEST_TIMEOUT_CODE));
-        assert!(!err.should_retry());
-    }
-
     fn fast_tuning() -> CleanupTuning {
         CleanupTuning {
             request_timeout: Duration::from_secs(5),
@@ -880,6 +872,7 @@ mod tests {
         };
         let err = run(process("raw", &config_for(&server), &tuning)).unwrap_err();
         assert_eq!(err.kind, CleanupErrorKind::Timeout);
+        assert_eq!(err.code(), Some(LLM_REQUEST_TIMEOUT_CODE));
         assert_eq!(err.message, "Request timed out after 0s");
         assert_eq!(server.requests().len(), 1);
     }
@@ -918,16 +911,23 @@ mod tests {
 
     #[test]
     fn param_fallback_persists_across_the_request() {
-        let server = MockServer::start(|req| {
+        let stripped = Arc::new(AtomicUsize::new(0));
+        let counter = stripped.clone();
+        let server = MockServer::start(move |req| {
             if req.json().get("reasoning").is_some() {
                 Reply::json(400, r#"{"error":"unknown field"}"#)
+            } else if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                Reply::json(503, r#"{"error":{"message":"loading model"}}"#)
             } else {
                 Reply::json(200, &completion("ok", "stop"))
             }
         });
         let out = run(process("raw", &config_for(&server), &fast_tuning()));
         assert_eq!(out.unwrap(), "ok");
-        assert_eq!(server.requests().len(), 2);
+        // The retry after the 503 does not send the rejected field again.
+        let requests = server.requests();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[2].json().get("reasoning").is_none());
     }
 
     #[test]

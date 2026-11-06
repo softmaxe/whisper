@@ -27,7 +27,7 @@ use crate::text::url::normalize_base_url;
 use super::components::f32_tx;
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, Toggle, backdrop,
-    dialog_shadow, icon, kbd, keyed_focus_handle, nav_row, page_container, panel_row,
+    dialog_shadow, icon, kbd, keyed_focus_handle, nav_row, page_container, panel_row, scroll_thumb,
     section_header, segment, segmented_track, settings_field, settings_field_tagged, settings_row,
     settings_section, status_label,
 };
@@ -1520,11 +1520,10 @@ impl SettingsModal {
         let s = settings(cx);
         let mode = s.activation_mode;
         let keys = s.effective_dictation_key();
-        let mode_info = backend::hotkey_mode_info(&keys);
         let selector = activation_mode_cards(
             mode,
             TapStyle::of(&parse_hotkey_list(&keys)),
-            mode_info.push_disabled_reason.clone(),
+            backend::push_disabled_reason(&keys),
             cx,
         );
         div()
@@ -1620,7 +1619,6 @@ impl SettingsModal {
                 settings_field(
                     t("common.model"),
                     Some(t("settings.speechToText.modelHelp").into_any_element()),
-                    None,
                     div()
                         .flex()
                         .flex_col()
@@ -1858,7 +1856,6 @@ impl SettingsModal {
             settings_field(
                 t("reasoning.custom.apiKeyOptional"),
                 Some(t("reasoning.custom.apiKeyHelp").into_any_element()),
-                None,
                 self.render_api_key(disabled, window, cx),
                 &p,
             )
@@ -1866,7 +1863,6 @@ impl SettingsModal {
             settings_field(
                 t("common.model"),
                 Some(t("reasoning.custom.modelHelp").into_any_element()),
-                None,
                 div()
                     .flex()
                     .flex_col()
@@ -3609,23 +3605,6 @@ impl Render for SettingsModal {
                 move |d, t| d.opacity(if closing { 1. - t } else { t }),
             )
     }
-}
-
-/// The overlay scroll thumb's top and height inside the content viewport,
-/// when the page is taller than the sheet. It stays visible rather than
-/// fading like a trackpad scroller, so a clipped row reads as more below.
-fn scroll_thumb(scroll: &ScrollHandle) -> Option<(Pixels, Pixels)> {
-    const INSET: f32 = 3.;
-    const MIN_THUMB: f32 = 32.;
-    let viewport = f32::from(scroll.bounds().size.height);
-    let max = f32::from(scroll.max_offset().y);
-    if max < 1. || viewport <= 2. * INSET + MIN_THUMB {
-        return None;
-    }
-    let track = viewport - 2. * INSET;
-    let height = (track * viewport / (viewport + max)).max(MIN_THUMB);
-    let progress = (-f32::from(scroll.offset().y) / max).clamp(0., 1.);
-    Some((px(INSET + (track - height) * progress), px(height)))
 }
 
 /// Where the sheet sits in the window, and whether it uses the narrow layout.
