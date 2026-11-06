@@ -62,11 +62,6 @@ impl AudioStorage {
         Self { dir }
     }
 
-    #[cfg(test)]
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// File name for a recording, named in the user's local wall clock. The
     /// stored timestamp is resolved first: a bare SQLite value is UTC.
     fn build_filename(transcription_id: i64, timestamp: &str) -> String {
@@ -360,8 +355,8 @@ mod tests {
             .save_audio(42, b"RIFF", "2026-09-10 12:00:00")
             .unwrap();
         let bare = storage.save_audio(7, b"bare", "").unwrap();
-        fs::write(storage.dir().join("142.wav"), b"x").unwrap();
-        fs::write(storage.dir().join("notes-42.txt"), b"not audio").unwrap();
+        fs::write(storage.dir.join("142.wav"), b"x").unwrap();
+        fs::write(storage.dir.join("notes-42.txt"), b"not audio").unwrap();
 
         assert_eq!(storage.audio_path(42), Some(wav));
         assert_eq!(storage.audio_path(7), Some(bare));
@@ -385,7 +380,7 @@ mod tests {
         assert!(storage.delete_audio(42), "deleting a missing file succeeds");
         assert_eq!(storage.delete_all_audio(), 2);
         assert_eq!(storage.storage_usage(), StorageUsage::default());
-        assert!(storage.dir().join("notes-42.txt").exists());
+        assert!(storage.dir.join("notes-42.txt").exists());
     }
 
     #[test]
