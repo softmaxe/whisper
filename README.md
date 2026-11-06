@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" alt="Whisper app icon" width="96">
+  <img src="docs/images/icon.png" alt="Whisper app icon" width="96">
 </p>
 
 <h1 align="center">Whisper</h1>
