@@ -1,4 +1,6 @@
-//! Date labels shared by every view, so one day reads the same everywhere.
+//! Date and time labels shared by every view, so they read the same everywhere.
+
+use std::time::Duration;
 
 use chrono::{Datelike, NaiveDate};
 
@@ -24,6 +26,17 @@ pub fn day_label(date: NaiveDate, today: NaiveDate) -> String {
     }
 }
 
+/// Elapsed time as m:ss, or h:mm:ss from an hour up.
+pub fn format_elapsed(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,15 +47,18 @@ mod tests {
 
     #[test]
     fn labels_recent_days_by_name_and_older_ones_by_date() {
+        // Tests never switch the UI language away from English.
         let today = d(2026, 11, 5);
-        assert_eq!(day_label(today, today), t("common.dates.today"));
-        assert_eq!(
-            day_label(d(2026, 11, 4), today),
-            t("common.dates.yesterday")
-        );
-        if i18n::language() == Language::En {
-            assert_eq!(day_label(d(2026, 11, 3), today), "Tue, Nov 3");
-            assert_eq!(day_label(d(2025, 11, 3), today), "Nov 3, 2025");
-        }
+        assert_eq!(day_label(today, today), "Today");
+        assert_eq!(day_label(d(2026, 11, 4), today), "Yesterday");
+        assert_eq!(day_label(d(2026, 11, 3), today), "Tue, Nov 3");
+        assert_eq!(day_label(d(2025, 11, 3), today), "Nov 3, 2025");
+    }
+
+    #[test]
+    fn elapsed_reads_as_a_clock() {
+        assert_eq!(format_elapsed(Duration::from_millis(3_999)), "0:03");
+        assert_eq!(format_elapsed(Duration::from_secs(102)), "1:42");
+        assert_eq!(format_elapsed(Duration::from_secs(3_725)), "1:02:05");
     }
 }

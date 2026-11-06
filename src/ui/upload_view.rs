@@ -23,6 +23,7 @@ use super::components::{
     Button, ButtonSize, ButtonVariant, drop, empty_state, f32_tx, icon, page_container, spinner,
     surface_card,
 };
+use super::format::format_elapsed;
 use super::history_view::copy_with_toast;
 use super::settings_modal::SettingsSection;
 use super::theme::{
@@ -104,17 +105,6 @@ fn format_file_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.)
     } else {
         format!("{:.1} MB", bytes as f64 / (1024. * 1024.))
-    }
-}
-
-/// Elapsed time as m:ss, or h:mm:ss from an hour up.
-fn format_elapsed(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
-    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
-    if hours > 0 {
-        format!("{hours}:{minutes:02}:{seconds:02}")
-    } else {
-        format!("{minutes}:{seconds:02}")
     }
 }
 
@@ -1445,19 +1435,5 @@ fn stage_key(stage: &Stage) -> &'static str {
         Stage::Transcribing => "transcribing",
         Stage::Complete { .. } => "complete",
         Stage::Error(_) => "error",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::format_elapsed;
-
-    #[test]
-    fn elapsed_reads_as_a_clock() {
-        assert_eq!(format_elapsed(Duration::from_secs(7)), "0:07");
-        assert_eq!(format_elapsed(Duration::from_secs(102)), "1:42");
-        assert_eq!(format_elapsed(Duration::from_secs(3_725)), "1:02:05");
     }
 }

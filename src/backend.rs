@@ -111,19 +111,11 @@ pub fn set_cleanup_api_key(key: &str) {
     }
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct HotkeyModeInfo {
-    pub push_disabled_reason: Option<String>,
-}
-
-pub fn hotkey_mode_info(hotkeys_list: &str) -> HotkeyModeInfo {
-    let Some(manager) = hotkeys() else {
-        return HotkeyModeInfo::default();
-    };
-    HotkeyModeInfo {
-        push_disabled_reason: (!manager.supports_hold(hotkeys_list))
-            .then(|| crate::i18n::t("hotkey.errors.holdNeedsReleaseKey")),
-    }
+/// Why hold-to-talk is unavailable for `hotkeys_list`, if it is.
+pub fn push_disabled_reason(hotkeys_list: &str) -> Option<String> {
+    let manager = hotkeys()?;
+    (!manager.supports_hold(hotkeys_list))
+        .then(|| crate::i18n::t("hotkey.errors.holdNeedsReleaseKey"))
 }
 
 pub fn list_models(
