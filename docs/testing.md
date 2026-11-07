@@ -47,6 +47,9 @@ Automated checks do not establish microphone, Accessibility, or server compatibi
 
 - Configure the intended ASR and cleanup servers, dictate with the global shortcut, and verify the pasted result and cleanup failure fallback.
 - Switch microphones, exercise Auto selection with the laptop lid, and verify recording cancellation.
+- Keep Settings open on the microphone picker with the system default set to the MacBook input. In Auto, close the lid and verify that "Next recording uses" updates to the available iPhone without pressing Refresh; reopen the lid and verify the built-in input returns. Connect and disconnect an external input and check that the options update without dismissing an open picker.
+- Press Refresh repeatedly, then close Settings while a refresh is pending. Reopen Settings and verify fresh devices appear; a closed sheet must not keep polling or publish a late result.
+- Start dictation and verify "Currently using" reports the device that opened. Change the picker or lid during recording: the current device must remain unchanged, with the new selection taking effect on the next recording. Stop or cancel and verify the row returns to "Next recording uses". Check unavailable saved inputs and default-input changes too.
 - Retry a History item, then check copy, delete, and retention settings.
 - Upload a file and a batch with History both enabled and disabled. Check raw results remain copyable and do not increase dictation Insights.
 - Verify dictionary and snippet behavior, the menu bar toggle, and installation through the Homebrew cask.

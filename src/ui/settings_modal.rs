@@ -5,6 +5,8 @@ use std::time::Duration;
 use std::cell::Cell;
 use std::rc::Rc;
 
+use std::future::Future;
+
 use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::component::text::{TextView, TextViewState};
@@ -20,8 +22,10 @@ use crate::text::hotkeys::{Hotkey, parse_hotkey_list};
 use crate::text::url::{EndpointIssue, endpoint_check};
 
 use crate::app_state::AppState;
+use crate::audio::capture::CaptureStatus;
 use crate::backend::{self, AutoStartState};
-use crate::native::mic::MicDevice;
+use crate::dictation::Dictation;
+use crate::native::mic::{MicDevice, MicSnapshot};
 use crate::services::cleanup::ModelOption;
 use crate::text::prompts::default_cleanup_prompt;
 use crate::text::url::normalize_base_url;
@@ -180,8 +184,10 @@ pub struct SettingsModal {
 
     auto_start: AutoStartState,
     auto_start_loading: bool,
-    mic_devices: Vec<MicDevice>,
-    mic_default: Option<String>,
+    mic_snapshot: MicSnapshot,
+    mic_capture_status: CaptureStatus,
+    mic_refresh: async_channel::Sender<()>,
+    _mic_monitor: Task<()>,
     storage_usage: (usize, u64),
     storage_usage_generation: u64,
     storage_usage_loading: bool,
@@ -203,6 +209,63 @@ impl EventEmitter<SettingsModalEvent> for SettingsModal {}
 
 fn settings(cx: &App) -> Settings {
     AppState::settings(cx)
+}
+
+/// Serializes timed and manual samples. Dropping the owner cancels this
+/// future, so an in-flight scan can never publish into a closed sheet.
+async fn refresh_microphones<Sample, Scan, Scanning, Publish, Wait, Waiting>(
+    requests: async_channel::Receiver<()>,
+    mut scan: Scan,
+    mut publish: Publish,
+    mut wait: Wait,
+) where
+    Scan: FnMut() -> Scanning,
+    Scanning: Future<Output = Sample>,
+    Publish: FnMut(Sample) -> bool,
+    Wait: FnMut() -> Waiting,
+    Waiting: Future<Output = ()>,
+{
+    loop {
+        while requests.try_recv().is_ok() {}
+        if !publish(scan().await) {
+            break;
+        }
+        let delay = wait();
+        let request = requests.recv();
+        futures::pin_mut!(delay, request);
+        if let futures::future::Either::Right((Err(_), _)) =
+            futures::future::select(delay, request).await
+        {
+            break;
+        }
+    }
+}
+
+/// Idle shows the next selection; a live recording always reports its own
+/// session, even when the picker, lid, or system default changes meanwhile.
+fn microphone_status_info(
+    snapshot: &MicSnapshot,
+    settings: &Settings,
+    capture: &CaptureStatus,
+) -> (&'static str, String) {
+    match capture {
+        CaptureStatus::Recording(device) => ("microphoneSettings.currentlyUsing", device.clone()),
+        CaptureStatus::Starting => (
+            "microphoneSettings.currentlyUsing",
+            t("microphoneSettings.connecting"),
+        ),
+        CaptureStatus::Unavailable => (
+            "microphoneSettings.currentlyUsing",
+            t("microphoneSettings.unknownDevice"),
+        ),
+        CaptureStatus::Idle => (
+            "microphoneSettings.nextRecordingUses",
+            snapshot
+                .next_device(settings)
+                .map(|d| d.label)
+                .unwrap_or_else(|| t("microphoneSettings.systemDefault")),
+        ),
+    }
 }
 
 fn update_settings(cx: &mut App, f: impl FnOnce(&mut Settings)) {
@@ -570,7 +633,12 @@ impl SettingsModal {
                 update_settings(cx, |s| {
                     s.microphone_selection_mode = MicrophoneSelectionMode::Auto
                 });
-            } else if let Some(device) = this.mic_devices.iter().find(|d| d.id == value.as_ref()) {
+            } else if let Some(device) = this
+                .mic_snapshot
+                .devices
+                .iter()
+                .find(|d| d.id == value.as_ref())
+            {
                 let (id, label) = (device.id.clone(), device.label.clone());
                 update_settings(cx, |s| {
                     s.selected_mic_device_id = id;
@@ -593,6 +661,36 @@ impl SettingsModal {
             this.sync_selects(cx);
             cx.notify();
         }));
+
+        let (mic_refresh, mic_requests) = async_channel::bounded(1);
+        // One serial worker handles both automatic and manual refreshes. The
+        // task holds a weak entity and is cancelled when the sheet is dropped.
+        let mic_monitor = cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            refresh_microphones(
+                mic_requests,
+                || executor.spawn(async { backend::microphone_snapshot() }),
+                |snapshot: MicSnapshot| {
+                    this.update(cx, |this: &mut Self, cx| {
+                        let capture = Dictation::global(cx).read(cx).capture_status();
+                        let devices_changed = this.mic_snapshot.devices != snapshot.devices;
+                        let changed =
+                            this.mic_snapshot != snapshot || this.mic_capture_status != capture;
+                        this.mic_snapshot = snapshot;
+                        this.mic_capture_status = capture;
+                        if devices_changed {
+                            this.sync_microphone_select(cx);
+                        }
+                        if changed {
+                            cx.notify();
+                        }
+                    })
+                    .is_ok()
+                },
+                || executor.timer(Duration::from_secs(1)),
+            )
+            .await;
+        });
 
         let mut this = Self {
             section,
@@ -631,8 +729,10 @@ impl SettingsModal {
             stt_request: None,
             auto_start: backend::auto_start_state(),
             auto_start_loading: false,
-            mic_devices: Vec::new(),
-            mic_default: None,
+            mic_snapshot: MicSnapshot::default(),
+            mic_capture_status: CaptureStatus::Idle,
+            mic_refresh,
+            _mic_monitor: mic_monitor,
             storage_usage: (0, 0),
             storage_usage_generation: 0,
             storage_usage_loading: false,
@@ -645,7 +745,6 @@ impl SettingsModal {
             restore_focus: window.focused(cx),
             _subscriptions: subscriptions,
         };
-        this.reload_microphones(cx);
         if section == SettingsSection::PrivacyData {
             this.load_storage_usage(cx);
         }
@@ -780,11 +879,8 @@ impl SettingsModal {
         self.sync_microphone_select(cx);
     }
 
-    fn reload_microphones(&mut self, cx: &mut Context<Self>) {
-        self.mic_devices = backend::list_microphones();
-        self.mic_default = backend::system_default_microphone();
-        self.sync_microphone_select(cx);
-        cx.notify();
+    fn reload_microphones(&mut self, _cx: &mut Context<Self>) {
+        let _ = self.mic_refresh.try_send(());
     }
 
     fn sync_microphone_select(&mut self, cx: &mut Context<Self>) {
@@ -813,7 +909,7 @@ impl SettingsModal {
                 SelectOption::new("__unavailable__", unavailable_label.clone()).disabled(true),
             );
         }
-        for device in &self.mic_devices {
+        for device in &self.mic_snapshot.devices {
             options.push(SelectOption::new(device.id.clone(), device.label.clone()));
         }
         let value: SharedString = if is_auto {
@@ -832,16 +928,7 @@ impl SettingsModal {
     }
 
     fn selected_device(&self, s: &Settings) -> Option<MicDevice> {
-        match s.microphone_selection_mode {
-            MicrophoneSelectionMode::BuiltIn => {
-                self.mic_devices.iter().find(|d| d.is_built_in).cloned()
-            }
-            _ => self
-                .mic_devices
-                .iter()
-                .find(|d| d.id == s.selected_mic_device_id)
-                .cloned(),
-        }
+        self.mic_snapshot.resolve(s)
     }
 
     // ---- Text cleanup server ----------------------------------------------------------------
@@ -1540,34 +1627,32 @@ impl SettingsModal {
 
     /// The row label and device name to report under the picker, when the
     /// selection resolves to a device without the user reading the dropdown.
-    fn microphone_status(&self, cx: &App) -> Option<(String, String)> {
-        let built_in = self.mic_devices.iter().find(|d| d.is_built_in);
-        match settings(cx).microphone_selection_mode {
-            MicrophoneSelectionMode::Auto => {
-                let lid_closed = backend::lid_closed().unwrap_or(false);
-                let device = built_in
-                    .filter(|_| !lid_closed)
-                    .map(|d| d.label.clone())
-                    .or_else(|| self.mic_default.clone())
-                    .unwrap_or_else(|| t("microphoneSettings.systemDefault"));
-                Some((t("microphoneSettings.currentlyUsing"), device))
-            }
-            MicrophoneSelectionMode::BuiltIn => {
-                built_in.map(|d| (t("microphoneSettings.currentlyUsing"), d.label.clone()))
-            }
-            MicrophoneSelectionMode::Specific => None,
-        }
-    }
-
     /// The Dictation page: everything about the act of dictating, from the
     /// keys that start it to the microphone and the pill it shows.
     fn render_hotkeys(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let mut microphone_rows = vec![self.render_microphone(cx)];
-        if let Some((label, device)) = self.microphone_status(cx) {
-            microphone_rows
-                .push(settings_row(label, None, status_label(device, &p), &p).into_any_element());
-        }
+        let capture = Dictation::global(cx).read(cx).capture_status();
+        let (label, device) = microphone_status_info(&self.mic_snapshot, &settings(cx), &capture);
+        let healthy = matches!(capture, CaptureStatus::Recording(_) | CaptureStatus::Idle);
+        let device_status = if healthy {
+            status_label(device, &p)
+        } else {
+            div()
+                .text_size(px(TEXT_SMALL))
+                .text_color(p.muted_foreground)
+                .child(device)
+        };
+        microphone_rows.push(
+            settings_row(
+                t(label),
+                matches!(capture, CaptureStatus::Recording(_))
+                    .then(|| t("microphoneSettings.appliesNextRecording").into()),
+                device_status,
+                &p,
+            )
+            .into_any_element(),
+        );
         let s = settings(cx);
         let mode = s.activation_mode;
         let keys = s.effective_dictation_key();
@@ -3741,9 +3826,167 @@ fn sheet_frame(viewport: Size<Pixels>) -> SheetFrame {
 
 #[cfg(test)]
 mod tests {
-    use super::{TapStyle, endpoint_host, friendly_server_error, sheet_frame};
+    use super::{
+        TapStyle, endpoint_host, friendly_server_error, microphone_status_info,
+        refresh_microphones, sheet_frame,
+    };
+    use crate::audio::capture::CaptureStatus;
+    use crate::native::mic::{MicDevice, MicSnapshot};
+    use crate::settings::{MicrophoneSelectionMode, Settings};
     use crate::text::hotkeys::parse_hotkey_list;
+    use futures::FutureExt;
     use gpui_kit::{px, size};
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    fn refresh_worker(
+        requests: async_channel::Receiver<()>,
+        results: async_channel::Receiver<usize>,
+        ticks: async_channel::Receiver<()>,
+        scans: Rc<Cell<usize>>,
+        published: Rc<RefCell<Vec<usize>>>,
+    ) -> impl std::future::Future<Output = ()> {
+        refresh_microphones(
+            requests,
+            move || {
+                scans.set(scans.get() + 1);
+                let results = results.clone();
+                async move { results.recv().await.unwrap() }
+            },
+            move |sample| {
+                published.borrow_mut().push(sample);
+                true
+            },
+            move || {
+                let ticks = ticks.clone();
+                async move { ticks.recv().await.unwrap() }
+            },
+        )
+    }
+
+    #[test]
+    fn microphone_refresh_serializes_slow_scans_and_coalesces_manual_requests() {
+        let (refresh, requests) = async_channel::bounded(1);
+        let (complete, results) = async_channel::unbounded();
+        let (tick, ticks) = async_channel::unbounded();
+        let scans = Rc::new(Cell::new(0));
+        let published = Rc::new(RefCell::new(Vec::new()));
+        let mut worker = Box::pin(refresh_worker(
+            requests,
+            results,
+            ticks,
+            scans.clone(),
+            published.clone(),
+        ));
+        assert!(worker.as_mut().now_or_never().is_none());
+        assert_eq!(scans.get(), 1);
+        refresh.try_send(()).unwrap();
+        assert!(refresh.try_send(()).is_err());
+        assert!(worker.as_mut().now_or_never().is_none());
+        assert_eq!(
+            scans.get(),
+            1,
+            "a manual request cannot overlap a slow scan"
+        );
+        complete.try_send(1).unwrap();
+        assert!(worker.as_mut().now_or_never().is_none());
+        assert_eq!(scans.get(), 2, "one coalesced follow-up scan");
+        complete.try_send(2).unwrap();
+        assert!(worker.as_mut().now_or_never().is_none());
+        assert_eq!(*published.borrow(), vec![1, 2]);
+        assert_eq!(scans.get(), 2);
+        tick.try_send(()).unwrap();
+        assert!(worker.as_mut().now_or_never().is_none());
+        assert_eq!(
+            scans.get(),
+            3,
+            "automatic refresh works without a button press"
+        );
+        complete.try_send(3).unwrap();
+        drop(refresh);
+        assert_eq!(worker.as_mut().now_or_never(), Some(()));
+        assert_eq!(*published.borrow(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn closing_microphone_refresh_drops_inflight_results_and_reopening_starts_fresh() {
+        let published = Rc::new(RefCell::new(Vec::new()));
+        for reopen in 0..2 {
+            let (_refresh, requests) = async_channel::bounded(1);
+            let (complete, results) = async_channel::unbounded();
+            let (_tick, ticks) = async_channel::unbounded();
+            let scans = Rc::new(Cell::new(0));
+            let mut worker = Box::pin(refresh_worker(
+                requests,
+                results,
+                ticks,
+                scans.clone(),
+                published.clone(),
+            ));
+            assert!(worker.as_mut().now_or_never().is_none());
+            assert_eq!(scans.get(), 1);
+            if reopen == 1 {
+                complete.try_send(42).unwrap();
+                assert!(worker.as_mut().now_or_never().is_none());
+                assert_eq!(*published.borrow(), vec![42]);
+            }
+            drop(worker);
+            assert!(
+                complete.try_send(99).is_err(),
+                "closed sheets cannot receive late scan results"
+            );
+            assert_eq!(scans.get(), 1, "closed sheets cannot start another scan");
+        }
+        assert_eq!(*published.borrow(), vec![42]);
+    }
+
+    #[test]
+    fn microphone_preview_updates_while_live_device_stays_with_its_session() {
+        let mut snapshot = MicSnapshot {
+            devices: vec![
+                MicDevice {
+                    id: "mac".into(),
+                    label: "MacBook Microphone".into(),
+                    is_built_in: true,
+                    is_default: true,
+                },
+                MicDevice {
+                    id: "phone".into(),
+                    label: "iPhone Microphone".into(),
+                    is_built_in: false,
+                    is_default: false,
+                },
+            ],
+            system_default_name: Some("MacBook Microphone".into()),
+            lid_closed: Some(true),
+        };
+        let mut settings = Settings::default();
+        assert_eq!(
+            microphone_status_info(&snapshot, &settings, &CaptureStatus::Idle),
+            (
+                "microphoneSettings.nextRecordingUses",
+                "iPhone Microphone".into()
+            )
+        );
+        let live = CaptureStatus::Recording("iPhone Microphone".into());
+        snapshot.lid_closed = Some(false);
+        settings.microphone_selection_mode = MicrophoneSelectionMode::Specific;
+        settings.selected_mic_device_id = "mac".into();
+        assert_eq!(
+            microphone_status_info(&snapshot, &settings, &live),
+            (
+                "microphoneSettings.currentlyUsing",
+                "iPhone Microphone".into()
+            )
+        );
+        assert_eq!(
+            microphone_status_info(&snapshot, &settings, &CaptureStatus::Idle),
+            (
+                "microphoneSettings.nextRecordingUses",
+                "MacBook Microphone".into()
+            )
+        );
+    }
 
     #[test]
     fn transport_errors_become_a_next_step_and_keep_the_raw_text() {
