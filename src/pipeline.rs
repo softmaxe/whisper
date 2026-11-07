@@ -18,7 +18,9 @@ use crate::text::chinese_script::{
 use crate::text::correction_learner::{KnownCorrection, apply_known_corrections};
 use crate::text::echo_filter::matches_dictionary_prompt;
 use crate::text::prompt_cap::{CLEANUP_PROMPT_CHARS, WHISPER_PROMPT_CHARS, fit_dictionary_prompt};
-use crate::text::snippets::{Snippet, expand_snippets, get_prioritized_dictionary_hint_words};
+use crate::text::snippets::{
+    Snippet, expand_snippets, get_prioritized_dictionary_hint_words, whole_snippet_replacement,
+};
 
 /// Everything the pipeline needs, captured when the recording stops so a
 /// settings change mid-request cannot mix two configurations.
@@ -200,6 +202,19 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         Err(err) => return PipelineOutcome::failed_from(&err),
     };
     let raw = response.text;
+    if cancel.is_cancelled() {
+        return PipelineOutcome::Cancelled;
+    }
+    // A whole trigger is intentional input even when it equals the ASR hint.
+    // Deliver saved text verbatim, without letting cleanup rewrite the trigger.
+    if let Some(text) = whole_snippet_replacement(&raw, &input.snippets) {
+        return PipelineOutcome::Transcribed(Transcript {
+            text,
+            spoken_text: raw.trim().to_string(),
+            raw_text: raw,
+            cleanup_failure: None,
+        });
+    }
     // Check the dictionary alone as well as the full prompt: a script bias
     // counts as one more word and can hide a short dictionary's echo.
     let echo = dictionary_prompt
@@ -405,6 +420,51 @@ mod tests {
         )));
         assert_eq!(t.text, "hello there");
         assert_eq!(t.cleanup_failure.unwrap().message, "bad key");
+    }
+
+    #[test]
+    fn standalone_snippet_survives_prompt_echo_filtering() {
+        for spoken in ["sig", "Sig."] {
+            let asr = asr(spoken);
+            let mut i = served(&asr, None);
+            i.snippets = vec![Snippet {
+                trigger: "sig".into(),
+                replacement: "Best regards".into(),
+            }];
+            let t = transcribed(run_test(run(i, CancellationToken::new())));
+            assert_eq!(t.text, "Best regards");
+            assert_eq!(t.raw_text, spoken);
+        }
+    }
+
+    #[test]
+    fn whole_snippets_keep_saved_text_without_cleanup() {
+        let asr = asr("My email, address.");
+        let llm = llm(completion("Email address."));
+        let mut i = served(&asr, Some(&llm));
+        i.snippets = vec![Snippet {
+            trigger: "my email address".into(),
+            replacement: "me@example.com".into(),
+        }];
+        let t = transcribed(run_test(run(i, CancellationToken::new())));
+        assert_eq!(t.text, "me@example.com");
+        assert_eq!(t.spoken_text, "My email, address.");
+        assert!(llm.requests().is_empty());
+    }
+
+    #[test]
+    fn partial_snippets_do_not_exempt_multi_entry_prompt_echoes() {
+        let asr = asr("sig, Supabase, Tauri");
+        let mut i = served(&asr, None);
+        i.dictionary = vec!["Supabase".into(), "Tauri".into()];
+        i.snippets = vec![Snippet {
+            trigger: "sig".into(),
+            replacement: "Best regards".into(),
+        }];
+        assert_eq!(
+            run_test(run(i, CancellationToken::new())),
+            PipelineOutcome::NoAudio
+        );
     }
 
     #[test]

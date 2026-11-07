@@ -92,6 +92,14 @@ fn utf16_len(s: &str) -> usize {
 }
 
 impl SnippetMatcher {
+    fn whole_replacement(&self, normalized: &str) -> Option<&str> {
+        let bare = strip_to_bare(normalized);
+        if bare.is_empty() {
+            return None;
+        }
+        resolve_replacement(&bare, &self.bare_triggers)
+    }
+
     /// Returns `None` when no snippet has a usable trigger.
     pub fn new(snippets: &[Snippet]) -> Option<Self> {
         let mut replacements = OrderedMap::default();
@@ -164,10 +172,7 @@ impl SnippetMatcher {
         }
         // NFC so a decomposed "I" + U+0307 in the transcript recombines into İ.
         let normalized: String = text.nfc().collect();
-        let bare = strip_to_bare(&normalized);
-        if !bare.is_empty()
-            && let Some(whole) = resolve_replacement(&bare, &self.bare_triggers)
-        {
+        if let Some(whole) = self.whole_replacement(&normalized) {
             return whole.to_string();
         }
 
@@ -229,6 +234,13 @@ pub fn expand_snippets(text: &str, snippets: &[Snippet]) -> String {
     }
 }
 
+/// Resolves a whole dictation trigger before prompt-echo filtering or cleanup.
+pub fn whole_snippet_replacement(text: &str, snippets: &[Snippet]) -> Option<String> {
+    let matcher = cached_matcher(snippets)?;
+    let normalized: String = text.nfc().collect();
+    matcher.whole_replacement(&normalized).map(str::to_string)
+}
+
 /// Dictionary words plus snippet triggers: the hint list fed to the STT prompt
 /// and the cleanup-model dictionary suffix so triggers survive both.
 pub fn get_dictionary_hint_words(dictionary: &[String], snippets: &[Snippet]) -> Vec<String> {
@@ -287,6 +299,20 @@ mod tests {
 
     fn strings(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn whole_trigger_resolution_reuses_unicode_rules_and_accepts_identity_replacements() {
+        let snippets = snip("İmza", "İmza");
+        let decomposed: String = "İMZA.".nfd().collect();
+        assert_eq!(
+            whole_snippet_replacement(&decomposed, &snippets).as_deref(),
+            Some("İmza")
+        );
+        assert_eq!(
+            whole_snippet_replacement("add İmza please", &snippets),
+            None
+        );
     }
 
     #[test]
