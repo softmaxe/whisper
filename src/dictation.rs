@@ -16,7 +16,7 @@ use futures::future::Shared;
 use gpui_kit::*;
 use tokio_util::sync::CancellationToken;
 
-use crate::audio::capture::{CaptureEvent, RecordedAudio, Recorder};
+use crate::audio::capture::{CaptureEvent, CaptureStatus, RecordedAudio, Recorder};
 use crate::audio::cues;
 use crate::history::Recording;
 use crate::i18n::t;
@@ -208,6 +208,10 @@ impl Dictation {
 
     pub fn status(&self) -> StatusMirror {
         self.status.clone()
+    }
+
+    pub fn capture_status(&self) -> CaptureStatus {
+        self.recorder.capture_status()
     }
 
     /// Current input level (RMS) for the waveform, `None` when not recording.

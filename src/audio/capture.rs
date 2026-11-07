@@ -60,6 +60,16 @@ pub enum CaptureEvent {
 
 pub type EventSink = Arc<dyn Fn(CaptureEvent) + Send + Sync>;
 
+/// The current session, rather than the device requested for a future one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum CaptureStatus {
+    #[default]
+    Idle,
+    Starting,
+    Recording(String),
+    Unavailable,
+}
+
 /// A finished recording.
 #[derive(Debug, Clone)]
 pub struct RecordedAudio {
@@ -95,6 +105,7 @@ type Waiter = oneshot::Sender<Result<(), AudioError>>;
 
 struct CoreState {
     opened_at: Instant,
+    opened_device: Option<String>,
     sample_rate: u32,
     channels: u16,
     phase: Phase,
@@ -135,6 +146,7 @@ impl Core {
         Self {
             state: Mutex::new(CoreState {
                 opened_at,
+                opened_device: None,
                 sample_rate: 0,
                 channels: 1,
                 phase: Phase::Prepared,
@@ -501,9 +513,11 @@ fn open_stream(selector: Option<&str>, core: &Arc<Core>) -> Result<cpal::Stream,
         ))),
     }?;
     stream.play().map_err(map_open_error)?;
+    let opened_device = device_name(&device);
+    core.state.lock().opened_device = Some(opened_device.clone());
     log::info!(
         "recording stream opened: device={} rate={} channels={} format={:?}",
-        device_name(&device),
+        opened_device,
         config.sample_rate,
         config.channels,
         supported.sample_format()
@@ -687,6 +701,25 @@ impl Recorder {
         self.inner.lock().active.as_ref()?.session.level()
     }
 
+    /// Reads only the active session; prewarming is not a live recording.
+    pub fn capture_status(&self) -> CaptureStatus {
+        let inner = self.inner.lock();
+        let Some(active) = inner.active.as_ref() else {
+            return CaptureStatus::Idle;
+        };
+        let state = active.session.core.state.lock();
+        if state.open_error.is_some()
+            || state.device_error.is_some()
+            || state.phase == Phase::Finished
+        {
+            return CaptureStatus::Unavailable;
+        }
+        match (active.recording, state.opened_device.as_ref()) {
+            (true, Some(device)) => CaptureStatus::Recording(device.clone()),
+            _ => CaptureStatus::Starting,
+        }
+    }
+
     #[cfg(test)]
     pub fn is_recording(&self) -> bool {
         self.inner
@@ -717,6 +750,67 @@ mod tests {
 
     fn tone(n: usize, amp: f32) -> Vec<f32> {
         (0..n).map(|i| amp * ((i as f32) * 0.05).sin()).collect()
+    }
+
+    fn fake_session(core: Arc<Core>) -> CaptureSession {
+        let (commands, _) = mpsc::channel();
+        CaptureSession {
+            core,
+            commands,
+            selector: Some("requested device".into()),
+        }
+    }
+
+    #[test]
+    fn capture_status_reports_opened_device_only_after_recording_starts() {
+        let recorder = Recorder::new(None);
+        let core = Arc::new(Core::new(Instant::now()));
+        recorder.inner.lock().prepared = Some(fake_session(core.clone()));
+        assert_eq!(recorder.capture_status(), CaptureStatus::Idle);
+        let session = recorder.inner.lock().prepared.take().unwrap();
+        recorder.inner.lock().active = Some(ActiveCapture {
+            session,
+            recording: false,
+            generation: 1,
+        });
+        assert_eq!(recorder.capture_status(), CaptureStatus::Starting);
+        core.state.lock().opened_device = Some("actual iPhone".into());
+        assert_eq!(recorder.capture_status(), CaptureStatus::Starting);
+        recorder.inner.lock().active.as_mut().unwrap().recording = true;
+        assert_eq!(
+            recorder.capture_status(),
+            CaptureStatus::Recording("actual iPhone".into())
+        );
+        core.state.lock().device_error = Some("disconnected".into());
+        assert_eq!(recorder.capture_status(), CaptureStatus::Unavailable);
+        recorder.cancel();
+        assert_eq!(recorder.capture_status(), CaptureStatus::Idle);
+    }
+
+    #[test]
+    fn late_old_session_cannot_change_current_capture_status() {
+        let recorder = Recorder::new(None);
+        let old = Arc::new(Core::new(Instant::now()));
+        recorder.inner.lock().active = Some(ActiveCapture {
+            session: fake_session(old.clone()),
+            recording: false,
+            generation: 1,
+        });
+        recorder.cancel();
+        let current = Arc::new(Core::new(Instant::now()));
+        current.state.lock().opened_device = Some("current device".into());
+        recorder.inner.lock().active = Some(ActiveCapture {
+            session: fake_session(current),
+            recording: true,
+            generation: 2,
+        });
+        old.state.lock().opened_device = Some("late old device".into());
+        assert_eq!(
+            recorder.capture_status(),
+            CaptureStatus::Recording("current device".into())
+        );
+        assert!(recorder.stop().is_some());
+        assert_eq!(recorder.capture_status(), CaptureStatus::Idle);
     }
 
     #[test]

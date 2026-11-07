@@ -27,6 +27,41 @@ pub struct MicDevice {
     pub is_default: bool,
 }
 
+/// One hardware sample shared by capture policy and the settings preview.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MicSnapshot {
+    pub devices: Vec<MicDevice>,
+    pub system_default_name: Option<String>,
+    pub lid_closed: Option<bool>,
+}
+
+impl MicSnapshot {
+    /// Queries CoreAudio; call off the UI thread when refreshing settings.
+    pub fn read() -> Self {
+        Self {
+            devices: list_input_devices(),
+            system_default_name: system_default_microphone(),
+            lid_closed: LaptopLidMonitor::shared().state(),
+        }
+    }
+
+    pub fn resolve(&self, settings: &Settings) -> Option<MicDevice> {
+        resolve_microphone_selection(
+            &self.devices,
+            settings,
+            self.system_default_name.as_deref(),
+            self.lid_closed,
+        )
+    }
+
+    /// Capture uses the system default when the configured device is absent.
+    pub fn next_device(&self, settings: &Settings) -> Option<MicDevice> {
+        self.resolve(settings).or_else(|| {
+            resolve_system_default_device(&self.devices, self.system_default_name.as_deref())
+        })
+    }
+}
+
 /// Every audio input device, with the system default flagged.
 pub fn list_input_devices() -> Vec<MicDevice> {
     coreaudio::input_devices()
@@ -238,11 +273,7 @@ pub fn watch_laptop_lid() {
 /// while the helper restarts, or on a Mac without a lid) counts as open, so
 /// Auto keeps the built-in microphone.
 pub fn resolve_preferred_microphone(settings: &Settings) -> Option<MicDevice> {
-    let devices = list_input_devices();
-    let auto = settings.microphone_selection_mode == MicrophoneSelectionMode::Auto;
-    let lid_closed = auto.then(|| LaptopLidMonitor::shared().state()).flatten();
-    let system_default = auto.then(system_default_microphone).flatten();
-    resolve_microphone_selection(&devices, settings, system_default.as_deref(), lid_closed)
+    MicSnapshot::read().resolve(settings)
 }
 
 #[cfg(test)]
@@ -273,6 +304,47 @@ mod tests {
             selected_mic_device_label: selected_label.into(),
             ..Settings::default()
         }
+    }
+
+    #[test]
+    fn snapshot_preview_follows_lid_and_phone_availability_with_internal_default() {
+        let mut built_in = mic("macbook", "MacBook Pro Microphone");
+        built_in.is_default = true;
+        let phone = mic("iphone", "Rui's iPhone Microphone");
+        let usb = mic("usb", "USB Microphone");
+        let mut snapshot = MicSnapshot {
+            devices: vec![built_in.clone(), usb.clone(), phone.clone()],
+            system_default_name: Some(built_in.label.clone()),
+            lid_closed: Some(false),
+        };
+        let settings = pref(MicrophoneSelectionMode::Auto);
+        assert_eq!(snapshot.next_device(&settings), Some(built_in.clone()));
+        snapshot.lid_closed = Some(true);
+        assert_eq!(snapshot.next_device(&settings), Some(phone));
+        snapshot.devices.pop();
+        assert_eq!(snapshot.next_device(&settings), Some(usb));
+        snapshot.lid_closed = Some(false);
+        assert_eq!(snapshot.next_device(&settings), Some(built_in));
+    }
+
+    #[test]
+    fn snapshot_preview_matches_capture_label_recovery_and_default_fallback() {
+        let mut built_in = mic("macbook", "MacBook Pro Microphone");
+        built_in.is_default = true;
+        let phone = mic("new-uid", "Rui's iPhone Microphone");
+        let mut snapshot = MicSnapshot {
+            devices: vec![built_in.clone(), phone.clone()],
+            system_default_name: Some(built_in.label.clone()),
+            lid_closed: Some(true),
+        };
+        let settings = specific("old-uid", &phone.label);
+        assert_eq!(snapshot.resolve(&settings), Some(phone.clone()));
+        assert_eq!(snapshot.next_device(&settings), Some(phone));
+        snapshot.devices.pop();
+        assert_eq!(snapshot.resolve(&settings), None);
+        assert_eq!(snapshot.next_device(&settings), Some(built_in));
+        snapshot.devices.clear();
+        assert_eq!(snapshot.next_device(&settings), None);
     }
 
     #[test]
