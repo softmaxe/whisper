@@ -44,9 +44,6 @@ const DOCK_INSET: f32 = 12.;
 const SCREEN_MARGIN: f32 = 4.;
 const PILL_W: f32 = 92.;
 const PILL_H: f32 = 30.;
-/// The elapsed timer joins the pill once a recording outlasts a quick
-/// phrase, so short dictations keep the compact pill.
-const TIMER_AFTER: Duration = Duration::from_secs(3);
 const TIMER_GAP: f32 = 8.;
 /// The widest time the timer slot is sized for, so a recording that passes
 /// ten minutes keeps the capsule's width.
@@ -494,9 +491,6 @@ pub struct PillView {
     /// timer keeps showing while it fades out for transcribing.
     recording_since: Option<Instant>,
     recorded: Duration,
-    /// When the timer joined the pill. The pill keeps that width until the
-    /// Dictation ends, so it does not shrink back while transcribing.
-    timed_at: Option<Instant>,
     /// Whether the pointer rests on the cancel control, so the hint above
     /// the pill speaks for it instead of for the pill.
     cancel_hovered: bool,
@@ -540,7 +534,6 @@ impl PillView {
             was_processing: false,
             recording_since: None,
             recorded: Duration::ZERO,
-            timed_at: None,
             cancel_hovered: false,
         }
     }
@@ -588,7 +581,6 @@ impl PillView {
             self.resolved_at = None;
             self.recording_since = None;
             self.recorded = Duration::ZERO;
-            self.timed_at = None;
         }
         if snapshot.is_recording && self.recording_since.is_none() {
             self.recording_since = Some(Instant::now() - dev_head_start());
@@ -942,22 +934,13 @@ impl PillView {
         opacity
     }
 
-    /// How far the elapsed timer has joined the pill, from 0 to 1. Also
-    /// keeps the recorded time current while the microphone is live.
-    fn timer_progress(&mut self, snapshot: &DictationSnapshot, reduce: bool) -> f32 {
+    /// Keeps the recorded time current while the microphone is live.
+    fn update_recorded(&mut self, snapshot: &DictationSnapshot) {
         let now = Instant::now();
         if snapshot.is_recording
             && let Some(since) = self.recording_since
         {
             self.recorded = now.saturating_duration_since(since);
-        }
-        if self.timed_at.is_none() && snapshot.is_recording && self.recorded >= TIMER_AFTER {
-            self.timed_at = Some(now);
-        }
-        match self.timed_at {
-            None => 0.,
-            Some(_) if reduce => 1.,
-            Some(at) => ease_out(progress(now - at, DUR_BASE)),
         }
     }
 
@@ -969,7 +952,6 @@ impl PillView {
         &mut self,
         snapshot: &DictationSnapshot,
         motion_fx: PillMotion,
-        timed: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1024,38 +1006,32 @@ impl PillView {
         } else {
             p.white.opacity(0.3 * bars_alpha)
         };
-        // The timer slides in from the bars' side as the pill widens, and
-        // fades with them when transcribing takes over.
+        // Reserve the timer slot while preparing so recording starts with
+        // a complete 0:00 and no layout shift. Fade it with the bars when
+        // transcribing takes over.
         let timed_w = Self::timed_width(window);
-        let timer = (timed > 0.).then(|| {
-            div()
-                .flex_none()
-                .w(px((timed_w - PILL_W) * timed))
-                .overflow_hidden()
-                // Digits hold the slot's trailing edge, as a clock's do, so the
-                // spare room for ten minutes and more sits beside the bars
-                // and the capsule's ends stay even.
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(timed_w - PILL_W))
-                        .flex()
-                        .justify_end()
-                        .whitespace_nowrap()
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .font_features(tabular_nums())
-                        .text_color(p.foreground.opacity(PILL_LABEL * timed * bars_alpha))
-                        .child(format_elapsed(self.recorded)),
-                )
-        });
+        let timer = div()
+            .flex_none()
+            .w(px(timed_w - PILL_W))
+            .when(self.recording_since.is_none(), |d| d.invisible())
+            // Digits hold the slot's trailing edge, as a clock's do, so the
+            // spare room for ten minutes and more sits beside the bars
+            // and the capsule's ends stay even.
+            .flex()
+            .justify_end()
+            .whitespace_nowrap()
+            .text_size(px(TEXT_SMALL))
+            .font_weight(FontWeight::MEDIUM)
+            .font_features(tabular_nums())
+            .text_color(p.foreground.opacity(PILL_LABEL * bars_alpha))
+            .child(format_elapsed(self.recorded));
         let meter = div()
             .flex()
             .items_center()
             .gap(px(REC_GAP))
             .child(div().size(px(REC_DOT)).rounded_full().bg(dot_color))
             .child(bars)
-            .children(timer);
+            .child(timer);
 
         // Transcribing names itself beside the dots, so the state reads
         // without hovering. It keeps the timed recording pill's width, so
@@ -1103,8 +1079,7 @@ impl PillView {
                 )
         });
         let scale = motion_fx.scale;
-        let meter_w = PILL_W + (timed_w - PILL_W) * timed;
-        let width = meter_w + (think_w - meter_w) * thinking;
+        let width = timed_w + (think_w - timed_w) * thinking;
         // GPUI has no paint transforms on divs, so the pill scales by size
         // inside a fixed slot, which keeps it centered and the row still.
         let pill = div()
@@ -1954,12 +1929,12 @@ impl Render for PillView {
         if !cancel_visible || !self.hovered {
             self.cancel_hovered = false;
         }
-        let timed = self.timer_progress(&snapshot, cx.reduce_motion());
+        self.update_recorded(&snapshot);
 
         let mut root = div().size_full().relative().font_family(FONT_UI);
 
         if show_pill {
-            let pill = self.render_pill(&snapshot, motion_fx, timed, window, cx);
+            let pill = self.render_pill(&snapshot, motion_fx, window, cx);
             let (cancel, cancel_t) = self.render_cancel(cancel_visible, recording, window, cx);
             // The slot is held while the microphone opens, so the pill does
             // not shift when the control arrives.
