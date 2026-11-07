@@ -11,6 +11,7 @@ pub mod hotkey_input;
 pub mod insights_view;
 pub mod overlays;
 pub mod pill;
+mod scroll;
 pub mod select;
 pub mod settings_modal;
 pub mod text_input;
