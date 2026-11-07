@@ -46,7 +46,7 @@ pub fn normalize_base_url(value: &str) -> String {
         return String::new();
     }
     let (raw_path, query, hash) = split_url_decorators(trimmed);
-    let mut normalized = raw_path.to_string();
+    let mut normalized = raw_path.trim_end_matches('/').to_string();
     for (suffix, replacement) in SUFFIX_REPLACEMENTS {
         if let Some(head) = strip_suffix_ignore_ascii_case(&normalized, suffix) {
             normalized = format!("{head}{replacement}")
@@ -272,6 +272,45 @@ mod tests {
         assert_eq!(
             normalize_base_url("https://api.example.com///"),
             "https://api.example.com"
+        );
+    }
+
+    #[test]
+    fn endpoint_suffixes_with_trailing_slashes_are_reduced() {
+        for (suffix, _) in SUFFIX_REPLACEMENTS {
+            let endpoint = suffix.strip_prefix("/v1").unwrap_or(suffix);
+            let pasted = format!("https://api.example.com{suffix}///?version=1#section");
+            let base_path = if suffix.starts_with("/v1/") {
+                "/v1"
+            } else {
+                ""
+            };
+            let base = format!("https://api.example.com{base_path}?version=1#section");
+            assert_eq!(normalize_base_url(&pasted), base);
+            assert_eq!(normalize_base_url(&base), base);
+            assert_eq!(
+                normalize_base_url(&pasted.replace(suffix, &suffix.to_uppercase())),
+                base
+            );
+            assert_eq!(
+                build_api_url(&pasted, endpoint),
+                Some(format!(
+                    "https://api.example.com{base_path}{endpoint}?version=1#section"
+                ))
+            );
+            assert_eq!(
+                ensure_v1_suffix(&pasted),
+                "https://api.example.com/v1?version=1#section"
+            );
+        }
+        assert_eq!(
+            endpoint_check(
+                "https://api.example.com/v1/chat/completions/",
+                "/chat/completions"
+            )
+            .unwrap()
+            .1,
+            None
         );
     }
 
