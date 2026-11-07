@@ -1962,7 +1962,7 @@ impl DictionaryView {
     }
 
     /// A sortable column heading; a second click flips the direction. Idle
-    /// headings show a faint chevron on hover or focus, pointing the way a
+    /// headings always show a faint chevron, pointing the way a
     /// click would sort, so every sortable column reads as one.
     fn column_heading(
         &self,
@@ -1983,12 +1983,11 @@ impl DictionaryView {
         } else {
             (default_descending(sort), p.subtle_foreground)
         };
-        // The chevron always takes its space so headings do not shift as it
-        // appears. In the right-aligned number and date columns it leads, so
-        // the label's edge lines up with the values below.
+        // Keep the chevron after every label and reserve its space so
+        // headings do not shift when the sort indicator is highlighted.
         let chevron = div()
             .flex_none()
-            .opacity(if active || focused { 1. } else { 0. })
+            .opacity(if active || focused { 1. } else { 0.7 })
             .group_hover(group.clone(), |s| s.opacity(1.))
             .child(icon(
                 if descending {
@@ -1999,11 +1998,6 @@ impl DictionaryView {
                 12.,
                 chevron_color,
             ));
-        let (before, after) = if sort != SortKey::Word {
-            (Some(chevron), None)
-        } else {
-            (None, Some(chevron))
-        };
         let state = match (active, self.descending) {
             (false, _) => t("dictionary.notSorted"),
             (true, true) => t("dictionary.sortedDescending"),
@@ -2031,9 +2025,8 @@ impl DictionaryView {
             })
             .cursor_pointer()
             .hover(|s| s.text_color(p.foreground))
-            .children(before)
             .child(t(key))
-            .children(after)
+            .child(chevron)
             .on_click(cx.listener(move |this, _, _, cx| {
                 if this.sort == sort {
                     this.descending = !this.descending;
