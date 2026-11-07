@@ -8694,12 +8694,13 @@ dependencies = [
 
 [[package]]
 name = "whisper"
-version = "0.0.18"
+version = "0.0.19"
 dependencies = [
  "anyhow",
  "async-channel",
  "base64 0.22.1",
  "block2 0.6.2",
+ "bytes",
  "chrono",
  "core-foundation 0.10.1",
  "cpal",

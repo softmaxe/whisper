@@ -1,5 +1,7 @@
 //! Dictionary words and Snippets.
 
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -9,6 +11,7 @@ use gpui_kit::*;
 
 use crate::db::{DictionaryEntry, DictionarySource, Snippet};
 use crate::i18n::{self, Language, t, t_with};
+use crate::text::correction_learner::KnownCorrection;
 use crate::text::dictionary_import::{format_dictionary_export, parse_dictionary_import_text};
 use crate::text::prompt_cap::WHISPER_DECODER_PROMPT_CHARS;
 use crate::text::snippets::get_dictionary_hint_words;
@@ -128,9 +131,17 @@ const MAX_ROW_CORRECTIONS: usize = 3;
 /// just added tops the rows it ties with.
 fn sort_entries(entries: &mut [DictionaryEntry], key: SortKey, descending: bool) {
     entries.reverse();
+    if key == SortKey::Word {
+        if descending {
+            entries.sort_by_cached_key(|e| std::cmp::Reverse(e.word.to_lowercase()));
+        } else {
+            entries.sort_by_cached_key(|e| e.word.to_lowercase());
+        }
+        return;
+    }
     entries.sort_by(|a, b| {
         let order = match key {
-            SortKey::Word => a.word.to_lowercase().cmp(&b.word.to_lowercase()),
+            SortKey::Word => unreachable!(),
             SortKey::Uses => a.use_count.cmp(&b.use_count),
             SortKey::LastUsed => a.last_used_at.cmp(&b.last_used_at),
         };
@@ -307,7 +318,99 @@ struct PendingRemoval {
     removal: Removal,
 }
 
+#[derive(PartialEq, Eq)]
+struct WordRowsKey {
+    query: String,
+    pending: Option<String>,
+    hidden_correction: Option<(String, String)>,
+    filter: SourceFilter,
+    sort: SortKey,
+    descending: bool,
+}
+
+/// Content-derived work is shared across animation and pointer redraws.
+struct WordRows {
+    visible: Vec<DictionaryEntry>,
+    row_keys: Vec<ElementId>,
+    misheard: Vec<Vec<String>>,
+    total: usize,
+    max_uses: i64,
+    prompt_chars: usize,
+}
+
+impl WordRows {
+    fn new(
+        entries: &[DictionaryEntry],
+        words: &[String],
+        snippets: &[Snippet],
+        known_corrections: &[KnownCorrection],
+        key: &WordRowsKey,
+    ) -> Self {
+        let entries: Vec<&DictionaryEntry> = entries
+            .iter()
+            .filter(|e| Some(&e.word) != key.pending.as_ref())
+            .collect();
+        let learned = entries
+            .iter()
+            .any(|e| e.source == DictionarySource::Learned);
+        let filter = if learned {
+            key.filter
+        } else {
+            SourceFilter::All
+        };
+        let mut visible: Vec<DictionaryEntry> = entries
+            .iter()
+            .copied()
+            .filter(|e| match filter {
+                SourceFilter::All => true,
+                SourceFilter::Manual => e.source == DictionarySource::Manual,
+                SourceFilter::Learned => e.source == DictionarySource::Learned,
+            })
+            .filter(|e| key.query.is_empty() || e.word.to_lowercase().contains(&key.query))
+            .cloned()
+            .collect();
+        sort_entries(&mut visible, key.sort, key.descending);
+        let mut corrections: HashMap<&str, Vec<&str>> = HashMap::new();
+        for correction in known_corrections {
+            if key
+                .hidden_correction
+                .as_ref()
+                .is_some_and(|(m, t)| *m == correction.misheard && *t == correction.term)
+            {
+                continue;
+            }
+            corrections
+                .entry(&correction.term)
+                .or_default()
+                .push(&correction.misheard);
+        }
+        let misheard = visible
+            .iter()
+            .map(|e| {
+                corrections
+                    .remove(e.word.as_str())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .collect();
+        Self {
+            total: entries.len(),
+            max_uses: entries.iter().map(|e| e.use_count).max().unwrap_or(0),
+            prompt_chars: get_dictionary_hint_words(words, snippets)
+                .join(", ")
+                .chars()
+                .count(),
+            row_keys: visible.iter().map(|e| word_key(&e.word)).collect(),
+            visible,
+            misheard,
+        }
+    }
+}
+
 pub struct DictionaryView {
+    word_rows: Option<(WordRowsKey, Arc<WordRows>)>,
     tab: Tab,
     panel: Panel,
     // Words
@@ -429,13 +532,15 @@ impl DictionaryView {
             .detach();
 
         let state = AppState::global(cx);
-        cx.subscribe(&state, |_, _, e: &AppEvent, cx| {
+        cx.subscribe(&state, |this, _, e: &AppEvent, cx| {
             if matches!(e, AppEvent::DictionaryChanged | AppEvent::SnippetsChanged) {
+                this.word_rows = None;
                 cx.notify();
             }
         })
         .detach();
         Self {
+            word_rows: None,
             tab: Tab::Words,
             panel: Panel::None,
             word_search,
@@ -1588,48 +1693,38 @@ impl DictionaryView {
 
     fn render_words(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let (entries, words, snippets) = {
-            let s = AppState::global(cx).read(cx);
-            (
-                s.dictionary_entries.clone(),
-                s.dictionary.clone(),
-                s.snippets.clone(),
-            )
-        };
-        let pending = self.pending_word().map(str::to_string);
-        let entries: Vec<DictionaryEntry> = entries
-            .into_iter()
-            .filter(|e| Some(&e.word) != pending.as_ref())
-            .collect();
         let query_raw = self.word_search.read(cx).value().trim().to_string();
-        let query = query_raw.to_lowercase();
-        let learned = entries
-            .iter()
-            .filter(|e| e.source == DictionarySource::Learned)
-            .count();
-        // With no learned words every row is manual, so the filter says nothing.
-        let filter = if learned > 0 {
-            self.filter
-        } else {
-            SourceFilter::All
+        let key = WordRowsKey {
+            query: query_raw.to_lowercase(),
+            pending: self.pending_word().map(str::to_string),
+            hidden_correction: self
+                .pending_correction()
+                .map(|(m, t)| (m.to_string(), t.to_string())),
+            filter: self.filter,
+            sort: self.sort,
+            descending: self.descending,
         };
-        let mut visible: Vec<DictionaryEntry> = entries
-            .iter()
-            .filter(|e| match filter {
-                SourceFilter::All => true,
-                SourceFilter::Manual => e.source == DictionarySource::Manual,
-                SourceFilter::Learned => e.source == DictionarySource::Learned,
-            })
-            .filter(|e| query.is_empty() || e.word.to_lowercase().contains(&query))
-            .cloned()
-            .collect();
-        sort_entries(&mut visible, self.sort, self.descending);
+        if self
+            .word_rows
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != key)
+        {
+            let state = AppState::global(cx);
+            let state = state.read(cx);
+            let rows = Arc::new(WordRows::new(
+                &state.dictionary_entries,
+                &state.dictionary,
+                &state.snippets,
+                &state.known_corrections,
+                &key,
+            ));
+            self.word_rows = Some((key, rows));
+        }
+        let rows = self.word_rows.as_ref().unwrap().1.clone();
+        let visible = &rows.visible;
         let shown = visible.len();
-        let max_uses = entries.iter().map(|e| e.use_count).max().unwrap_or(0);
-        let prompt_chars = get_dictionary_hint_words(&words, &snippets)
-            .join(", ")
-            .chars()
-            .count();
+        let max_uses = rows.max_uses;
+        let prompt_chars = rows.prompt_chars;
 
         let panel = match self.panel {
             Panel::AddWords => Some(self.render_add_panel(window, cx)),
@@ -1638,7 +1733,7 @@ impl DictionaryView {
         };
 
         let col = div().flex().flex_col().gap(px(12.)).children(panel);
-        if entries.is_empty() {
+        if rows.total == 0 {
             self.row_keys.clear();
             return col.child(Self::render_empty(&p, cx));
         }
@@ -1691,39 +1786,25 @@ impl DictionaryView {
         if visible.is_empty() {
             table = table.child(self.render_no_matches(&query_raw, cx));
         }
-        self.row_keys = visible.iter().map(|e| word_key(&e.word)).collect();
-        let corrections = AppState::global(cx).read(cx).known_corrections.clone();
-        let hidden = self
-            .pending_correction()
-            .map(|(m, t)| (m.to_string(), t.to_string()));
+        self.row_keys.clone_from(&rows.row_keys);
         let mut focused_row = false;
-        for (index, entry) in visible.into_iter().enumerate() {
-            let misheard: Vec<String> = corrections
-                .iter()
-                .filter(|c| c.term == entry.word)
-                .filter(|c| {
-                    hidden
-                        .as_ref()
-                        .is_none_or(|(m, t)| *m != c.misheard || *t != c.term)
-                })
-                .map(|c| c.misheard.clone())
-                .collect();
+        for (index, (entry, misheard)) in visible.iter().zip(&rows.misheard).enumerate() {
             let (row, focused) = self.render_word_row(index, entry, misheard, max_uses, window, cx);
             focused_row |= focused;
             table = table.child(row);
         }
 
-        let count = if shown == entries.len() {
+        let count = if shown == rows.total {
             t_with(
                 "dictionary.wordCount",
-                &[("count", &entries.len().to_string())],
+                &[("count", &rows.total.to_string())],
             )
         } else {
             t_with(
                 "dictionary.wordCountFiltered",
                 &[
                     ("shown", &shown.to_string()),
-                    ("total", &entries.len().to_string()),
+                    ("total", &rows.total.to_string()),
                 ],
             )
         };
@@ -2180,8 +2261,8 @@ impl DictionaryView {
     fn render_word_row(
         &mut self,
         index: usize,
-        entry: DictionaryEntry,
-        misheard: Vec<String>,
+        entry: &DictionaryEntry,
+        misheard: &[String],
         max_uses: i64,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2237,9 +2318,9 @@ impl DictionaryView {
             let more =
                 (misheard.len() > shown).then(|| Self::more_chip(&word, &misheard[shown..], cx));
             let chips: Vec<Div> = misheard
-                .into_iter()
+                .iter()
                 .take(shown)
-                .map(|m| Self::misheard_chip(m, word.clone(), max_chars, cx))
+                .map(|m| Self::misheard_chip(m.clone(), word.clone(), max_chars, cx))
                 .collect();
             let (edit_word, remove_word) = (word.clone(), word.clone());
             let actions = div()
@@ -3250,5 +3331,64 @@ mod tests {
     #[test]
     fn replacements_show_on_one_line() {
         assert_eq!(one_line("Best,\nRui\n"), "Best, ↵ Rui");
+    }
+
+    #[test]
+    fn presentation_hides_pending_words_and_mishearing_without_changing_prompt_budget() {
+        let entries = vec![entry("Alpha", 3, None), entry("Beta", 8, None)];
+        let words = vec!["Alpha".to_string(), "Beta".to_string()];
+        let corrections = vec![
+            crate::text::correction_learner::KnownCorrection {
+                misheard: "alfa".into(),
+                term: "Alpha".into(),
+                count: 2,
+            },
+            crate::text::correction_learner::KnownCorrection {
+                misheard: "alpha word".into(),
+                term: "Alpha".into(),
+                count: 3,
+            },
+        ];
+        let key = super::WordRowsKey {
+            query: "ALPHA".to_lowercase(),
+            pending: Some("Beta".into()),
+            hidden_correction: Some(("alfa".into(), "Alpha".into())),
+            filter: super::SourceFilter::All,
+            sort: SortKey::Word,
+            descending: false,
+        };
+        let rows = super::WordRows::new(&entries, &words, &[], &corrections, &key);
+        assert_eq!(rows.total, 1);
+        assert_eq!(rows.max_uses, 3);
+        assert_eq!(rows.visible[0].word, "Alpha");
+        assert_eq!(rows.misheard, [vec!["alpha word".to_string()]]);
+        assert_eq!(rows.prompt_chars, "Alpha, Beta".chars().count());
+    }
+
+    #[test]
+    fn presentation_ignores_learned_filter_when_pending_removal_hides_last_learned_word() {
+        let mut learned = entry("Learned", 8, None);
+        learned.source = DictionarySource::Learned;
+        let entries = vec![entry("Manual", 3, None), learned];
+        let key = super::WordRowsKey {
+            query: String::new(),
+            pending: Some("Learned".into()),
+            hidden_correction: None,
+            filter: super::SourceFilter::Learned,
+            sort: SortKey::Uses,
+            descending: true,
+        };
+        let rows = super::WordRows::new(&entries, &[], &[], &[], &key);
+        assert_eq!(rows.visible.len(), 1);
+        assert_eq!(rows.visible[0].word, "Manual");
+    }
+
+    #[test]
+    fn cached_word_sort_keeps_the_newest_spelling_first_for_case_insensitive_ties() {
+        for descending in [false, true] {
+            let mut entries = vec![entry("Alpha", 0, None), entry("ALPHA", 0, None)];
+            sort_entries(&mut entries, SortKey::Word, descending);
+            assert_eq!(entries[0].word, "ALPHA");
+        }
     }
 }

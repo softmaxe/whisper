@@ -4,6 +4,7 @@
 //! which touches only the words it names. Words are unique case-insensitively.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -14,7 +15,7 @@ use super::Database;
 use super::timestamp::{now_db_timestamp, parse_db_timestamp};
 use crate::analytics::trim_text;
 use crate::text::correction_learner::{Correction, KnownCorrection};
-use crate::text::term_match::find_term;
+use crate::text::script::is_unspaced_script;
 
 /// Who added a dictionary word. Manual words outrank learned ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -55,10 +56,37 @@ const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Freshness tiers by last use: within a day, within two weeks, older.
 const FRESHNESS_TIER_LIMITS_MS: [i64; 2] = [DAY_MS, 14 * DAY_MS];
 
+/// Counts an already-normalized term without lowercasing every candidate
+/// character again. Rejected boundary matches advance one character so a
+/// later overlapping match can still be accepted.
+fn count_normalized_term(text: &str, term: &str) -> usize {
+    let whole_word = !term.chars().any(is_unspaced_script);
+    let continues_word = |c: char| (c.is_alphanumeric() || c == '_') && !is_unspaced_script(c);
+    let (mut cursor, mut count) = (0, 0);
+    while let Some(offset) = text[cursor..].find(term) {
+        let start = cursor + offset;
+        let end = start + term.len();
+        let boundary_match = !whole_word
+            || (!text[..start]
+                .chars()
+                .next_back()
+                .is_some_and(continues_word)
+                && !text[end..].chars().next().is_some_and(continues_word));
+        if boundary_match {
+            count += 1;
+            cursor = end;
+        } else {
+            cursor = start + text[start..].chars().next().unwrap().len_utf8();
+        }
+    }
+    count
+}
+
 /// Case-insensitive occurrences of each dictionary word in `text`, keyed by
 /// the word as given and in input order; words that do not occur are omitted.
 pub fn count_dictionary_word_uses<S: AsRef<str>>(words: &[S], text: &str) -> Vec<(String, usize)> {
     let mut counts: Vec<(String, usize)> = Vec::new();
+    let mut positions: HashMap<&str, usize> = HashMap::new();
     if text.is_empty() {
         return counts;
     }
@@ -69,13 +97,16 @@ pub fn count_dictionary_word_uses<S: AsRef<str>>(words: &[S], text: &str) -> Vec
         if needle.is_empty() {
             continue;
         }
-        let count = find_term(&haystack, &needle).len();
+        let count = count_normalized_term(&haystack, &needle);
         if count == 0 {
             continue;
         }
-        match counts.iter_mut().find(|(w, _)| w == word) {
-            Some(entry) => entry.1 = count,
-            None => counts.push((word.to_string(), count)),
+        match positions.get(word) {
+            Some(&index) => counts[index].1 = count,
+            None => {
+                positions.insert(word, counts.len());
+                counts.push((word.to_string(), count));
+            }
         }
     }
     counts
@@ -148,6 +179,13 @@ struct ExistingRow {
     id: i64,
     word: String,
     source: String,
+}
+
+struct DictionaryUsage {
+    id: i64,
+    word: String,
+    updated_at: String,
+    count: usize,
 }
 
 /// All rows, indexed by lowercase word.
@@ -292,30 +330,65 @@ impl Database {
     /// edit, so `updated_at` stays as it was. Returns how many distinct words
     /// were used.
     pub fn record_dictionary_usage(&self, text: &str) -> Result<usize> {
-        let mut conn = self.lock();
-        let rows: Vec<(i64, String)> = conn
-            .prepare("SELECT id, word FROM custom_dictionary")?
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
-            .collect::<rusqlite::Result<_>>()?;
-        let words: Vec<&str> = rows.iter().map(|(_, w)| w.as_str()).collect();
-        let counts = count_dictionary_word_uses(&words, text);
-        if counts.is_empty() {
+        if text.is_empty() {
             return Ok(0);
         }
+        let rows: Vec<DictionaryUsage> = {
+            let conn = self.lock();
+            conn.prepare("SELECT id, word, updated_at FROM custom_dictionary")?
+                .query_map([], |row| {
+                    Ok(DictionaryUsage {
+                        id: row.get(0)?,
+                        word: row.get(1)?,
+                        updated_at: row.get(2)?,
+                        count: 0,
+                    })
+                })?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        // Matching can scan a long transcript once per dictionary word. Keep
+        // it outside the connection mutex so reads and edits can proceed.
+        let words: Vec<&str> = rows.iter().map(|row| row.word.as_str()).collect();
+        let counts: HashMap<String, usize> = count_dictionary_word_uses(&words, text)
+            .into_iter()
+            .collect();
+        let usage: Vec<DictionaryUsage> = rows
+            .into_iter()
+            .filter_map(|mut row| {
+                row.count = *counts.get(&row.word)?;
+                Some(row)
+            })
+            .collect();
+        self.apply_dictionary_usage(&usage)
+    }
+
+    fn apply_dictionary_usage(&self, usage: &[DictionaryUsage]) -> Result<usize> {
+        if usage.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.lock();
         let now = now_db_timestamp();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut updated = 0;
         {
             let mut record = tx.prepare(
-                "UPDATE custom_dictionary SET use_count = use_count + ?, last_used_at = ? WHERE id = ?",
+                "UPDATE custom_dictionary SET use_count = use_count + ?, last_used_at = ?
+                 WHERE id = ? AND word = ? COLLATE BINARY AND updated_at = ?",
             )?;
-            for (id, word) in &rows {
-                if let Some((_, count)) = counts.iter().find(|(w, _)| w == word) {
-                    record.execute(params![*count as i64, now, id])?;
-                }
+            for row in usage {
+                // A removed/replaced or respelled row must not inherit a match
+                // computed from its previous spelling.
+                updated += record.execute(params![
+                    row.count as i64,
+                    now,
+                    row.id,
+                    row.word,
+                    row.updated_at
+                ])?;
             }
         }
         tx.commit()?;
-        Ok(counts.len())
+        Ok(updated)
     }
 
     /// Adds and/or removes specific words, leaving every other row untouched.
@@ -358,8 +431,33 @@ impl Database {
     /// sighting. Words the user removed are ignored. A term already in the
     /// Dictionary only takes the capitalization the user just gave it.
     /// Returns the words added.
+    #[cfg(test)]
     pub fn record_corrections(&self, corrections: &[Correction]) -> Result<Vec<String>> {
+        self.record_corrections_checked(corrections, None)
+    }
+
+    /// Stores a background learning result only while its dictionary generation
+    /// is still current. Check under the connection lock so a pending result
+    /// cannot undo a clear or another dictionary edit that invalidated it.
+    pub fn record_corrections_if_current(
+        &self,
+        corrections: &[Correction],
+        generation: &AtomicU64,
+        expected: u64,
+    ) -> Result<Vec<String>> {
+        self.record_corrections_checked(corrections, Some((generation, expected)))
+    }
+
+    fn record_corrections_checked(
+        &self,
+        corrections: &[Correction],
+        generation: Option<(&AtomicU64, u64)>,
+    ) -> Result<Vec<String>> {
         let mut conn = self.lock();
+        if generation.is_some_and(|(current, expected)| current.load(Ordering::Acquire) != expected)
+        {
+            return Ok(Vec::new());
+        }
         let by_lower = dictionary_rows(&conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut added: Vec<String> = Vec::new();
@@ -688,6 +786,73 @@ mod tests {
     }
 
     #[test]
+    fn stale_usage_does_not_credit_respelled_or_replaced_words() {
+        let db = db();
+        db.apply_dictionary_changes(&["github", "Alice", "Bob"], NONE, manual())
+            .unwrap();
+        let usage: Vec<DictionaryUsage> = db
+            .lock()
+            .prepare("SELECT id, word, updated_at FROM custom_dictionary ORDER BY id")
+            .unwrap()
+            .query_map([], |row| {
+                Ok(DictionaryUsage {
+                    id: row.get(0)?,
+                    word: row.get(1)?,
+                    updated_at: row.get(2)?,
+                    count: 2,
+                })
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        // Case-only changes retain the row ID; exact spelling still guards it.
+        db.apply_dictionary_changes(&["GitHub"], NONE, manual())
+            .unwrap();
+        db.apply_dictionary_changes(NONE, &["Alice"], manual())
+            .unwrap();
+        db.apply_dictionary_changes(&["Alice"], NONE, manual())
+            .unwrap();
+        assert_eq!(db.apply_dictionary_usage(&usage).unwrap(), 1);
+        let entries = db.get_dictionary_entries().unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| (entry.word.as_str(), entry.use_count))
+                .collect::<Vec<_>>(),
+            [("GitHub", 0), ("Bob", 2), ("Alice", 0)]
+        );
+    }
+
+    #[test]
+    fn usage_counts_keep_input_order_and_exact_duplicate_semantics() {
+        assert_eq!(
+            count_dictionary_word_uses(
+                &["Alice", "Bob", "Alice", "alice"],
+                "alice met Bob and Alice"
+            ),
+            [("Alice".into(), 2), ("Bob".into(), 1), ("alice".into(), 2)]
+        );
+    }
+
+    #[test]
+    fn usage_matching_preserves_unicode_boundaries_and_rejected_overlaps() {
+        assert_eq!(
+            count_dictionary_word_uses(
+                &["a-a", "Café", "张珊", "Claude", "rust", "i"],
+                "xa-a-a CAFE\u{301} 张珊张珊 用Claude写 trusted RUST rust_x İ"
+            ),
+            [
+                ("a-a".into(), 1),
+                ("Café".into(), 1),
+                ("张珊".into(), 2),
+                ("Claude".into(), 1),
+                ("rust".into(), 1),
+                ("i".into(), 1),
+            ]
+        );
+    }
+
+    #[test]
     fn priority_favors_manual_recent_words_and_skips_deleted() {
         let db = db();
         db.apply_dictionary_changes(&["Stale", "Busy", "Gone"], NONE, manual())
@@ -738,6 +903,33 @@ mod tests {
                 count: 1,
             }]
         );
+    }
+
+    #[test]
+    fn an_invalidated_learning_result_cannot_restore_a_cleared_dictionary() {
+        let db = db();
+        let generation = AtomicU64::new(7);
+        let learn = correction("Shunade", "Sinead", false);
+        assert_eq!(
+            db.record_corrections_if_current(std::slice::from_ref(&learn), &generation, 7)
+                .unwrap(),
+            ["Sinead"]
+        );
+        generation.fetch_add(1, Ordering::AcqRel);
+        db.clear_dictionary().unwrap();
+        assert!(
+            db.record_corrections_if_current(&[learn], &generation, 7)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(db.get_dictionary().unwrap().is_empty());
+        let stored_corrections: i64 = db
+            .lock()
+            .query_row("SELECT COUNT(*) FROM dictionary_corrections", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored_corrections, 0);
     }
 
     #[test]

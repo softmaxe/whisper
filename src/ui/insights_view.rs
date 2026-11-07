@@ -3,6 +3,7 @@
 //! day-level highlights.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use chrono::{Datelike, Days, Local, NaiveDate};
 use gpui_kit::prelude::FluentBuilder;
@@ -18,7 +19,8 @@ use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state, icon,
-    keyed_focus_handle, page_container, retention_banner, segment, segmented_track, surface_card,
+    keyed_focus_handle, page_container, retention_banner, segment, segmented_track, spinner,
+    surface_card,
 };
 use super::format::day_label;
 use super::theme::{
@@ -86,8 +88,10 @@ impl Range {
 }
 
 pub struct InsightsView {
-    summary: Option<AnalyticsSummary>,
+    summary: Option<Arc<AnalyticsSummary>>,
     load_failed: bool,
+    load_generation: u64,
+    load_in_flight: bool,
     range: Range,
     /// The bar under the pointer.
     hovered: Option<usize>,
@@ -389,17 +393,20 @@ impl InsightsView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let state = AppState::global(cx);
         cx.subscribe(&state, |this, _, event: &AppEvent, cx| {
-            if matches!(
-                event,
-                AppEvent::AnalyticsChanged | AppEvent::HistoryChanged | AppEvent::SettingsChanged
-            ) {
-                this.load(cx);
+            match event {
+                AppEvent::AnalyticsChanged | AppEvent::HistoryChanged => this.load(cx),
+                // Formatting follows Settings, but the SQL summary has no
+                // settings-dependent inputs.
+                AppEvent::SettingsChanged => cx.notify(),
+                _ => {}
             }
         })
         .detach();
         let mut this = Self {
             summary: None,
             load_failed: false,
+            load_generation: 0,
+            load_in_flight: false,
             range: Range::Week,
             hovered: None,
             cursor: None,
@@ -409,18 +416,48 @@ impl InsightsView {
     }
 
     pub fn load(&mut self, cx: &mut Context<Self>) {
-        let db = AppState::global(cx).read(cx).db.clone();
-        match db.get_analytics_summary() {
-            Ok(summary) => {
-                self.summary = Some(summary);
-                self.load_failed = false;
-            }
-            Err(err) => {
-                log::error!("reading local Insights failed: {err}");
-                self.load_failed = true;
-            }
+        self.load_generation = self.load_generation.wrapping_add(1);
+        if self.load_in_flight {
+            return;
         }
-        cx.notify();
+        self.load_in_flight = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok((db, generation)) = this.update(cx, |this, cx| {
+                    (
+                        AppState::global(cx).read(cx).db.clone(),
+                        this.load_generation,
+                    )
+                }) else {
+                    return;
+                };
+                let result = cx
+                    .background_spawn(async move { db.get_analytics_summary() })
+                    .await;
+                let retry = this.update(cx, |this, cx| {
+                    if generation != this.load_generation {
+                        return true;
+                    }
+                    match result {
+                        Ok(summary) => {
+                            this.summary = Some(Arc::new(summary));
+                            this.load_failed = false;
+                        }
+                        Err(err) => {
+                            log::error!("reading local Insights failed: {err}");
+                            this.load_failed = true;
+                        }
+                    }
+                    this.load_in_flight = false;
+                    cx.notify();
+                    false
+                });
+                if !matches!(retry, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn set_range(&mut self, range: Range, cx: &mut Context<Self>) {
@@ -1597,7 +1634,8 @@ impl Render for InsightsView {
             .child(t("insights.onDevicePrivacy"));
         let page = page_container().pb(px(32.)).flex().flex_col();
 
-        // `load` runs in `new`, so a summary exists unless loading failed.
+        // Keep the existing summary while refreshing; initial loading must not
+        // briefly show the failure state before its first background result.
         let notice = match self.summary.clone().filter(|_| !self.load_failed) {
             Some(summary) if summary.total_dictations > 0 => {
                 return page
@@ -1612,6 +1650,9 @@ impl Render for InsightsView {
             }
             // The empty state itself explains History being off.
             Some(_) => Self::empty_state(retention, &p),
+            None if self.load_in_flight => {
+                div().child(spinner("insights-loading", 20., p.muted_foreground))
+            }
             None => Self::load_error(&p, cx),
         };
         // Without data the message sits in the middle of the visible area

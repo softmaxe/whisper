@@ -141,14 +141,12 @@ fn build_request(path: PathBuf, cx: &App) -> FileTranscriptionRequest {
 }
 
 /// Saves an upload's raw transcript to History when retention is on.
-fn save_upload(text: &str, cx: &mut App) -> Result<Option<i64>, String> {
-    AppState::global(cx)
-        .update(cx, |s, cx| {
-            s.record_history(cx, |history, settings| {
-                history.record_upload(text, settings)
-            })
+fn save_upload(text: String, cx: &mut App) -> Task<anyhow::Result<Option<i64>>> {
+    AppState::global(cx).update(cx, |s, cx| {
+        s.record_history(cx, move |history, settings| {
+            history.record_upload(&text, settings)
         })
-        .map_err(|err| err.to_string())
+    })
 }
 
 fn run_transcription(
@@ -314,6 +312,22 @@ impl UploadView {
         let task = run_transcription(request, cancel);
         cx.spawn(async move |this, cx| {
             let result = task.await;
+            let save = this
+                .update(cx, |this, cx| {
+                    if run != this.run_id {
+                        return None;
+                    }
+                    match &result {
+                        Ok(text) if !text.trim().is_empty() => Some(save_upload(text.clone(), cx)),
+                        _ => None,
+                    }
+                })
+                .ok()
+                .flatten();
+            let saved = match save {
+                Some(save) => Some(save.await),
+                None => None,
+            };
             let _ = this.update(cx, |this, cx| {
                 // Every new run or cancel bumps `run_id`, so a stale run no
                 // longer owns `active_request`.
@@ -322,13 +336,13 @@ impl UploadView {
                 }
                 this.active_request = None;
                 this.stage = match result {
-                    Ok(text) if !text.trim().is_empty() => match save_upload(&text, cx) {
-                        Ok(id) => Stage::Complete {
+                    Ok(text) if !text.trim().is_empty() => match saved {
+                        Some(Ok(id)) => Stage::Complete {
                             text,
                             transcription_id: id,
                             save_error: None,
                         },
-                        Err(_) => Stage::Complete {
+                        _ => Stage::Complete {
                             text,
                             transcription_id: None,
                             save_error: Some(t("upload.saveFailed")),
@@ -396,16 +410,30 @@ impl UploadView {
                 };
                 processed.insert(id.clone());
                 let result = run_transcription(request, cancel).await;
+                let save = this
+                    .update(cx, |this, cx| {
+                        if run != this.batch_run {
+                            return None;
+                        }
+                        match &result {
+                            Ok(text) if !text.trim().is_empty() => {
+                                Some(save_upload(text.clone(), cx))
+                            }
+                            _ => None,
+                        }
+                    })
+                    .ok()
+                    .flatten();
+                let outcome = match save {
+                    Some(save) => Some(save.await),
+                    None => None,
+                };
                 let still_current = this
                     .update(cx, |this, cx| {
-                        this.batch_request = None;
                         if run != this.batch_run {
                             return false;
                         }
-                        let outcome = match &result {
-                            Ok(text) if !text.trim().is_empty() => Some(save_upload(text, cx)),
-                            _ => None,
-                        };
+                        this.batch_request = None;
                         if let Some(item) = this.queue.iter_mut().find(|i| i.id == id) {
                             match (&result, outcome) {
                                 (Ok(text), Some(Ok(saved))) => {

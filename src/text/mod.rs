@@ -10,7 +10,7 @@ pub mod hotkeys;
 pub mod language;
 pub mod prompt_cap;
 pub mod prompts;
-mod script;
+pub(crate) mod script;
 pub mod snippets;
 pub mod strip_thinking;
 pub mod term_match;

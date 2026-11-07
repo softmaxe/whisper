@@ -5,11 +5,85 @@
 //! plain `Future` that does not need a Tokio context to be polled).
 
 use std::future::Future;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use tokio::runtime::{Builder, Runtime};
 
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(build_runtime);
+static BLOCKING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(2)));
+
+type StorageJob = Box<dyn FnOnce() + Send>;
+
+static STORAGE: LazyLock<async_channel::Sender<StorageJob>> = LazyLock::new(|| {
+    let (tx, rx) = async_channel::bounded::<StorageJob>(32);
+    std::thread::Builder::new()
+        .name("whisper-storage".into())
+        .spawn(move || {
+            while let Ok(job) = rx.recv_blocking() {
+                job();
+            }
+        })
+        .expect("storage worker");
+    tx
+});
+
+/// Runs CPU work without occupying a network worker. Started jobs retain their
+/// permit even if the caller stops awaiting them.
+pub async fn blocking<F, T>(work: F) -> Result<T, tokio::task::JoinError>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let permit = BLOCKING_SLOTS
+        .clone()
+        .acquire_owned()
+        .await
+        .expect("CPU slots");
+    RUNTIME
+        .spawn_blocking(move || {
+            let _permit = permit;
+            work()
+        })
+        .await
+}
+
+/// Serializes accepted storage mutations, including deletion and retention,
+/// without making the UI wait on the database connection or filesystem.
+pub fn storage<F, T>(work: F) -> impl Future<Output = T>
+where
+    F: FnOnce() -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (tx, rx) = futures::channel::oneshot::channel();
+    let job: StorageJob = Box::new(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+        let _ = tx.send(result);
+    });
+    // Enqueue immediately when there is capacity, so dropping an accepted
+    // operation's UI task cannot cancel its durable mutation.
+    let pending = match STORAGE.try_send(job) {
+        Ok(()) => None,
+        Err(async_channel::TrySendError::Full(job)) => Some(job),
+        Err(async_channel::TrySendError::Closed(_)) => panic!("storage worker unavailable"),
+    };
+    async move {
+        if let Some(job) = pending {
+            STORAGE.send(job).await.expect("storage worker available");
+        }
+        match rx.await.expect("storage job completed") {
+            Ok(value) => value,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    }
+}
+
+/// Shutdown is the only place allowed to wait synchronously. Storage jobs never
+/// require UI callbacks, so draining here cannot deadlock on the UI executor.
+/// GPUI's asynchronous quit handlers otherwise have a 200 ms timeout.
+pub fn drain_storage() {
+    futures::executor::block_on(storage(|| ()));
+}
 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     // Self-hosted servers live on loopback, the LAN or a tailnet; a system or
@@ -74,6 +148,61 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepted_storage_writes_survive_dropped_receivers_and_drain_in_order() {
+        let values = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        for index in 0..16 {
+            let values = values.clone();
+            // These futures deliberately never get polled: acceptance must
+            // happen at submission, not when a UI task first runs.
+            drop(storage(move || values.lock().push(index)));
+        }
+        drain_storage();
+        assert_eq!(*values.lock(), (0..16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn storage_worker_survives_a_failed_job() {
+        let failed = storage(|| panic!("synthetic storage failure"));
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                futures::executor::block_on(failed)
+            }))
+            .is_err()
+        );
+        assert_eq!(futures::executor::block_on(storage(|| 42)), 42);
+    }
+
+    #[test]
+    fn cpu_work_is_bounded_and_does_not_block_network_progress() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let tasks: Vec<_> = (0..8)
+            .map(|_| {
+                let (active, peak) = (active.clone(), peak.clone());
+                spawn(async move {
+                    blocking(move || {
+                        let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(count, Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        active.fetch_sub(1, Ordering::SeqCst);
+                    })
+                    .await
+                    .unwrap();
+                })
+            })
+            .collect();
+        futures::executor::block_on(async {
+            assert_eq!(spawn(async { 42 }).await.unwrap(), 42);
+            for task in tasks {
+                task.await.unwrap();
+            }
+        });
+        assert!(peak.load(Ordering::SeqCst) <= 2);
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn spawned_tasks_complete_from_a_foreign_executor() {

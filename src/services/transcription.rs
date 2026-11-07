@@ -124,20 +124,25 @@ pub struct TranscriptionRequest {
     pub language: Option<String>,
     /// Already-fitted dictionary/script prompt; omitted when empty.
     pub prompt: Option<String>,
-    pub audio: Vec<u8>,
+    pub audio: bytes::Bytes,
     pub file_name: String,
     pub mime_type: String,
 }
 
 impl TranscriptionRequest {
     /// A request for `route` carrying `audio` (e.g. a WAV from [`crate::audio::wav`]).
-    pub fn new(route: &Route, audio: Vec<u8>, mime_type: &str, prompt: Option<String>) -> Self {
+    pub fn new(
+        route: &Route,
+        audio: impl Into<bytes::Bytes>,
+        mime_type: &str,
+        prompt: Option<String>,
+    ) -> Self {
         Self {
             endpoint: route.endpoint.clone(),
             model: route.model.clone(),
             language: route.language.clone(),
             prompt,
-            audio,
+            audio: audio.into(),
             file_name: format!("audio.{}", audio_extension_for_mime(mime_type)),
             mime_type: mime_type.to_string(),
         }
@@ -259,8 +264,12 @@ async fn run(
     }
 
     let upload = async {
-        let mut part =
-            reqwest::multipart::Part::bytes(request.audio).file_name(request.file_name.clone());
+        let audio_len = request.audio.len() as u64;
+        let mut part = reqwest::multipart::Part::stream_with_length(
+            reqwest::Body::from(request.audio),
+            audio_len,
+        )
+        .file_name(request.file_name.clone());
         part = match part.mime_str(&request.mime_type) {
             Ok(p) => p,
             Err(err) => return Err(TranscriptionError::Network(err.to_string())),

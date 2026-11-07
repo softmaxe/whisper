@@ -13,4 +13,6 @@ pub mod upload;
 #[cfg(test)]
 pub(crate) mod live_tests;
 #[cfg(test)]
+mod performance_tests;
+#[cfg(test)]
 pub(crate) mod test_server;

@@ -1,6 +1,6 @@
 [package]
 name = "whisper"
-version = "0.0.18"
+version = "0.0.19"
 edition = "2024"
 description = "macOS dictation with self-hosted speech recognition and text cleanup (Rust + GPUI)"
 license = "AGPL-3.0-only"
@@ -40,6 +40,7 @@ parking_lot = "0.12"
 dirs = "6"
 futures = "0.3"
 async-channel = "2"
+bytes = "1"
 
 # Persistence
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -47,7 +48,7 @@ keyring = { version = "3", features = ["apple-native"] }
 
 # Networking
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "process", "io-util", "fs"] }
-tokio-util = "0.7"
+tokio-util = { version = "0.7", features = ["io"] }
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls", "stream", "query"] }
 url = "2"
 
