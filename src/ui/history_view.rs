@@ -14,8 +14,8 @@ use crate::app_state::AppState;
 use crate::backend;
 
 use super::components::{
-    KeyboardFocusable, empty_state, f32_tx, icon, kbd, keyed_focus_handle, page_container,
-    retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
+    KeyboardFocusable, MenuTriggerBounds, empty_state, f32_tx, icon, kbd, keyed_focus_handle,
+    page_container, retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
 };
 use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
 use super::theme::{
@@ -569,6 +569,7 @@ impl HistoryView {
                 )
         });
 
+        let menu_trigger = MenuTriggerBounds::default();
         let action_btn = |id_str: &'static str, name: &'static str, label: String, cx: &mut App| {
             div()
                 .id((id_str, id as usize))
@@ -656,13 +657,17 @@ impl HistoryView {
                             t("controlPanel.history.moreActions"),
                             cx,
                         )
+                        .relative()
+                        .child(menu_trigger.measure())
                         .aria_expanded(menu_open)
                         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                             this.toggle_menu(id, event.is_keyboard(), window, cx)
                         }))
                         .into_any_element()
                     })
-                    .when(menu_open, |d| d.child(self.render_menu(item, cx))),
+                    .when(menu_open, |d| {
+                        d.child(self.render_menu(item, menu_trigger, cx))
+                    }),
             );
 
         // A new transcript tints in and eases out over the flash.
@@ -910,7 +915,12 @@ impl HistoryView {
         cx.notify();
     }
 
-    fn render_menu(&self, item: &TranscriptionItem, cx: &mut Context<Self>) -> AnyElement {
+    fn render_menu(
+        &self,
+        item: &TranscriptionItem,
+        trigger: MenuTriggerBounds,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = cx.palette();
         let id = item.id;
         let mut entries: Vec<(&'static str, String, u8, bool)> = Vec::new();
@@ -949,9 +959,11 @@ impl HistoryView {
             })
             .bg(if p.dark { p.surface_3 } else { p.popover })
             .shadow_lg()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.open_menu = None;
-                cx.notify();
+            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                if !trigger.contains(event.position) {
+                    this.open_menu = None;
+                    cx.notify();
+                }
             }))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 match e.keystroke.key.as_str() {
