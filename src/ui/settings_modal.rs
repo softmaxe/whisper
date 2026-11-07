@@ -1,6 +1,6 @@
 //! The Settings modal and the panels it hosts.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use std::rc::Rc;
 
@@ -45,8 +45,8 @@ use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_READING, LINE_SMALL, Palette, PaletteExt,
     RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY,
-    TEXT_CAPTION, TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT, ease_out,
-    ease_snap, motion,
+    TEXT_CAPTION, TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT,
+    cubic_bezier, ease_out, ease_snap, motion, progress,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +136,7 @@ const SELECT_WIDTH: f32 = 200.;
 /// The input device select grows past `SELECT_WIDTH` up to this cap for long
 /// device names; longer ones truncate and show in full in the menu.
 const MIC_SELECT_WIDTH: f32 = 240.;
+const MIC_REFRESH_ANIMATION_MS: u64 = 600;
 
 const RETENTION_DAY_OPTIONS: [u32; 6] = [1, 7, 14, 30, 60, 90];
 
@@ -187,6 +188,7 @@ pub struct SettingsModal {
     mic_snapshot: MicSnapshot,
     mic_capture_status: CaptureStatus,
     mic_refresh: async_channel::Sender<()>,
+    mic_refresh_started: Option<Instant>,
     _mic_monitor: Task<()>,
     storage_usage: (usize, u64),
     storage_usage_generation: u64,
@@ -744,6 +746,7 @@ impl SettingsModal {
             mic_snapshot: MicSnapshot::default(),
             mic_capture_status: CaptureStatus::Idle,
             mic_refresh,
+            mic_refresh_started: None,
             _mic_monitor: mic_monitor,
             storage_usage: (0, 0),
             storage_usage_generation: 0,
@@ -891,8 +894,17 @@ impl SettingsModal {
         self.sync_microphone_select(cx);
     }
 
-    fn reload_microphones(&mut self, _cx: &mut Context<Self>) {
+    fn reload_microphones(&mut self, cx: &mut Context<Self>) {
         let _ = self.mic_refresh.try_send(());
+        // Repeated clicks still request a refresh without interrupting a turn.
+        if !cx.reduce_motion()
+            && self.mic_refresh_started.is_none_or(|started| {
+                started.elapsed() >= Duration::from_millis(MIC_REFRESH_ANIMATION_MS)
+            })
+        {
+            self.mic_refresh_started = Some(Instant::now());
+            cx.notify();
+        }
     }
 
     fn sync_microphone_select(&mut self, cx: &mut Context<Self>) {
@@ -1567,8 +1579,27 @@ impl SettingsModal {
 
     /// The input device row: the select sits inline like every other
     /// select, and what Auto does is a quiet note under the label.
-    fn render_microphone(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_microphone(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
+        let rotation = match self.mic_refresh_started {
+            Some(started)
+                if !cx.reduce_motion()
+                    && started.elapsed() < Duration::from_millis(MIC_REFRESH_ANIMATION_MS) =>
+            {
+                window.request_animation_frame();
+                -cubic_bezier(
+                    0.22,
+                    0.7,
+                    0.22,
+                    1.,
+                    progress(started.elapsed(), MIC_REFRESH_ANIMATION_MS),
+                )
+            }
+            _ => {
+                self.mic_refresh_started = None;
+                0.
+            }
+        };
         let s = settings(cx);
         let is_auto = s.microphone_selection_mode == MicrophoneSelectionMode::Auto;
         let note = if is_auto {
@@ -1616,6 +1647,7 @@ impl SettingsModal {
                             .child(
                                 Button::new("settings-refresh-mics")
                                     .icon("refresh-cw", 14.)
+                                    .icon_rotation(rotation)
                                     .aria_label(t("microphoneSettings.refresh"))
                                     .variant(ButtonVariant::Ghost)
                                     .size(ButtonSize::Sm)
@@ -1633,9 +1665,9 @@ impl SettingsModal {
     /// selection resolves to a device without the user reading the dropdown.
     /// The Dictation page: everything about the act of dictating, from the
     /// keys that start it to the microphone and the pill it shows.
-    fn render_hotkeys(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_hotkeys(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        let mut microphone_rows = vec![self.render_microphone(cx)];
+        let mut microphone_rows = vec![self.render_microphone(window, cx)];
         let capture = Dictation::global(cx).read(cx).capture_status();
         let (label, device) = microphone_status_info(&self.mic_snapshot, &settings(cx), &capture);
         let healthy = matches!(capture, CaptureStatus::Recording(_) | CaptureStatus::Idle);
@@ -3440,7 +3472,7 @@ impl Render for SettingsModal {
         let nav = self.render_nav(frame.attached, cx);
         let content = match self.section {
             SettingsSection::General => self.render_general(cx),
-            SettingsSection::Hotkeys => self.render_hotkeys(cx),
+            SettingsSection::Hotkeys => self.render_hotkeys(window, cx),
             SettingsSection::SpeechToText => self.render_speech_to_text(window, cx),
             SettingsSection::Llms => self.render_llms(window, cx),
             SettingsSection::PrivacyData => self.render_privacy(cx),
