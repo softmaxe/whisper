@@ -769,6 +769,19 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_accepts_a_pasted_endpoint_with_trailing_slashes() {
+        let server =
+            MockServer::start(|_| Reply::json(200, &completion("Cleaned transcript", "stop")));
+        let mut config = config_for(&server);
+        config.base_url = server.url("/v1/chat/completions///");
+        assert_eq!(
+            run(process("raw transcript", &config, &fast_tuning())).unwrap(),
+            "Cleaned transcript"
+        );
+        assert_eq!(server.requests()[0].path, "/v1/chat/completions");
+    }
+
+    #[test]
     fn uses_endpoint_model_key_and_prompt() {
         let server =
             MockServer::start(|_| Reply::json(200, &completion("Cleaned transcript", "stop")));
@@ -1019,6 +1032,8 @@ mod tests {
         let server = MockServer::start(|_| Reply::json(401, "Unauthorized"));
         let err = run(list_models(&server.url("/v1"), None)).unwrap_err();
         assert_eq!(err.message, "401 Unauthorized");
+        assert_eq!(err.message_key, Some(ENDPOINT_UNAUTHORIZED_MESSAGE_KEY));
+        let err = run(list_models(&server.url("/v1/models/"), None)).unwrap_err();
         assert_eq!(err.message_key, Some(ENDPOINT_UNAUTHORIZED_MESSAGE_KEY));
         let err = run(list_models(&server.url("/v1"), Some("key"))).unwrap_err();
         assert_eq!(err.message_key, None);
