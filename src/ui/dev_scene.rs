@@ -3,7 +3,8 @@
 //!
 //! Values: `home`, `insights`, `upload`, `dictionary`, `search`,
 //! `settings[:general|hotkeys|speech|llms|privacy]`, and the pill states
-//! `pill:recording`, `pill:processing`, `pill:error`, `pill:fallback`.
+//! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
+//! `pill:error`, `pill:fallback`.
 
 use std::time::Duration;
 
@@ -40,6 +41,8 @@ pub fn scene() -> Option<Scene> {
             _ => SettingsSection::General,
         }),
         "pill" => Scene::Pill(match arg {
+            "preparing" => "preparing",
+            "transition" => "transition",
             "processing" => "processing",
             "error" => "error",
             "fallback" => "fallback",
@@ -64,6 +67,43 @@ pub fn apply_pill(cx: &mut App) {
         return;
     };
     match state {
+        "preparing" | "transition" => {
+            AppState::global(cx).update(cx, |s, cx| {
+                s.dictation.is_preparing = true;
+                cx.notify();
+            });
+            if state == "transition" {
+                cx.spawn(async |cx| {
+                    loop {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(2300))
+                            .await;
+                        cx.update(|cx| {
+                            AppState::global(cx).update(cx, |s, cx| {
+                                s.dictation.is_preparing = false;
+                                s.dictation.is_recording = true;
+                                cx.notify();
+                            })
+                        });
+                        cx.background_executor().timer(Duration::from_secs(6)).await;
+                        cx.update(|cx| {
+                            AppState::global(cx).update(cx, |s, cx| {
+                                s.dictation = Default::default();
+                                cx.notify();
+                            })
+                        });
+                        cx.background_executor().timer(Duration::from_secs(1)).await;
+                        cx.update(|cx| {
+                            AppState::global(cx).update(cx, |s, cx| {
+                                s.dictation.is_preparing = true;
+                                cx.notify();
+                            })
+                        });
+                    }
+                })
+                .detach();
+            }
+        }
         "recording" | "processing" => {
             AppState::global(cx).update(cx, |s, cx| {
                 s.dictation.is_recording = state == "recording";
