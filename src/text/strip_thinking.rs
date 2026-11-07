@@ -1,47 +1,47 @@
 //! Strips `<think>…</think>` blocks emitted by reasoning models.
 //!
-//! Innermost closed pairs go first so nested blocks cannot leave a stray
-//! `</think>`, then a trailing unterminated `<think>` is cut, and finally
-//! orphan `</think>` tags are dropped. Tags match ASCII case-insensitively.
+//! Nested and unterminated blocks are hidden; orphan closing tags are dropped.
+//! Tags match ASCII case-insensitively in a single linear scan.
+//! Only tags present in the original input are recognized; removing a block
+//! does not cause surrounding text to be reparsed as a new tag.
 
 const OPEN: &[u8] = b"<think>";
 const CLOSE: &[u8] = b"</think>";
 
-fn tag_at(lower: &[u8], pos: usize, tag: &[u8]) -> bool {
-    lower.get(pos..pos + tag.len()) == Some(tag)
-}
-
-/// Byte range of the leftmost `<think>` whose next tag is a `</think>`.
-fn innermost_closed(lower: &[u8]) -> Option<(usize, usize)> {
-    let mut open: Option<usize> = None;
-    for pos in 0..lower.len() {
-        if tag_at(lower, pos, OPEN) {
-            open = Some(pos);
-        } else if tag_at(lower, pos, CLOSE)
-            && let Some(start) = open
-        {
-            return Some((start, pos + CLOSE.len()));
-        }
-    }
-    None
+fn tag_at(bytes: &[u8], pos: usize, tag: &[u8]) -> bool {
+    bytes
+        .get(pos..pos + tag.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(tag))
 }
 
 pub fn strip_thinking_tags(text: &str) -> String {
-    let mut out = text.to_string();
-    // Tags are ASCII, so byte offsets in the lowercased copy match `out`.
-    while let Some((start, end)) = innermost_closed(out.to_ascii_lowercase().as_bytes()) {
-        out.replace_range(start..end, "");
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut depth = 0usize;
+    let mut pos = 0;
+    let mut visible_start = 0;
+    while pos < bytes.len() {
+        let opening = tag_at(bytes, pos, OPEN);
+        let closing = !opening && tag_at(bytes, pos, CLOSE);
+        if opening || closing {
+            if depth == 0 {
+                // ASCII tag boundaries are also UTF-8 boundaries.
+                out.push_str(&text[visible_start..pos]);
+            }
+            if opening {
+                depth += 1;
+                pos += OPEN.len();
+            } else {
+                depth = depth.saturating_sub(1);
+                pos += CLOSE.len();
+            }
+            visible_start = pos;
+        } else {
+            pos += 1;
+        }
     }
-    let lower = out.to_ascii_lowercase();
-    if let Some(start) = lower.find("<think>") {
-        out.truncate(start);
-    }
-    loop {
-        let lower = out.to_ascii_lowercase();
-        let Some(start) = lower.find("</think>") else {
-            break;
-        };
-        out.replace_range(start..start + CLOSE.len(), "");
+    if depth == 0 {
+        out.push_str(&text[visible_start..]);
     }
     out.trim().to_string()
 }
@@ -116,6 +116,39 @@ mod tests {
         assert_eq!(
             strip_thinking_tags("<think>思考</think> 会议纪要 "),
             "会议纪要"
+        );
+    }
+
+    #[test]
+    fn handles_dense_deep_and_unterminated_blocks() {
+        assert_eq!(
+            strip_thinking_tags(&format!(
+                "{}保留🙂{}",
+                "<think>x</think>".repeat(30_000),
+                "</THINK>".repeat(30_000)
+            )),
+            "保留🙂"
+        );
+        assert_eq!(
+            strip_thinking_tags(&format!(
+                "前{}秘密{}后",
+                "<think>".repeat(30_000),
+                "</think>".repeat(30_000)
+            )),
+            "前后"
+        );
+        assert_eq!(strip_thinking_tags("前<think>a<think>b</think>秘密"), "前");
+        assert_eq!(
+            strip_thinking_tags("保留 <thin>🙂</thin>"),
+            "保留 <thin>🙂</thin>"
+        );
+    }
+
+    #[test]
+    fn only_recognizes_tags_present_in_the_input() {
+        assert_eq!(
+            strip_thinking_tags("<thi<think>x</think>nk>answer"),
+            "<think>answer"
         );
     }
 }
