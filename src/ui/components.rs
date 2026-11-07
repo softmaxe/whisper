@@ -334,6 +334,7 @@ pub struct Button {
     id: ElementId,
     label: Option<SharedString>,
     icon: Option<(&'static str, f32)>,
+    icon_rotation: f32,
     variant: ButtonVariant,
     size: ButtonSize,
     disabled: bool,
@@ -348,6 +349,7 @@ impl Button {
             id: id.into(),
             label: None,
             icon: None,
+            icon_rotation: 0.,
             variant: ButtonVariant::Primary,
             size: ButtonSize::Default,
             disabled: false,
@@ -364,6 +366,12 @@ impl Button {
 
     pub fn icon(mut self, name: &'static str, size: f32) -> Self {
         self.icon = Some((name, size));
+        self
+    }
+
+    /// Rotates only the icon, measured in turns.
+    pub fn icon_rotation(mut self, turns: f32) -> Self {
+        self.icon_rotation = turns;
         self
     }
 
@@ -522,7 +530,14 @@ impl RenderOnce for Button {
             .flatten();
         el.when_some(tip, |d, tip| d.tooltip(text_tooltip(tip)))
             .when_some(self.icon, |d, (name, size)| {
-                d.child(icon(name, size, style.icon))
+                d.child(icon(name, size, style.icon).when(
+                    self.icon_rotation != 0. && !cx.reduce_motion(),
+                    |svg| {
+                        svg.with_transformation(Transformation::rotate(percentage(
+                            self.icon_rotation.rem_euclid(1.),
+                        )))
+                    },
+                ))
             })
             .when_some(self.label, |d, label| d.child(label))
     }
