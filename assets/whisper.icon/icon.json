@@ -1,18 +1,38 @@
 {
-  "fill": {
-    "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
-  },
+  "fill-specializations": [
+    {
+      "value": {
+        "solid": "srgb:0.96471,0.97255,0.98824,1.00000"
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "solid": "srgb:0.00000,0.00000,0.00000,1.00000"
+      }
+    }
+  ],
   "groups": [
     {
+      "glass": false,
       "layers": [
         {
-          "image-name": "ICON.png",
-          "name": "ICON"
+          "glass": false,
+          "image-name-specializations": [
+            {
+              "value": "wave-light.png"
+            },
+            {
+              "appearance": "dark",
+              "value": "wave-dark.png"
+            }
+          ],
+          "name": "Waveform W"
         }
       ],
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.5
+        "opacity": 0
       },
       "translucency": {
         "enabled": false,

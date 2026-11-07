@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/images/icon.png" alt="Whisper 应用图标" width="96">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/icon-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/images/icon.png">
+    <img src="docs/images/icon.png" alt="Whisper app icon" width="96">
+  </picture>
 </p>
 
 <h1 align="center">Whisper</h1>
@@ -107,6 +111,7 @@ Rust 版应用包的 95 MB（0.0.6 实测）中包含一个 43 MB 的静态 `ffm
 ```sh
 cargo run                    # debug build
 scripts/check.sh             # formatting, clippy and tests, as in CI
+scripts/build-icons.sh       # rebuild app icons and README previews (full Xcode 26+)
 scripts/bundle-macos.sh      # release build -> dist/Whisper.app (ad-hoc signed)
 ```
 
