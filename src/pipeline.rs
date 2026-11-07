@@ -25,7 +25,7 @@ use crate::text::snippets::{Snippet, expand_snippets, get_prioritized_dictionary
 #[derive(Debug, Clone)]
 pub struct PipelineInput {
     /// WAV audio (16 kHz for dictation, the stored recording for retry).
-    pub audio: Vec<u8>,
+    pub audio: bytes::Bytes,
     pub settings: Settings,
     pub dictionary: Vec<String>,
     /// Dictionary words most-used first.
@@ -243,7 +243,7 @@ mod tests {
 
     fn input(dictionary: &[&str]) -> PipelineInput {
         PipelineInput {
-            audio: Vec::new(),
+            audio: bytes::Bytes::new(),
             settings: Settings::default(),
             dictionary: dictionary.iter().map(|s| s.to_string()).collect(),
             dictionary_priority: Vec::new(),
@@ -449,7 +449,7 @@ mod tests {
         let wav = synthesize(dir.path(), "um so please send the report by friday");
         let (spec, mono) = read_wav_mono(&std::fs::read(&wav).unwrap());
         let mut i = input(&[]);
-        i.audio = encode_wav_16k(&mono, spec.sample_rate);
+        i.audio = encode_wav_16k(&mono, spec.sample_rate).into();
         (
             i.settings.remote_transcription_url,
             i.settings.remote_transcription_model,

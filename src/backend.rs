@@ -336,6 +336,7 @@ pub fn monitor_corrections(
             crate::app_state::AppState::global(cx)
                 .update(cx, |s, cx| s.learn_from_session(report, cx))
         })
+        .await
     })
 }
 

@@ -1,6 +1,7 @@
 //! PCM helpers: band-limited resampling and 16-bit WAV encoding.
 
 use std::f64::consts::PI;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Sample rate the transcription server receives.
 const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -26,79 +27,204 @@ fn bessel_i0(x: f64) -> f64 {
     sum
 }
 
+/// Cached rates are bounded so uncommon device formats cannot grow resident
+/// filter storage without limit. Common 48/44.1 kHz conversions use one/160
+/// phases, with the same interpolated Kaiser kernel as the scalar path.
+const FILTER_CACHE_SIZE: usize = 4;
+const MAX_PHASE_COEFFICIENTS: usize = 100_000;
+const MAX_CACHED_FILTER_BYTES: usize = 1024 * 1024;
+
+struct Phase {
+    weights: Vec<f64>,
+    total: f64,
+}
+
+struct Filter {
+    reach: i64,
+    table: Vec<f64>,
+    phases: Vec<Phase>,
+}
+
+impl Filter {
+    fn new(from_rate: u32, to_rate: u32) -> Self {
+        let ratio = f64::from(to_rate) / f64::from(from_rate);
+        // Leave the original transition band below the target Nyquist.
+        let cutoff = 0.5 * ratio.min(1.0) * 0.94;
+        let half_width = KERNEL_ZERO_CROSSINGS / (2.0 * cutoff);
+        let table_len = (half_width * TABLE_RESOLUTION as f64).ceil() as usize + 2;
+        let i0_beta = bessel_i0(KAISER_BETA);
+        let table = (0..table_len)
+            .map(|i| {
+                let t = i as f64 / TABLE_RESOLUTION as f64;
+                if t > half_width {
+                    return 0.0;
+                }
+                let x = 2.0 * cutoff * t;
+                let sinc = if x.abs() < 1e-12 {
+                    1.0
+                } else {
+                    (PI * x).sin() / (PI * x)
+                };
+                let r = t / half_width;
+                let window = bessel_i0(KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / i0_beta;
+                2.0 * cutoff * sinc * window
+            })
+            .collect();
+        let mut filter = Self {
+            reach: half_width.ceil() as i64,
+            table,
+            phases: Vec::new(),
+        };
+        let mut a = from_rate;
+        let mut b = to_rate;
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        let phase_count = (to_rate / a) as usize;
+        let taps = (2 * filter.reach + 2) as usize;
+        if phase_count.saturating_mul(taps) <= MAX_PHASE_COEFFICIENTS {
+            filter.phases = (0..phase_count)
+                .map(|phase| {
+                    let remainder = (phase as u64 * u64::from(from_rate)) % u64::from(to_rate);
+                    let fraction = remainder as f64 / f64::from(to_rate);
+                    let weights: Vec<f64> = (-filter.reach..=filter.reach + 1)
+                        .map(|offset| filter.weight(fraction - offset as f64))
+                        .collect();
+                    let total = weights.iter().sum();
+                    Phase { weights, total }
+                })
+                .collect();
+            // The precomputed phases contain everything the hot loop needs.
+            filter.table = Vec::new();
+        }
+        filter
+    }
+
+    fn weight(&self, t: f64) -> f64 {
+        let pos = t.abs() * TABLE_RESOLUTION as f64;
+        let i = pos as usize;
+        if i + 1 >= self.table.len() {
+            return 0.0;
+        }
+        let fraction = pos - i as f64;
+        self.table[i] * (1.0 - fraction) + self.table[i + 1] * fraction
+    }
+
+    fn sample(&self, input: &[f32], n: usize, from_rate: u32, to_rate: u32) -> f32 {
+        let (acc, total) = if self.phases.is_empty() {
+            let center = n as f64 / (f64::from(to_rate) / f64::from(from_rate));
+            let base = center.floor() as i64;
+            let (mut acc, mut total) = (0.0, 0.0);
+            for k in base - self.reach..=base + self.reach + 1 {
+                let w = self.weight(center - k as f64);
+                total += w;
+                if k >= 0 && (k as usize) < input.len() {
+                    acc += w * f64::from(input[k as usize]);
+                }
+            }
+            (acc, total)
+        } else {
+            let position = n as u64 * u64::from(from_rate);
+            let base = (position / u64::from(to_rate)) as i64;
+            let phase = &self.phases[n % self.phases.len()];
+            let start = base - self.reach;
+            // Clip only the input span. The denominator always includes the
+            // full filter, preserving the original zero-padded edge behavior.
+            let first = start.max(0) as usize;
+            let end = (start + phase.weights.len() as i64).clamp(0, input.len() as i64) as usize;
+            let skip = (first as i64 - start) as usize;
+            let acc = dot_product(&input[first..end], &phase.weights[skip..skip + end - first]);
+            (acc, phase.total)
+        };
+        if total.abs() > 1e-12 {
+            (acc / total) as f32
+        } else {
+            0.0
+        }
+    }
+}
+
+/// Independent accumulators avoid one long floating-point dependency chain.
+/// Accumulation remains f64 before the original f32/PCM16 quantization.
+fn dot_product(samples: &[f32], weights: &[f64]) -> f64 {
+    let mut sums = [0.0; 4];
+    let (sample_chunks, sample_tail) = samples.as_chunks::<4>();
+    let (weight_chunks, weight_tail) = weights.as_chunks::<4>();
+    for (samples, weights) in sample_chunks.iter().zip(weight_chunks) {
+        for i in 0..4 {
+            sums[i] += f64::from(samples[i]) * weights[i];
+        }
+    }
+    let mut sum = sums.into_iter().sum::<f64>();
+    for (&sample, &weight) in sample_tail.iter().zip(weight_tail) {
+        sum += f64::from(sample) * weight;
+    }
+    sum
+}
+
+type FilterCache = Vec<((u32, u32), Arc<Filter>)>;
+
+fn cached_filter(from_rate: u32, to_rate: u32) -> Arc<Filter> {
+    static CACHE: OnceLock<Mutex<FilterCache>> = OnceLock::new();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let key = (from_rate, to_rate);
+    if let Some(index) = cache.iter().position(|(rates, _)| *rates == key) {
+        let entry = cache.remove(index);
+        let filter = Arc::clone(&entry.1);
+        cache.push(entry);
+        return filter;
+    }
+    let filter = Arc::new(Filter::new(from_rate, to_rate));
+    let coefficient_bytes = (filter.table.len()
+        + filter
+            .phases
+            .iter()
+            .map(|phase| phase.weights.len())
+            .sum::<usize>())
+        * std::mem::size_of::<f64>();
+    let phase_bytes = filter.phases.len() * std::mem::size_of::<Phase>();
+    if coefficient_bytes + phase_bytes > MAX_CACHED_FILTER_BYTES {
+        return filter;
+    }
+    if cache.len() == FILTER_CACHE_SIZE {
+        cache.remove(0);
+    }
+    cache.push((key, Arc::clone(&filter)));
+    filter
+}
+
+fn resampled_len(input_len: usize, from_rate: u32, to_rate: u32) -> usize {
+    (input_len as f64 * (f64::from(to_rate) / f64::from(from_rate))).round() as usize
+}
+
 /// Windowed-sinc (Kaiser) resampler. Downsampling low-passes below the
 /// target Nyquist so nothing aliases into the speech band.
+#[cfg(test)]
 pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() || from_rate == 0 || to_rate == 0 {
         return input.to_vec();
     }
-    let ratio = f64::from(to_rate) / f64::from(from_rate);
-    // Cutoff in cycles per input sample; leave a transition band below Nyquist.
-    let cutoff = 0.5 * ratio.min(1.0) * 0.94;
-    let half_width = KERNEL_ZERO_CROSSINGS / (2.0 * cutoff);
-    let table_len = (half_width * TABLE_RESOLUTION as f64).ceil() as usize + 2;
-    let i0_beta = bessel_i0(KAISER_BETA);
-    let table: Vec<f64> = (0..table_len)
-        .map(|i| {
-            let t = i as f64 / TABLE_RESOLUTION as f64;
-            if t > half_width {
-                return 0.0;
-            }
-            let x = 2.0 * cutoff * t;
-            let sinc = if x.abs() < 1e-12 {
-                1.0
-            } else {
-                (PI * x).sin() / (PI * x)
-            };
-            let r = t / half_width;
-            let window = bessel_i0(KAISER_BETA * (1.0 - r * r).max(0.0).sqrt()) / i0_beta;
-            2.0 * cutoff * sinc * window
-        })
-        .collect();
-    let kernel = |t: f64| -> f64 {
-        let pos = t.abs() * TABLE_RESOLUTION as f64;
-        let i = pos as usize;
-        if i + 1 >= table.len() {
-            return 0.0;
-        }
-        let frac = pos - i as f64;
-        table[i] * (1.0 - frac) + table[i + 1] * frac
-    };
-
-    let out_len = ((input.len() as f64) * ratio).round() as usize;
-    let reach = half_width.ceil() as i64;
-    let last = input.len() as i64 - 1;
-    let mut out = Vec::with_capacity(out_len);
-    for n in 0..out_len {
-        let center = n as f64 / ratio;
-        let base = center.floor() as i64;
-        let mut acc = 0.0;
-        let mut weight = 0.0;
-        for k in (base - reach)..=(base + reach + 1) {
-            let w = kernel(center - k as f64);
-            if w == 0.0 {
-                continue;
-            }
-            weight += w;
-            if (0..=last).contains(&k) {
-                acc += w * f64::from(input[k as usize]);
-            }
-        }
-        // Normalizing by the full kernel sum keeps DC gain at exactly 1 while
-        // edges fade naturally against implicit zero padding.
-        out.push(if weight.abs() > 1e-12 {
-            (acc / weight) as f32
-        } else {
-            0.0
-        });
-    }
-    out
+    let filter = cached_filter(from_rate, to_rate);
+    (0..resampled_len(input.len(), from_rate, to_rate))
+        .map(|n| filter.sample(input, n, from_rate, to_rate))
+        .collect()
 }
 
 /// Encodes mono samples as 16-bit PCM WAV at `sample_rate`.
 pub fn encode_wav_pcm16(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    let data_len = (samples.len() * 2) as u32;
-    let mut out = Vec::with_capacity(WAV_HEADER_BYTES + samples.len() * 2);
+    let mut out = wav_header(samples.len(), sample_rate);
+    for &sample in samples {
+        append_pcm16(&mut out, sample);
+    }
+    out
+}
+
+fn wav_header(sample_count: usize, sample_rate: u32) -> Vec<u8> {
+    let data_len = (sample_count * 2) as u32;
+    let mut out = Vec::with_capacity(WAV_HEADER_BYTES + sample_count * 2);
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data_len).to_le_bytes());
     out.extend_from_slice(b"WAVE");
@@ -112,19 +238,29 @@ pub fn encode_wav_pcm16(samples: &[f32], sample_rate: u32) -> Vec<u8> {
     out.extend_from_slice(&16u16.to_le_bytes()); // bits per sample
     out.extend_from_slice(b"data");
     out.extend_from_slice(&data_len.to_le_bytes());
-    for &s in samples {
-        let v = (f64::from(s).clamp(-1.0, 1.0) * 32767.0).round() as i16;
-        out.extend_from_slice(&v.to_le_bytes());
-    }
     out
+}
+
+fn append_pcm16(out: &mut Vec<u8>, sample: f32) {
+    let value = (f64::from(sample).clamp(-1.0, 1.0) * 32767.0).round() as i16;
+    out.extend_from_slice(&value.to_le_bytes());
 }
 
 /// Resamples mono audio to 16 kHz and encodes it as 16-bit PCM WAV.
 pub fn encode_wav_16k(samples: &[f32], sample_rate: u32) -> Vec<u8> {
-    encode_wav_pcm16(
-        &resample(samples, sample_rate, TARGET_SAMPLE_RATE),
-        TARGET_SAMPLE_RATE,
-    )
+    if sample_rate == TARGET_SAMPLE_RATE || samples.is_empty() || sample_rate == 0 {
+        return encode_wav_pcm16(samples, TARGET_SAMPLE_RATE);
+    }
+    let filter = cached_filter(sample_rate, TARGET_SAMPLE_RATE);
+    let len = resampled_len(samples.len(), sample_rate, TARGET_SAMPLE_RATE);
+    let mut out = wav_header(len, TARGET_SAMPLE_RATE);
+    for n in 0..len {
+        append_pcm16(
+            &mut out,
+            filter.sample(samples, n, sample_rate, TARGET_SAMPLE_RATE),
+        );
+    }
+    out
 }
 
 /// Reads a 16-bit PCM WAV with `hound`, downmixed to mono floats.
@@ -238,5 +374,32 @@ mod tests {
         let bytes = encode_wav_16k(&sine(440.0, 48_000, 1.0, 0.3), 48_000);
         assert!(is_pcm16_mono_16k_wav(&bytes));
         assert_eq!(bytes.len(), WAV_HEADER_BYTES + 16_000 * 2);
+    }
+
+    #[test]
+    fn short_recordings_keep_scalar_filter_edge_behavior() {
+        // Reference values from the original scalar Kaiser implementation.
+        let input = [0.7, -0.2, 0.6, 0.1, -0.4];
+        for (rate, expected) in [
+            (44_100, [0.2907555, 0.09786659]),
+            (48_000, [0.27860528, 0.06889108]),
+        ] {
+            let actual = resample(&input, rate, 16_000);
+            assert_eq!(actual.len(), expected.len());
+            for (&actual, expected) in actual.iter().zip(expected) {
+                assert!((actual - expected).abs() < 1e-7, "{rate}: {actual}");
+            }
+        }
+        assert!(resample(&[], 48_000, 16_000).is_empty());
+        assert_eq!(resample(&input, 16_000, 16_000), input);
+    }
+
+    #[test]
+    fn direct_encoding_preserves_quantization_and_output_length() {
+        for rate in [8_000, 16_000, 44_100, 44_101, 48_000, 96_000] {
+            let input = sine(3210.0, rate, 0.025, 0.8);
+            let expected = encode_wav_pcm16(&resample(&input, rate, 16_000), 16_000);
+            assert_eq!(encode_wav_16k(&input, rate), expected, "{rate}");
+        }
     }
 }

@@ -1,6 +1,7 @@
 //! Home: the local History grouped by day.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -10,7 +11,7 @@ use gpui_kit::*;
 use crate::db::TranscriptionItem;
 use crate::i18n::{self, Language, t, t_with};
 
-use crate::app_state::AppState;
+use crate::app_state::{AppEvent, AppState};
 use crate::backend;
 
 use super::components::{
@@ -62,7 +63,46 @@ struct Glide {
     since: Instant,
 }
 
+#[derive(PartialEq, Eq)]
+struct HistoryGroupsKey {
+    language: Language,
+    today: NaiveDate,
+    utc_offset: i32,
+    hidden: Vec<i64>,
+    pending: bool,
+}
+
+type HistoryGroups = Arc<Vec<(String, Vec<usize>)>>;
+
+fn group_history(
+    history: &[TranscriptionItem],
+    key: &HistoryGroupsKey,
+) -> Vec<(String, Vec<usize>)> {
+    let mut groups: Vec<(String, Vec<usize>)> = Vec::new();
+    for (index, item) in history.iter().enumerate() {
+        if key.hidden.binary_search(&item.id).is_ok() {
+            continue;
+        }
+        let label = local_time(item)
+            .map(|t| super::format::day_label(t.date_naive(), key.today))
+            .unwrap_or_default();
+        match groups.last_mut() {
+            Some((last, items)) if *last == label => items.push(index),
+            _ => groups.push((label, vec![index])),
+        }
+    }
+    let today = super::format::day_label(key.today, key.today);
+    if key.pending && groups.first().is_none_or(|(label, _)| *label != today) {
+        groups.insert(0, (today, Vec::new()));
+    }
+    groups
+}
+
 pub struct HistoryView {
+    /// Share the application's immutable snapshot across animation frames.
+    history: Arc<Vec<TranscriptionItem>>,
+    groups: Option<(HistoryGroupsKey, HistoryGroups)>,
+    committing_deletes: HashSet<i64>,
     /// The control panel's scroll area, which holds this view.
     scroll: ScrollHandle,
     spotlight: Option<Spotlight>,
@@ -115,28 +155,46 @@ fn format_clock(time: DateTime<Local>) -> String {
     }
 }
 
-pub fn format_date_group(date: NaiveDate) -> String {
-    super::format::day_label(date, Local::now().date_naive())
-}
-
 impl HistoryView {
     pub fn new(scroll: ScrollHandle, cx: &mut Context<Self>) -> Self {
         let state = AppState::global(cx);
         // Dictation phase changes drive the transcribing placeholder. Tracked
         // here rather than in render so it starts before the transcript is
         // saved even while Home is not showing.
-        cx.observe(&state, |this, state, cx| {
+        let mut observed = None;
+        cx.observe(&state, move |this, state, cx| {
             let s = state.read(cx);
             let busy = s.settings.data_retention_enabled && s.dictation.is_processing;
             let top = s.history.first().map(|item| item.id);
-            this.sync_pending(busy, top);
-            cx.notify();
+            let relevant = (
+                busy,
+                top,
+                s.settings.data_retention_enabled,
+                s.settings.effective_dictation_key(),
+                i18n::language(),
+            );
+            if observed.as_ref() != Some(&relevant) {
+                observed = Some(relevant);
+                this.sync_pending(busy, top);
+                cx.notify();
+            }
+        })
+        .detach();
+        cx.subscribe(&state, |this, state, event: &AppEvent, cx| {
+            if matches!(event, AppEvent::HistoryChanged) {
+                this.history = state.read(cx).history.clone();
+                this.groups = None;
+                cx.notify();
+            }
         })
         .detach();
         if !state.read(cx).history_loaded {
             Self::reload(cx);
         }
         Self {
+            history: state.read(cx).history.clone(),
+            groups: None,
+            committing_deletes: HashSet::new(),
             scroll,
             spotlight: None,
             glide: None,
@@ -206,16 +264,21 @@ impl HistoryView {
     }
 
     fn reload(cx: &mut App) {
-        let result = AppState::global(cx).update(cx, |s, cx| s.load_history(cx));
-        if result.is_err() {
-            show_dialog(
-                DialogRequest::alert(
-                    t("controlPanel.history.couldNotLoadTitle"),
-                    Some(t("controlPanel.history.couldNotLoadDescription").into()),
-                ),
-                cx,
-            );
-        }
+        let load = AppState::global(cx).update(cx, |s, cx| s.load_history(cx));
+        cx.spawn(async move |cx| {
+            if load.await.is_err() {
+                cx.update(|cx| {
+                    show_dialog(
+                        DialogRequest::alert(
+                            t("controlPanel.history.couldNotLoadTitle"),
+                            Some(t("controlPanel.history.couldNotLoadDescription").into()),
+                        ),
+                        cx,
+                    );
+                });
+            }
+        })
+        .detach();
     }
 
     /// Removes a transcript from view at once and deletes it when the Undo
@@ -258,19 +321,33 @@ impl HistoryView {
         let Some(id) = self.deleting.take() else {
             return;
         };
-        let result = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
-        let description = match result {
-            Ok(true) => return,
-            Ok(false) => t("controlPanel.history.couldNotDeleteDescription"),
-            Err(_) => t("controlPanel.history.couldNotDeleteDescriptionGeneric"),
-        };
-        show_dialog(
-            DialogRequest::alert(
-                t("controlPanel.history.couldNotDeleteTitle"),
-                Some(description.into()),
-            ),
-            cx,
-        );
+        self.committing_deletes.insert(id);
+        self.groups = None;
+        let delete = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
+        cx.spawn(async move |this, cx| {
+            let result = delete.await;
+            let _ = this.update(cx, |this, cx| {
+                this.committing_deletes.remove(&id);
+                this.groups = None;
+                let description = match result {
+                    Ok(true) => {
+                        cx.notify();
+                        return;
+                    }
+                    Ok(false) => t("controlPanel.history.couldNotDeleteDescription"),
+                    Err(_) => t("controlPanel.history.couldNotDeleteDescriptionGeneric"),
+                };
+                show_dialog(
+                    DialogRequest::alert(
+                        t("controlPanel.history.couldNotDeleteTitle"),
+                        Some(description.into()),
+                    ),
+                    cx,
+                );
+                cx.notify();
+            });
+        })
+        .detach();
         cx.notify();
     }
 
@@ -282,7 +359,7 @@ impl HistoryView {
             .history
             .iter()
             .map(|item| item.id)
-            .filter(|id| Some(*id) != self.deleting)
+            .filter(|id| Some(*id) != self.deleting && !self.committing_deletes.contains(id))
             .collect();
         if ids.is_empty() {
             return;
@@ -371,23 +448,29 @@ impl HistoryView {
             Some(t("controlPanel.history.clearAllDescriptionDevice").into()),
             true,
             |_, cx| {
-                let result = AppState::global(cx).update(cx, |s, cx| s.clear_transcriptions(cx));
-                if result.is_ok() {
-                    show_toast(
-                        Toast::new(t("controlPanel.history.clearAllSuccess"))
-                            .variant(ToastVariant::Success)
-                            .duration(Duration::from_millis(4000)),
-                        cx,
-                    );
-                } else {
-                    show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.clearAllErrorTitle"),
-                            Some(t("controlPanel.history.clearAllErrorDescription").into()),
-                        ),
-                        cx,
-                    );
-                }
+                let clear = AppState::global(cx).update(cx, |s, cx| s.clear_transcriptions(cx));
+                cx.spawn(async move |cx| {
+                    let result = clear.await;
+                    cx.update(|cx| {
+                        if result.is_ok() {
+                            show_toast(
+                                Toast::new(t("controlPanel.history.clearAllSuccess"))
+                                    .variant(ToastVariant::Success)
+                                    .duration(Duration::from_millis(4000)),
+                                cx,
+                            );
+                        } else {
+                            show_dialog(
+                                DialogRequest::alert(
+                                    t("controlPanel.history.clearAllErrorTitle"),
+                                    Some(t("controlPanel.history.clearAllErrorDescription").into()),
+                                ),
+                                cx,
+                            );
+                        }
+                    });
+                })
+                .detach();
             },
         );
         request.confirm_label = t("controlPanel.history.clearHistoryConfirm").into();
@@ -1047,10 +1130,10 @@ impl Render for HistoryView {
         }
         let spotlit = self.spotlight.is_some();
         let state = AppState::global(cx);
-        let (history, retention, hotkey) = {
+        let history = self.history.clone();
+        let (retention, hotkey) = {
             let s = state.read(cx);
             (
-                s.history.clone(),
                 s.settings.data_retention_enabled,
                 s.settings.effective_dictation_key(),
             )
@@ -1073,30 +1156,29 @@ impl Render for HistoryView {
             );
         }
 
-        // A transcript waiting out its Undo window is already gone here.
-        let history: Vec<TranscriptionItem> = history
-            .into_iter()
-            .filter(|item| Some(item.id) != self.deleting)
-            .collect();
-        if history.is_empty() && pending.is_none() {
+        let now = Local::now();
+        let mut hidden: Vec<i64> = self.committing_deletes.iter().copied().collect();
+        hidden.extend(self.deleting);
+        hidden.sort_unstable();
+        let key = HistoryGroupsKey {
+            language: i18n::language(),
+            today: now.date_naive(),
+            utc_offset: now.offset().local_minus_utc(),
+            hidden,
+            pending: pending.is_some(),
+        };
+        if self
+            .groups
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != key)
+        {
+            let groups = group_history(&history, &key);
+            self.groups = Some((key, Arc::new(groups)));
+        }
+        let groups = self.groups.as_ref().unwrap().1.clone();
+        if groups.is_empty() {
             content = content.child(render_empty_with_hotkey(&hotkey, retention, &p));
         } else {
-            // Group consecutive rows by local day.
-            let mut groups: Vec<(String, Vec<TranscriptionItem>)> = Vec::new();
-            for item in history {
-                let label = local_time(&item)
-                    .map(|t| format_date_group(t.date_naive()))
-                    .unwrap_or_default();
-                match groups.last_mut() {
-                    Some((last, items)) if *last == label => items.push(item),
-                    _ => groups.push((label, vec![item])),
-                }
-            }
-            // The placeholder belongs to today, which may not have a group yet.
-            let today = format_date_group(Local::now().date_naive());
-            if pending.is_some() && groups.first().is_none_or(|(label, _)| *label != today) {
-                groups.insert(0, (today, Vec::new()));
-            }
             let list_focus = keyed_focus_handle("history-list".into(), cx);
             let mut list = div()
                 .id("history-list")
@@ -1104,7 +1186,7 @@ impl Render for HistoryView {
                 .role(Role::List)
                 .aria_label(t("sidebar.home"))
                 .on_key_down(cx.listener(Self::on_list_key));
-            for (index, (label, items)) in groups.into_iter().enumerate() {
+            for (index, (label, items)) in groups.iter().enumerate() {
                 // Day label with its count beside it, then a hairline to the edge.
                 let count = items.len();
                 let header = div()
@@ -1112,7 +1194,7 @@ impl Render for HistoryView {
                     .role(Role::Heading)
                     .aria_label(t_with(
                         "controlPanel.history.dayCount",
-                        &[("day", &label), ("count", &count.to_string())],
+                        &[("day", label.as_str()), ("count", &count.to_string())],
                     ))
                     .relative()
                     .flex()
@@ -1160,8 +1242,8 @@ impl Render for HistoryView {
                 {
                     rows = rows.child(self.render_pending(since, window, cx));
                 }
-                for item in &items {
-                    rows = rows.child(self.render_item(item, window, cx));
+                for item in items {
+                    rows = rows.child(self.render_item(&history[*item], window, cx));
                 }
                 list = list.child(
                     div()
@@ -1265,5 +1347,43 @@ mod tests {
     #[test]
     fn spotlight_skips_the_fades_with_reduced_motion() {
         assert_eq!(spotlight_level(Duration::ZERO, true), 1.);
+    }
+
+    #[test]
+    fn grouping_keeps_pending_today_and_hides_rows_waiting_for_deletion() {
+        use chrono::{Duration as Days, Local, TimeZone};
+        let today = Local::now().date_naive();
+        let yesterday = today - Days::days(1);
+        let at = Local
+            .from_local_datetime(&yesterday.and_hms_opt(12, 0, 0).unwrap())
+            .earliest()
+            .unwrap();
+        let row = |id| crate::db::TranscriptionItem {
+            id,
+            text: format!("transcript {id}"),
+            raw_text: None,
+            timestamp: at.to_rfc3339(),
+            created_at: at.to_rfc3339(),
+            has_audio: false,
+            audio_duration_ms: None,
+        };
+        let history = vec![row(3), row(2), row(1)];
+        let key = super::HistoryGroupsKey {
+            language: crate::i18n::language(),
+            today,
+            utc_offset: at.offset().local_minus_utc(),
+            hidden: vec![2],
+            pending: true,
+        };
+        let groups = super::group_history(&history, &key);
+        assert_eq!(groups.len(), 2);
+        assert!(groups[0].1.is_empty());
+        assert_eq!(groups[1].1, [0, 2]);
+        let key = super::HistoryGroupsKey {
+            hidden: vec![1, 2, 3],
+            pending: false,
+            ..key
+        };
+        assert!(super::group_history(&history, &key).is_empty());
     }
 }

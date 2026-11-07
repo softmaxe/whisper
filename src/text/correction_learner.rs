@@ -43,6 +43,8 @@ const MAX_REPLACED_UNITS: usize = 8;
 /// A field this large (a terminal buffer, a long document) is compared only
 /// after trimming what stayed the same; past this it is not worth the memory.
 const MAX_DIFF_CELLS: usize = 4_000_000;
+/// Bounds one-sided edits as well as the dimensions of a matrix.
+const MAX_DIFF_UNITS: usize = 16_384;
 
 // One-character fixes of these are grammar (的 -> 得, 在 -> 再), and they never
 // belong to a name.
@@ -258,17 +260,40 @@ fn diff_units(baseline: &[Unit], edited: &[Unit]) -> Vec<Hunk> {
     let orig = &baseline[prefix..baseline.len() - suffix];
     let edit = &edited[prefix..edited.len() - suffix];
     let (m, n) = (orig.len(), edit.len());
-    if m.saturating_mul(n) > MAX_DIFF_CELLS {
+    if m.saturating_add(n) > MAX_DIFF_UNITS {
         return Vec::new();
     }
+    if m == 0 || n == 0 {
+        return if m == n {
+            Vec::new()
+        } else {
+            vec![Hunk {
+                removed: prefix..prefix + m,
+                added: prefix..prefix + n,
+            }]
+        };
+    }
+    let width = n + 1;
+    let Some(cells) = (m + 1)
+        .checked_mul(width)
+        .filter(|cells| *cells <= MAX_DIFF_CELLS)
+    else {
+        return Vec::new();
+    };
 
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    // An LCS value is at most min(m, n). The cell budget bounds that value
+    // below 2,000, so u16 preserves every value while using one quarter of
+    // usize storage on 64-bit systems. One allocation also avoids row objects.
+    let mut dp = vec![0u16; cells];
     for i in 1..=m {
+        let (before, rest) = dp.split_at_mut(i * width);
+        let previous = &before[(i - 1) * width..i * width];
+        let current = &mut rest[..width];
         for j in 1..=n {
-            dp[i][j] = if orig[i - 1].key == edit[j - 1].key {
-                dp[i - 1][j - 1] + 1
+            current[j] = if orig[i - 1].key == edit[j - 1].key {
+                previous[j - 1] + 1
             } else {
-                dp[i - 1][j].max(dp[i][j - 1])
+                previous[j].max(current[j - 1])
             };
         }
     }
@@ -296,7 +321,7 @@ fn diff_units(baseline: &[Unit], edited: &[Unit]) -> Vec<Hunk> {
             removed: i..i,
             added: j..j,
         });
-        if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
+        if j > 0 && (i == 0 || dp[i * width + j - 1] >= dp[(i - 1) * width + j]) {
             j -= 1;
             hunk.added.start = j;
         } else {
@@ -820,6 +845,55 @@ mod tests {
         let a: String = (0..3000).map(|i| format!("alpha{i} ")).collect();
         let b: String = (0..3000).map(|i| format!("beta{i} ")).collect();
         assert!(ex(&a, &b).is_empty());
+    }
+
+    #[test]
+    fn one_sided_edits_do_not_allocate_a_diff_matrix() {
+        let units = tokenize("alpha beta gamma");
+        assert_eq!(
+            diff_units(&units, &[]),
+            [Hunk {
+                removed: 0..3,
+                added: 0..0,
+            }]
+        );
+        assert_eq!(
+            diff_units(&[], &units),
+            [Hunk {
+                removed: 0..0,
+                added: 0..3,
+            }]
+        );
+        let huge = vec![units[0].clone(); MAX_DIFF_UNITS + 1];
+        assert!(diff_units(&huge, &[]).is_empty());
+        assert!(diff_units(&[], &huge).is_empty());
+    }
+
+    #[test]
+    fn matrix_budget_includes_border_cells() {
+        let unit = tokenize("alpha").remove(0);
+        let mut different = unit.clone();
+        different.key = "beta".into();
+        different.text = "beta".into();
+        // m*n fit the old limit, but the allocated border would exceed it.
+        assert!(diff_units(&vec![unit; 2000], &vec![different; 2000]).is_empty());
+    }
+
+    #[test]
+    fn repeated_words_keep_alignment_and_capitalization_hunks() {
+        assert_eq!(
+            diff_units(&tokenize("alpha beta alpha"), &tokenize("beta Alpha beta")),
+            [
+                Hunk {
+                    removed: 0..1,
+                    added: 0..0,
+                },
+                Hunk {
+                    removed: 2..3,
+                    added: 1..3,
+                },
+            ]
+        );
     }
 
     #[test]

@@ -274,7 +274,20 @@ pub fn run() {
             KeyBinding::new("escape", CloseOverlay, Some("ControlPanel")),
             KeyBinding::new("cmd-q", Quit, None),
         ]);
+        cx.on_app_quit(|cx| {
+            AppState::global(cx).update(cx, |state, _| state.invalidate_learning());
+            if let Some(manager) = backend::hotkeys() {
+                manager.shutdown();
+            }
+            crate::services::runtime::drain_storage();
+            async {}
+        })
+        .detach();
         cx.on_action(|_: &Quit, cx| {
+            Dictation::global(cx).update(cx, |d, cx| {
+                d.cancel_processing(cx);
+                d.cancel_recording(cx);
+            });
             if let Some(manager) = backend::hotkeys() {
                 manager.shutdown();
             }
@@ -319,7 +332,10 @@ pub fn run() {
             state.settings.clone(),
         );
         let sweep = cx.background_spawn(async move {
-            crate::audio_storage::run_retention_cleanup(&db, &storage, (&settings).into())
+            crate::services::runtime::storage(move || {
+                crate::audio_storage::run_retention_cleanup(&db, &storage, (&settings).into())
+            })
+            .await
         });
         cx.spawn(async move |cx| {
             let report = sweep.await;

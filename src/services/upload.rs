@@ -175,24 +175,34 @@ async fn transcribe_file_inner(
         code: Some(e.code.to_string()),
         message_key: Some(e.message_key.to_string()),
     })?;
-    let source = std::fs::canonicalize(&request.file_path)
+    let source = tokio::fs::canonicalize(&request.file_path)
+        .await
         .map_err(|_| UploadError::plain("Invalid file path"))?;
 
     let upload = prepare_provider_upload(&source, cancel)
         .await
         .map_err(|e| UploadError::plain(e.to_string()))?;
-    let bytes = tokio::fs::read(&upload.path)
+    // File streams keep large uploads bounded while their known length lets
+    // self-hosted gateways accept a regular Content-Length request.
+    let file = tokio::fs::File::open(&upload.path)
         .await
         .map_err(|e| UploadError::plain(e.to_string()))?;
+    let length = file
+        .metadata()
+        .await
+        .map_err(|e| UploadError::plain(e.to_string()))?
+        .len();
     let file_name = upload
         .path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "audio".into());
-    let part = reqwest::multipart::Part::bytes(bytes)
-        .file_name(file_name)
-        .mime_str(provider_content_type(&upload.path))
-        .map_err(|e| UploadError::plain(e.to_string()))?;
+        .unwrap_or_default()
+        .to_string_lossy();
+    let stream = tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024);
+    let part =
+        reqwest::multipart::Part::stream_with_length(reqwest::Body::wrap_stream(stream), length)
+            .file_name(file_name.into_owned())
+            .mime_str(provider_content_type(&upload.path))
+            .map_err(|e| UploadError::plain(e.to_string()))?;
     let mut form = reqwest::multipart::Form::new().part("file", part);
     if let Some(model) = route.model.clone() {
         form = form.text("model", model);
@@ -300,11 +310,51 @@ mod tests {
         assert_eq!(requests.len(), 1, "uploads skip the reachability probe");
         assert_eq!(requests[0].path, "/v1/audio/transcriptions");
         let body = String::from_utf8_lossy(&requests[0].body).to_string();
+        assert_eq!(
+            requests[0].header("Content-Length"),
+            Some(requests[0].body.len().to_string())
+        );
+        assert_eq!(requests[0].header("Transfer-Encoding"), None);
         assert!(body.contains("filename=\"clip.wav\""));
         assert!(body.contains("Content-Type: audio/wav"));
         assert!(body.contains("name=\"model\"\r\n\r\nwhisper-large-v3"));
         assert!(body.contains("name=\"language\"\r\n\r\nen"));
         assert!(!body.contains("name=\"prompt\""));
+    }
+
+    #[test]
+    fn streamed_upload_preserves_large_binary_file_and_length() {
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"complete"}"#));
+        let (dir, path) = temp_audio("wav");
+        let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &payload).unwrap();
+        let text = run(transcribe_audio_file(
+            FileTranscriptionRequest {
+                file_path: path,
+                remote_transcription_url: server.url("/v1"),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+        ))
+        .unwrap();
+        assert_eq!(text, "complete");
+        let requests = server.requests();
+        let request = &requests[0];
+        assert_eq!(
+            request.header("Content-Length"),
+            Some(request.body.len().to_string())
+        );
+        let file_start = request
+            .body
+            .windows(4)
+            .position(|bytes| bytes == b"\r\n\r\n")
+            .unwrap()
+            + 4;
+        assert_eq!(
+            &request.body[file_start..file_start + payload.len()],
+            payload
+        );
+        drop(dir);
     }
 
     #[test]

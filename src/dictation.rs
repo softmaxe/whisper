@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::audio::capture::{CaptureEvent, RecordedAudio, Recorder};
 use crate::audio::cues;
-use crate::history::{HistoryStore, Recorded, Recording};
+use crate::history::Recording;
 use crate::i18n::t;
 use crate::pipeline::{self, PipelineInput, PipelineOutcome, Transcript};
 use crate::services::transcription;
@@ -77,7 +77,7 @@ impl ErrorActions {
 /// memory only so the error panel can send it again. A new Dictation, a
 /// resend, or the panel closing drops it.
 struct FailedRecording {
-    wav: Vec<u8>,
+    wav: bytes::Bytes,
     duration: Duration,
     occurred_at: DateTime<Utc>,
 }
@@ -437,20 +437,20 @@ impl Dictation {
 
     // ---- Processing --------------------------------------------------------------------------
 
-    fn pipeline_input(audio: Vec<u8>, cx: &App) -> PipelineInput {
+    fn pipeline_input(audio: bytes::Bytes, cx: &App) -> PipelineInput {
         let state = AppState::global(cx).read(cx);
         PipelineInput {
             audio,
             settings: state.settings.clone(),
             dictionary: state.dictionary.clone(),
-            dictionary_priority: state.db.get_dictionary_by_priority().unwrap_or_default(),
+            dictionary_priority: Vec::new(),
             known_corrections: if state.settings.auto_learn_corrections {
                 state.known_corrections.clone()
             } else {
                 Vec::new()
             },
             snippets: state.snippets.clone(),
-            cleanup_api_key: Some(backend::cleanup_api_key()).filter(|k| !k.is_empty()),
+            cleanup_api_key: None,
         }
     }
 
@@ -460,19 +460,57 @@ impl Dictation {
             .take()
             .unwrap_or_else(|| (Instant::now(), Utc::now()));
         let duration = started.elapsed();
-        let wav = audio.to_wav_16k();
-        let usable = audio.is_usable(wav.len());
-        if !usable || audio.speech_gate.is_silence() {
+        let input = Self::pipeline_input(bytes::Bytes::new(), cx);
+        let db = AppState::global(cx).read(cx).db.clone();
+        let generation = self.generation;
+        let cancel = CancellationToken::new();
+        self.cancel = Some(cancel.clone());
+        let stopped = Instant::now();
+        let handle = crate::services::runtime::spawn(async move {
+            let conversion_cancel = cancel.clone();
+            let wav = crate::services::runtime::blocking(move || {
+                if conversion_cancel.is_cancelled() || audio.speech_gate.is_silence() {
+                    return None;
+                }
+                let wav = audio.to_wav_16k();
+                audio.is_usable(wav.len()).then(|| bytes::Bytes::from(wav))
+            })
+            .await;
+            let wav = match wav {
+                Ok(Some(wav)) => wav,
+                Ok(None) => return (PipelineOutcome::NoAudio, bytes::Bytes::new()),
+                Err(_) => return (pipeline_task_failed(), bytes::Bytes::new()),
+            };
             log::info!(
-                "dropping recording before transcription (usable={usable}, peak_rms={:.4}, windows={})",
-                audio.speech_gate.peak_rms,
-                audio.speech_gate.window_count
+                "[perf] operation={generation} stage=audio_ready elapsed_ms={:.3} bytes={}",
+                stopped.elapsed().as_secs_f64() * 1000.0,
+                wav.len()
             );
-            self.set_phase(Phase::Idle, cx);
-            cx.emit(DictationNotice::NoAudio);
-            return;
-        }
-        self.transcribe(wav, duration, occurred_at, cx);
+            if cancel.is_cancelled() {
+                return (PipelineOutcome::Cancelled, wav);
+            }
+            let mut input = input;
+            input.audio = wav.clone();
+            let outcome = run_prepared_pipeline(input, db, cancel).await;
+            log::info!(
+                "[perf] operation={generation} stage=pipeline_complete elapsed_ms={:.3}",
+                stopped.elapsed().as_secs_f64() * 1000.0
+            );
+            (outcome, wav)
+        });
+        cx.spawn(async move |this, cx| {
+            let (outcome, wav) = handle
+                .await
+                .unwrap_or_else(|_| (pipeline_task_failed(), bytes::Bytes::new()));
+            let _ = this.update(cx, |this, cx| {
+                if generation != this.generation {
+                    return;
+                }
+                this.cancel = None;
+                this.finish(outcome, wav, duration, occurred_at, cx);
+            });
+        })
+        .detach();
     }
 
     /// Sends the last failed recording again, as if it had just stopped.
@@ -499,7 +537,7 @@ impl Dictation {
 
     fn transcribe(
         &mut self,
-        wav: Vec<u8>,
+        wav: bytes::Bytes,
         duration: Duration,
         occurred_at: DateTime<Utc>,
         cx: &mut Context<Self>,
@@ -508,7 +546,8 @@ impl Dictation {
         let input = Self::pipeline_input(wav.clone(), cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
-        let handle = crate::services::runtime::spawn(pipeline::run(input, cancel));
+        let db = AppState::global(cx).read(cx).db.clone();
+        let handle = crate::services::runtime::spawn(run_prepared_pipeline(input, db, cancel));
         cx.spawn(async move |this, cx| {
             let outcome = handle.await.unwrap_or(PipelineOutcome::Failed {
                 message: "pipeline task failed".into(),
@@ -529,16 +568,11 @@ impl Dictation {
     fn finish(
         &mut self,
         outcome: PipelineOutcome,
-        wav: Vec<u8>,
+        wav: bytes::Bytes,
         duration: Duration,
         occurred_at: DateTime<Utc>,
         cx: &mut Context<Self>,
     ) {
-        let recording = Recording {
-            wav: &wav,
-            duration,
-            occurred_at,
-        };
         match outcome {
             PipelineOutcome::Cancelled => {
                 self.set_phase(Phase::Idle, cx);
@@ -588,16 +622,54 @@ impl Dictation {
                 });
             }
             PipelineOutcome::Transcribed(transcript) => {
-                self.deliver(transcript, &recording, cx);
+                self.persist_and_deliver(transcript, wav, duration, occurred_at, cx);
             }
         }
     }
 
-    fn deliver(&mut self, transcript: Transcript, recording: &Recording, cx: &mut Context<Self>) {
-        cx.emit(DictationNotice::DismissError);
-        record(cx, |history, settings| {
-            history.record_delivered(&transcript, recording, settings)
+    fn persist_and_deliver(
+        &mut self,
+        transcript: Transcript,
+        wav: bytes::Bytes,
+        duration: Duration,
+        occurred_at: DateTime<Utc>,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.generation;
+        let saved_transcript = transcript.clone();
+        let save = AppState::global(cx).update(cx, |state, cx| {
+            state.record_history(cx, move |history, settings| {
+                history.record_delivered(
+                    &saved_transcript,
+                    &Recording {
+                        wav: &wav,
+                        duration,
+                        occurred_at,
+                    },
+                    settings,
+                )
+            })
         });
+        let started = Instant::now();
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = save.await {
+                log::error!("failed to save the History row: {err:#}");
+            }
+            log::info!(
+                "[perf] operation={generation} stage=persistence_complete elapsed_ms={:.3}",
+                started.elapsed().as_secs_f64() * 1000.0
+            );
+            let _ = this.update(cx, |this, cx| {
+                if generation == this.generation && this.phase == Phase::Processing {
+                    this.deliver(transcript, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn deliver(&mut self, transcript: Transcript, cx: &mut Context<Self>) {
+        cx.emit(DictationNotice::DismissError);
         let settings = AppState::settings(cx);
         let Transcript {
             text,
@@ -622,7 +694,20 @@ impl Dictation {
                     Some(target) => target.await,
                     None => None,
                 };
+                let current = this
+                    .update(cx, |this, _| {
+                        generation == this.generation && this.phase == Phase::Processing
+                    })
+                    .unwrap_or(false);
+                if !current {
+                    return;
+                }
+                let paste_started = Instant::now();
                 let pasted = backend::paste_text(text.clone(), target_pid, restore_clipboard).await;
+                log::info!(
+                    "[perf] operation={generation} stage=paste_complete elapsed_ms={:.3}",
+                    paste_started.elapsed().as_secs_f64() * 1000.0
+                );
                 let _ = this.update(cx, |this, cx| {
                     if generation != this.generation {
                         return;
@@ -680,58 +765,95 @@ impl Dictation {
     }
 }
 
-/// Runs a History write; a failure is logged and the Dictation goes on.
-fn record(
-    cx: &mut App,
-    write: impl FnOnce(&HistoryStore, &Settings) -> anyhow::Result<Option<Recorded>>,
-) {
-    let result = AppState::global(cx).update(cx, |s, cx| s.record_history(cx, write));
-    if let Err(err) = result {
-        log::error!("failed to save the History row: {err:#}");
+fn pipeline_task_failed() -> PipelineOutcome {
+    PipelineOutcome::Failed {
+        message: "pipeline task failed".into(),
+        code: None,
+        message_key: None,
     }
+}
+
+async fn run_prepared_pipeline(
+    mut input: PipelineInput,
+    db: Arc<crate::db::Database>,
+    cancel: CancellationToken,
+) -> PipelineOutcome {
+    if cancel.is_cancelled() {
+        return PipelineOutcome::Cancelled;
+    }
+    let needs_key = pipeline::cleanup_enabled(&input.settings);
+    let preparation = crate::services::runtime::blocking(move || {
+        (
+            db.get_dictionary_by_priority().unwrap_or_default(),
+            needs_key
+                .then(backend::cleanup_api_key)
+                .filter(|k| !k.is_empty()),
+        )
+    })
+    .await;
+    let Ok((priority, key)) = preparation else {
+        return pipeline_task_failed();
+    };
+    input.dictionary_priority = priority;
+    input.cleanup_api_key = key;
+    if cancel.is_cancelled() {
+        return PipelineOutcome::Cancelled;
+    }
+    pipeline::run(input, cancel).await
 }
 
 /// Re-transcribes a History row from its saved audio through the same
 /// pipeline as a live Dictation.
 pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
     let history = AppState::global(cx).read(cx).history_store.clone();
-    let Some(audio) = history.retry_audio(id) else {
-        return Task::ready(Err(t("controlPanel.history.audioNotFound")));
-    };
-    // Saved recordings are always WAV.
-    let input = Dictation::pipeline_input(audio, cx);
-    let handle = crate::services::runtime::spawn(pipeline::run(input, CancellationToken::new()));
+    let db = AppState::global(cx).read(cx).db.clone();
+    let mut input = Dictation::pipeline_input(bytes::Bytes::new(), cx);
     cx.spawn(async move |cx| {
-        let outcome = handle.await.map_err(|e| e.to_string())?;
+        let audio = crate::services::runtime::storage(move || history.retry_audio(id)).await;
+        let Some(audio) = audio else {
+            return Err(t("controlPanel.history.audioNotFound"));
+        };
+        input.audio = audio.into();
+        let outcome = crate::services::runtime::spawn(run_prepared_pipeline(
+            input,
+            db,
+            CancellationToken::new(),
+        ))
+        .await
+        .map_err(|e| e.to_string())?;
         match outcome {
-            PipelineOutcome::Transcribed(transcript) => cx.update(|cx| {
-                AppState::global(cx)
-                    .update(cx, |s, cx| {
-                        s.record_history(cx, |history, _| history.apply_retry(id, &transcript))
+            PipelineOutcome::Transcribed(transcript) => {
+                let failure = transcript.cleanup_failure.clone();
+                let save = cx.update(|cx| {
+                    AppState::global(cx).update(cx, |s, cx| {
+                        s.record_history(cx, move |history, _| history.apply_retry(id, &transcript))
                     })
-                    .map_err(|e| e.to_string())?;
-                if let Some(failure) = transcript.cleanup_failure {
-                    crate::ui::overlays::show_toast(
-                        crate::ui::overlays::Toast::new(t("app.toasts.cleanupFailed.title"))
-                            .description(
-                                failure
-                                    .message_key
-                                    .and_then(|k| crate::i18n::try_t(&k))
-                                    .unwrap_or(failure.message),
-                            )
-                            .variant(crate::ui::overlays::ToastVariant::Destructive),
-                        cx,
-                    );
+                });
+                save.await.map_err(|e| e.to_string())?;
+                if let Some(failure) = failure {
+                    cx.update(|cx| {
+                        crate::ui::overlays::show_toast(
+                            crate::ui::overlays::Toast::new(t("app.toasts.cleanupFailed.title"))
+                                .description(
+                                    failure
+                                        .message_key
+                                        .and_then(|key| crate::i18n::try_t(&key))
+                                        .unwrap_or(failure.message),
+                                )
+                                .variant(crate::ui::overlays::ToastVariant::Destructive),
+                            cx,
+                        )
+                    });
                 }
                 Ok(())
-            }),
+            }
             PipelineOutcome::NoAudio => Err(t("dictation.noAudio.title")),
             PipelineOutcome::Failed {
                 message,
                 message_key,
                 ..
             } => Err(message_key
-                .and_then(|k| crate::i18n::try_t(&k))
+                .and_then(|key| crate::i18n::try_t(&key))
                 .unwrap_or(message)),
             PipelineOutcome::Cancelled => Err("Cancelled".into()),
         }

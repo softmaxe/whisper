@@ -181,6 +181,9 @@ pub struct SettingsModal {
     mic_devices: Vec<MicDevice>,
     mic_default: Option<String>,
     storage_usage: (usize, u64),
+    storage_usage_generation: u64,
+    storage_usage_loading: bool,
+    clearing_audio: bool,
     mic_permission: bool,
     accessibility_permission: bool,
 
@@ -627,7 +630,10 @@ impl SettingsModal {
             auto_start_loading: false,
             mic_devices: Vec::new(),
             mic_default: None,
-            storage_usage: backend::audio_storage_usage(),
+            storage_usage: (0, 0),
+            storage_usage_generation: 0,
+            storage_usage_loading: false,
+            clearing_audio: false,
             mic_permission: backend::microphone_permission_granted(),
             accessibility_permission: backend::accessibility_granted(),
             scroll: ScrollHandle::new(),
@@ -637,6 +643,9 @@ impl SettingsModal {
             _subscriptions: subscriptions,
         };
         this.reload_microphones(cx);
+        if section == SettingsSection::PrivacyData {
+            this.load_storage_usage(cx);
+        }
         this.sync_selects(cx);
         if !s.cleanup_remote_url.trim().is_empty() {
             this.load_models(None, false, cx);
@@ -649,12 +658,45 @@ impl SettingsModal {
             self.section = section;
             self.scroll.set_offset(point(px(0.), px(0.)));
             if section == SettingsSection::PrivacyData {
-                self.storage_usage = backend::audio_storage_usage();
+                self.load_storage_usage(cx);
                 self.mic_permission = backend::microphone_permission_granted();
                 self.accessibility_permission = backend::accessibility_granted();
             }
             cx.notify();
         }
+    }
+
+    /// Coalesces scans and never publishes a result made stale by deletion.
+    fn load_storage_usage(&mut self, cx: &mut Context<Self>) {
+        self.storage_usage_generation = self.storage_usage_generation.wrapping_add(1);
+        if self.storage_usage_loading {
+            return;
+        }
+        self.storage_usage_loading = true;
+        cx.spawn(async move |this, cx| {
+            loop {
+                let Ok(generation) = this.update(cx, |this, _| this.storage_usage_generation)
+                else {
+                    return;
+                };
+                let usage = cx
+                    .background_spawn(async { backend::audio_storage_usage() })
+                    .await;
+                let retry = this.update(cx, |this, cx| {
+                    if generation != this.storage_usage_generation {
+                        return true;
+                    }
+                    this.storage_usage = usage;
+                    this.storage_usage_loading = false;
+                    cx.notify();
+                    false
+                });
+                if !matches!(retry, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Closes the sheet and returns keyboard focus to where it was before.
@@ -2415,7 +2457,9 @@ impl SettingsModal {
         let p = cx.palette();
         let s = settings(cx);
         let (files, bytes) = self.storage_usage;
-        let usage = if files > 0 {
+        let usage = if self.storage_usage_loading || self.clearing_audio {
+            "…".to_string()
+        } else if files > 0 {
             t_with(
                 "settings.privacy.audioStorageFiles",
                 &[
@@ -2490,7 +2534,9 @@ impl SettingsModal {
                             .label(t("settings.privacy.clearAllAudio"))
                             .variant(ButtonVariant::Outline)
                             .size(ButtonSize::Sm)
-                            .disabled(files == 0)
+                            .disabled(
+                                files == 0 || self.storage_usage_loading || self.clearing_audio,
+                            )
                             .on_click(cx.listener(|this, _, _, cx| this.confirm_clear_audio(cx))),
                         &p,
                     )
@@ -2614,19 +2660,32 @@ impl SettingsModal {
             ),
             true,
             move |_, cx| {
-                AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
+                let clear = AppState::global(cx).update(cx, |s, cx| s.delete_all_audio(cx));
                 let _ = this.update(cx, |this, cx| {
-                    this.storage_usage = backend::audio_storage_usage();
+                    this.clearing_audio = true;
                     cx.notify();
                 });
-                show_toast(
-                    Toast::new(t_with(
-                        "settings.privacy.audioCleared",
-                        &[("count", &files.to_string()), ("size", &size)],
-                    ))
-                    .variant(ToastVariant::Success),
-                    cx,
-                );
+                let this = this.clone();
+                let size = size.clone();
+                cx.spawn(async move |cx| {
+                    clear.await;
+                    cx.update(|cx| {
+                        let _ = this.update(cx, |this, cx| {
+                            this.clearing_audio = false;
+                            this.load_storage_usage(cx);
+                            cx.notify();
+                        });
+                        show_toast(
+                            Toast::new(t_with(
+                                "settings.privacy.audioCleared",
+                                &[("count", &files.to_string()), ("size", &size)],
+                            ))
+                            .variant(ToastVariant::Success),
+                            cx,
+                        );
+                    });
+                })
+                .detach();
             },
         );
         request.confirm_label = t("settings.privacy.clearAudioConfirm").into();
