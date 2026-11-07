@@ -107,16 +107,38 @@ pub fn apply_known_corrections(text: &str, corrections: &[KnownCorrection]) -> S
     let mut result = text.to_string();
     for correction in automatic {
         let spelled_right = find_term(&result, &correction.term);
-        let hits: Vec<Range<usize>> = find_term(&result, &correction.misheard)
-            .into_iter()
-            .filter(|hit| {
-                !spelled_right
-                    .iter()
-                    .any(|r| hit.start < r.end && r.start < hit.end)
-            })
-            .collect();
-        for hit in hits.into_iter().rev() {
-            result.replace_range(hit, &correction.term);
+        let hits = find_term(&result, &correction.misheard);
+        // One replacement can retain the existing allocation, particularly
+        // for sparse rules in long documents.
+        if let [hit] = hits.as_slice() {
+            if !spelled_right
+                .iter()
+                .any(|r| hit.start < r.end && r.start < hit.end)
+            {
+                result.replace_range(hit.clone(), &correction.term);
+            }
+            continue;
+        }
+        let mut protected = spelled_right.iter().peekable();
+        let mut rewritten = String::new();
+        let mut cursor = 0;
+        for hit in hits {
+            while protected.peek().is_some_and(|r| r.end <= hit.start) {
+                protected.next();
+            }
+            if protected.peek().is_some_and(|r| r.start < hit.end) {
+                continue;
+            }
+            if rewritten.is_empty() {
+                rewritten.reserve(result.len());
+            }
+            rewritten.push_str(&result[cursor..hit.start]);
+            rewritten.push_str(&correction.term);
+            cursor = hit.end;
+        }
+        if cursor != 0 {
+            rewritten.push_str(&result[cursor..]);
+            result = rewritten;
         }
     }
     result
@@ -942,6 +964,164 @@ mod tests {
     fn a_term_containing_its_mishearing_is_left_alone() {
         let text = apply_known_corrections("克劳德 和 克劳", &[known("克劳", "克劳德", 2)]);
         assert_eq!(text, "克劳德 和 克劳德");
+    }
+
+    fn apply_known_corrections_reference(text: &str, corrections: &[KnownCorrection]) -> String {
+        let mut automatic: Vec<_> = corrections
+            .iter()
+            .filter(|c| c.applies_automatically())
+            .collect();
+        automatic.sort_by_key(|c| std::cmp::Reverse(utf16_len(&c.misheard)));
+        let mut result = text.to_owned();
+        for correction in automatic {
+            let spelled_right = find_term(&result, &correction.term);
+            let hits: Vec<_> = find_term(&result, &correction.misheard)
+                .into_iter()
+                .filter(|hit| {
+                    !spelled_right
+                        .iter()
+                        .any(|r| hit.start < r.end && r.start < hit.end)
+                })
+                .collect();
+            for hit in hits.into_iter().rev() {
+                result.replace_range(hit, &correction.term);
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn correction_rewrite_matches_reference_with_unicode_and_cascades() {
+        for (text, rules, expected) in [
+            (
+                "İİ test 和 i\u{307}i\u{307} TEST",
+                vec![known("İİ test", "工具", 2)],
+                "工具 和 工具",
+            ),
+            (
+                "甲乙",
+                vec![known("甲乙", "丙丁", 2), known("丙丁", "戊己", 2)],
+                "戊己",
+            ),
+        ] {
+            assert!(rules.iter().all(KnownCorrection::applies_automatically));
+            assert_eq!(apply_known_corrections(text, &rules), expected);
+            assert_eq!(apply_known_corrections_reference(text, &rules), expected);
+        }
+        let corrections = [
+            known("克劳", "克劳德", 2),
+            known("克劳德", "Claude", 2),
+            known("cloud code", "Claude Code", 2),
+            known("github", "GitHub", 2),
+            known("İİ", "工具", 2),
+            known("工具", "tool", 2),
+        ];
+        let fragments = [
+            "",
+            "克劳",
+            "克劳德",
+            "克劳克劳德",
+            "CLOUD CODE",
+            "用github写",
+            "İİ",
+            "i\u{307}i\u{307}",
+            "😀",
+            "工具",
+        ];
+        for a in fragments {
+            for b in fragments {
+                for separator in ["", " ", "。"] {
+                    let text = format!("{a}{separator}{b}");
+                    for rules in [&corrections[..], &corrections[..1], &corrections[1..]] {
+                        assert_eq!(
+                            apply_known_corrections(&text, rules),
+                            apply_known_corrections_reference(&text, rules),
+                            "{text}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "synthetic correction performance probe"]
+    fn benchmark_known_correction_rewrite() {
+        let rules = [known("克劳", "克劳德", 2)];
+        for (label, text) in [
+            ("short", "克劳德 和 克劳".to_owned()),
+            ("dense", "克劳德 和 克劳 ".repeat(2_000)),
+            ("miss", "普通文本 ".repeat(2_000)),
+        ] {
+            assert_eq!(
+                apply_known_corrections(&text, &rules),
+                apply_known_corrections_reference(&text, &rules)
+            );
+            for sample in 0..30 {
+                for legacy in if sample % 2 == 0 {
+                    [true, false]
+                } else {
+                    [false, true]
+                } {
+                    let start = std::time::Instant::now();
+                    for _ in 0..10 {
+                        std::hint::black_box(if legacy {
+                            apply_known_corrections_reference(std::hint::black_box(&text), &rules)
+                        } else {
+                            apply_known_corrections(std::hint::black_box(&text), &rules)
+                        });
+                    }
+                    println!(
+                        "correction_rewrite,{label},{sample},{legacy},{}",
+                        start.elapsed().as_nanos() / 10
+                    );
+                }
+            }
+        }
+        for (label, text, rules) in [
+            (
+                "sparse_equal",
+                format!("{}甲乙", "普通文本 ".repeat(10_000)),
+                vec![known("甲乙", "丙丁", 2)],
+            ),
+            (
+                "sparse_expand",
+                format!("{}甲乙", "普通文本 ".repeat(10_000)),
+                vec![known("甲乙", "工具名称", 2)],
+            ),
+            (
+                "sparse_multi",
+                format!("{}甲乙 丙丁 戊己", "普通文本 ".repeat(10_000)),
+                vec![
+                    known("甲乙", "一二", 2),
+                    known("丙丁", "三四", 2),
+                    known("戊己", "五六", 2),
+                ],
+            ),
+        ] {
+            assert_eq!(
+                apply_known_corrections(&text, &rules),
+                apply_known_corrections_reference(&text, &rules)
+            );
+            for sample in 0..30 {
+                for legacy in if sample % 2 == 0 {
+                    [true, false]
+                } else {
+                    [false, true]
+                } {
+                    let start = std::time::Instant::now();
+                    std::hint::black_box(if legacy {
+                        apply_known_corrections_reference(std::hint::black_box(&text), &rules)
+                    } else {
+                        apply_known_corrections(std::hint::black_box(&text), &rules)
+                    });
+                    println!(
+                        "correction_rewrite,{label},{sample},{legacy},{}",
+                        start.elapsed().as_nanos()
+                    );
+                }
+            }
+        }
     }
 
     #[test]
