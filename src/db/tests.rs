@@ -256,12 +256,7 @@ fn schema_matches_the_expected_layout() {
             "created_at",
             "has_audio",
             "audio_duration_ms",
-            "provider",
-            "model",
             "status",
-            "error_message",
-            "error_code",
-            "route_kind",
         ]
     );
     assert_eq!(
@@ -297,11 +292,158 @@ fn schema_matches_the_expected_layout() {
             "local_date",
             "word_count",
             "spoken_duration_ms",
-            "provider",
-            "model",
         ]
     );
-    assert_eq!(count(&db, "PRAGMA user_version"), 2);
+    assert_eq!(count(&db, "PRAGMA user_version"), 3);
+}
+
+fn legacy_connection(path: &Path) -> Connection {
+    let conn = Connection::open(path).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE transcriptions (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           text TEXT NOT NULL,
+           raw_text TEXT,
+           timestamp TEXT NOT NULL,
+           created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%fZ', 'now')),
+           has_audio INTEGER NOT NULL DEFAULT 0,
+           audio_duration_ms INTEGER,
+           provider TEXT,
+           model TEXT,
+           status TEXT NOT NULL DEFAULT 'completed',
+           error_message TEXT,
+           error_code TEXT,
+           route_kind TEXT
+         );
+         CREATE INDEX idx_transcriptions_timestamp ON transcriptions(timestamp);
+         CREATE TABLE analytics_events (
+           id INTEGER PRIMARY KEY AUTOINCREMENT,
+           occurred_at TEXT NOT NULL,
+           local_date TEXT NOT NULL,
+           word_count INTEGER NOT NULL CHECK (word_count > 0),
+           spoken_duration_ms INTEGER CHECK (spoken_duration_ms > 0),
+           provider TEXT,
+           model TEXT
+         );
+         CREATE INDEX idx_analytics_events_local_date ON analytics_events(local_date);
+         INSERT INTO transcriptions (
+           id, text, raw_text, timestamp, created_at, has_audio, audio_duration_ms,
+           provider, model, status, error_message, error_code, route_kind
+         ) VALUES (
+           41, 'delivered', 'raw words', '2026-09-01 10:00:00.000Z',
+           '2026-09-01 10:00:01.000Z', 1, 2000,
+           'old provider', 'old model', 'completed', NULL, NULL, 'old route'
+         ), (
+           42, 'failed words', NULL, '2026-09-01 10:01:00.000Z',
+           '2026-09-01 10:01:01.000Z', 1, 1000,
+           'old provider', 'old model', 'failed', 'old error', 'OLD_ERROR', 'old route'
+         );
+         INSERT INTO analytics_events VALUES (
+           17, '2026-09-01 10:00:00.000Z', '2026-09-01', 4, 2000,
+           'old provider', 'old model'
+         );
+         PRAGMA user_version = 2;",
+    )
+    .unwrap();
+    conn
+}
+
+#[test]
+fn upgrades_legacy_metadata_without_losing_history_or_counters() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    drop(legacy_connection(&path));
+    let expected_layout = db();
+    let upgraded = Database::open(&path).unwrap();
+    for table in ["transcriptions", "analytics_events"] {
+        assert_eq!(
+            column_names(&upgraded, table),
+            column_names(&expected_layout, table)
+        );
+    }
+    let rows = upgraded.get_transcriptions(10).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, 41);
+    assert_eq!(rows[0].text, "delivered");
+    assert_eq!(rows[0].raw_text.as_deref(), Some("raw words"));
+    assert_eq!(rows[0].timestamp, "2026-09-01 10:00:00.000Z");
+    assert_eq!(rows[0].created_at, "2026-09-01 10:00:01.000Z");
+    assert!(rows[0].has_audio);
+    assert_eq!(rows[0].audio_duration_ms, Some(2000));
+    let summary = upgraded.get_analytics_summary_for("2026-09-01").unwrap();
+    assert_eq!(summary.total_words, 4);
+    assert_eq!(summary.total_dictations, 1);
+    assert_eq!(summary.average_wpm, Some(120));
+    assert_eq!(count(&upgraded, "SELECT id FROM analytics_events"), 17);
+    assert_eq!(count(&upgraded, "PRAGMA user_version"), 3);
+    assert_eq!(
+        count(
+            &upgraded,
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_transcriptions_timestamp', 'idx_analytics_events_local_date')"
+        ),
+        2
+    );
+    drop(upgraded);
+
+    let reopened = Database::open(&path).unwrap();
+    assert_eq!(reopened.get_transcriptions(10).unwrap(), rows);
+    assert_eq!(
+        reopened.get_analytics_summary_for("2026-09-01").unwrap(),
+        summary
+    );
+    assert_eq!(reopened.delete_hidden_transcriptions().unwrap(), [42]);
+    assert!(reopened.save_transcription("new", None, None).unwrap().id > 42);
+    reopened
+        .record_analytics_event(&event("2026-09-01 10:02:00.000Z"))
+        .unwrap();
+    assert_eq!(
+        reopened
+            .get_analytics_summary_for("2026-09-01")
+            .unwrap()
+            .total_dictations,
+        2
+    );
+}
+
+#[test]
+fn failed_upgrade_rolls_back_schema_and_version() {
+    let conn = legacy_connection(Path::new(":memory:"));
+    // An unexpected dependent index makes DROP COLUMN fail after earlier
+    // columns were removed. The entire upgrade must roll back.
+    conn.execute_batch("CREATE INDEX custom_error_index ON transcriptions(error_code);")
+        .unwrap();
+    assert!(schema::init(&conn).is_err());
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    let legacy: (String, String) = conn
+        .query_row(
+            "SELECT provider, route_kind FROM transcriptions WHERE id = 41",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(legacy, ("old provider".into(), "old route".into()));
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM transcriptions", [], |r| r
+            .get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+fn refuses_a_newer_schema_without_downgrading_it() {
+    let db = db();
+    let conn = db.lock();
+    conn.pragma_update(None, "user_version", 4).unwrap();
+    assert!(schema::init(&conn).is_err());
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
 }
 
 #[test]

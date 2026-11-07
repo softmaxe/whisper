@@ -1,19 +1,24 @@
-//! Schema setup. Every statement is idempotent, so opening a database runs the
-//! whole script; `user_version` records which schema the file holds.
+//! Schema setup and transactional upgrades, tracked by `user_version`.
 
 use anyhow::Result;
 use rusqlite::Connection;
 
 use super::timestamp::SQL_NOW;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub(super) fn init(conn: &Connection) -> Result<()> {
     // Wait briefly rather than fail when another connection holds the lock.
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
 
-    conn.execute_batch(&format!(
+    let tx = conn.unchecked_transaction()?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    anyhow::ensure!(
+        version <= SCHEMA_VERSION,
+        "Database schema is newer than this app"
+    );
+    tx.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS transcriptions (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           text TEXT NOT NULL,
@@ -23,14 +28,7 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
           created_at TEXT NOT NULL DEFAULT ({SQL_NOW}),
           has_audio INTEGER NOT NULL DEFAULT 0,
           audio_duration_ms INTEGER,
-          -- provider, model, error_message, error_code and route_kind are no
-          -- longer written; they stay so older databases keep working.
-          provider TEXT,
-          model TEXT,
-          status TEXT NOT NULL DEFAULT 'completed',
-          error_message TEXT,
-          error_code TEXT,
-          route_kind TEXT
+          status TEXT NOT NULL DEFAULT 'completed'
         );
         CREATE INDEX IF NOT EXISTS idx_transcriptions_timestamp ON transcriptions(timestamp);
 
@@ -80,14 +78,38 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
           occurred_at TEXT NOT NULL,
           local_date TEXT NOT NULL,
           word_count INTEGER NOT NULL CHECK (word_count > 0),
-          spoken_duration_ms INTEGER CHECK (spoken_duration_ms > 0),
-          -- provider and model are no longer written.
-          provider TEXT,
-          model TEXT
+          spoken_duration_ms INTEGER CHECK (spoken_duration_ms > 0)
         );
-        CREATE INDEX IF NOT EXISTS idx_analytics_events_local_date ON analytics_events(local_date);
-
-        PRAGMA user_version = {SCHEMA_VERSION};"
+        CREATE INDEX IF NOT EXISTS idx_analytics_events_local_date ON analytics_events(local_date);"
     ))?;
+    if version < 3 {
+        // Fresh databases already have the current columns. Older databases
+        // retain their rows and indexes while unused metadata is removed.
+        for (table, columns) in [
+            (
+                "transcriptions",
+                &[
+                    "provider",
+                    "model",
+                    "error_message",
+                    "error_code",
+                    "route_kind",
+                ][..],
+            ),
+            ("analytics_events", &["provider", "model"][..]),
+        ] {
+            let existing = tx
+                .prepare(&format!("PRAGMA table_info({table})"))?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for &column in columns {
+                if existing.iter().any(|name| name == column) {
+                    tx.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))?;
+                }
+            }
+        }
+    }
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
     Ok(())
 }
