@@ -14,7 +14,11 @@ Unit tests live next to the code in `src/`. Tests marked `#[ignore]` need hardwa
 
 ## Workflows
 
-The CI workflow lints the workflows and scripts and runs `scripts/check.sh` on pull requests and pushes to `main`. Pull requests that only change documentation skip the checks, and pull requests that change packaging also build an ad-hoc signed package with the Build workflow. The `CI result` job is the only required status check; it passes when every other CI job passed or was skipped.
+The CI workflow lints the workflows and scripts and runs `scripts/check.sh` on pull requests and pushes to `main`. Pull requests that only change documentation skip the Rust checks. The `CI result` job is the only required status check; it passes when every other CI job passed or was skipped.
+
+Pull requests also build an ad-hoc signed package when they change the Build workflow, `build.rs`, `packaging/`, `resources/`, packaging scripts, or the application icon inputs (`assets/icon.icns`, `assets/Assets.car`, and `assets/whisper.icon/`). Changes limited to embedded UI icons, fonts, ordinary Rust code, or CI orchestration run the regular checks without building a package. Run the Build workflow manually when a package is needed for other changes.
+
+Both pull requests and pushes to `main` can restore Cargo output from an older lockfile with the same runner, architecture, toolchain, Cargo configuration, and CI build settings. Cargo rebuilds dependencies affected by the lockfile change. Only successful checks on `main` save new caches. The cache namespace is versioned: changing it causes one cold build on `main` before compatible runs can reuse the new cache, and also provides a way to discard accumulated obsolete artifacts.
 
 The Release workflow builds and publishes a signed package for a `v<version>` tag on `main` once CI has passed on that commit. See the workflow files for the exact steps and [macOS signing](macos-signing.md) for the release identity.
 
