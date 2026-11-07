@@ -323,6 +323,7 @@ impl Database {
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(conn);
         Ok(rank_dictionary_rows(rows, Utc::now().timestamp_millis()))
     }
 
@@ -453,6 +454,9 @@ impl Database {
         corrections: &[Correction],
         generation: Option<(&AtomicU64, u64)>,
     ) -> Result<Vec<String>> {
+        if corrections.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut conn = self.lock();
         if generation.is_some_and(|(current, expected)| current.load(Ordering::Acquire) != expected)
         {

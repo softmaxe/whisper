@@ -346,17 +346,19 @@ impl AppState {
                 edit,
             } = report;
             let edited = edit.is_some();
-            let corrections = crate::services::runtime::blocking(move || {
-                edit.map_or_else(Vec::new, |edit| {
+            let corrections = if let Some(edit) = edit {
+                crate::services::runtime::blocking(move || {
                     crate::text::correction_learner::extract_corrections(
                         &edit.baseline,
                         &edit.edited,
                         &edit.pasted,
                     )
                 })
-            })
-            .await
-            .unwrap_or_default();
+                .await
+                .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
             let Ok(Some(db)) = this.update(cx, |this, _| {
                 (this.dictionary_revision.load(Ordering::SeqCst) == revision
                     && this.settings.auto_learn_corrections)
@@ -375,7 +377,8 @@ impl AppState {
                 {
                     log::warn!("failed to save auto-learn stats: {err}");
                 }
-                let dictionary = (db.get_dictionary_entries(), db.get_known_corrections());
+                let dictionary = (!corrections.is_empty())
+                    .then(|| (db.get_dictionary_entries(), db.get_known_corrections()));
                 (learned, dictionary)
             })
             .await;
@@ -383,7 +386,9 @@ impl AppState {
                 if this.dictionary_revision.load(Ordering::SeqCst) != revision {
                     return Vec::new();
                 }
-                this.apply_dictionary_snapshot(dictionary, cx);
+                if let Some(dictionary) = dictionary {
+                    this.apply_dictionary_snapshot(dictionary, cx);
+                }
                 learned
             })
             .unwrap_or_default()
