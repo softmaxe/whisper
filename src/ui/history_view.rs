@@ -478,15 +478,20 @@ impl HistoryView {
     }
 
     fn show_in_folder(id: i64, cx: &mut App) {
-        let path = AppState::global(cx).read(cx).audio.audio_path(id);
-        match path {
-            Some(path) => backend::reveal_in_finder(&path),
-            None => show_toast(
-                Toast::new(t("controlPanel.history.audioNotFound"))
-                    .variant(ToastVariant::Destructive),
-                cx,
-            ),
-        }
+        let audio = AppState::global(cx).read(cx).audio.clone();
+        let lookup = crate::services::runtime::storage(move || audio.audio_path(id));
+        cx.spawn(async move |cx| {
+            let path = lookup.await;
+            cx.update(|cx| match path {
+                Some(path) => backend::reveal_in_finder(&path),
+                None => show_toast(
+                    Toast::new(t("controlPanel.history.audioNotFound"))
+                        .variant(ToastVariant::Destructive),
+                    cx,
+                ),
+            });
+        })
+        .detach();
     }
 
     fn retry(&mut self, id: i64, cx: &mut Context<Self>) {

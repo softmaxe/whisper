@@ -169,3 +169,89 @@ Local workspace evidence is retained under ignored `.e2e/performance-review/`:
 `render-sort-results.json`, `data/`, and `check.log`. Baseline and final test
 executables are saved there for repeat comparisons. Those local artifacts are
 not source-controlled release assets.
+
+## Follow-up optimization and independent review
+
+Measured on 2026-11-07 after baseline `92e9f32`, on the same Apple M2 Pro,
+macOS 27.2 arm64 and Rust 1.98.0. An Astra high discussion identified the
+remaining candidates; separate independent Astra high reviews checked the
+implementation and requested additional sparse-match and Unicode/cascade tests.
+
+Changes in this follow-up:
+
+- Retention collects deleted transcript IDs, scans the audio directory once and
+  keeps an ephemeral ID-to-path index. Work becomes linear in directory entries
+  plus requested IDs instead of rescanning and sorting for every ID. Exact ID
+  matching, legacy names, case-insensitive WAV extensions and the first lexical
+  match among duplicate files are preserved. Single lookups use a minimum rather
+  than sorting. History's Finder lookup runs on the storage worker.
+- Empty correction results skip dictionary transactions, full dictionary reloads
+  and change notifications, while still recording learning-session statistics.
+  Sessions with no edits also skip CPU-worker dispatch. Nonempty corrections
+  still refresh even when no new word was learned. Priority sorting releases the
+  connection lock after reading its owned rows.
+- Within each correction rule, ordered protection intervals are traversed once
+  and dense replacements build the result once. Rules still apply sequentially.
+  A single-hit path uses the existing allocation: sparse long-text measurements
+  exposed a regression in the initial always-rebuild implementation, which was
+  corrected before the final measurements below.
+
+Both opt-in probes retain the previous algorithms as test-only references and
+alternate old/new execution order over 30 samples per case in one executable.
+Fixtures are constructed outside timing; all retention files contain synthetic
+four-byte payloads and use a temporary database/directory. The retention timer
+includes database purging and actual file deletion, but excludes fixture setup.
+Correction samples average ten calls for short/dense/miss fixtures and one call
+for each long sparse fixture. The sparse fixture prefix repeats `普通文本 `
+10,000 times. Build configuration is Cargo's test profile (application opt-level
+1, dependency opt-level 2), not a release package. Final runs had no concurrent
+Cargo compilation. These are warm local synthetic measurements, with noisy
+scheduling tails, not end-to-end application latency or production workloads.
+
+| Synthetic case | Before median (ms) | Final median (ms) | Before p95 (ms) | Final p95 (ms) |
+| --- | ---: | ---: | ---: | ---: |
+| Retention, 1,000 recordings | 3126.671000 | 73.375000 | 4659.112000 | 148.240000 |
+| Retention, 250 recordings | 184.695000 | 13.149500 | 292.891000 | 26.773000 |
+| Correction, 2,000 repeated phrases | 10.127389 | 0.771756 | 22.389187 | 3.182900 |
+| Correction, no match | 0.286197 | 0.290695 | 0.403320 | 0.334416 |
+| Correction, short text | 0.001879 | 0.001927 | 0.002320 | 0.002712 |
+| Correction, long text / one equal-length match | 1.426979 | 1.425979 | 1.462375 | 1.551000 |
+| Correction, long text / one expanding match | 1.429375 | 1.429583 | 1.466000 | 1.545042 |
+| Correction, long text / three sparse rules | 4.265313 | 4.229730 | 4.343292 | 4.353041 |
+
+The 1,000-recording retention median decreased by 97.65%; dense correction
+rewriting decreased by 92.38% in this run. Short, no-match and sparse cases show
+no material median improvement; sub-microsecond short-text differences and
+scheduling-sensitive tails do not establish an application regression or gain.
+The earlier always-rebuild sparse multi-rule regression is absent from the final
+single-hit implementation. No app-wide speedup is inferred from these probes.
+
+Validation: `scripts/check.sh` passed with 494 tests passed and 13 ignored;
+the two new opt-in benchmark tests also passed when explicitly run. Differential
+checks include 900 fragment/rule combinations, actual automatic Unicode
+lowercase expansion, correct-spelling protection, and a positive ordered cascade.
+Storage regressions cover duplicate IDs/files, exact versus padded IDs, missing
+or externally removed files, uppercase extensions and unrelated files/directories.
+The existing Cargo `block 0.1.6` future-compatibility notice remains.
+
+Reproduce with:
+
+```sh
+scripts/check.sh
+cargo test --locked --lib benchmark_retention_audio_deletion -- --ignored --nocapture --test-threads=1
+cargo test --locked --lib benchmark_known_correction_rewrite -- --ignored --nocapture --test-threads=1
+```
+
+Local logs and the numeric summary are in ignored `.e2e/performance-followup/`:
+`bench-final.log` (retention), `correction-final.log` (final correction code),
+`check-final.log` and `summary.json`. Earlier correction rows in `bench-final.log`
+predate the single-hit fix and are not the final correction measurements.
+
+The independent reviews found no blocking correctness issue or additional
+immediately justified optimization after the requested validation. Stop this
+iteration at that evidence boundary. Absolute project-wide optimality cannot be
+established: native frame timing, shortcut-to-paste latency, capture allocation
+and whole-process RSS remain unmeasured. Virtual lists, persistent file indexes,
+additional caches and capture redesign need traces demonstrating a bottleneck
+before their complexity is justified. No installed app, signing, permissions,
+real microphone, clipboard or live server was changed or tested in this follow-up.
