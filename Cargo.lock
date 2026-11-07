@@ -8694,7 +8694,7 @@ dependencies = [
 
 [[package]]
 name = "whisper"
-version = "0.0.19"
+version = "0.0.20"
 dependencies = [
  "anyhow",
  "async-channel",
