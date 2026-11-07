@@ -669,6 +669,36 @@ impl Focusable for ControlPanel {
 impl Render for ControlPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
+        let settings_modal = self.settings.clone();
+        let custom = Overlays::global(cx).read(cx).custom();
+        let dialog = render_dialog(window, cx);
+        let toasts = render_toasts(window, cx);
+        let root = div()
+            .key_context("ControlPanel")
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::on_open_settings))
+            .on_action(cx.listener(Self::on_open_search))
+            .on_action(cx.listener(Self::on_close_overlay))
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(p.surface_window)
+            .font_family(FONT_UI)
+            .text_color(p.foreground);
+        // Occlusion only blocks hit testing. Without this branch, every settings
+        // scroll still lays out the entire History page behind the opaque sheet.
+        // Keep the view entities and scroll handle alive so closing restores them.
+        if let Some(modal) = &settings_modal
+            && modal.read(cx).covers_workspace(window.viewport_size())
+        {
+            return root
+                .child(modal.clone())
+                .children(custom)
+                .children(dialog)
+                .children(toasts)
+                .into_any_element();
+        }
         let collapsed = self.sidebar_collapsed;
         let spacer = f32_tx(
             "sidebar-spacer",
@@ -757,127 +787,104 @@ impl Render for ControlPanel {
                 .child(sidebar)
                 .into_any_element(),
         );
-        let settings_modal = self.settings.clone();
-        let custom = Overlays::global(cx).read(cx).custom();
-        let dialog = render_dialog(window, cx);
-        let toasts = render_toasts(window, cx);
-
-        div()
-            .key_context("ControlPanel")
-            .track_focus(&self.focus)
-            .on_action(cx.listener(Self::on_open_settings))
-            .on_action(cx.listener(Self::on_open_search))
-            .on_action(cx.listener(Self::on_close_overlay))
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .bg(p.surface_window)
-            .font_family(FONT_UI)
-            .text_color(p.foreground)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .flex()
-                    .overflow_hidden()
-                    .children((!collapsed).then(|| sidebar_host.take()).flatten())
-                    .child(div().flex_none().w(px(spacer)))
-                    .child(
-                        div().flex_1().flex().flex_col().overflow_hidden().child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .flex()
-                                .flex_col()
-                                .overflow_hidden()
-                                .bg(p.background)
-                                .child(top_bar)
-                                .child(
-                                    div()
-                                        .relative()
-                                        .flex_1()
-                                        .min_h_0()
-                                        .flex()
-                                        .flex_col()
-                                        .child(
+        root.child(
+            div()
+                .relative()
+                .flex_1()
+                .flex()
+                .overflow_hidden()
+                .children((!collapsed).then(|| sidebar_host.take()).flatten())
+                .child(div().flex_none().w(px(spacer)))
+                .child(
+                    div().flex_1().flex().flex_col().overflow_hidden().child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .overflow_hidden()
+                            .bg(p.background)
+                            .child(top_bar)
+                            .child(
+                                div()
+                                    .relative()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(
+                                        div()
+                                            .id("panel-scroll")
+                                            .flex_1()
+                                            .min_h_0()
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.scroll)
+                                            .child(content),
+                                    )
+                                    // Content scrolled under the top bar fades out
+                                    // instead of meeting its border at a hard edge.
+                                    .when(fade > 0.001, |d| {
+                                        d.child(
                                             div()
-                                                .id("panel-scroll")
-                                                .flex_1()
-                                                .min_h_0()
-                                                .overflow_y_scroll()
-                                                .track_scroll(&self.scroll)
-                                                .child(content),
+                                                .absolute()
+                                                .top_0()
+                                                .left_0()
+                                                .right(px(12.))
+                                                .h(px(SCROLL_FADE))
+                                                .opacity(fade)
+                                                .bg(linear_gradient(
+                                                    180.,
+                                                    linear_color_stop(p.background, 0.),
+                                                    linear_color_stop(p.background.opacity(0.), 1.),
+                                                )),
                                         )
-                                        // Content scrolled under the top bar fades out
-                                        // instead of meeting its border at a hard edge.
-                                        .when(fade > 0.001, |d| {
-                                            d.child(
-                                                div()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .left_0()
-                                                    .right(px(12.))
-                                                    .h(px(SCROLL_FADE))
-                                                    .opacity(fade)
-                                                    .bg(linear_gradient(
-                                                        180.,
-                                                        linear_color_stop(p.background, 0.),
-                                                        linear_color_stop(
-                                                            p.background.opacity(0.),
-                                                            1.,
-                                                        ),
-                                                    )),
-                                            )
-                                        })
-                                        // A quiet thumb and a short bottom fade say a long
-                                        // page continues, as the Settings sheet does.
-                                        .when_some(thumb, |d, (top, height)| {
-                                            d.child(
-                                                div()
-                                                    .absolute()
-                                                    .right(px(3.))
-                                                    .top(top)
-                                                    .w(px(4.))
-                                                    .h(height)
-                                                    .rounded_full()
-                                                    .bg(p.foreground.opacity(if p.dark {
-                                                        0.22
-                                                    } else {
-                                                        0.18
-                                                    })),
-                                            )
-                                        })
-                                        .when(bottom_fade > 0.01, |d| {
-                                            d.child(
-                                                div()
-                                                    .absolute()
-                                                    .bottom_0()
-                                                    .left_0()
-                                                    .right(px(12.))
-                                                    .h(px(16.))
-                                                    .opacity(bottom_fade)
-                                                    .bg(linear_gradient(
-                                                        0.,
-                                                        linear_color_stop(p.background, 0.),
-                                                        linear_color_stop(
-                                                            p.background.opacity(0.),
-                                                            1.,
-                                                        ),
-                                                    )),
-                                            )
-                                        }),
-                                ),
-                        ),
-                    )
-                    // A peeking sidebar paints after the main column to
-                    // overlay it; a docked one comes first so Tab reaches
-                    // navigation before the page.
-                    .when(collapsed, |d| d.children(sidebar_host.take())),
-            )
-            .when_some(settings_modal, |d, modal| d.child(modal))
-            .children(custom)
-            .children(dialog)
-            .children(toasts)
+                                    })
+                                    // A quiet thumb and a short bottom fade say a long
+                                    // page continues, as the Settings sheet does.
+                                    .when_some(thumb, |d, (top, height)| {
+                                        d.child(
+                                            div()
+                                                .absolute()
+                                                .right(px(3.))
+                                                .top(top)
+                                                .w(px(4.))
+                                                .h(height)
+                                                .rounded_full()
+                                                .bg(p.foreground.opacity(if p.dark {
+                                                    0.22
+                                                } else {
+                                                    0.18
+                                                })),
+                                        )
+                                    })
+                                    .when(bottom_fade > 0.01, |d| {
+                                        d.child(
+                                            div()
+                                                .absolute()
+                                                .bottom_0()
+                                                .left_0()
+                                                .right(px(12.))
+                                                .h(px(16.))
+                                                .opacity(bottom_fade)
+                                                .bg(linear_gradient(
+                                                    0.,
+                                                    linear_color_stop(p.background, 0.),
+                                                    linear_color_stop(p.background.opacity(0.), 1.),
+                                                )),
+                                        )
+                                    }),
+                            ),
+                    ),
+                )
+                // A peeking sidebar paints after the main column to
+                // overlay it; a docked one comes first so Tab reaches
+                // navigation before the page.
+                .when(collapsed, |d| d.children(sidebar_host.take())),
+        )
+        .when_some(settings_modal, |d, modal| d.child(modal))
+        .children(custom)
+        .children(dialog)
+        .children(toasts)
+        .into_any_element()
     }
 }
