@@ -469,10 +469,27 @@ async fn read_cleanup_body(mut response: reqwest::Response) -> Result<String, Cl
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelOption {
     pub value: String,
+    /// Other API names for the same model, excluding `value`.
+    pub aliases: Vec<String>,
     pub label: String,
     /// The server's description, if any.
     pub description: Option<String>,
     pub owned_by: Option<String>,
+}
+
+impl ModelOption {
+    pub fn matches(&self, value: &str) -> bool {
+        self.value == value || self.aliases.iter().any(|alias| alias == value)
+    }
+
+    /// Preserve a saved alias when selecting its model again.
+    pub fn selected_value<'a>(&'a self, selected: &'a str) -> &'a str {
+        if self.matches(selected) {
+            selected
+        } else {
+            &self.value
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -593,7 +610,36 @@ async fn fetch_model_options(
         .or_else(|| payload.get("models").and_then(Value::as_array))
         .cloned()
         .unwrap_or_default();
-    Ok(raw.iter().filter_map(model_option).collect())
+    Ok(group_model_options(&raw))
+}
+
+fn group_model_options(raw: &[Value]) -> Vec<ModelOption> {
+    let mut models: Vec<ModelOption> = Vec::new();
+    let mut roots = std::collections::HashMap::new();
+    for item in raw {
+        let Some(model) = model_option(item) else {
+            continue;
+        };
+        // vLLM lists each served name separately for the same base model.
+        // Do not infer aliases from similar IDs or merge adapter models.
+        let root = item.get("root").and_then(Value::as_str).filter(|root| {
+            !root.trim().is_empty()
+                && model.owned_by.as_deref() == Some("vllm")
+                && item.get("parent").is_none_or(Value::is_null)
+        });
+        if let Some(root) = root {
+            if let Some(&index) = roots.get(root) {
+                let existing: &mut ModelOption = &mut models[index];
+                if !existing.matches(&model.value) {
+                    existing.aliases.push(model.value);
+                }
+                continue;
+            }
+            roots.insert(root, models.len());
+        }
+        models.push(model);
+    }
+    models
 }
 
 fn model_option(item: &Value) -> Option<ModelOption> {
@@ -619,6 +665,7 @@ fn model_option(item: &Value) -> Option<ModelOption> {
     Some(ModelOption {
         label: value.clone(),
         value,
+        aliases: Vec::new(),
         description,
         owned_by,
     })
@@ -1176,24 +1223,76 @@ mod tests {
             vec![
                 ModelOption {
                     value: "qwen3.5:9b".into(),
+                    aliases: Vec::new(),
                     label: "qwen3.5:9b".into(),
                     description: None,
                     owned_by: Some("library".into()),
                 },
                 ModelOption {
                     value: "7".into(),
+                    aliases: Vec::new(),
                     label: "7".into(),
                     description: None,
                     owned_by: None,
                 },
                 ModelOption {
                     value: "named".into(),
+                    aliases: Vec::new(),
                     label: "named".into(),
                     description: Some("Desc".into()),
                     owned_by: None,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn list_models_groups_vllm_aliases_and_preserves_saved_names() {
+        let server = MockServer::start(|_| {
+            Reply::json(
+                200,
+                r#"{"data":[
+            {"id":"Qwen/Qwen3-ASR-1.7B","owned_by":"vllm","root":"/models/qwen","parent":null},
+            {"id":"Qwen3-ASR-1.7B","owned_by":"vllm","root":"/models/qwen","parent":null},
+            {"id":"whisper-1","owned_by":"vllm","root":"/models/qwen","parent":null},
+            {"id":"whisper-1","owned_by":"vllm","root":"/models/qwen","parent":null}
+        ]}"#,
+            )
+        });
+        let (_, models) = run(list_models(&server.url("/v1"), None)).unwrap();
+        assert_eq!(models.len(), 1);
+        let model = &models[0];
+        assert_eq!(model.value, "Qwen/Qwen3-ASR-1.7B");
+        assert_eq!(model.aliases, ["Qwen3-ASR-1.7B", "whisper-1"]);
+        assert!(model.matches("Qwen/Qwen3-ASR-1.7B"));
+        assert!(model.matches("whisper-1"));
+        assert!(!model.matches("whisper-large"));
+        assert_eq!(model.selected_value("whisper-1"), "whisper-1");
+        assert_eq!(model.selected_value("other"), model.value);
+    }
+
+    #[test]
+    fn list_models_keeps_distinct_or_unproven_models_separate() {
+        let server = MockServer::start(|_| {
+            Reply::json(
+                200,
+                r#"{"data":[
+            {"id":"base","owned_by":"vllm","root":"/models/base"},
+            {"id":"other","owned_by":"vllm","root":"/models/other"},
+            {"id":"adapter-a","owned_by":"vllm","root":"/models/base","parent":"base"},
+            {"id":"adapter-b","owned_by":"vllm","root":"/models/base","parent":"base"},
+            {"id":"unknown-a","root":"/models/base"},
+            {"id":"unknown-b","root":"/models/base"},
+            {"id":"missing-root-a","owned_by":"vllm"},
+            {"id":"missing-root-b","owned_by":"vllm"},
+            {"id":"empty-root-a","owned_by":"vllm","root":""},
+            {"id":"empty-root-b","owned_by":"vllm","root":""}
+        ]}"#,
+            )
+        });
+        let (_, models) = run(list_models(&server.url("/v1"), None)).unwrap();
+        assert_eq!(models.len(), 10);
+        assert!(models.iter().all(|model| model.aliases.is_empty()));
     }
 
     #[test]
