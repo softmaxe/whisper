@@ -45,7 +45,8 @@ jobs:
               *) code=true ;;
             esac
             case "$file" in
-              .github/workflows/build.yml | .github/workflows/ci.yml | assets/* | build.rs | packaging/* | resources/* | \
+              .github/workflows/build.yml | assets/icon.icns | assets/Assets.car | assets/whisper.icon/* | \
+                build.rs | packaging/* | resources/* | \
                 scripts/build-mediaremote-adapter.sh | scripts/bundle-macos.sh | scripts/check-version.sh | \
                 scripts/download-ffmpeg.sh | scripts/sign-macos-release.sh)
                 package=true
@@ -77,9 +78,10 @@ jobs:
 
       # Only main saves the cache, so pull requests reuse it without filling
       # the repository's cache quota with a copy per pull request. The prefix
-      # names the build settings above so older, larger caches are not restored.
-      # Main builds from scratch when Cargo.lock changes, so stale artifacts
-      # from an older lockfile do not accumulate in the saved cache.
+      # isolates the runner, architecture, toolchain and build settings above.
+      # Both main and pull requests reuse compatible output after lockfile
+      # changes; Cargo rebuilds changed dependencies. Bump v2 when changing the
+      # build settings or when accumulated obsolete artifacts need a reset.
       - name: Restore Cargo downloads and build output
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -89,8 +91,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: ci-${{ runner.os }}-nodebug-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: ${{ github.event_name == 'pull_request' && format('ci-{0}-nodebug-', runner.os) || '' }}
+          key: ci-v2-macos-15-${{ runner.arch }}-nodebug-${{ hashFiles('rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ci-v2-macos-15-${{ runner.arch }}-nodebug-${{ hashFiles('rust-toolchain.toml', '.cargo/config', '.cargo/config.toml') }}-
 
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Validate architecture, toolchain and package version
@@ -137,7 +140,8 @@ jobs:
       - name: Lint shell scripts
         run: shellcheck --severity=warning scripts/*.sh
 
-  # Pull requests that touch packaging build an unsigned package.
+  # Packaging inputs trigger an ad-hoc signed build; embedded UI assets and
+  # CI orchestration changes only need the regular checks.
   package:
     name: Package
     needs: changes
