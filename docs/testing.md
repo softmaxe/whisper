@@ -29,6 +29,14 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 - In the searchable speech language menu, type a query and select a result. Reopen it and check that the query resets. Check arrow keys, Return, Escape, and Tab as well.
 - Repeat trigger toggling, slow clicks, outside dismissal, and keyboard activation for a History row's actions, the History page actions, and the Dictionary page actions. Check that Dictionary context menus still dismiss on outside clicks.
 
+## Settings scrolling regression check
+
+- With a populated History page, open Settings and repeatedly scroll Text cleanup with a mouse wheel, then switch sections and click controls. Repeat while the server connection check is pending and after it fails or succeeds.
+- Test the prompt preview, Customize and Test tabs, scrolling to both ends of the page. Controls should respond promptly after rapid scrolling.
+- Close Settings and verify the History scroll position is preserved. Repeat from Insights, Upload and Dictionary.
+- Repeat in a narrow window where Settings covers the workspace and a wide window where it floats above it. Check opening and closing animations, Escape, keyboard focus, and window resizing with Settings open.
+- When profiling the full-window sheet after its opening animation, the covered workspace must not participate in layout or paint. The floating sheet and closing animation still render the visible workspace.
+
 ## Release smoke check
 
 Automated checks do not establish microphone, Accessibility, or server compatibility on a user's Mac. Before calling a release ready, check the packaged app on macOS:

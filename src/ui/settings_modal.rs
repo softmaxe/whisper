@@ -343,6 +343,11 @@ fn endpoint_control(field: impl IntoElement, raw: &str, path: &str, p: &Palette)
 }
 
 impl SettingsModal {
+    /// The workspace remains visible while a floating sheet or exit animation is shown.
+    pub(super) fn covers_workspace(&self, viewport: Size<Pixels>) -> bool {
+        !self.closing && sheet_frame(viewport).attached
+    }
+
     pub fn new(section: SettingsSection, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let s = settings(cx);
         let mut subscriptions = Vec::new();
@@ -1788,8 +1793,12 @@ impl SettingsModal {
         } else if let Some(error) = &self.models_error {
             ConnectionCheck::Failed(error.clone())
         } else if self.last_loaded_base.is_some() && !is_dirty {
-            let listed: Vec<String> = self.models.iter().map(|m| m.value.clone()).collect();
-            ConnectionCheck::connected(&listed, settings(cx).cleanup_model.trim())
+            let model = settings(cx).cleanup_model;
+            let model = model.trim();
+            ConnectionCheck::Connected {
+                model_listed: (!model.is_empty() && !self.models.is_empty())
+                    .then(|| self.models.iter().any(|m| m.value == model)),
+            }
         } else {
             ConnectionCheck::Idle
         }
@@ -1807,11 +1816,6 @@ impl SettingsModal {
         let is_dirty = draft != s.cleanup_remote_url.trim();
         let saved_base = normalize_base_url(&s.cleanup_remote_url);
         let model = s.cleanup_model.trim().to_string();
-        let models = if is_dirty || disabled {
-            Vec::new()
-        } else {
-            self.models.clone()
-        };
         let check = if disabled {
             ConnectionCheck::Idle
         } else {
@@ -1830,6 +1834,12 @@ impl SettingsModal {
         );
         let can_test =
             !disabled && !self.models_loading && !(draft.is_empty() && saved_base.is_empty());
+        let api_key = self.render_api_key(disabled, window, cx);
+        let models = if is_dirty || disabled {
+            &[][..]
+        } else {
+            self.models.as_slice()
+        };
 
         vec![
             settings_field_tagged(
@@ -1856,7 +1866,7 @@ impl SettingsModal {
             settings_field(
                 t("reasoning.custom.apiKeyOptional"),
                 Some(t("reasoning.custom.apiKeyHelp").into_any_element()),
-                self.render_api_key(disabled, window, cx),
+                api_key,
                 &p,
             )
             .into_any_element(),
@@ -1876,7 +1886,7 @@ impl SettingsModal {
                     ))
                     .when(!models.is_empty(), |d| {
                         d.child(model_card_list(
-                            &models,
+                            models,
                             &model,
                             cx.entity().downgrade(),
                             &p,
