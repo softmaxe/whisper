@@ -4,6 +4,7 @@
 //! time, or `Whisper-<id>.wav` when the row has no usable timestamp. Lookups
 //! match the trailing `-<id>` of the file stem.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -105,7 +106,7 @@ impl AudioStorage {
         let mut files = Vec::new();
         for entry in fs::read_dir(&self.dir)? {
             let path = entry?.path();
-            if path.is_file() && is_audio_file(&path) {
+            if is_audio_file(&path) && path.is_file() {
                 files.push(path);
             }
         }
@@ -115,13 +116,15 @@ impl AudioStorage {
     /// The saved recording of a transcription.
     pub fn audio_path(&self, transcription_id: i64) -> Option<PathBuf> {
         let id = transcription_id.to_string();
-        let mut files = self.audio_files().ok()?;
-        files.sort();
-        files.into_iter().find(|path| {
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|stem| id_from_stem(stem) == Some(id.as_str()))
-        })
+        self.audio_files()
+            .ok()?
+            .into_iter()
+            .filter(|path| {
+                path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|stem| id_from_stem(stem) == Some(id.as_str()))
+            })
+            .min()
     }
 
     pub fn read_audio(&self, transcription_id: i64) -> Option<Vec<u8>> {
@@ -136,7 +139,43 @@ impl AudioStorage {
         let Some(path) = self.audio_path(transcription_id) else {
             return true;
         };
-        match fs::remove_file(&path) {
+        Self::delete_path(&path)
+    }
+
+    /// Deletes the first lexical match for each ID with one directory scan.
+    /// Keep the index local so external file changes cannot leave stale paths.
+    fn delete_audio_batch(&self, transcription_ids: &[i64]) {
+        if transcription_ids.is_empty() {
+            return;
+        }
+        let mut paths: HashMap<String, Option<PathBuf>> = transcription_ids
+            .iter()
+            .map(|id| (id.to_string(), None))
+            .collect();
+        let Ok(files) = self.audio_files() else {
+            return;
+        };
+        for path in files {
+            let Some(id) = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(id_from_stem)
+            else {
+                continue;
+            };
+            if let Some(candidate) = paths.get_mut(id)
+                && candidate.as_ref().is_none_or(|old| path < *old)
+            {
+                *candidate = Some(path);
+            }
+        }
+        for path in paths.into_values().flatten() {
+            Self::delete_path(&path);
+        }
+    }
+
+    fn delete_path(path: &Path) -> bool {
+        match fs::remove_file(path) {
             Ok(()) => true,
             Err(err) => {
                 log::error!("Failed to delete audio {}: {err}", path.display());
@@ -284,9 +323,6 @@ pub fn run_retention_cleanup(
     let mut report = RetentionCleanupReport::default();
     match db.delete_hidden_transcriptions() {
         Ok(ids) => {
-            for id in &ids {
-                storage.delete_audio(*id);
-            }
             report.deleted_transcription_ids = ids;
         }
         Err(err) => log::error!("Failed to remove failed and discarded rows: {err:#}"),
@@ -294,15 +330,13 @@ pub fn run_retention_cleanup(
     if settings.transcript_retention_days > 0 {
         match db.delete_transcriptions_expired_before(settings.transcript_retention_days) {
             Ok(purge) => {
-                for id in &purge.ids {
-                    storage.delete_audio(*id);
-                }
                 report.deleted_transcription_ids.extend(purge.ids);
                 report.analytics_purged = purge.analytics_purged;
             }
             Err(err) => log::error!("Retention cleanup failed: {err:#}"),
         }
     }
+    storage.delete_audio_batch(&report.deleted_transcription_ids);
     if settings.audio_retention_days > 0 {
         report.audio = storage.cleanup_expired_audio(settings.audio_retention_days, db);
     }
@@ -325,6 +359,99 @@ mod tests {
         let file = fs::File::options().write(true).open(path).unwrap();
         file.set_modified(SystemTime::now() - DAY * days as u32)
             .unwrap();
+    }
+
+    #[test]
+    #[ignore = "synthetic filesystem performance probe"]
+    fn benchmark_retention_audio_deletion() {
+        for count in [250, 1_000] {
+            for sample in 0..30 {
+                for legacy in if sample % 2 == 0 {
+                    [true, false]
+                } else {
+                    [false, true]
+                } {
+                    let (_tmp, storage) = storage();
+                    let db = Database::open_in_memory().unwrap();
+                    for _ in 0..count {
+                        let row = db.save_transcription("synthetic", None, None).unwrap();
+                        storage.save_audio(row.id, b"RIFF", &row.timestamp).unwrap();
+                    }
+                    db.lock()
+                        .execute(
+                            "UPDATE transcriptions SET created_at = datetime('now', '-5 days')",
+                            [],
+                        )
+                        .unwrap();
+                    let start = std::time::Instant::now();
+                    let deleted = if legacy {
+                        // Retain the previous scan/sort-per-ID implementation for
+                        // alternating before/after measurements in one executable.
+                        let hidden = db.delete_hidden_transcriptions().unwrap();
+                        assert!(hidden.is_empty());
+                        let purge = db.delete_transcriptions_expired_before(1).unwrap();
+                        for id in &purge.ids {
+                            let id = id.to_string();
+                            let mut files = storage.audio_files().unwrap();
+                            files.sort();
+                            if let Some(path) = files.into_iter().find(|path| {
+                                path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .and_then(id_from_stem)
+                                    == Some(id.as_str())
+                            }) {
+                                fs::remove_file(path).unwrap();
+                            }
+                        }
+                        purge.ids.len()
+                    } else {
+                        run_retention_cleanup(
+                            &db,
+                            &storage,
+                            RetentionSettings {
+                                audio_retention_days: 0,
+                                transcript_retention_days: 1,
+                            },
+                        )
+                        .deleted_transcription_ids
+                        .len()
+                    };
+                    let elapsed = start.elapsed();
+                    assert_eq!(deleted, count);
+                    assert_eq!(storage.storage_usage().file_count, 0);
+                    println!(
+                        "retention_audio,{count},{sample},{legacy},{}",
+                        elapsed.as_micros()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn batch_deletion_preserves_lexical_choice_and_unrelated_files() {
+        let (_tmp, storage) = storage();
+        let first = storage.dir.join("Whisper-2020-42.WAV");
+        let second = storage.dir.join("Whisper-2021-42.wav");
+        for path in [&first, &second] {
+            fs::write(path, b"audio").unwrap();
+        }
+        let bare = storage.save_audio(7, b"bare", "").unwrap();
+        let unrelated = storage.save_audio(142, b"keep", "").unwrap();
+        let padded = storage.dir.join("Whisper-0042.wav");
+        fs::write(&padded, b"keep").unwrap();
+        fs::create_dir(storage.dir.join("directory-42.wav")).unwrap();
+        fs::write(storage.dir.join("notes-42.txt"), b"keep").unwrap();
+        assert_eq!(storage.audio_path(42), Some(first.clone()));
+        storage.delete_audio_batch(&[42, 42, 7, 999]);
+        assert!(!first.exists());
+        assert!(!bare.exists());
+        assert!(second.exists());
+        assert!(unrelated.exists());
+        assert!(padded.exists());
+        fs::remove_file(&second).unwrap();
+        storage.delete_audio_batch(&[42]);
+        assert!(unrelated.exists());
     }
 
     #[test]
