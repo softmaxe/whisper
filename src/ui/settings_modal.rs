@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
+use gpui_kit::component::text::TextView;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -37,10 +38,10 @@ use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog,
 use super::select::{Select, SelectEvent, SelectOption};
 use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_SMALL, Palette, PaletteExt, RADIUS_2XL,
-    RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY, TEXT_CAPTION,
-    TEXT_MONO_BODY, TEXT_MONO_CAPTION, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT,
-    ease_out, ease_snap, motion,
+    DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_READING, LINE_SMALL, Palette, PaletteExt,
+    RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY,
+    TEXT_CAPTION, TEXT_MONO_BODY, TEXT_MONO_CAPTION, TEXT_MONO_SMALL, TEXT_SMALL,
+    WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap, motion,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2170,6 +2171,8 @@ impl SettingsModal {
                             .id("prompt-view")
                             .max_h(px(320.))
                             .overflow_y_scroll()
+                            // Consume the wheel after this viewport scrolls, including at its edges.
+                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                             .p(px(16.))
                             .rounded(px(RADIUS_LG))
                             .border_1()
@@ -2179,11 +2182,15 @@ impl SettingsModal {
                             } else {
                                 p.muted.opacity(0.3)
                             })
-                            .font_family(FONT_MONO)
-                            .text_size(px(TEXT_MONO_SMALL))
-                            .line_height(px(LINE_SMALL))
-                            .text_color(p.muted_foreground)
-                            .child(text),
+                            .text_size(px(TEXT_BODY))
+                            .line_height(px(LINE_READING))
+                            .text_color(p.foreground)
+                            .child(
+                                TextView::markdown("prompt-markdown", text)
+                                    .selectable(true)
+                                    .scrollable(false)
+                                    .w_full(),
+                            ),
                     )
                     .into_any_element()
             }
@@ -2211,6 +2218,7 @@ impl SettingsModal {
                 )
                 .child(
                     div()
+                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                         .px(px(20.))
                         .py(px(16.))
                         .border_b_1()

@@ -33,6 +33,8 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 
 - With a populated History page, open Settings and repeatedly scroll Text cleanup with a mouse wheel, then switch sections and click controls. Repeat while the server connection check is pending and after it fails or succeeds.
 - Test the prompt preview, Customize and Test tabs, scrolling to both ends of the page. Controls should respond promptly after rapid scrolling.
+- In Prompt Studio, scroll a long prompt with the pointer inside View and Customize. Only the prompt viewport should move, even at its top and bottom; scrolling outside it should still move Settings. Repeat with a mouse wheel and a trackpad.
+- Save a custom prompt containing headings, bold text, lists, inline code, and a fenced code block. View should render Markdown with wrapped prose; Customize and Copy should preserve the Markdown source. Verify the preview updates after saving or resetting and with both interface languages and themes.
 - Close Settings and verify the History scroll position is preserved. Repeat from Insights, Upload and Dictionary.
 - Repeat in a narrow window where Settings covers the workspace and a wide window where it floats above it. Check opening and closing animations, Escape, keyboard focus, and window resizing with Settings open.
 - When profiling the full-window sheet after its opening animation, the covered workspace must not participate in layout or paint. The floating sheet and closing animation still render the visible workspace.
