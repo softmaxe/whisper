@@ -414,7 +414,10 @@
     "builtInDevice": "Built-in Microphone",
     "unavailableDevice": "{{device}} (Unavailable)",
     "refresh": "Refresh devices",
-    "currentlyUsing": "Currently using"
+    "currentlyUsing": "Currently using",
+    "nextRecordingUses": "Next recording uses",
+    "connecting": "Connecting to microphone…",
+    "appliesNextRecording": "Microphone changes apply to the next recording"
   },
   "promptStudio": {
     "common": {

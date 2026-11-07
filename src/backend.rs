@@ -38,16 +38,8 @@ pub fn reveal_in_finder(path: &PathBuf) {
         .spawn();
 }
 
-pub fn list_microphones() -> Vec<crate::native::mic::MicDevice> {
-    crate::native::mic::list_input_devices()
-}
-
-pub fn system_default_microphone() -> Option<String> {
-    crate::native::mic::system_default_microphone()
-}
-
-pub fn lid_closed() -> Option<bool> {
-    crate::native::mic::LaptopLidMonitor::shared().state()
+pub fn microphone_snapshot() -> crate::native::mic::MicSnapshot {
+    crate::native::mic::MicSnapshot::read()
 }
 
 pub fn microphone_permission_granted() -> bool {

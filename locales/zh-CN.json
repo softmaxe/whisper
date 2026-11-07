@@ -410,7 +410,10 @@
     "builtInDevice": "内置麦克风",
     "unavailableDevice": "{{device}}（不可用）",
     "refresh": "刷新设备",
-    "currentlyUsing": "当前使用"
+    "currentlyUsing": "当前使用",
+    "nextRecordingUses": "下次录音使用",
+    "connecting": "正在连接麦克风…",
+    "appliesNextRecording": "麦克风更改将在下次录音时生效"
   },
   "promptStudio": {
     "common": {
