@@ -42,6 +42,9 @@ pub const UNABLE_TO_LOAD_MODELS_MESSAGE_KEY: &str = "reasoning.custom.unableToLo
 
 /// Default `max_tokens`: `max(4096, clamp(len * 2, 512, 2048))` is always 4096.
 const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// Bound untrusted completion JSON, including reasoning, metadata and errors.
+/// This leaves ample room for 4096 output tokens, even with JSON escaping.
+const MAX_CLEANUP_RESPONSE_BYTES: usize = 1024 * 1024;
 /// Deadline per model-list request, so a hung server cannot leave the
 /// settings panel loading forever.
 const LIST_MODELS_TIMEOUT: Duration = Duration::from_secs(15);
@@ -141,7 +144,7 @@ impl CleanupError {
     }
 
     fn should_retry(&self) -> bool {
-        api_should_retry(self.status, self.code())
+        self.kind != CleanupErrorKind::InvalidResponse && api_should_retry(self.status, self.code())
     }
 }
 
@@ -427,15 +430,39 @@ async fn post_json(
         .await
         .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))?;
     let status = response.status();
-    let body = response
-        .text()
-        .await
-        .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))?;
+    let body = read_cleanup_body(response).await?;
     Ok(HttpReply {
         status: status.as_u16(),
         status_text: status.canonical_reason().unwrap_or_default().to_string(),
         body,
     })
+}
+
+async fn read_cleanup_body(mut response: reqwest::Response) -> Result<String, CleanupError> {
+    let too_large = || {
+        CleanupError::new(
+            CleanupErrorKind::InvalidResponse,
+            format!("Cleanup response exceeds {MAX_CLEANUP_RESPONSE_BYTES} bytes"),
+        )
+    };
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_CLEANUP_RESPONSE_BYTES as u64)
+    {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))?
+    {
+        if chunk.len() > MAX_CLEANUP_RESPONSE_BYTES - body.len() {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8_lossy(&body).into_owned())
 }
 
 /// A model offered by `/models`.
@@ -872,6 +899,160 @@ mod tests {
         };
         let out = run(process("raw", &config, &fast_tuning())).unwrap();
         assert_eq!(out, "<think>a</think>B");
+    }
+
+    #[test]
+    fn accepts_exact_response_limit_and_rejects_larger_replies_without_retry() {
+        let overhead = completion("", "stop").len();
+        let body = completion(&"x".repeat(MAX_CLEANUP_RESPONSE_BYTES - overhead), "stop");
+        assert_eq!(body.len(), MAX_CLEANUP_RESPONSE_BYTES);
+        let server = MockServer::start(move |_| Reply::json(200, &body));
+        let output = run(process("raw", &config_for(&server), &fast_tuning())).unwrap();
+        assert_eq!(output.len(), MAX_CLEANUP_RESPONSE_BYTES - overhead);
+
+        for status in [200, 400, 422, 503] {
+            let body = "x".repeat(MAX_CLEANUP_RESPONSE_BYTES + 1);
+            let server = MockServer::start(move |_| Reply::json(status, &body));
+            let err = run(process("raw", &config_for(&server), &fast_tuning())).unwrap_err();
+            assert_eq!(err.kind, CleanupErrorKind::InvalidResponse);
+            assert!(!err.should_retry());
+            assert_eq!(server.requests().len(), 1, "status {status}");
+        }
+    }
+
+    /// Raw chunked replies exercise streaming checks without Content-Length.
+    fn chunked_server(
+        send: impl FnOnce(&mut std::net::TcpStream) + Send + 'static,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let thread = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut headers = Vec::new();
+            while !headers.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                headers.push(byte[0]);
+            }
+            let length = String::from_utf8(headers)
+                .unwrap()
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().unwrap())
+                })
+                .unwrap_or(0);
+            stream.read_exact(&mut vec![0; length]).unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            send(&mut stream);
+        });
+        (base, thread)
+    }
+
+    #[test]
+    fn rejects_chunked_overflow_before_the_response_ends() {
+        use std::io::Write;
+        let (base_url, server) = chunked_server(|stream| {
+            let chunk = vec![b'x'; MAX_CLEANUP_RESPONSE_BYTES + 1];
+            write!(stream, "{:x}\r\n", chunk.len()).unwrap();
+            // The client may close as soon as the limit is crossed.
+            let _ = stream.write_all(&chunk);
+            let _ = stream.write_all(b"\r\n");
+            // Deliberately omit the terminating zero chunk.
+        });
+        let config = CleanupRequestConfig {
+            base_url,
+            ..CleanupRequestConfig::default()
+        };
+        let err = run(process("raw", &config, &fast_tuning())).unwrap_err();
+        assert_eq!(err.kind, CleanupErrorKind::InvalidResponse);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn cancels_during_a_chunked_body_while_another_request_completes() {
+        use std::io::Write;
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let (base_url, server) = chunked_server(move |stream| {
+            stream.write_all(b"1\r\n{\r\n").unwrap();
+            let _ = started_tx.send(());
+            let _ = finish_rx.recv_timeout(Duration::from_secs(5));
+        });
+        let other = MockServer::start(|_| Reply::json(200, &completion("fresh", "stop")));
+        let config = CleanupRequestConfig {
+            base_url,
+            ..CleanupRequestConfig::default()
+        };
+        let (cancelled, kept) = run(async {
+            let cancel = CancellationToken::new();
+            let cancelling = async {
+                started_rx.await.unwrap();
+                cancel.cancel();
+            };
+            let tuning = fast_tuning();
+            let request = process_text_with("raw", &config, &tuning, &cancel);
+            let other_config = config_for(&other);
+            let (result, _, other) = tokio::time::timeout(Duration::from_secs(2), async {
+                tokio::join!(request, cancelling, process("raw", &other_config, &tuning))
+            })
+            .await
+            .unwrap();
+            (result, other)
+        });
+        finish_tx.send(()).unwrap();
+        server.join().unwrap();
+        assert_eq!(cancelled.unwrap_err().kind, CleanupErrorKind::Cancelled);
+        assert_eq!(kept.unwrap(), "fresh");
+    }
+
+    #[test]
+    fn dense_tag_responses_complete_within_deadline() {
+        let dense = MockServer::start(|_| {
+            Reply::json(
+                200,
+                &completion(
+                    &format!("{}保留", "<think>x</think>".repeat(60_000)),
+                    "stop",
+                ),
+            )
+        });
+        let config = config_for(&dense);
+        let started = std::time::Instant::now();
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                let config = config.clone();
+                crate::services::runtime::spawn(async move {
+                    process("raw", &config, &fast_tuning()).await
+                })
+            })
+            .collect();
+        run(async {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                assert_eq!(
+                    crate::services::runtime::spawn(async { 42 }).await.unwrap(),
+                    42
+                );
+                for task in tasks {
+                    assert_eq!(task.await.unwrap().unwrap(), "保留");
+                }
+            })
+            .await
+            .unwrap();
+        });
+        assert!(started.elapsed() < Duration::from_secs(3));
     }
 
     #[test]
