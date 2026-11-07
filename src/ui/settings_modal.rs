@@ -2,11 +2,12 @@
 
 use std::time::Duration;
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui_kit::base::FocusTrapElement as _;
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
-use gpui_kit::component::text::TextView;
+use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -154,6 +155,7 @@ pub struct SettingsModal {
     models_request: Option<Task<()>>,
 
     prompt_tab: PromptTab,
+    prompt_preview: Entity<TextViewState>,
     prompt_editor: Entity<TextareaState>,
     test_input: Entity<TextareaState>,
     test_result: String,
@@ -609,6 +611,7 @@ impl SettingsModal {
             last_loaded_base: None,
             models_request: None,
             prompt_tab: PromptTab::View,
+            prompt_preview: cx.new(|cx| TextViewState::markdown("", cx)),
             prompt_editor,
             test_input,
             test_result: String::new(),
@@ -2155,6 +2158,10 @@ impl SettingsModal {
                 let copied = self.copied_prompt;
                 let text = current_prompt.replace("{{agentName}}", crate::text::DEFAULT_AGENT_NAME);
                 let copy_text = current_prompt.clone();
+                self.prompt_preview
+                    .update(cx, |state, cx| state.set_text(&text, cx));
+                let prompt_list = self.prompt_preview.read(cx).list_state().clone();
+                let previous_offset = Cell::new(prompt_list.scroll_px_offset_for_scrollbar().y);
                 div()
                     .px(px(20.))
                     .py(px(16.))
@@ -2214,8 +2221,22 @@ impl SettingsModal {
                             .h(px(320.))
                             .overflow_hidden()
                             // Let TextView virtualize the document inside a bounded viewport.
-                            // Consume the wheel after it scrolls, including at its edges.
-                            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                            // The list handles the wheel first. Pass only the unused
+                            // distance directly to Settings.
+                            .on_scroll_wheel(cx.listener(
+                                move |this, event: &ScrollWheelEvent, _, cx| {
+                                    let offset = prompt_list.scroll_px_offset_for_scrollbar().y;
+                                    let consumed = offset - previous_offset.replace(offset);
+                                    // GPUI's virtual list converts wheel lines using 20 pixels.
+                                    let remaining = event.delta.pixel_delta(px(20.)).y - consumed;
+                                    let mut page_offset = this.scroll.offset();
+                                    page_offset.y = (page_offset.y + remaining)
+                                        .clamp(-this.scroll.max_offset().y, px(0.));
+                                    this.scroll.set_offset(page_offset);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                },
+                            ))
                             .p(px(16.))
                             .rounded(px(RADIUS_LG))
                             .border_1()
@@ -2229,7 +2250,7 @@ impl SettingsModal {
                             .line_height(px(LINE_READING))
                             .text_color(p.foreground)
                             .child(
-                                TextView::markdown("prompt-markdown", text)
+                                TextView::new(&self.prompt_preview)
                                     .selectable(true)
                                     .scrollable(true)
                                     .size_full(),
@@ -2261,7 +2282,6 @@ impl SettingsModal {
                 )
                 .child(
                     div()
-                        .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                         .px(px(20.))
                         .py(px(16.))
                         .border_b_1()
