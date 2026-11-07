@@ -5,11 +5,11 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{MenuTriggerBounds, drop, f32_tx, focus_ring, icon};
+use super::components::{MenuTriggerBounds, drop, f32_tx, focus_ring, icon, text_tooltip};
 use super::control_panel::CloseOverlay;
 use super::theme::{
-    DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT, TEXT_SMALL, ease_out,
-    ease_snap, motion,
+    DUR_BASE, DUR_SNAP, FONT_MONO, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT,
+    TEXT_MONO_SMALL, TEXT_SMALL, ease_out, ease_snap, motion,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +51,14 @@ impl SelectOption {
     }
 }
 
+/// Model IDs are case-sensitive; whitespace around a typed ID is not part
+/// of the value sent to the server.
+fn unlisted_value<'a>(options: &[SelectOption], query: &'a str) -> Option<&'a str> {
+    let value = query.trim();
+    (!value.is_empty() && !options.iter().any(|option| option.value.as_ref() == value))
+        .then_some(value)
+}
+
 pub enum SelectEvent {
     Change(SharedString),
 }
@@ -72,6 +80,8 @@ pub struct Select {
     max_width: Option<Pixels>,
     menu_min_width: Pixels,
     disabled: bool,
+    /// Model selectors accept IDs the server does not list.
+    custom_value: bool,
     search: Option<Entity<InputState>>,
     query: String,
     highlighted: usize,
@@ -90,25 +100,11 @@ impl Select {
         cx: &mut Context<Self>,
     ) -> Self {
         let search = if options.len() > LIST_SEARCH_THRESHOLD {
-            let input = cx.new(|cx| {
-                InputState::new(window, cx)
-                    .placeholder(crate::i18n::t("languageSelector.searchPlaceholder"))
-            });
-            cx.subscribe_in(
-                &input,
+            Some(Self::search_input(
+                "languageSelector.searchPlaceholder",
                 window,
-                |this: &mut Self, input, event: &InputEvent, window, cx| match event {
-                    InputEvent::Change => {
-                        this.query = input.read(cx).value().to_string();
-                        this.highlighted = 0;
-                        cx.notify();
-                    }
-                    InputEvent::PressEnter { .. } => this.choose_highlighted(window, cx),
-                    _ => {}
-                },
-            )
-            .detach();
-            Some(input)
+                cx,
+            ))
         } else {
             None
         };
@@ -122,6 +118,7 @@ impl Select {
             max_width: None,
             menu_min_width: px(160.),
             disabled: false,
+            custom_value: false,
             search,
             query: String::new(),
             highlighted: 0,
@@ -152,9 +149,47 @@ impl Select {
         self
     }
 
+    /// Combines server choices and manual model IDs in the same search menu.
+    pub fn with_custom_value(mut self, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        self.custom_value = true;
+        self.search = Some(Self::search_input(
+            "reasoning.custom.modelSearchPlaceholder",
+            window,
+            cx,
+        ));
+        self
+    }
+
+    fn search_input(
+        placeholder: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<InputState> {
+        let input =
+            cx.new(|cx| InputState::new(window, cx).placeholder(crate::i18n::t(placeholder)));
+        cx.subscribe_in(
+            &input,
+            window,
+            |this: &mut Self, input, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => {
+                    this.query = input.read(cx).value().to_string();
+                    this.highlighted = 0;
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => this.choose_highlighted(window, cx),
+                _ => {}
+            },
+        )
+        .detach();
+        input
+    }
+
     pub fn set_options(&mut self, options: Vec<SelectOption>, cx: &mut Context<Self>) {
         if self.options != options {
             self.options = options;
+            self.highlighted = self
+                .highlighted
+                .min(self.filtered().len().saturating_sub(1));
             cx.notify();
         }
     }
@@ -184,8 +219,9 @@ impl Select {
         if self.search.is_none() || self.query.trim().is_empty() {
             return self.options.clone();
         }
-        let q = self.query.to_lowercase();
-        self.options
+        let q = self.query.trim().to_lowercase();
+        let mut options: Vec<_> = self
+            .options
             .iter()
             .filter(|o| {
                 o.label.to_lowercase().contains(&q)
@@ -195,7 +231,16 @@ impl Select {
                         .is_some_and(|k| k.to_lowercase().contains(&q))
             })
             .cloned()
-            .collect()
+            .collect();
+        if self.custom_value
+            && let Some(value) = unlisted_value(&self.options, &self.query)
+        {
+            options.push(SelectOption::new(
+                value.to_string(),
+                crate::i18n::t_with("reasoning.custom.useModelId", &[("model", value)]),
+            ));
+        }
+        options
     }
 
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -329,6 +374,7 @@ impl Render for Select {
         let label: SharedString = selected_option
             .as_ref()
             .map(|o| o.label.clone())
+            .or_else(|| self.custom_value.then(|| self.selected.clone()).flatten())
             .unwrap_or_else(|| self.placeholder.clone());
         let lead_icon = selected_option.as_ref().and_then(|o| o.icon);
         let open = self.open;
@@ -359,6 +405,7 @@ impl Render for Select {
         let value = selected_option
             .as_ref()
             .map(|o| o.label.clone())
+            .or_else(|| self.custom_value.then(|| self.selected.clone()).flatten())
             .unwrap_or_default();
         // The button radius, so a select sits beside buttons as their kin.
         let radius = px(RADIUS_LG);
@@ -382,11 +429,18 @@ impl Render for Select {
             .when(!trigger_shadow.is_empty(), |d| d.shadow(trigger_shadow))
             .text_size(px(TEXT_SMALL))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(if selected_option.is_some() {
-                p.foreground
-            } else {
-                p.muted_foreground
+            .when(self.custom_value, |d| {
+                d.font_family(FONT_MONO)
+                    .text_size(px(TEXT_MONO_SMALL))
+                    .tooltip(text_tooltip(label.to_string()))
             })
+            .text_color(
+                if selected_option.is_some() || (self.custom_value && self.selected.is_some()) {
+                    p.foreground
+                } else {
+                    p.muted_foreground
+                },
+            )
             .when(self.disabled, |d| d.opacity(0.5))
             .when(!self.disabled, |d| {
                 d.cursor_pointer().hover(|s| {
@@ -480,7 +534,11 @@ impl Select {
                     .py(px(8.))
                     .text_size(px(TEXT_SMALL))
                     .text_color(p.muted_foreground)
-                    .child(crate::i18n::t("languageSelector.noLanguagesFound")),
+                    .child(crate::i18n::t(if self.custom_value {
+                        "reasoning.custom.modelEmpty"
+                    } else {
+                        "languageSelector.noLanguagesFound"
+                    })),
             );
         }
         for (index, option) in filtered.into_iter().enumerate() {
@@ -503,6 +561,11 @@ impl Select {
                     .px(px(8.))
                     .rounded(px(RADIUS_SM))
                     .text_size(px(TEXT_SMALL))
+                    .when(self.custom_value, |d| {
+                        d.font_family(FONT_MONO)
+                            .text_size(px(TEXT_MONO_SMALL))
+                            .tooltip(text_tooltip(option.value.to_string()))
+                    })
                     .text_color(p.foreground)
                     .when_some(row_bg, |d, bg| d.bg(bg))
                     .when(option.disabled, |d| d.opacity(0.5))
@@ -551,6 +614,9 @@ impl Select {
             .occlude()
             .mt(px(4.))
             .min_w(self.menu_min_width.max(self.trigger_bounds.width()))
+            .when(self.custom_value, |d| {
+                d.w(self.menu_min_width.max(self.trigger_bounds.width()))
+            })
             .when_some(self.width, |d, w| d.w(w.max(self.menu_min_width)))
             .flex()
             .flex_col()
@@ -585,5 +651,27 @@ impl Select {
                 |d, t| d.opacity(t),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SelectOption, unlisted_value};
+
+    #[test]
+    fn manual_ids_preserve_case_and_trim_only_surrounding_whitespace() {
+        let options = vec![SelectOption::new("Qwen:9b", "Qwen")];
+        assert_eq!(unlisted_value(&options, "  Qwen:9b \n"), None);
+        assert_eq!(unlisted_value(&options, " qwen:9b "), Some("qwen:9b"));
+        assert_eq!(unlisted_value(&options, "Qwen"), Some("Qwen"));
+    }
+
+    #[test]
+    fn manual_ids_work_before_any_server_models_are_loaded() {
+        assert_eq!(
+            unlisted_value(&[], " hf.co/team/model:tag "),
+            Some("hf.co/team/model:tag")
+        );
+        assert_eq!(unlisted_value(&[], " \n\t "), None);
     }
 }

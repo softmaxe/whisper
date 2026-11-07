@@ -45,8 +45,8 @@ use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SNAP, FONT_MONO, LINE_READING, LINE_SMALL, Palette, PaletteExt,
     RADIUS_2XL, RADIUS_LG, RADIUS_MD, RADIUS_SM, RADIUS_XL, ROW_CONTROL_HEIGHT, TEXT_BODY,
-    TEXT_CAPTION, TEXT_MONO_BODY, TEXT_MONO_CAPTION, TEXT_MONO_SMALL, TEXT_SMALL,
-    WORKSPACE_TOP_BAR_HEIGHT, cubic_bezier, ease_out, ease_snap, motion, progress,
+    TEXT_CAPTION, TEXT_MONO_BODY, TEXT_MONO_SMALL, TEXT_SMALL, WORKSPACE_TOP_BAR_HEIGHT,
+    cubic_bezier, ease_out, ease_snap, motion, progress,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -148,7 +148,7 @@ pub struct SettingsModal {
     stt_model: Entity<InputState>,
 
     cleanup_url: Entity<InputState>,
-    cleanup_model: Entity<InputState>,
+    cleanup_model: Entity<Select>,
     api_key: String,
     api_key_editing: bool,
     api_key_input: Entity<InputState>,
@@ -478,19 +478,20 @@ impl SettingsModal {
         ));
 
         let cleanup_model = cx.new(|cx| {
-            InputState::new(window, cx)
-                .placeholder("qwen3:8b")
-                .default_value(s.cleanup_model.clone())
+            let selected = (!s.cleanup_model.trim().is_empty())
+                .then(|| s.cleanup_model.trim().to_string().into());
+            let mut select = Select::new(Vec::new(), selected, window, cx)
+                .with_label(t("common.model"))
+                .with_custom_value(window, cx);
+            select.set_placeholder(t("reasoning.custom.modelPlaceholder"));
+            select
         });
-        subscriptions.push(
-            cx.subscribe(&cleanup_model, |_, input, e: &InputEvent, cx| {
-                if matches!(e, InputEvent::Change) {
-                    let value = input.read(cx).value().trim().to_string();
-                    update_settings(cx, |s| s.cleanup_model = value);
-                    cx.notify();
-                }
-            }),
-        );
+        subscriptions.push(cx.subscribe(&cleanup_model, |_, _, e: &SelectEvent, cx| {
+            let SelectEvent::Change(value) = e;
+            let value = value.trim().to_string();
+            update_settings(cx, |s| s.cleanup_model = value);
+            cx.notify();
+        }));
 
         let api_key_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("apiKeyInput.placeholder")));
@@ -997,14 +998,6 @@ impl SettingsModal {
             );
         }
         row.into_any_element()
-    }
-
-    /// Puts a listed model in the Model field, as if typed.
-    fn pick_cleanup_model(&mut self, value: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.cleanup_model
-            .update(cx, |input, cx| input.set_value(value.clone(), window, cx));
-        update_settings(cx, |s| s.cleanup_model = value);
-        cx.notify();
     }
 
     fn apply_cleanup_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2014,6 +2007,12 @@ impl SettingsModal {
         } else {
             self.models.as_slice()
         };
+        let options = cleanup_model_options(models, &model);
+        self.cleanup_model.update(cx, |select, cx| {
+            select.set_options(options, cx);
+            select.set_selected((!model.is_empty()).then(|| model.into()), cx);
+            select.set_disabled(disabled, cx);
+        });
 
         vec![
             settings_field_tagged(
@@ -2047,36 +2046,30 @@ impl SettingsModal {
             settings_field(
                 t("common.model"),
                 Some(t("reasoning.custom.modelHelp").into_any_element()),
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .child(text_field_disabled(
-                        &self.cleanup_model,
-                        true,
-                        disabled,
-                        window,
-                        cx,
-                    ))
-                    .when(!models.is_empty(), |d| {
-                        d.child(model_card_list(
-                            models,
-                            &model,
-                            cx.entity().downgrade(),
-                            &p,
-                            cx,
-                        ))
-                    }),
+                self.cleanup_model.clone(),
                 &p,
             )
             .into_any_element(),
-            connection_row(
-                "settings-cleanup-test",
-                status,
-                can_test,
-                cx.listener(|this, _, window, cx| this.refresh_models(window, cx)),
-                cx,
-            ),
+            panel_row()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap(px(16.))
+                        .child(div().flex_1().min_w_0().child(status))
+                        .child(
+                            Button::new("settings-cleanup-test")
+                                .label(t("settings.connection.test"))
+                                .variant(ButtonVariant::Outline)
+                                .size(ButtonSize::Sm)
+                                .disabled(!can_test)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.refresh_models(window, cx)
+                                })),
+                        ),
+                )
+                .into_any_element(),
         ]
     }
 
@@ -3431,174 +3424,19 @@ fn info_line(label: String, value: String, p: &Palette) -> Div {
         )
 }
 
-/// Fixed widths of the tag and owner columns; the model column takes the rest.
-const MODEL_TAG_W: f32 = 140.;
-const MODEL_OWNER_W: f32 = 88.;
-
-/// Splits a model id like `hf.co/unsloth/Qwen3-GGUF:Q4_K_M` into its source
-/// prefix (`hf.co/unsloth/`), name (`Qwen3-GGUF`) and tag (`Q4_K_M`).
-fn split_model_id(id: &str) -> (&str, &str, &str) {
-    let slash = id.rfind('/').map_or(0, |i| i + 1);
-    let (rest, tag) = match id[slash..].rfind(':') {
-        Some(i) => (&id[..slash + i], &id[slash + i + 1..]),
-        None => (id, ""),
-    };
-    (&rest[..slash], &rest[slash..], tag)
-}
-
-/// The models the server listed, as a table whose rows fill the Model
-/// field; the row matching the field is marked.
-fn model_card_list(
-    models: &[ModelOption],
-    selected: &str,
-    this: WeakEntity<SettingsModal>,
-    p: &Palette,
-    cx: &mut App,
-) -> AnyElement {
-    let p = *p;
-    let line = if p.dark {
-        p.white.opacity(0.08)
-    } else {
-        p.border
-    };
-    let row = || div().flex().items_center().gap(px(10.)).px(px(12.));
-    let header = |text: String| {
-        div()
-            .text_size(px(TEXT_CAPTION))
-            .text_color(p.subtle_foreground)
-            .child(text)
-    };
-    let mut table = div()
-        .flex()
-        .flex_col()
-        .rounded(px(RADIUS_LG))
-        .border_1()
-        .border_color(line)
-        .bg(if p.dark {
-            p.white.opacity(0.02)
-        } else {
-            p.surface_1
+/// Keep grouped aliases searchable and preserve the saved API name.
+fn cleanup_model_options(models: &[ModelOption], selected: &str) -> Vec<SelectOption> {
+    models
+        .iter()
+        .map(|model| {
+            let value = model.selected_value(selected).to_string();
+            SelectOption::new(value.clone(), value).keywords(format!(
+                "{} {}",
+                model.value,
+                model.aliases.join(" ")
+            ))
         })
-        .overflow_hidden()
-        .child(
-            row()
-                .py(px(7.))
-                .border_b_1()
-                .border_color(line)
-                .child(div().w(px(12.)).flex_none())
-                .child(header(t("common.model")).flex_1().min_w_0())
-                .child(
-                    header(t("reasoning.custom.columnTag"))
-                        .w(px(MODEL_TAG_W))
-                        .flex_none(),
-                )
-                .child(
-                    header(t("reasoning.custom.columnOwner"))
-                        .w(px(MODEL_OWNER_W))
-                        .flex_none(),
-                ),
-        );
-    for (index, model) in models.iter().enumerate() {
-        let is_selected = model.matches(selected);
-        let value = model.selected_value(selected).to_string();
-        let label = if is_selected {
-            value.clone()
-        } else {
-            model.label.clone()
-        };
-        let (source, name, tag) = split_model_id(&label);
-        let muted = |text: String| {
-            div()
-                .flex_none()
-                .truncate()
-                .text_size(px(TEXT_CAPTION))
-                .text_color(p.subtle_foreground)
-                .child(text)
-        };
-        table = table.child(
-            row()
-                .id(("model-card", index))
-                .keyboard_focusable(
-                    ("settings-model", index),
-                    Role::RadioButton,
-                    label.to_string(),
-                    cx,
-                )
-                .aria_toggled(if is_selected {
-                    Toggled::True
-                } else {
-                    Toggled::False
-                })
-                .py(px(9.))
-                .when(index > 0, |d| d.border_t_1().border_color(line))
-                .cursor_pointer()
-                .when(is_selected, |d| d.bg(p.hover_wash(0.06)))
-                .when(!is_selected, |d| d.hover(|s| s.bg(p.hover_wash(0.03))))
-                .on_click({
-                    let this = this.clone();
-                    move |_, window, cx| {
-                        let value = value.clone();
-                        let _ =
-                            this.update(cx, |this, cx| this.pick_cleanup_model(value, window, cx));
-                    }
-                })
-                .child(radio_dot(is_selected, &p))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .flex()
-                                .overflow_hidden()
-                                .font_family(FONT_MONO)
-                                .text_size(px(TEXT_MONO_SMALL))
-                                .font_weight(FontWeight::MEDIUM)
-                                .when(!source.is_empty(), |d| {
-                                    d.child(
-                                        div()
-                                            .flex_shrink(1.)
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_color(p.subtle_foreground)
-                                            .child(source.to_string()),
-                                    )
-                                })
-                                .child(
-                                    div()
-                                        .flex_none()
-                                        .text_color(p.foreground)
-                                        .child(name.to_string()),
-                                ),
-                        )
-                        .when_some(model.description.clone(), |d, desc| {
-                            d.child(
-                                div()
-                                    .mt(px(2.))
-                                    .truncate()
-                                    .text_size(px(TEXT_CAPTION))
-                                    .text_color(p.subtle_foreground)
-                                    .child(desc),
-                            )
-                        }),
-                )
-                .child(
-                    muted(if tag.is_empty() {
-                        "—".to_string()
-                    } else {
-                        tag.to_string()
-                    })
-                    .w(px(MODEL_TAG_W))
-                    .font_family(FONT_MONO)
-                    .text_size(px(TEXT_MONO_CAPTION)),
-                )
-                .child(
-                    muted(model.owned_by.clone().unwrap_or_else(|| "—".to_string()))
-                        .w(px(MODEL_OWNER_W)),
-                ),
-        );
-    }
-    table.into_any_element()
+        .collect()
 }
 
 fn permission_row(
@@ -3890,8 +3728,8 @@ fn sheet_frame(viewport: Size<Pixels>) -> SheetFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        ConnectionCheck, TapStyle, endpoint_host, friendly_server_error, microphone_status_info,
-        refresh_microphones, sheet_frame,
+        ConnectionCheck, TapStyle, cleanup_model_options, endpoint_host, friendly_server_error,
+        microphone_status_info, refresh_microphones, sheet_frame,
     };
     use crate::audio::capture::CaptureStatus;
     use crate::native::mic::{MicDevice, MicSnapshot};
@@ -3902,6 +3740,27 @@ mod tests {
     use gpui_kit::{px, size};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    #[test]
+    fn cleanup_picker_preserves_saved_aliases_and_searches_all_api_names() {
+        let models = vec![ModelOption {
+            value: "team/Model".into(),
+            aliases: vec!["cleanup".into(), "other-alias".into()],
+            label: "team/Model".into(),
+            description: None,
+            owned_by: Some("vllm".into()),
+        }];
+        let options = cleanup_model_options(&models, "cleanup");
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].value.as_ref(), "cleanup");
+        assert_eq!(options[0].label.as_ref(), "cleanup");
+        assert_eq!(
+            options[0].keywords.as_deref(),
+            Some("team/Model cleanup other-alias")
+        );
+        let options = cleanup_model_options(&models, "unlisted");
+        assert_eq!(options[0].value.as_ref(), "team/Model");
+    }
 
     #[test]
     fn connection_check_recognizes_grouped_model_aliases() {
