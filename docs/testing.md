@@ -22,6 +22,13 @@ Both pull requests and pushes to `main` can restore Cargo output from an older l
 
 The Release workflow builds and publishes a signed package for a `v<version>` tag on `main` once CI has passed on that commit. See the workflow files for the exact steps and [macOS signing](macos-signing.md) for the release identity.
 
+## Dropdown interaction regression check
+
+- In Settings, open and close each select by clicking its trigger again: interface language, speech language, Chinese script, microphone, recording pill position, audio retention, and transcript retention. Repeat with a slow press and release and with several consecutive clicks.
+- Check that selecting an option closes the menu and applies the value, while clicking elsewhere closes it without changing the value. Switching directly between selects should leave only the new menu open.
+- In the searchable speech language menu, type a query and select a result. Reopen it and check that the query resets. Check arrow keys, Return, Escape, and Tab as well.
+- Repeat trigger toggling, slow clicks, outside dismissal, and keyboard activation for a History row's actions, the History page actions, and the Dictionary page actions. Check that Dictionary context menus still dismiss on outside clicks.
+
 ## Release smoke check
 
 Automated checks do not establish microphone, Accessibility, or server compatibility on a user's Mac. Before calling a release ready, check the packaged app on macOS:

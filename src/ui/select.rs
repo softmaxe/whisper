@@ -1,14 +1,11 @@
 //! A compact dropdown select, used inline in settings rows. Long lists, such
 //! as the transcription languages, get a search field.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{drop, f32_tx, focus_ring, icon};
+use super::components::{MenuTriggerBounds, drop, f32_tx, focus_ring, icon};
 use super::control_panel::CloseOverlay;
 use super::theme::{
     DUR_BASE, DUR_SNAP, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT, TEXT_SMALL, ease_out,
@@ -79,9 +76,8 @@ pub struct Select {
     query: String,
     highlighted: usize,
     focus: FocusHandle,
-    /// The trigger's width at the last paint, so the menu is never narrower
-    /// than the control it drops from.
-    trigger_width: Rc<Cell<Pixels>>,
+    /// The trigger's painted bounds, used for menu sizing and dismissal.
+    trigger_bounds: MenuTriggerBounds,
 }
 
 impl EventEmitter<SelectEvent> for Select {}
@@ -130,7 +126,7 @@ impl Select {
             query: String::new(),
             highlighted: 0,
             focus: cx.focus_handle(),
-            trigger_width: Rc::new(Cell::new(px(0.))),
+            trigger_bounds: MenuTriggerBounds::default(),
         }
     }
 
@@ -426,7 +422,6 @@ impl Render for Select {
 
         let menu = open.then(|| self.render_menu(cx));
 
-        let measured = self.trigger_width.clone();
         // Focus sits on the root, which holds both the trigger and the menu,
         // so the highlighted option can report itself as the active
         // descendant while the arrow keys move it.
@@ -446,14 +441,7 @@ impl Render for Select {
             .rounded(radius)
             .map(|d| self.size_trigger(d))
             .child(trigger)
-            .child(
-                canvas(
-                    move |bounds, _, _| measured.set(bounds.size.width),
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(self.trigger_bounds.measure())
             .when_some(menu, |d, menu| {
                 d.child(
                     deferred(anchored().snap_to_window_with_margin(px(8.)).child(menu))
@@ -562,7 +550,7 @@ impl Select {
             .id("select-menu")
             .occlude()
             .mt(px(4.))
-            .min_w(self.menu_min_width.max(self.trigger_width.get()))
+            .min_w(self.menu_min_width.max(self.trigger_bounds.width()))
             .when_some(self.width, |d, w| d.w(w.max(self.menu_min_width)))
             .flex()
             .flex_col()
@@ -578,7 +566,11 @@ impl Select {
                 inset: false,
             }])
             .overflow_hidden()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close(cx)))
+            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+                if !this.trigger_bounds.contains(event.position) {
+                    this.close(cx);
+                }
+            }))
             .when_some(search, |d, s| d.child(s))
             .child(
                 div()

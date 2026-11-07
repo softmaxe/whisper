@@ -12,8 +12,8 @@ use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, NavSurface, drop, f32_tx, icon, inset,
-    kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, NavSurface, drop,
+    f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
@@ -517,27 +517,32 @@ impl ControlPanel {
                     })
                     .children(dictionary_menu)
                     .when(page_actions, |d| {
+                        let trigger = MenuTriggerBounds::default();
                         d.child(
                             div()
                                 .relative()
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .child(
-                                    Button::new("history-page-menu")
-                                        .icon("more-vertical", 15.)
-                                        .variant(ButtonVariant::Ghost)
-                                        .size(ButtonSize::Sm)
-                                        .aria_label(t("controlPanel.history.pageActions"))
-                                        .on_click(cx.listener(
-                                            |this, event: &ClickEvent, window, cx| {
-                                                this.toggle_page_menu(
-                                                    event.is_keyboard(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        )),
+                                    div().relative().child(trigger.measure()).child(
+                                        Button::new("history-page-menu")
+                                            .icon("more-vertical", 15.)
+                                            .variant(ButtonVariant::Ghost)
+                                            .size(ButtonSize::Sm)
+                                            .aria_label(t("controlPanel.history.pageActions"))
+                                            .on_click(cx.listener(
+                                                |this, event: &ClickEvent, window, cx| {
+                                                    this.toggle_page_menu(
+                                                        event.is_keyboard(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                },
+                                            )),
+                                    ),
                                 )
-                                .when(self.page_menu_open, |d| d.child(self.render_page_menu(cx))),
+                                .when(self.page_menu_open, |d| {
+                                    d.child(self.render_page_menu(trigger, cx))
+                                }),
                         )
                     }),
             )
@@ -563,7 +568,11 @@ impl ControlPanel {
 
     /// The History page's ⋯ menu. Its one item is destructive, so it sits
     /// behind the menu rather than as a bare button in the toolbar.
-    fn render_page_menu(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_page_menu(
+        &mut self,
+        trigger: MenuTriggerBounds,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = cx.palette();
         let label = t("controlPanel.history.clearHistory");
         let item = div()
@@ -601,9 +610,11 @@ impl ControlPanel {
             })
             .bg(if p.dark { p.surface_3 } else { p.popover })
             .shadow_lg()
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.page_menu_open = false;
-                cx.notify();
+            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                if !trigger.contains(event.position) {
+                    this.page_menu_open = false;
+                    cx.notify();
+                }
             }))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 if matches!(e.keystroke.key.as_str(), "escape" | "tab") {
