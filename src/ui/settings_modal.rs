@@ -2169,9 +2169,10 @@ impl SettingsModal {
                     .child(
                         div()
                             .id("prompt-view")
-                            .max_h(px(320.))
-                            .overflow_y_scroll()
-                            // Consume the wheel after this viewport scrolls, including at its edges.
+                            .h(px(320.))
+                            .overflow_hidden()
+                            // Let TextView virtualize the document inside a bounded viewport.
+                            // Consume the wheel after it scrolls, including at its edges.
                             .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
                             .p(px(16.))
                             .rounded(px(RADIUS_LG))
@@ -2188,8 +2189,8 @@ impl SettingsModal {
                             .child(
                                 TextView::markdown("prompt-markdown", text)
                                     .selectable(true)
-                                    .scrollable(false)
-                                    .w_full(),
+                                    .scrollable(true)
+                                    .size_full(),
                             ),
                     )
                     .into_any_element()
