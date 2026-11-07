@@ -315,9 +315,11 @@
       "apiKeyOptional": "API 密钥",
       "apiKeyHelp": "仅在服务器需要时填写。Whisper 会把它保存在钥匙串中。",
       "unableToLoadModels": "无法从端点加载模型。",
-      "columnTag": "标签",
-      "columnOwner": "所有者",
-      "modelHelp": "服务器要运行的模型。点“测试连接”可列出它提供的模型。"
+      "modelSearchPlaceholder": "搜索或输入模型 ID",
+      "modelPlaceholder": "选择模型",
+      "modelEmpty": "测试连接以发现模型，或在上方输入模型 ID。",
+      "useModelId": "使用“{{model}}”",
+      "modelHelp": "选择服务器模型，或输入自定义模型 ID。"
     },
     "disableThinking": {
       "label": "跳过模型推理",

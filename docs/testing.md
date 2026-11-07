@@ -29,6 +29,15 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 - In the searchable speech language menu, type a query and select a result. Reopen it and check that the query resets. Check arrow keys, Return, Escape, and Tab as well.
 - Repeat trigger toggling, slow clicks, outside dismissal, and keyboard activation for a History row's actions, the History page actions, and the Dictionary page actions. Check that Dictionary context menus still dismiss on outside clicks.
 
+## Cleanup model picker regression check
+
+- Open Settings > Text cleanup with a configured server. The Model field should show only the selected ID, with connection status and Test Connection on one compact row below it.
+- Open the model picker, search for a listed ID, and select it using both the pointer and arrow keys plus Return. Verify the menu closes and the chosen ID persists after reopening Settings.
+- Enter an unlisted model ID, including a mixed-case name with a source prefix and tag. Choose the Use action, then verify the saved ID preserves case and trims surrounding whitespace. Repeat before any server models have loaded and after a connection failure.
+- Reopen the picker and verify the search resets. Close it using Escape, Tab, a second trigger click, and an outside click; none should change the model. Check long IDs in a narrow window and verify the full value is available in a tooltip.
+- Change the server URL and verify choices from the previous server disappear while editing. Test Connection should load the new server's models without replacing a manually selected ID. Disable cleanup and verify the picker is unavailable.
+- Repeat with both interface languages and themes. Confirm the existing language and microphone dropdown interactions still work.
+
 ## Settings scrolling regression check
 
 - With MOS enabled, reverse the wheel immediately after reaching either end of Settings and the prompt preview. The first reverse event should move content immediately, without repaying overscroll. Repeat with MOS disabled and with several small, fractional pixel events between frames.

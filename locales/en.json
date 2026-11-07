@@ -319,9 +319,11 @@
       "apiKeyOptional": "API key",
       "apiKeyHelp": "Only if your server asks for one. Whisper keeps it in your Keychain.",
       "unableToLoadModels": "Unable to load models from endpoint.",
-      "columnTag": "Tag",
-      "columnOwner": "Owner",
-      "modelHelp": "The model your server should run. Test Connection lists the ones it offers."
+      "modelSearchPlaceholder": "Search or enter a model ID",
+      "modelPlaceholder": "Select a model",
+      "modelEmpty": "Test Connection to discover models, or enter a model ID above.",
+      "useModelId": "Use \"{{model}}\"",
+      "modelHelp": "Choose a server model or enter your own ID."
     },
     "disableThinking": {
       "label": "Skip model reasoning",
