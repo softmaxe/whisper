@@ -118,6 +118,9 @@ const REC_GAP: f32 = 7.;
 const THINK_DOTS: usize = 3;
 const THINK_DOT: f32 = 4.;
 const THINK_GAP: f32 = 5.;
+const PREPARE_W: f32 = 104.;
+const PREPARE_DOT: f32 = 6.;
+const PREPARE_MORPH_MS: u64 = 680;
 
 /// The pill's surfaces always use the dark palette; see the module docs.
 fn hud() -> Palette {
@@ -192,14 +195,6 @@ fn dev_head_start() -> Duration {
     Duration::ZERO
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Motion {
-    /// Bars follow the input level.
-    Live,
-    /// A dim highlight sweeps the bars while the microphone opens.
-    Sweep,
-}
-
 /// Maps an RMS level to 0..1 linearly in decibels between
 /// [`LEVEL_FLOOR_DB`] and [`LEVEL_CEIL_DB`].
 fn bar_level(rms: f32) -> f32 {
@@ -226,12 +221,37 @@ fn live_target(rms: f32, index: usize, now_ms: f32, reduce: bool) -> f32 {
     speech + (1. - level) * BREATH * ENVELOPE[index] * swell
 }
 
-fn sweep_opacity(index: usize, now_ms: f32) -> f32 {
-    let overrun = 3.;
-    let span = BARS as f32 + overrun * 2.;
-    let head = (now_ms / 70.) % span - overrun;
-    let d = index as f32 - head;
-    0.16 + 0.84 * (-(d * d) / 2.2).exp()
+/// A zero-velocity handoff at both ends keeps the dots and bars continuous.
+fn prepare_ease(t: f32) -> f32 {
+    let t = t.clamp(0., 1.);
+    t * t * t * (t * (t * 6. - 15.) + 10.)
+}
+
+/// The original three dots become bars 2, 5 and 8. The remaining bars
+/// appear between them only after the capsule has begun expanding.
+fn prepare_mark(index: usize, now_ms: f32, ready: f32, reduce: bool) -> (f32, f32, f32) {
+    let seed = matches!(index, 2 | 5 | 8);
+    let seed_index = (index as f32 - 2.) / 3.;
+    let opacity = if seed {
+        if reduce {
+            0.75
+        } else {
+            let phase = now_ms / 1800. * TAU - seed_index * 0.85;
+            0.32 + 0.68 * ((1. + phase.cos()) / 2.).powi(2)
+        }
+    } else {
+        0.
+    };
+    let alpha = if seed {
+        ready
+    } else {
+        prepare_ease((ready - 0.35) / 0.65)
+    };
+    (
+        (seed_index - 1.) * 13.,
+        if seed { PREPARE_DOT } else { BAR_W },
+        opacity + (1. - opacity) * alpha,
+    )
 }
 
 /// Opacity of transcribing dot `index`: a highlight that walks left to right.
@@ -490,6 +510,8 @@ pub struct PillView {
     /// When the microphone went live, and the time it ran for, which the
     /// timer keeps showing while it fades out for transcribing.
     recording_since: Option<Instant>,
+    /// Actual readiness time, independent of a dev scene's elapsed timer.
+    ready_at: Option<Instant>,
     recorded: Duration,
     /// Whether the pointer rests on the cancel control, so the hint above
     /// the pill speaks for it instead of for the pill.
@@ -533,6 +555,7 @@ impl PillView {
             resolved_at: None,
             was_processing: false,
             recording_since: None,
+            ready_at: None,
             recorded: Duration::ZERO,
             cancel_hovered: false,
         }
@@ -580,10 +603,12 @@ impl PillView {
             self.dipped_at = None;
             self.resolved_at = None;
             self.recording_since = None;
+            self.ready_at = None;
             self.recorded = Duration::ZERO;
         }
         if snapshot.is_recording && self.recording_since.is_none() {
             self.recording_since = Some(Instant::now() - dev_head_start());
+            self.ready_at = Some(Instant::now());
         }
         if active && processing && !self.was_processing && self.was_active {
             self.dipped_at = Some(Instant::now());
@@ -898,12 +923,7 @@ impl PillView {
         )
     }
 
-    fn update_lanes(
-        &mut self,
-        motion: Option<Motion>,
-        level: Option<f32>,
-        reduce: bool,
-    ) -> [f32; BARS] {
+    fn update_lanes(&mut self, active: bool, level: Option<f32>, reduce: bool) {
         let now = Instant::now();
         let now_ms = now.duration_since(self.started).as_secs_f32() * 1000.;
         let frames = self
@@ -911,27 +931,14 @@ impl PillView {
             .map(|last| (now.duration_since(last).as_secs_f32() * 60.).min(4.))
             .unwrap_or(1.);
         self.last_frame = Some(now);
-        let mut opacity = [1.; BARS];
-        let Some(motion) = motion else { return opacity };
+        if !active {
+            return;
+        }
         for i in 0..BARS {
-            let target = match motion {
-                Motion::Live => match level {
-                    Some(rms) => live_target(rms, i, now_ms, reduce),
-                    None => 0.,
-                },
-                Motion::Sweep => {
-                    opacity[i] = if reduce {
-                        0.4
-                    } else {
-                        sweep_opacity(i, now_ms)
-                    };
-                    0.
-                }
-            };
+            let target = level.map_or(0., |rms| live_target(rms, i, now_ms, reduce));
             let rate = if target > self.lanes[i] { RISE } else { FALL };
             self.lanes[i] += (target - self.lanes[i]) * (1. - (1. - rate).powf(frames));
         }
-        opacity
     }
 
     /// Keeps the recorded time current while the microphone is live.
@@ -946,8 +953,8 @@ impl PillView {
 
     /// The pill. Each phase has its own silhouette, so a still frame tells
     /// them apart without relying on color: a record dot beside level bars
-    /// while the microphone is live, a dim sweep over the bars while it
-    /// opens, and three pulsing dots alone while transcribing.
+    /// while the microphone is live, three breathing dots while it opens,
+    /// and three labeled pulsing dots while transcribing.
     fn render_pill(
         &mut self,
         snapshot: &DictationSnapshot,
@@ -960,14 +967,7 @@ impl PillView {
         let finishing = !snapshot.is_active();
         let recording = snapshot.is_recording;
         let processing = snapshot.is_processing;
-        let motion = if finishing {
-            None
-        } else if recording || processing {
-            Some(Motion::Live)
-        } else {
-            Some(Motion::Sweep)
-        };
-        if motion.is_some() {
+        if !finishing {
             window.request_animation_frame();
         }
         let now_ms = self.started.elapsed().as_secs_f32() * 1000.;
@@ -976,7 +976,7 @@ impl PillView {
             .read(cx)
             .level()
             .or(recording.then_some(0.));
-        let opacity = self.update_lanes(motion, level, reduce);
+        self.update_lanes(!finishing, level, reduce);
         let thinking = f32_tx(
             "pill-thinking",
             if processing { 1. } else { 0. },
@@ -986,50 +986,93 @@ impl PillView {
             cx,
         );
         let bars_alpha = (1. - thinking) * motion_fx.bars;
+        let scale = motion_fx.scale;
 
-        let mut bars = div().flex().items_center().gap(px(BAR_GAP)).h(px(24.));
+        let timed_w = Self::timed_width(window);
+        let ready = self.ready_at.map_or(0., |at| {
+            if reduce {
+                1.
+            } else {
+                prepare_ease(progress(at.elapsed(), PREPARE_MORPH_MS))
+            }
+        });
+        // Processing may begin before the entrance finishes. It owns the
+        // full timed width and must not revive the preparation dots.
+        let ready = if processing { 1. } else { ready };
+        let recording_w = PREPARE_W + (timed_w - PREPARE_W) * ready;
+        let prepare_ms = self.ready_at.map_or(now_ms, |at| {
+            at.duration_since(self.started).as_secs_f32() * 1000.
+        });
+        let bar_span = BARS as f32 * BAR_W + (BARS - 1) as f32 * BAR_GAP;
+        let elapsed = format_elapsed(self.recorded);
+        let timer_w = Self::label_width(&elapsed, window);
+        // Reserve the longest timer in the capsule's outer width, but
+        // center the visible group using the current timer's actual width.
+        let meter_w = REC_DOT + REC_GAP + bar_span + TIMER_GAP + timer_w;
+        let meter_left = (timed_w - meter_w) / 2.;
+        // Absolute children start inside the 1px border. Their center
+        // belongs to that inner box, including during the entrance pop.
+        let content_w = recording_w * scale - 2.;
+        let content_h = PILL_H * scale - 2.;
+        let mut bars = div().absolute().inset_0();
         for i in 0..BARS {
+            let (start_x, start_w, alpha) = prepare_mark(i, prepare_ms, ready, reduce);
+            let end_x = meter_left + REC_DOT + REC_GAP + i as f32 * (BAR_W + BAR_GAP) + BAR_W / 2.
+                - timed_w / 2.;
+            let seed = matches!(i, 2 | 5 | 8);
+            let x = if seed {
+                start_x + (end_x - start_x) * ready
+            } else {
+                end_x
+            };
+            let w = start_w + (BAR_W - start_w) * ready;
+            let start_h = if seed { PREPARE_DOT } else { BAR_W };
+            let h = start_h + (BAR_MIN + self.lanes[i] * (BAR_MAX - BAR_MIN) - start_h) * ready;
             bars = bars.child(
                 div()
-                    .w(px(BAR_W))
-                    .h(px(BAR_MIN + self.lanes[i] * (BAR_MAX - BAR_MIN)))
+                    .absolute()
+                    .left(px(content_w / 2. + x - w / 2.))
+                    .top(px((content_h - h) / 2.))
+                    .w(px(w))
+                    .h(px(h))
                     .rounded_full()
-                    .bg(p.white.opacity(opacity[i] * bars_alpha)),
+                    .bg(p.white.opacity(alpha * bars_alpha)),
             );
         }
-        // The dot is red only while the microphone is live, and at full
-        // strength: a dimmed red turns brick-brown on a dark desktop, and
-        // the moving bars already show the microphone is live. While it
-        // opens the dot waits in a dim neutral so the bars do not shift.
-        let dot_color = if recording {
-            p.destructive.opacity(bars_alpha)
-        } else {
-            p.white.opacity(0.3 * bars_alpha)
-        };
-        // Reserve the timer slot while preparing so recording starts with
-        // a complete 0:00 and no layout shift. Fade it with the bars when
-        // transcribing takes over.
-        let timed_w = Self::timed_width(window);
+        let dot_color = p
+            .destructive
+            .opacity(bars_alpha * prepare_ease((ready - 0.22) / 0.68));
         let timer = div()
+            .absolute()
+            .left(px(content_w / 2. + timed_w / 2. - meter_left - timer_w))
+            .top(px((content_h - LINE_SMALL) / 2.))
             .flex_none()
-            .w(px(timed_w - PILL_W))
+            .w(px(timer_w))
             .when(self.recording_since.is_none(), |d| d.invisible())
-            // Digits hold the slot's trailing edge, as a clock's do, so the
-            // spare room for ten minutes and more sits beside the bars
-            // and the capsule's ends stay even.
             .flex()
             .justify_end()
             .whitespace_nowrap()
             .text_size(px(TEXT_SMALL))
+            .line_height(px(LINE_SMALL))
             .font_weight(FontWeight::MEDIUM)
             .font_features(tabular_nums())
-            .text_color(p.foreground.opacity(PILL_LABEL * bars_alpha))
-            .child(format_elapsed(self.recorded));
+            .text_color(
+                p.foreground
+                    .opacity(PILL_LABEL * bars_alpha * prepare_ease((ready - 0.42) / 0.58)),
+            )
+            .child(elapsed);
         let meter = div()
-            .flex()
-            .items_center()
-            .gap(px(REC_GAP))
-            .child(div().size(px(REC_DOT)).rounded_full().bg(dot_color))
+            .absolute()
+            .inset_0()
+            .child(
+                div()
+                    .absolute()
+                    .left(px(content_w / 2. + meter_left - timed_w / 2.))
+                    .top(px((content_h - REC_DOT) / 2.))
+                    .size(px(REC_DOT))
+                    .rounded_full()
+                    .bg(dot_color),
+            )
             .child(bars)
             .child(timer);
 
@@ -1078,8 +1121,7 @@ impl PillView {
                         .with_transformation(Transformation::scale(size(scale, scale))),
                 )
         });
-        let scale = motion_fx.scale;
-        let width = timed_w + (think_w - timed_w) * thinking;
+        let width = recording_w + (think_w - recording_w) * thinking;
         // GPUI has no paint transforms on divs, so the pill scales by size
         // inside a fixed slot, which keeps it centered and the row still.
         let pill = div()
@@ -2038,7 +2080,8 @@ mod tests {
 
     use super::{
         BAR_MAX, BAR_MIN, BAR_W, BREATH, Countdown, DUR_BASE, ENVELOPE, ERROR_HOLD, ErrorActions,
-        ErrorCard, RESOLVE, bar_level, live_target, pill_motion, think_opacity,
+        ErrorCard, RESOLVE, bar_level, live_target, pill_motion, prepare_ease, prepare_mark,
+        think_opacity,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -2097,6 +2140,39 @@ mod tests {
         assert!(hi - lo > 0.1, "{lo}..{hi}");
         let (lo, hi) = spread(true);
         assert_eq!(lo, hi);
+    }
+
+    #[test]
+    fn preparation_shows_only_three_dots_until_the_microphone_is_ready() {
+        for reduce in [false, true] {
+            for now in [0., 900., 2300.] {
+                let visible: Vec<_> = (0..10)
+                    .filter(|&i| prepare_mark(i, now, 0., reduce).2 > 0.)
+                    .collect();
+                assert_eq!(visible, [2, 5, 8]);
+                for i in 0..10 {
+                    assert_eq!(prepare_mark(i, now, 1., reduce).2, 1.);
+                }
+            }
+        }
+        assert_eq!(
+            prepare_mark(2, 0., 0., true),
+            prepare_mark(2, 900., 0., true)
+        );
+    }
+
+    #[test]
+    fn preparation_handoff_has_stationary_endpoints() {
+        assert_eq!(prepare_ease(-1.), 0.);
+        assert_eq!(prepare_ease(2.), 1.);
+        assert!(prepare_ease(0.001) < 0.00001);
+        assert!(1. - prepare_ease(0.999) < 0.00001);
+        let mut previous = 0.;
+        for frame in 0..=100 {
+            let value = prepare_ease(frame as f32 / 100.);
+            assert!(value >= previous && (0. ..=1.).contains(&value));
+            previous = value;
+        }
     }
 
     #[test]
