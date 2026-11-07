@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use std::cell::Cell;
 use std::rc::Rc;
 
 use std::future::Future;
@@ -40,6 +39,7 @@ use super::components::{
 use super::control_panel::{CloseOverlay, SIDEBAR_WIDTH, drag_region};
 use super::hotkey_input::{HotkeyListInput, hotkey_glyphs};
 use super::overlays::{DialogRequest, Overlays, Toast, ToastVariant, show_dialog, show_toast};
+use super::scroll::{consume_delta, wheel_region};
 use super::select::{Select, SelectEvent, SelectOption};
 use super::text_input::{text_field, text_field_disabled, textarea_field};
 use super::theme::{
@@ -412,6 +412,17 @@ fn endpoint_control(field: impl IntoElement, raw: &str, path: &str, p: &Palette)
 }
 
 impl SettingsModal {
+    fn scroll_page(&self, delta: Pixels) -> bool {
+        let mut offset = self.scroll.offset();
+        let (next, _) = consume_delta(offset.y, self.scroll.max_offset().y, delta);
+        if next == offset.y {
+            return false;
+        }
+        offset.y = next;
+        self.scroll.set_offset(offset);
+        true
+    }
+
     /// The workspace remains visible while a floating sheet or exit animation is shown.
     pub(super) fn covers_workspace(&self, viewport: Size<Pixels>) -> bool {
         !self.closing && sheet_frame(viewport).attached
@@ -2246,7 +2257,6 @@ impl SettingsModal {
                 self.prompt_preview
                     .update(cx, |state, cx| state.set_text(&text, cx));
                 let prompt_list = self.prompt_preview.read(cx).list_state().clone();
-                let previous_offset = Cell::new(prompt_list.scroll_px_offset_for_scrollbar().y);
                 div()
                     .px(px(20.))
                     .py(px(16.))
@@ -2303,24 +2313,28 @@ impl SettingsModal {
                     .child(
                         div()
                             .id("prompt-view")
+                            .relative()
                             .h(px(320.))
                             .overflow_hidden()
-                            // Let TextView virtualize the document inside a bounded viewport.
-                            // The list handles the wheel first. Pass only the unused
-                            // distance directly to Settings.
-                            .on_scroll_wheel(cx.listener(
-                                move |this, event: &ScrollWheelEvent, _, cx| {
+                            // Bypass the List's frame-relative delta accumulation so
+                            // a reversal after an edge takes effect on this event.
+                            .child(wheel_region(
+                                DispatchPhase::Capture,
+                                None,
+                                cx.listener(move |this, event: &ScrollWheelEvent, _, cx| {
                                     let offset = prompt_list.scroll_px_offset_for_scrollbar().y;
-                                    let consumed = offset - previous_offset.replace(offset);
-                                    // GPUI's virtual list converts wheel lines using 20 pixels.
-                                    let remaining = event.delta.pixel_delta(px(20.)).y - consumed;
-                                    let mut page_offset = this.scroll.offset();
-                                    page_offset.y = (page_offset.y + remaining)
-                                        .clamp(-this.scroll.max_offset().y, px(0.));
-                                    this.scroll.set_offset(page_offset);
+                                    let (next, remaining) = consume_delta(
+                                        offset,
+                                        prompt_list.max_offset_for_scrollbar().y,
+                                        event.delta.pixel_delta(px(20.)).y,
+                                    );
+                                    prompt_list.set_offset_from_scrollbar(point(px(0.), next));
+                                    let page_changed = this.scroll_page(remaining);
                                     cx.stop_propagation();
-                                    cx.notify();
-                                },
+                                    if next != offset || page_changed {
+                                        cx.notify();
+                                    }
+                                }),
                             ))
                             .p(px(16.))
                             .rounded(px(RADIUS_LG))
@@ -3664,9 +3678,21 @@ impl Render for SettingsModal {
             .child(
                 div()
                     .id("settings-content")
+                    .relative()
                     .size_full()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .child(wheel_region(
+                        DispatchPhase::Bubble,
+                        Some(self.scroll.clone()),
+                        cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
+                            let delta = event.delta.pixel_delta(window.line_height()).y;
+                            if this.scroll_page(delta) {
+                                cx.notify();
+                            }
+                            cx.stop_propagation();
+                        }),
+                    ))
                     .child(
                         page_container()
                             .when(frame.compact, |d| d.px(px(20.)))

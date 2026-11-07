@@ -31,6 +31,7 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 
 ## Settings scrolling regression check
 
+- With MOS enabled, reverse the wheel immediately after reaching either end of Settings and the prompt preview. The first reverse event should move content immediately, without repaying overscroll. Repeat with MOS disabled and with several small, fractional pixel events between frames.
 - With a populated History page, open Settings and repeatedly scroll Text cleanup with a mouse wheel, then switch sections and click controls. Repeat while the server connection check is pending and after it fails or succeeds.
 - Test the prompt preview, Customize and Test tabs, scrolling to both ends of the page. Controls should respond promptly after rapid scrolling.
 - In Prompt Studio, scroll a long prompt with the pointer inside View and Customize. Only the prompt viewport should move while there is content in that direction; continuing past its top or bottom should scroll Settings. In View, a wheel delta crossing an edge should pass only its unused distance to Settings. Repeat with a mouse wheel and a trackpad, including rapid direction changes and several events between frames.
