@@ -1,6 +1,7 @@
 //! Small presentational building blocks shared by the windows.
 
 use std::time::{Duration, Instant};
+use std::{cell::Cell, rc::Rc};
 
 use gpui_kit::base::{Transition, transition};
 use gpui_kit::prelude::FluentBuilder;
@@ -19,6 +20,31 @@ pub fn icon(name: &str, size: f32, color: Hsla) -> Svg {
         .size(px(size))
         .flex_none()
         .text_color(color)
+}
+
+/// Keeps a menu's trigger out of its outside-dismiss region. Outside mouse
+/// downs run during capture, before the trigger's click toggles the menu.
+#[derive(Clone, Default)]
+pub struct MenuTriggerBounds(Rc<Cell<Bounds<Pixels>>>);
+
+impl MenuTriggerBounds {
+    /// Place inside a relatively positioned trigger or its tight wrapper.
+    pub fn measure(&self) -> impl IntoElement + use<> {
+        let bounds = self.0.clone();
+        canvas(move |rect, _, _| bounds.set(rect), |_, _, _, _| {})
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+    }
+
+    pub fn contains(&self, position: Point<Pixels>) -> bool {
+        self.0.get().contains(&position)
+    }
+
+    pub fn width(&self) -> Pixels {
+        self.0.get().size.width
+    }
 }
 
 /// The keyboard focus ring: a 2 px ring color band just inside the

@@ -1,6 +1,6 @@
 //! Dictionary words and Snippets.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
@@ -16,8 +16,9 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, drop, empty_state, icon, kbd,
-    keyed_focus_handle, page_container, segment, segmented_track, surface_card, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, drop, empty_state,
+    icon, kbd, keyed_focus_handle, page_container, segment, segmented_track, surface_card,
+    text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
 use super::format::day_label;
@@ -328,8 +329,6 @@ pub struct DictionaryView {
     expansion: Entity<TextareaState>,
     // Shared
     menu: Option<OpenMenu>,
-    /// When a menu last closed, so the click that closed it does not reopen it.
-    menu_closed_at: Option<Instant>,
     pending: Option<PendingRemoval>,
     next_removal: u64,
     /// Focus keys of the rows on screen, top to bottom, for arrow-key moves.
@@ -453,7 +452,6 @@ impl DictionaryView {
             trigger_input,
             expansion,
             menu: None,
-            menu_closed_at: None,
             pending: None,
             next_removal: 0,
             row_keys: Vec::new(),
@@ -667,7 +665,6 @@ impl DictionaryView {
 
     fn close_menu(&mut self, restore_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take() {
-            self.menu_closed_at = Some(Instant::now());
             if restore_focus {
                 focus_key(menu.return_focus, window, cx);
             }
@@ -678,13 +675,6 @@ impl DictionaryView {
     fn toggle_overflow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu.is_some() {
             self.close_menu(true, window, cx);
-            return;
-        }
-        // The mouse-down that dismissed the menu also lands here as a click.
-        if self
-            .menu_closed_at
-            .is_some_and(|at| at.elapsed() < Duration::from_millis(DUR_BASE))
-        {
             return;
         }
         let entries = vec![
@@ -1141,23 +1131,28 @@ impl DictionaryView {
         if self.tab != Tab::Words || !has_words {
             return Empty.into_any_element();
         }
+        let trigger = MenuTriggerBounds::default();
         let menu = self
             .menu
             .clone()
             .filter(|m| m.position.is_none())
-            .map(|m| self.render_menu(m, cx));
+            .map(|m| self.render_menu(m, Some(trigger.clone()), cx));
         div()
             .relative()
             .flex()
             // The top bar drags the window on mouse-down; the menu must not.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                Button::new(MORE_BUTTON)
-                    .icon("more-vertical", 15.)
-                    .aria_label(t("dictionary.pageActions"))
-                    .variant(ButtonVariant::Ghost)
-                    .size(ButtonSize::Sm)
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_overflow(window, cx))),
+                div().relative().child(trigger.measure()).child(
+                    Button::new(MORE_BUTTON)
+                        .icon("more-vertical", 15.)
+                        .aria_label(t("dictionary.pageActions"))
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.toggle_overflow(window, cx)),
+                        ),
+                ),
             )
             .when_some(menu, |d, menu| {
                 // Hangs from the button's right edge; deferred so it paints
@@ -1280,7 +1275,12 @@ impl DictionaryView {
             )
     }
 
-    fn render_menu(&self, menu: OpenMenu, cx: &mut Context<Self>) -> AnyElement {
+    fn render_menu(
+        &self,
+        menu: OpenMenu,
+        trigger: Option<MenuTriggerBounds>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let p = cx.palette();
         let count = menu.entries.len();
         let mut list = div()
@@ -1302,7 +1302,14 @@ impl DictionaryView {
                 inset: false,
             }])
             .on_mouse_down_out(
-                cx.listener(|this, _, window, cx| this.close_menu(false, window, cx)),
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    if !trigger
+                        .as_ref()
+                        .is_some_and(|trigger| trigger.contains(event.position))
+                    {
+                        this.close_menu(false, window, cx);
+                    }
+                }),
             )
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 let current = (0..count)
@@ -2941,7 +2948,7 @@ impl Render for DictionaryView {
                     anchored()
                         .position(at)
                         .snap_to_window_with_margin(px(8.))
-                        .child(self.render_menu(m, cx)),
+                        .child(self.render_menu(m, None, cx)),
                 )
                 .with_priority(2)
             });
