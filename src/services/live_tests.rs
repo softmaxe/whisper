@@ -118,14 +118,14 @@ fn live_list_models() {
     let (asr_url, asr_model) = asr();
     let (base, models) = run(list_models(&asr_url, None)).unwrap();
     assert_eq!(base, asr_url);
-    assert!(models.iter().any(|m| m.value == asr_model), "{models:?}");
+    assert!(models.iter().any(|m| m.matches(&asr_model)), "{models:?}");
 
     let (llm_url, llm_model) = llm();
     // Bare origin falls back to the /v1 sibling.
     let origin = llm_url.trim_end_matches("/v1");
     let (base, models) = run(list_models(origin, None)).unwrap();
     eprintln!("cleanup base {base}, {} models", models.len());
-    assert!(models.iter().any(|m| m.value == llm_model));
+    assert!(models.iter().any(|m| m.matches(&llm_model)));
 }
 
 #[test]

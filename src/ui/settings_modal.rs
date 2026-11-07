@@ -121,10 +121,10 @@ enum ConnectionCheck {
 
 impl ConnectionCheck {
     /// Whether the server listed the model in the field, when both are known.
-    fn connected(models: &[String], model: &str) -> Self {
+    fn connected(models: &[ModelOption], model: &str) -> Self {
         Self::Connected {
             model_listed: (!model.is_empty() && !models.is_empty())
-                .then(|| models.iter().any(|m| m == model)),
+                .then(|| models.iter().any(|m| m.matches(model))),
         }
     }
 }
@@ -179,7 +179,7 @@ pub struct SettingsModal {
     stt_check: ConnectionCheck,
     stt_error_details: bool,
     /// Models the speech server listed on the last successful check.
-    stt_models: Vec<String>,
+    stt_models: Vec<ModelOption>,
     stt_request: Option<Task<()>>,
 
     auto_start: AutoStartState,
@@ -1100,7 +1100,7 @@ impl SettingsModal {
             let _ = this.update(cx, |this, cx| {
                 this.stt_check = match result {
                     Ok((_, models)) => {
-                        this.stt_models = models.into_iter().map(|m| m.value).collect();
+                        this.stt_models = models;
                         ConnectionCheck::connected(&this.stt_models, &model)
                     }
                     Err(error) => ConnectionCheck::Failed(error),
@@ -1802,13 +1802,13 @@ impl SettingsModal {
         let current = self.stt_model.read(cx).value().trim().to_string();
         let mut row = div().flex().flex_wrap().gap(px(6.));
         for (index, model) in self.stt_models.iter().take(STT_MODEL_CHOICES).enumerate() {
-            let value = model.clone();
+            let value = model.selected_value(&current).to_string();
             row = row.child(
                 suggestion_chip(
                     ("settings-stt-model", index),
-                    model.clone(),
-                    model.clone(),
-                    *model == current,
+                    value.clone(),
+                    value.clone(),
+                    model.matches(&current),
                     true,
                     true,
                     cx,
@@ -1939,7 +1939,7 @@ impl SettingsModal {
             let model = model.trim();
             ConnectionCheck::Connected {
                 model_listed: (!model.is_empty() && !self.models.is_empty())
-                    .then(|| self.models.iter().any(|m| m.value == model)),
+                    .then(|| self.models.iter().any(|m| m.matches(model))),
             }
         } else {
             ConnectionCheck::Idle
@@ -3467,9 +3467,14 @@ fn model_card_list(
                 ),
         );
     for (index, model) in models.iter().enumerate() {
-        let is_selected = model.value == selected;
-        let value = model.value.clone();
-        let (source, name, tag) = split_model_id(&model.label);
+        let is_selected = model.matches(selected);
+        let value = model.selected_value(selected).to_string();
+        let label = if is_selected {
+            value.clone()
+        } else {
+            model.label.clone()
+        };
+        let (source, name, tag) = split_model_id(&label);
         let muted = |text: String| {
             div()
                 .flex_none()
@@ -3484,7 +3489,7 @@ fn model_card_list(
                 .keyboard_focusable(
                     ("settings-model", index),
                     Role::RadioButton,
-                    model.label.clone(),
+                    label.to_string(),
                     cx,
                 )
                 .aria_toggled(if is_selected {
@@ -3853,17 +3858,51 @@ fn sheet_frame(viewport: Size<Pixels>) -> SheetFrame {
 #[cfg(test)]
 mod tests {
     use super::{
-        TapStyle, endpoint_host, friendly_server_error, microphone_status_info,
+        ConnectionCheck, TapStyle, endpoint_host, friendly_server_error, microphone_status_info,
         refresh_microphones, sheet_frame,
     };
     use crate::audio::capture::CaptureStatus;
     use crate::native::mic::{MicDevice, MicSnapshot};
+    use crate::services::cleanup::ModelOption;
     use crate::settings::{MicrophoneSelectionMode, Settings};
     use crate::text::hotkeys::parse_hotkey_list;
     use futures::FutureExt;
     use gpui_kit::{px, size};
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
+
+    #[test]
+    fn connection_check_recognizes_grouped_model_aliases() {
+        let models = vec![ModelOption {
+            value: "Qwen/Qwen3-ASR-1.7B".into(),
+            aliases: vec!["Qwen3-ASR-1.7B".into(), "whisper-1".into()],
+            label: "Qwen/Qwen3-ASR-1.7B".into(),
+            description: None,
+            owned_by: Some("vllm".into()),
+        }];
+        for name in ["Qwen/Qwen3-ASR-1.7B", "Qwen3-ASR-1.7B", "whisper-1"] {
+            assert!(matches!(
+                ConnectionCheck::connected(&models, name),
+                ConnectionCheck::Connected {
+                    model_listed: Some(true)
+                }
+            ));
+        }
+        assert!(matches!(
+            ConnectionCheck::connected(&models, "missing"),
+            ConnectionCheck::Connected {
+                model_listed: Some(false)
+            }
+        ));
+        assert!(matches!(
+            ConnectionCheck::connected(&models, ""),
+            ConnectionCheck::Connected { model_listed: None }
+        ));
+        assert!(matches!(
+            ConnectionCheck::connected(&[], "whisper-1"),
+            ConnectionCheck::Connected { model_listed: None }
+        ));
+    }
 
     fn refresh_worker(
         requests: async_channel::Receiver<()>,
