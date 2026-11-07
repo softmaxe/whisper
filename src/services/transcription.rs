@@ -312,7 +312,9 @@ async fn run(
     let text = json
         .get("text")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .ok_or_else(|| {
+            TranscriptionError::InvalidResponse("Expected a string field `text`".into())
+        })?
         .to_string();
     if text.trim().is_empty() {
         log::info!("transcription returned empty text");
@@ -550,6 +552,32 @@ mod tests {
                 .unwrap_err();
             assert_eq!(err.code(), Some("TRANSCRIPTION_REQUEST_TIMEOUT"));
         })
+    }
+
+    #[test]
+    fn rejects_success_responses_without_a_string_transcript() {
+        run(async {
+            for body in [
+                "{}",
+                r#"{"error":"unavailable"}"#,
+                r#"{"text":null}"#,
+                r#"{"text":42}"#,
+                r#"{"text":true}"#,
+                r#"{"text":[]}"#,
+                r#"{"text":{}}"#,
+                "[]",
+                "null",
+            ] {
+                let server = MockServer::start(move |_| Reply::json(200, body));
+                let err = transcribe(request_for(&server), CancellationToken::new())
+                    .await
+                    .unwrap_err();
+                assert!(
+                    matches!(err, TranscriptionError::InvalidResponse(_)),
+                    "{body}: {err}"
+                );
+            }
+        });
     }
 
     #[test]

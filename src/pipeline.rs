@@ -468,6 +468,24 @@ mod tests {
     }
 
     #[test]
+    fn invalid_asr_schema_is_a_recoverable_failure() {
+        let asr = MockServer::start(|_| Reply::json(200, r#"{"text":null}"#));
+        assert!(matches!(
+            run_test(run(served(&asr, None), CancellationToken::new())),
+            PipelineOutcome::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn valid_empty_asr_text_is_still_no_audio() {
+        let asr = asr("   ");
+        assert_eq!(
+            run_test(run(served(&asr, None), CancellationToken::new())),
+            PipelineOutcome::NoAudio
+        );
+    }
+
+    #[test]
     fn dictionary_echo_is_no_audio() {
         let asr = asr("Supabase, Tauri");
         let mut i = served(&asr, None);
