@@ -336,6 +336,15 @@ impl Core {
         self.recording.store(false, Ordering::Relaxed);
         resolve(st.waiter.take(), Err(AudioError::Cancelled));
         let was_recording = st.phase == Phase::Recording;
+        if was_recording
+            && st.frames_since_window > 0
+            && st.gate.is_some_and(|gate| gate.window_count > 0)
+        {
+            let rms = window_rms(&st.samples, ANALYSER_WINDOW);
+            if let Some(gate) = st.gate.as_mut() {
+                gate.record_window(rms);
+            }
+        }
         st.phase = Phase::Finished;
         let samples = if was_recording {
             std::mem::take(&mut st.samples)
@@ -862,6 +871,33 @@ mod tests {
         // Ten 100 ms windows of digital silence.
         assert!(audio.speech_gate.is_silence());
         assert_eq!(audio.speech_gate.window_count, 10);
+    }
+
+    #[test]
+    fn stopping_checks_speech_in_the_partial_gate_window() {
+        for amplitude in [0.0, 0.2] {
+            let t0 = Instant::now();
+            let core = make_core(16_000, 1, t0);
+            core.begin(false, FIRST_AUDIO_TIMEOUT, t0).unwrap();
+            core.push(std::iter::repeat_n(0.0, 1600), t0);
+            core.push(tone(1280, amplitude).into_iter(), t0);
+            let audio = core.finish();
+            assert_eq!(audio.samples.len(), 2880);
+            assert_eq!(audio.speech_gate.is_silence(), amplitude == 0.0);
+        }
+    }
+
+    #[test]
+    fn stopping_before_the_first_gate_window_still_fails_open() {
+        for amplitude in [0.0, 0.2] {
+            let t0 = Instant::now();
+            let core = make_core(16_000, 1, t0);
+            core.begin(false, FIRST_AUDIO_TIMEOUT, t0).unwrap();
+            core.push(tone(1280, amplitude).into_iter(), t0);
+            let gate = core.finish().speech_gate;
+            assert_eq!(gate.window_count, 0);
+            assert!(!gate.is_silence());
+        }
     }
 
     #[test]
