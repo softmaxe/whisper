@@ -34,6 +34,13 @@ pub struct Recorded {
     pub insights_changed: bool,
 }
 
+/// A write's durable result and the other data it may have touched.
+/// Dictionary usage can change even when retention is off or saving fails.
+pub struct HistoryWrite {
+    pub result: anyhow::Result<Option<Recorded>>,
+    pub dictionary_changed: bool,
+}
+
 pub struct HistoryStore {
     db: Arc<Database>,
     audio: Arc<AudioStorage>,
@@ -51,45 +58,53 @@ impl HistoryStore {
         transcript: &Transcript,
         recording: &Recording,
         settings: &Settings,
-    ) -> anyhow::Result<Option<Recorded>> {
-        if let Err(err) = self.db.record_dictionary_usage(&transcript.spoken_text) {
-            log::warn!("failed to record dictionary usage: {err}");
+    ) -> HistoryWrite {
+        let result = (|| {
+            if let Err(err) = self.db.record_dictionary_usage(&transcript.spoken_text) {
+                log::warn!("failed to record dictionary usage: {err}");
+            }
+            if !settings.data_retention_enabled {
+                return Ok(None);
+            }
+            let insights_changed =
+                self.record_insights(transcript, recording.occurred_at, recording.duration);
+            let item = self.db.save_transcription(
+                &transcript.text,
+                Some(&transcript.raw_text),
+                Some(recording.occurred_at),
+            )?;
+            if let Err(err) = self.store_audio(&item, recording, settings) {
+                // The transcript is still useful without its recording.
+                log::warn!("failed to save transcription audio: {err}");
+            }
+            Ok(Some(Recorded {
+                item: self.reread(item),
+                insights_changed,
+            }))
+        })();
+        HistoryWrite {
+            result,
+            dictionary_changed: true,
         }
-        if !settings.data_retention_enabled {
-            return Ok(None);
-        }
-        let insights_changed =
-            self.record_insights(transcript, recording.occurred_at, recording.duration);
-        let item = self.db.save_transcription(
-            &transcript.text,
-            Some(&transcript.raw_text),
-            Some(recording.occurred_at),
-        )?;
-        if let Err(err) = self.store_audio(&item, recording, settings) {
-            // The transcript is still useful without its recording.
-            log::warn!("failed to save transcription audio: {err}");
-        }
-        Ok(Some(Recorded {
-            item: self.reread(item),
-            insights_changed,
-        }))
     }
 
     /// An uploaded file's raw transcript. Uploads skip cleanup, Snippets and
     /// Insights.
-    pub fn record_upload(
-        &self,
-        text: &str,
-        settings: &Settings,
-    ) -> anyhow::Result<Option<Recorded>> {
-        if !settings.data_retention_enabled {
-            return Ok(None);
+    pub fn record_upload(&self, text: &str, settings: &Settings) -> HistoryWrite {
+        let result = (|| {
+            if !settings.data_retention_enabled {
+                return Ok(None);
+            }
+            let item = self.db.save_transcription(text, None, None)?;
+            Ok(Some(Recorded {
+                item,
+                insights_changed: false,
+            }))
+        })();
+        HistoryWrite {
+            result,
+            dictionary_changed: false,
         }
-        let item = self.db.save_transcription(text, None, None)?;
-        Ok(Some(Recorded {
-            item,
-            insights_changed: false,
-        }))
     }
 
     /// The saved recording a retry re-transcribes.
@@ -98,21 +113,23 @@ impl HistoryStore {
     }
 
     /// Replaces a row's text with a retry's transcript; its audio is unchanged.
-    pub fn apply_retry(
-        &self,
-        id: i64,
-        transcript: &Transcript,
-    ) -> anyhow::Result<Option<Recorded>> {
-        let before = self
-            .db
-            .get_transcription_by_id(id)?
-            .ok_or_else(|| anyhow!("History row {id} no longer exists"))?;
-        self.db
-            .update_transcription_text(id, &transcript.text, Some(&transcript.raw_text))?;
-        Ok(Some(Recorded {
-            item: self.reread(before),
-            insights_changed: false,
-        }))
+    pub fn apply_retry(&self, id: i64, transcript: &Transcript) -> HistoryWrite {
+        let result = (|| {
+            let before = self
+                .db
+                .get_transcription_by_id(id)?
+                .ok_or_else(|| anyhow!("History row {id} no longer exists"))?;
+            self.db
+                .update_transcription_text(id, &transcript.text, Some(&transcript.raw_text))?;
+            Ok(Some(Recorded {
+                item: self.reread(before),
+                insights_changed: false,
+            }))
+        })();
+        HistoryWrite {
+            result,
+            dictionary_changed: false,
+        }
     }
 
     /// Adds the Insights counter; a failure only loses the counter.
@@ -221,6 +238,7 @@ mod tests {
         let recorded = f
             .store
             .record_delivered(&transcript("hello"), &recording(), &Settings::default())
+            .result
             .unwrap()
             .unwrap();
         assert!(recorded.insights_changed);
@@ -249,12 +267,16 @@ mod tests {
         let delivered = f
             .store
             .record_delivered(&transcript("hello"), &recording(), &settings)
+            .result
             .unwrap();
         assert_eq!(delivered, None);
         assert!(f.db.get_transcriptions(10).unwrap().is_empty());
         assert_eq!(total_dictations(&f.db), 0);
         assert_eq!(f.db.get_dictionary_by_priority().unwrap(), vec!["hello"]);
-        assert_eq!(f.store.record_upload("text", &settings).unwrap(), None);
+        assert_eq!(
+            f.store.record_upload("text", &settings).result.unwrap(),
+            None
+        );
     }
 
     #[test]
@@ -263,6 +285,7 @@ mod tests {
         let recorded = f
             .store
             .record_upload("file text", &Settings::default())
+            .result
             .unwrap()
             .unwrap();
         assert!(!recorded.insights_changed);
@@ -277,6 +300,7 @@ mod tests {
         let item = f
             .store
             .record_delivered(&transcript("hello"), &recording(), &Settings::default())
+            .result
             .unwrap()
             .unwrap()
             .item;
@@ -286,6 +310,7 @@ mod tests {
         let recorded = f
             .store
             .apply_retry(id, &transcript("again"))
+            .result
             .unwrap()
             .unwrap();
         assert!(!recorded.insights_changed);
@@ -300,6 +325,63 @@ mod tests {
     #[test]
     fn retrying_a_missing_row_fails() {
         let f = fixture();
-        assert!(f.store.apply_retry(42, &transcript("x")).is_err());
+        assert!(f.store.apply_retry(42, &transcript("x")).result.is_err());
+    }
+
+    #[test]
+    fn dictionary_refresh_survives_retention_off_and_partial_history_failure() {
+        let f = fixture();
+        f.db.apply_dictionary_changes(
+            &["hello"],
+            &[] as &[&str],
+            crate::db::DictionarySource::Manual,
+        )
+        .unwrap();
+        let settings = Settings {
+            data_retention_enabled: false,
+            ..Settings::default()
+        };
+        let write = f
+            .store
+            .record_delivered(&transcript("hello"), &recording(), &settings);
+        assert!(write.dictionary_changed);
+        assert!(write.result.unwrap().is_none());
+        assert_eq!(f.db.get_dictionary_entries().unwrap()[0].use_count, 1);
+
+        // Usage is written before History, so a failed insert must still
+        // refresh usage counters in the Dictionary view.
+        f.db.lock()
+            .execute_batch(
+                "CREATE TRIGGER reject_history BEFORE INSERT ON transcriptions
+             BEGIN SELECT RAISE(FAIL, 'synthetic history failure'); END;",
+            )
+            .unwrap();
+        let write =
+            f.store
+                .record_delivered(&transcript("hello"), &recording(), &Settings::default());
+        assert!(write.dictionary_changed);
+        assert!(write.result.is_err());
+        assert_eq!(f.db.get_dictionary_entries().unwrap()[0].use_count, 2);
+    }
+
+    #[test]
+    fn uploads_and_retries_never_request_a_dictionary_refresh() {
+        let f = fixture();
+        for enabled in [false, true] {
+            let settings = Settings {
+                data_retention_enabled: enabled,
+                ..Settings::default()
+            };
+            let write = f.store.record_upload("hello", &settings);
+            assert!(!write.dictionary_changed);
+            if let Some(recorded) = write.result.unwrap() {
+                let retry = f.store.apply_retry(recorded.item.id, &transcript("again"));
+                assert!(!retry.dictionary_changed);
+                assert!(retry.result.is_ok());
+            }
+        }
+        let missing = f.store.apply_retry(i64::MAX, &transcript("missing"));
+        assert!(!missing.dictionary_changed);
+        assert!(missing.result.is_err());
     }
 }

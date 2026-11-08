@@ -471,9 +471,6 @@ pub struct ModelOption {
     pub value: String,
     /// Other API names for the same model, excluding `value`.
     pub aliases: Vec<String>,
-    pub label: String,
-    /// The server's description, if any.
-    pub description: Option<String>,
     pub owned_by: Option<String>,
 }
 
@@ -657,16 +654,9 @@ fn model_option(item: &Value) -> Option<ModelOption> {
         .get("owned_by")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let description = item
-        .get("description")
-        .and_then(Value::as_str)
-        .filter(|d| !d.is_empty())
-        .map(str::to_string);
     Some(ModelOption {
-        label: value.clone(),
         value,
         aliases: Vec::new(),
-        description,
         owned_by,
     })
 }
@@ -1224,22 +1214,16 @@ mod tests {
                 ModelOption {
                     value: "qwen3.5:9b".into(),
                     aliases: Vec::new(),
-                    label: "qwen3.5:9b".into(),
-                    description: None,
                     owned_by: Some("library".into()),
                 },
                 ModelOption {
                     value: "7".into(),
                     aliases: Vec::new(),
-                    label: "7".into(),
-                    description: None,
                     owned_by: None,
                 },
                 ModelOption {
                     value: "named".into(),
                     aliases: Vec::new(),
-                    label: "named".into(),
-                    description: Some("Desc".into()),
                     owned_by: None,
                 },
             ]

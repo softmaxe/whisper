@@ -25,6 +25,48 @@ impl Snippet {
             replacement: replacement.into(),
         }
     }
+
+    /// Keeps existing row order and appends new triggers, just like SQLite's
+    /// diff-based whole-list write. Repeated UI edits can use this immediately.
+    pub fn project_list(existing: &[Self], requested: &[Self]) -> Vec<Self> {
+        let cleaned = normalized_snippets(requested);
+        let mut by_key: HashMap<&str, &Snippet> = cleaned
+            .iter()
+            .map(|(key, snippet)| (key.as_str(), snippet))
+            .collect();
+        let mut projected = Vec::with_capacity(cleaned.len());
+        for old in existing {
+            if let Some(snippet) = by_key.remove(old.trigger.to_lowercase().as_str()) {
+                projected.push(snippet.clone());
+            }
+        }
+        for (key, snippet) in &cleaned {
+            if by_key.contains_key(key.as_str()) {
+                projected.push(snippet.clone());
+            }
+        }
+        projected
+    }
+}
+
+fn normalized_snippets(snippets: &[Snippet]) -> Vec<(String, Snippet)> {
+    let mut seen = HashSet::new();
+    let mut cleaned: Vec<(String, Snippet)> = Vec::new();
+    for raw in snippets {
+        let trigger = trim_text(&raw.trigger);
+        let replacement = trim_text(&raw.replacement);
+        if trigger.is_empty() || replacement.is_empty() {
+            continue;
+        }
+        if trigger.chars().count() > MAX_SNIPPET_TRIGGER_LENGTH {
+            continue;
+        }
+        let lower = trigger.to_lowercase();
+        if seen.insert(lower.clone()) {
+            cleaned.push((lower, Snippet::new(trigger, replacement)));
+        }
+    }
+    cleaned
 }
 
 impl Database {
@@ -43,26 +85,49 @@ impl Database {
         Ok(snippets)
     }
 
+    /// Applies only the user's changes from a possibly optimistic UI list.
+    /// An unchanged row from an earlier failed write must not be resurrected
+    /// by the next edit's whole-list snapshot.
+    pub fn apply_snippet_changes(&self, before: &[Snippet], requested: &[Snippet]) -> Result<()> {
+        let before = normalized_snippets(before);
+        let requested = normalized_snippets(requested);
+        let old: HashMap<&str, &Snippet> = before
+            .iter()
+            .map(|(key, snippet)| (key.as_str(), snippet))
+            .collect();
+        let next: HashSet<&str> = requested.iter().map(|(key, _)| key.as_str()).collect();
+        let mut actual = self.get_snippets()?;
+        actual.retain(|snippet| {
+            let key = snippet.trigger.to_lowercase();
+            !old.contains_key(key.as_str()) || next.contains(key.as_str())
+        });
+        let positions: HashMap<String, usize> = actual
+            .iter()
+            .enumerate()
+            .map(|(index, snippet)| (snippet.trigger.to_lowercase(), index))
+            .collect();
+        for (key, snippet) in requested {
+            if old
+                .get(key.as_str())
+                .is_some_and(|previous| **previous == snippet)
+            {
+                continue;
+            }
+            if let Some(&index) = positions.get(&key) {
+                actual[index] = snippet;
+            } else {
+                actual.push(snippet);
+            }
+        }
+        self.set_snippets(&actual)
+    }
+
     /// Replaces the snippet list. Triggers and replacements are trimmed,
     /// empty or over-long entries dropped, and case-variant triggers deduped
     /// (first wins).
     pub fn set_snippets(&self, snippets: &[Snippet]) -> Result<()> {
-        let mut seen = HashSet::new();
-        let mut cleaned: Vec<(String, Snippet)> = Vec::new();
-        for raw in snippets {
-            let trigger = trim_text(&raw.trigger);
-            let replacement = trim_text(&raw.replacement);
-            if trigger.is_empty() || replacement.is_empty() {
-                continue;
-            }
-            if trigger.chars().count() > MAX_SNIPPET_TRIGGER_LENGTH {
-                continue;
-            }
-            let lower = trigger.to_lowercase();
-            if seen.insert(lower.clone()) {
-                cleaned.push((lower, Snippet::new(trigger, replacement)));
-            }
-        }
+        let cleaned = normalized_snippets(snippets);
+        let seen: HashSet<&str> = cleaned.iter().map(|(key, _)| key.as_str()).collect();
 
         let mut conn = self.lock();
         let existing: HashMap<String, i64> = conn
@@ -83,7 +148,7 @@ impl Database {
                 tx.prepare("INSERT INTO snippets (trigger, replacement) VALUES (?, ?)")?;
 
             for (lower, id) in &existing {
-                if !seen.contains(lower) {
+                if !seen.contains(lower.as_str()) {
                     delete.execute([id])?;
                 }
             }
@@ -121,6 +186,62 @@ mod tests {
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap()
+    }
+
+    #[test]
+    fn immediate_lists_and_delta_writes_match_whole_list_storage() {
+        let db = Database::open_in_memory().unwrap();
+        let reference = Database::open_in_memory().unwrap();
+        let mut projected = Vec::new();
+        let requests = [
+            vec![
+                Snippet::new(" One ", " first "),
+                Snippet::new("two", "2"),
+                Snippet::new("É", "unicode"),
+            ],
+            vec![
+                Snippet::new("TWO", "updated"),
+                Snippet::new("one", "first"),
+                Snippet::new("three", "3"),
+            ],
+            vec![
+                Snippet::new("Three", "third"),
+                Snippet::new("THREE", "duplicate"),
+                Snippet::new("", "empty"),
+                Snippet::new("x".repeat(101), "long"),
+            ],
+            vec![
+                Snippet::new("one", "back"),
+                Snippet::new("three", "third"),
+                Snippet::new("i̇", "unicode"),
+            ],
+            vec![],
+        ];
+        for requested in requests {
+            db.apply_snippet_changes(&projected, &requested).unwrap();
+            reference.set_snippets(&requested).unwrap();
+            projected = Snippet::project_list(&projected, &requested);
+            assert_eq!(projected, reference.get_snippets().unwrap());
+            assert_eq!(db.get_snippets().unwrap(), projected);
+        }
+    }
+
+    #[test]
+    fn a_later_snippet_edit_does_not_resurrect_an_earlier_failed_insert() {
+        let db = Database::open_in_memory().unwrap();
+        db.lock().execute_batch("CREATE TRIGGER reject_first BEFORE INSERT ON snippets WHEN NEW.trigger = 'first' BEGIN SELECT RAISE(ABORT, 'synthetic write failure'); END;").unwrap();
+        let first = vec![Snippet::new("first", "1")];
+        assert!(db.apply_snippet_changes(&[], &first).is_err());
+        db.lock()
+            .execute_batch("DROP TRIGGER reject_first;")
+            .unwrap();
+        let mut second = first.clone();
+        second.push(Snippet::new("second", "2"));
+        db.apply_snippet_changes(&first, &second).unwrap();
+        assert_eq!(
+            db.get_snippets().unwrap(),
+            vec![Snippet::new("second", "2")]
+        );
     }
 
     #[test]

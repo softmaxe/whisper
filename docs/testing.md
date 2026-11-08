@@ -38,6 +38,16 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 - Change the server URL and verify choices from the previous server disappear while editing. Test Connection should load the new server's models without replacing a manually selected ID. Disable cleanup and verify the picker is unavailable.
 - Repeat with both interface languages and themes. Confirm the existing language and microphone dropdown interactions still work.
 
+## Local data editing regression check
+
+- Add several Dictionary words in quick succession, including case variants and pasted lists. Rename a word, delete it, then add it again before starting another action. Verify duplicate feedback, row order, source, and keyboard focus remain consistent.
+- Delete words, corrections, and snippets with both the mouse and keyboard. Undo within the existing undo window, then repeat and let the deletion commit. Clear the Dictionary while a deletion is pending and verify no row reappears.
+- Create and edit several snippets quickly. Check duplicate triggers, case-only renames, insertion order, and empty or overlong triggers. Close the editor immediately after saving and verify the result survives reopening and app restart.
+- Keep Settings open while dictating, uploading, and editing local data. Verify its selected values remain stable, while recording status and microphone information still update. Change the interface language and retention settings and verify option labels and enabled states update.
+- Upload files and retry History rows with the Dictionary visible before and afterward. Dictionary usage must remain unchanged. Dictation must still update usage with History retention disabled.
+
+Storage failure and callback-order regressions use temporary databases in automated tests. Pipeline regressions also verify that failed edits never become transcription hints or replacements, and that edits after a request starts do not change its captured rules. Do not damage the installed application's database to simulate a write failure.
+
 ## Settings scrolling regression check
 
 - With MOS enabled, reverse the wheel immediately after reaching either end of Settings and the prompt preview. The first reverse event should move content immediately, without repaying overscroll. Repeat with MOS disabled and with several small, fractional pixel events between frames.
