@@ -1,8 +1,6 @@
 //! The main window: a collapsible sidebar split from the canvas by a hairline,
 //! a top bar with the transcript search, and the active view.
 
-use std::time::Duration;
-
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -20,21 +18,22 @@ use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
+use super::sidebar_icon::SidebarIcon;
 use super::theme::{
-    CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG,
-    RADIUS_MD, TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_out, ease_snap, motion,
+    CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG, RADIUS_MD,
+    TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_css, ease_out, ease_snap, motion,
 };
 use super::upload_view::{UploadEvent, UploadView};
 
 actions!(control_panel, [OpenSearch, OpenSettings, CloseOverlay]);
 
 pub const SIDEBAR_WIDTH: f32 = 232.;
-/// Where the top bar's controls start when the sidebar is hidden, clear of
-/// the traffic lights.
-const TRAFFIC_LIGHTS_END: f32 = 84.;
-/// Where the sidebar's app name starts: the traffic lights plus a gap.
-const BRAND_INSET: f32 = 96.;
-const PEEK_CLOSE_DELAY: Duration = Duration::from_millis(DUR_SNAP);
+/// Separate window controls from app navigation, with a fixed toggle in both states.
+const SIDEBAR_TOGGLE_LEFT: f32 = 96.;
+const SIDEBAR_TOGGLE_SIZE: f32 = 28.;
+const BRAND_INSET: f32 = 128.;
+const COLLAPSED_TITLE_INSET: f32 = 140.;
+const SIDEBAR_DURATION: u64 = 200;
 /// Height of the fade that softens content scrolled under the top bar.
 const SCROLL_FADE: f32 = 28.;
 
@@ -71,11 +70,7 @@ impl PanelView {
 pub struct ControlPanel {
     pub active: PanelView,
     sidebar_collapsed: bool,
-    peek: bool,
-    /// After a toggle collapses the sidebar, the pointer still sits on the
-    /// toggle; suppress peeking until it leaves so the sidebar doesn't bounce.
-    suppress_peek: bool,
-    peek_close: Option<Task<()>>,
+    sidebar_icon: SidebarIcon,
     focus: FocusHandle,
     history: Entity<HistoryView>,
     insights: Option<Entity<InsightsView>>,
@@ -124,9 +119,7 @@ impl ControlPanel {
         let mut this = Self {
             active: PanelView::Home,
             sidebar_collapsed: collapsed,
-            peek: false,
-            suppress_peek: false,
-            peek_close: None,
+            sidebar_icon: SidebarIcon::new(collapsed),
             focus,
             history,
             insights: None,
@@ -227,10 +220,7 @@ impl ControlPanel {
     }
 
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.peek_close = None;
-        self.peek = false;
         self.sidebar_collapsed = !self.sidebar_collapsed;
-        self.suppress_peek = self.sidebar_collapsed;
         let collapsed = self.sidebar_collapsed;
         AppState::global(cx).update(cx, |s, cx| {
             s.update_settings(cx, |s| s.sidebar_collapsed = collapsed)
@@ -238,36 +228,37 @@ impl ControlPanel {
         cx.notify();
     }
 
-    fn show_peek(&mut self, cx: &mut Context<Self>) {
-        if self.suppress_peek || !self.sidebar_collapsed {
-            return;
-        }
-        self.peek_close = None;
-        if !self.peek {
-            self.peek = true;
-            cx.notify();
-        }
+    fn render_sidebar_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let p = cx.palette();
+        let label = t(if self.sidebar_collapsed {
+            "sidebar.show"
+        } else {
+            "sidebar.hide"
+        });
+        div()
+            .id("sidebar-toggle")
+            .keyboard_focusable("panel-sidebar-toggle", Role::Button, label.clone(), cx)
+            .tooltip(text_tooltip(label))
+            .absolute()
+            .left(px(SIDEBAR_TOGGLE_LEFT))
+            .top(px((WORKSPACE_TOP_BAR_HEIGHT - SIDEBAR_TOGGLE_SIZE) / 2.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(SIDEBAR_TOGGLE_SIZE))
+            .rounded(px(RADIUS_LG))
+            .cursor_pointer()
+            .hover(|s| s.bg(p.hover_wash(0.05)))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(self.sidebar_icon.render(p.muted_foreground))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
     }
 
-    fn hide_peek(&mut self, cx: &mut Context<Self>) {
-        if !self.peek {
-            return;
-        }
-        self.peek_close = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(PEEK_CLOSE_DELAY).await;
-            let _ = this.update(cx, |this, cx| {
-                this.peek = false;
-                cx.notify();
-            });
-        }));
-    }
-
-    fn leave_toggle(&mut self, cx: &mut Context<Self>) {
-        self.suppress_peek = false;
-        self.hide_peek(cx);
-    }
-
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_sidebar(
+        &mut self,
+        sidebar_width: f32,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let p = cx.palette();
         let active = self.active;
         let mut nav = div().flex().flex_col().gap(px(2.)).px(px(8.)).pt(px(4.));
@@ -301,13 +292,25 @@ impl ControlPanel {
                     .flex_none()
                     .flex()
                     .items_center()
-                    .pl(px(BRAND_INSET))
+                    // A stationary clipping slot lets the brand slide with navigation
+                    // without painting over the fixed window controls or toggle.
+                    .pl(px(BRAND_INSET + SIDEBAR_WIDTH - sidebar_width))
                     .child(
                         div()
-                            .text_size(px(TEXT_BODY))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(p.foreground)
-                            .child("Whisper"),
+                            .flex_none()
+                            .w(px(SIDEBAR_WIDTH - BRAND_INSET))
+                            .h(px(20.))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .relative()
+                                    .left(px(sidebar_width - SIDEBAR_WIDTH))
+                                    .text_size(px(TEXT_BODY))
+                                    .line_height(px(20.))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(p.foreground)
+                                    .child("Whisper"),
+                            ),
                     ),
             )
             .child(nav)
@@ -331,25 +334,13 @@ impl ControlPanel {
 
     fn render_top_bar(
         &mut self,
+        sidebar_width: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let p = cx.palette();
-        let clear_traffic_lights = self.sidebar_collapsed;
-        // Eased with the sidebar so the toggle glides past the traffic lights.
-        let start_pad = f32_tx(
-            "topbar-start-pad",
-            if clear_traffic_lights {
-                TRAFFIC_LIGHTS_END - 4.
-            } else {
-                12.
-            },
-            DUR_SHEET,
-            ease_out,
-            window,
-            cx,
-        );
-        let collapsed = self.sidebar_collapsed;
+        // Derive the title's inset from the same reveal as the sidebar.
+        let start_pad = 12. + (COLLAPSED_TITLE_INSET - 12.) * (1. - sidebar_width / SIDEBAR_WIDTH);
         let title = self.active.label();
         // Page-level actions sit at the top bar's end; Home's is Clear History.
         let page_actions =
@@ -435,46 +426,6 @@ impl ControlPanel {
                     .flex()
                     .items_center()
                     .gap(px(10.))
-                    .child(
-                        div()
-                            .id("sidebar-toggle")
-                            .keyboard_focusable(
-                                "panel-sidebar-toggle",
-                                Role::Button,
-                                t(if collapsed {
-                                    "sidebar.show"
-                                } else {
-                                    "sidebar.hide"
-                                }),
-                                cx,
-                            )
-                            .tooltip(text_tooltip(t(if collapsed {
-                                "sidebar.show"
-                            } else {
-                                "sidebar.hide"
-                            })))
-                            .flex()
-                            .flex_none()
-                            .items_center()
-                            .justify_center()
-                            .size(px(28.))
-                            .rounded(px(RADIUS_LG))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(p.hover_wash(0.05)))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(icon("panel-left-close", 16., p.muted_foreground))
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx)))
-                            .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                                if !collapsed {
-                                    return;
-                                }
-                                if *hovered {
-                                    this.show_peek(cx);
-                                } else {
-                                    this.leave_toggle(cx);
-                                }
-                            })),
-                    )
                     .child(
                         div()
                             .text_size(px(TEXT_BODY))
@@ -700,26 +651,24 @@ impl Render for ControlPanel {
                 .into_any_element();
         }
         let collapsed = self.sidebar_collapsed;
-        let spacer = f32_tx(
-            "sidebar-spacer",
+        let icon_animating = self.sidebar_icon.update(collapsed, cx.reduce_motion());
+        // One reveal drives both clipping and content layout, including reversals.
+        let sidebar_width = f32_tx(
+            "sidebar-reveal",
             if collapsed { 0. } else { SIDEBAR_WIDTH },
-            DUR_SHEET,
-            ease_out,
+            SIDEBAR_DURATION,
+            ease_css,
             window,
             cx,
         );
-        let visible = !collapsed || self.peek;
-        let offset = f32_tx(
-            "sidebar-offset",
-            if visible { 0. } else { -SIDEBAR_WIDTH },
-            DUR_SHEET,
-            ease_out,
-            window,
-            cx,
-        );
-        let peeking = collapsed && self.peek;
-        let sidebar = self.render_sidebar(cx);
-        let top_bar = self.render_top_bar(window, cx);
+        let target_width = if collapsed { 0. } else { SIDEBAR_WIDTH };
+        if sidebar_width != target_width || icon_animating {
+            // Keep view-owned layout and icon physics advancing through retained frames.
+            cx.on_next_frame(window, |_, _, cx| cx.notify());
+        }
+        let sidebar = (sidebar_width > 0.).then(|| self.render_sidebar(sidebar_width, cx));
+        let top_bar = self.render_top_bar(sidebar_width, window, cx);
+        let sidebar_toggle = self.render_sidebar_toggle(cx);
         // Each view eases in 3 px as it replaces the last.
         // Insights fills the viewport, so its wrapper must too.
         let fill = self.active == PanelView::Insights;
@@ -758,43 +707,28 @@ impl Render for ControlPanel {
             window,
             cx,
         );
-        let mut sidebar_host = Some(
-            div()
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .left(px(offset))
-                .when(peeking, |d| {
-                    d.shadow(vec![BoxShadow {
-                        color: hsla(0., 0., 0., 0.2),
-                        offset: point(px(10.), px(0.)),
-                        blur_radius: px(40.),
-                        spread_radius: px(-18.),
-                        inset: false,
-                    }])
-                })
-                .id("sidebar-host")
-                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                    if !this.sidebar_collapsed {
-                        return;
-                    }
-                    if *hovered {
-                        this.show_peek(cx);
-                    } else {
-                        this.hide_peek(cx);
-                    }
-                }))
-                .child(sidebar)
-                .into_any_element(),
-        );
         root.child(
             div()
                 .relative()
                 .flex_1()
                 .flex()
                 .overflow_hidden()
-                .children((!collapsed).then(|| sidebar_host.take()).flatten())
-                .child(div().flex_none().w(px(spacer)))
+                .child(
+                    div()
+                        .id("sidebar-host")
+                        .relative()
+                        .flex_none()
+                        .w(px(sidebar_width))
+                        .h_full()
+                        .overflow_hidden()
+                        .children(sidebar.map(|sidebar| {
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .left(px(sidebar_width - SIDEBAR_WIDTH))
+                                .child(sidebar)
+                        })),
+                )
                 .child(
                     div().flex_1().flex().flex_col().overflow_hidden().child(
                         div()
@@ -875,12 +809,9 @@ impl Render for ControlPanel {
                                     }),
                             ),
                     ),
-                )
-                // A peeking sidebar paints after the main column to
-                // overlay it; a docked one comes first so Tab reaches
-                // navigation before the page.
-                .when(collapsed, |d| d.children(sidebar_host.take())),
+                ),
         )
+        .child(sidebar_toggle)
         .when_some(settings_modal, |d, modal| d.child(modal))
         .children(custom)
         .children(dialog)
