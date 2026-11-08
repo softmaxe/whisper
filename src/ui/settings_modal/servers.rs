@@ -229,7 +229,6 @@ impl SettingsModal {
         }
         let server = settings_section(
             t("settings.speechToText.serverTitle"),
-            Some(t("settings.speechToText.sharedDescription").into()),
             vec![
                 settings_field_tagged(
                     t("settings.selfHosted.serverUrl"),
@@ -269,7 +268,6 @@ impl SettingsModal {
             .child(server)
             .child(settings_section(
                 t("settings.language.sectionTitle"),
-                Some(t("settings.language.transcriptionSectionDescription").into()),
                 language_rows,
                 &p,
             ))
@@ -355,7 +353,6 @@ impl SettingsModal {
         let enabled = s.use_cleanup_model;
         let master = settings_section(
             t("settings.llms.cleanup.title"),
-            Some(t("settings.llms.cleanup.description").into()),
             vec![toggle_row(
                 "use-cleanup",
                 t("settings.aiModels.enableTextCleanup"),
@@ -373,7 +370,6 @@ impl SettingsModal {
         // connection fields.
         let output = settings_section(
             t("settings.llms.output.title"),
-            Some(t("settings.llms.output.description").into()),
             vec![toggle_row(
                 "disable-thinking",
                 t("reasoning.disableThinking.label"),
@@ -391,24 +387,12 @@ impl SettingsModal {
             .gap(px(24.))
             .child(master)
             .child(
-                settings_section(
-                    t("settings.llms.server.title"),
-                    Some(t("settings.llms.server.description").into()),
-                    server_rows,
-                    &p,
-                )
-                .when(!enabled, |d| d.opacity(0.5)),
+                settings_section(t("settings.llms.server.title"), server_rows, &p)
+                    .when(!enabled, |d| d.opacity(0.5)),
             )
             .child(
                 div()
-                    .child(
-                        section_header(
-                            t("settings.prompts.title"),
-                            Some(t("settings.prompts.description").into()),
-                            &p,
-                        )
-                        .px(px(16.)),
-                    )
+                    .child(section_header(t("settings.prompts.title"), &p).px(px(16.)))
                     .child(self.render_prompt_studio(window, cx)),
             )
             .child(output.when(!enabled, |d| d.opacity(0.5)))

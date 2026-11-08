@@ -64,7 +64,6 @@ impl SettingsModal {
             // History comes first: audio is only kept for saved dictations.
             .child(settings_section(
                 t("settings.privacy.historyTitle"),
-                Some(t("settings.privacy.historyDescription").into()),
                 vec![
                     toggle_row(
                         "data-retention",
@@ -94,7 +93,6 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.privacy.audioRetention"),
-                Some(t("settings.privacy.audioRetentionDescription").into()),
                 vec![
                     settings_row(
                         t("settings.privacy.keepAudioFor"),
@@ -129,7 +127,6 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.permissions.title"),
-                Some(t("settings.permissions.description").into()),
                 vec![
                     permission_row(
                         "settings-perm-mic",
@@ -160,7 +157,6 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.permissions.troubleshootingTitle"),
-                Some(t("settings.permissions.troubleshootingDescription").into()),
                 vec![
                     settings_row(
                         t("settings.permissions.resetAccessibility.label"),

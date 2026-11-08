@@ -152,7 +152,6 @@ impl SettingsModal {
             .gap(px(24.))
             .child(settings_section(
                 t("settings.general.appearance.title"),
-                Some(t("settings.general.appearance.description").into()),
                 vec![
                     panel_row()
                         .child(
@@ -180,13 +179,11 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.language.sectionTitle"),
-                Some(t("settings.language.uiSectionDescription").into()),
                 vec![self.render_ui_language(cx)],
                 &p,
             ))
             .child(settings_section(
                 t("settings.general.soundEffects.title"),
-                Some(t("settings.general.soundEffects.description").into()),
                 vec![
                     toggle(
                         "audio-cues",
@@ -207,7 +204,6 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.general.clipboard.title"),
-                Some(t("settings.general.clipboard.description").into()),
                 vec![
                     toggle(
                         "auto-paste",
@@ -228,13 +224,11 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.general.startup.title"),
-                Some(t("settings.general.startup.description").into()),
                 startup_rows,
                 &p,
             ))
             .child(settings_section(
                 t("settings.dictionary.title"),
-                Some(t("settings.dictionary.description").into()),
                 vec![toggle(
                     "auto-learn",
                     "settings.dictionary.autoLearnTitle",
@@ -348,31 +342,23 @@ impl SettingsModal {
             .gap(px(24.))
             .child(settings_section(
                 t("settings.general.hotkey.title"),
-                Some(t("settings.general.hotkey.description").into()),
                 vec![self.hotkeys.clone().into_any_element()],
                 &p,
             ))
             .child(
                 div()
                     .child(
-                        section_header(
-                            t("settings.general.hotkey.activationMode"),
-                            Some(t("settings.general.hotkey.activationModeDescription").into()),
-                            &p,
-                        )
-                        .px(px(16.)),
+                        section_header(t("settings.general.hotkey.activationMode"), &p).px(px(16.)),
                     )
                     .child(selector),
             )
             .child(settings_section(
                 t("settings.general.microphone.title"),
-                Some(t("settings.general.microphone.description").into()),
                 microphone_rows,
                 &p,
             ))
             .child(settings_section(
                 t("settings.general.floatingIcon.title"),
-                Some(t("settings.general.floatingIcon.description").into()),
                 vec![
                     settings_row(
                         t("settings.general.floatingIcon.startPosition"),
