@@ -243,6 +243,14 @@ impl Select {
         options
     }
 
+    /// Opens the real menu after its trigger has laid out in a screenshot scene.
+    #[cfg(debug_assertions)]
+    pub(super) fn preview_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open {
+            self.toggle(window, cx);
+        }
+    }
+
     fn toggle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.disabled {
             return;
@@ -387,16 +395,13 @@ impl Render for Select {
             cx,
         );
 
-        let trigger_border = if open { p.ring } else { p.input_border };
-        let trigger_shadow = if open {
-            vec![BoxShadow {
-                color: p.ring.opacity(0.24),
-                offset: point(px(0.), px(0.)),
-                blur_radius: px(0.),
-                spread_radius: px(3.),
-                inset: false,
-            }]
-        } else if p.dark {
+        // Opening the menu is distinct from keyboard focus on the root.
+        let trigger_border = if open {
+            p.control_border
+        } else {
+            p.input_border
+        };
+        let trigger_shadow = if p.dark {
             Vec::new()
         } else {
             vec![drop(0., 1., 2., 0.05)]
@@ -545,7 +550,7 @@ impl Select {
             let is_selected = Some(&option.value) == selected.as_ref();
             let is_highlighted = index == highlighted;
             let value = option.value.clone();
-            let row_bg = is_highlighted.then(|| p.foreground.opacity(0.08));
+            let row_bg = is_highlighted.then_some(p.list_highlight);
             list = list.child(
                 div()
                     .id(("option", index))
@@ -566,12 +571,16 @@ impl Select {
                             .text_size(px(TEXT_MONO_SMALL))
                             .tooltip(text_tooltip(option.value.to_string()))
                     })
-                    .text_color(p.foreground)
+                    .text_color(if is_highlighted {
+                        p.selection_foreground
+                    } else {
+                        p.foreground
+                    })
                     .when_some(row_bg, |d, bg| d.bg(bg))
                     .when(option.disabled, |d| d.opacity(0.5))
                     .when(!option.disabled, |d| {
                         d.cursor_pointer()
-                            .hover(|s| s.bg(p.foreground.opacity(0.08)))
+                            .hover(|s| s.bg(p.list_highlight).text_color(p.selection_foreground))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.choose(value.clone(), window, cx)
                             }))

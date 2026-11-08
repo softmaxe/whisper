@@ -83,3 +83,12 @@ For changes to macOS signing, also test an upgrade between two release builds si
 4. Quit version A and upgrade to version B through the Homebrew cask, preserving the installation path. Launch it, dictate, verify automatic paste, and access the saved credential. Record whether microphone, Accessibility, or Keychain authorization appears again and the macOS version used.
 
 Do not reset TCC permissions, change system trust, or delete Keychain items during the upgrade test. Those actions would invalidate the test. Automated signature checks alone do not prove permission retention, and a source change does not update an already installed app. See [macOS signing](macos-signing.md) for identity setup.
+
+## Tokyo Night theme check
+
+- Select Tokyo Night in Settings > General. Reopen Settings and restart the app; the selection must persist. Switch macOS appearance while it is selected: it must remain Tokyo Night. Verify Auto still follows macOS, and Light and Dark remain available.
+- Review Home with transcripts and an empty history, Insights with both current and comparison data, Upload, Dictionary words and snippets, command search, and each Settings section. Use both interface languages and the minimum supported window size. Check reading text, metadata, chart labels, selected navigation, popovers, and input edges.
+- Use `WHISPER_DEV_SCENE=settings:language` to inspect the expanded interface-language menu in a debug build.
+- Tab through theme choices, buttons, switches, inputs, and dropdowns. Check focus, hover, selected, disabled, and destructive states. The filled action must retain a clearly contrasting label; switches must remain distinguishable by both thumb position and track color.
+- With `WHISPER_USER_DATA_DIR` pointing to a temporary directory, use `WHISPER_DEV_SCENE` in a debug build to inspect `pill:recording`, `pill:processing`, `pill:preparing`, `pill:error`, and `pill:fallback`. Tokyo Night uses the same indigo surface family as the workspace, muted blue voice activity, and distinct error/recovery colors. Light and Dark retain their dark floating HUD.
+- Automated tests cover preference serialization, system-appearance resolution, reading contrast, focus indicators, and selected/action text. They complement visual review; they do not prove native interaction or rendering quality.

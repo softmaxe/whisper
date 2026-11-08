@@ -506,6 +506,13 @@ impl SettingsModal {
             .with_menu_min_width(px(240.))
             .with_label(t("settings.language.uiLabel"))
         });
+        #[cfg(debug_assertions)]
+        if std::env::var("WHISPER_DEV_SCENE").as_deref() == Ok("settings:language") {
+            let select = ui_language.clone();
+            window.on_next_frame(move |window, cx| {
+                select.update(cx, |select, cx| select.preview_open(window, cx));
+            });
+        }
         subscriptions.push(cx.subscribe(&ui_language, |_, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
             let value = value.to_string();
@@ -976,7 +983,19 @@ impl Render for SettingsModal {
         // so the fade shows on a page that opens with more below.
         if self.measured_section != Some(self.section) {
             self.measured_section = Some(self.section);
-            cx.on_next_frame(window, |_, _, cx| cx.notify());
+            cx.on_next_frame(window, |this, _, cx| {
+                #[cfg(debug_assertions)]
+                if let Ok(fraction) = std::env::var("WHISPER_DEV_SCROLL_FRACTION")
+                    && let Ok(fraction) = fraction.parse::<f32>()
+                {
+                    let extent = this.scroll.max_offset().y;
+                    this.scroll
+                        .set_offset(point(px(0.), -extent * fraction.clamp(0., 1.)));
+                }
+                #[cfg(not(debug_assertions))]
+                let _ = this;
+                cx.notify();
+            });
         }
         let more_below = max_scroll > px(1.) && self.scroll.offset().y > -max_scroll + px(1.);
         let fade = f32_tx(
@@ -1012,6 +1031,8 @@ impl Render for SettingsModal {
                     ))
                     .child(
                         page_container()
+                            .max_w(px(860.))
+                            .pt(px(if frame.compact { 20. } else { 32. }))
                             .when(frame.compact, |d| d.px(px(20.)))
                             .pb(px(48.))
                             .child(content),

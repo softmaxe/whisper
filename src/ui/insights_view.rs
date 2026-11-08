@@ -315,18 +315,14 @@ fn axis_labels(bars: &[TrendBar], bucket_days: i64) -> Vec<Option<String>> {
 /// (3.5:1 dark, 3.9:1 light), so the full accent stays free to mark the bar
 /// under the pointer or cursor. No edge: the fill alone carries the shape.
 fn period_tone(p: &Palette) -> Hsla {
-    if p.dark {
-        hsla(p.primary.h, 0.55, 0.50, 1.)
-    } else {
-        hsla(p.primary.h, 0.55, 0.60, 1.)
-    }
+    p.chart_current
 }
 
 /// A comparison-period bar: a flat neutral that clears 3:1 against the
 /// canvas, so every bar's height reads, while the saturated
 /// period tone keeps the current period in the lead.
 fn comparison_tone(p: &Palette) -> Hsla {
-    p.foreground.opacity(if p.dark { 0.42 } else { 0.5 })
+    p.chart_comparison
 }
 
 /// A heading inside the dashboard: one step above the body text it heads.
@@ -344,7 +340,7 @@ fn heading(text: String, p: &Palette) -> Div {
 /// A weekday that is not the busiest: clearly recessive, so the one bar in
 /// the full accent is the only thing that stands out.
 fn rhythm_bar(p: &Palette) -> Hsla {
-    p.foreground.opacity(if p.dark { 0.28 } else { 0.22 })
+    p.chart_rhythm
 }
 
 /// When a bar covers: its day, or the week it closes.
@@ -851,7 +847,7 @@ impl InsightsView {
         // blue bars it crosses; the comparison period's is a quieter dashed
         // trace that still clears 3:1 against the canvas.
         let period_line = p.foreground.opacity(0.9);
-        let comparison_line = p.foreground.opacity(0.7);
+        let comparison_line = p.foreground.opacity(0.9);
         let ring = p.background;
         let line = canvas(
             move |_, _, _| {},
@@ -869,7 +865,7 @@ impl InsightsView {
                     let (width, color) = if *in_period {
                         (px(2.), period_line)
                     } else {
-                        (px(1.5), comparison_line)
+                        (px(2.), comparison_line)
                     };
                     for (width, color) in [(width + px(2.), ring), (width, color)] {
                         let mut path = PathBuilder::stroke(width);

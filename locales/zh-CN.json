@@ -53,9 +53,10 @@
         "auto": "自动",
         "dark": "深色",
         "description": "控制 Whisper 的外观",
+        "tokyoNight": "Tokyo Night",
         "light": "浅色",
         "theme": "主题",
-        "themeDescription": "选择浅色、深色或跟随系统",
+        "themeDescription": "选择浅色、深色、Tokyo Night 或跟随系统",
         "showMenuBarIcon": "在菜单栏显示",
         "showMenuBarIconDescription": "在 macOS 菜单栏显示 Whisper 图标",
         "title": "外观"

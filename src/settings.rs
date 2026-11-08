@@ -50,6 +50,8 @@ impl PanelStartPosition {
 pub enum ThemePreference {
     Light,
     Dark,
+    #[serde(rename = "tokyo-night")]
+    TokyoNight,
     #[default]
     Auto,
 }
@@ -202,6 +204,14 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tokyo_night_preference_round_trips() {
+        let settings: Settings = serde_json::from_str(r#"{"theme":"tokyo-night"}"#).unwrap();
+        assert_eq!(settings.theme, ThemePreference::TokyoNight);
+        let saved = serde_json::to_value(settings).unwrap();
+        assert_eq!(saved["theme"], "tokyo-night");
+    }
 
     #[test]
     fn round_trips_through_json_with_camel_case_keys() {

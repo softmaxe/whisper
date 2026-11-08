@@ -1,6 +1,7 @@
 //! General behavior and presentation for SettingsModal.
 
 use super::*;
+use crate::ui::components::label_block;
 
 impl SettingsModal {
     pub(super) fn render_general(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -8,7 +9,7 @@ impl SettingsModal {
         let s = settings(cx);
 
         let theme_switch = {
-            let mut track = segmented_track(&p).items_center().gap(px(2.));
+            let mut track = segmented_track(&p).items_center().flex_wrap().gap(px(2.));
             for (value, icon_name, key) in [
                 (
                     ThemePreference::Light,
@@ -19,6 +20,11 @@ impl SettingsModal {
                     ThemePreference::Dark,
                     "moon",
                     "settings.general.appearance.dark",
+                ),
+                (
+                    ThemePreference::TokyoNight,
+                    "moon",
+                    "settings.general.appearance.tokyoNight",
                 ),
                 (
                     ThemePreference::Auto,
@@ -148,13 +154,20 @@ impl SettingsModal {
                 t("settings.general.appearance.title"),
                 Some(t("settings.general.appearance.description").into()),
                 vec![
-                    settings_row(
-                        t("settings.general.appearance.theme"),
-                        Some(t("settings.general.appearance.themeDescription").into()),
-                        theme_switch,
-                        &p,
-                    )
-                    .into_any_element(),
+                    panel_row()
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(12.))
+                                .child(label_block(
+                                    t("settings.general.appearance.theme"),
+                                    Some(t("settings.general.appearance.themeDescription").into()),
+                                    &p,
+                                ))
+                                .child(div().flex().child(theme_switch)),
+                        )
+                        .into_any_element(),
                     toggle(
                         "menu-bar-icon",
                         "settings.general.appearance.showMenuBarIcon",
@@ -255,12 +268,13 @@ impl SettingsModal {
             .mt(px(2.))
             .max_w(px(crate::ui::components::DESCRIPTION_MAX_WIDTH))
             .flex()
-            .flex_wrap()
-            .gap_x(px(3.5))
+            .flex_col()
+            .items_start()
+            .w_full()
             .text_size(px(TEXT_SMALL))
             .line_height(px(LINE_SMALL))
             .text_color(p.subtle_foreground)
-            .child(t("settings.language.uiDescription"))
+            .child(div().w_full().child(t("settings.language.uiDescription")))
             .child(link);
         panel_row()
             .child(
@@ -340,11 +354,14 @@ impl SettingsModal {
             ))
             .child(
                 div()
-                    .child(section_header(
-                        t("settings.general.hotkey.activationMode"),
-                        Some(t("settings.general.hotkey.activationModeDescription").into()),
-                        &p,
-                    ))
+                    .child(
+                        section_header(
+                            t("settings.general.hotkey.activationMode"),
+                            Some(t("settings.general.hotkey.activationModeDescription").into()),
+                            &p,
+                        )
+                        .px(px(16.)),
+                    )
                     .child(selector),
             )
             .child(settings_section(

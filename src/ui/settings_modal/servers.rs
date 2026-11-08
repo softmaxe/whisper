@@ -401,11 +401,14 @@ impl SettingsModal {
             )
             .child(
                 div()
-                    .child(section_header(
-                        t("settings.prompts.title"),
-                        Some(t("settings.prompts.description").into()),
-                        &p,
-                    ))
+                    .child(
+                        section_header(
+                            t("settings.prompts.title"),
+                            Some(t("settings.prompts.description").into()),
+                            &p,
+                        )
+                        .px(px(16.)),
+                    )
                     .child(self.render_prompt_studio(window, cx)),
             )
             .child(output.when(!enabled, |d| d.opacity(0.5)))

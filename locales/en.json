@@ -53,9 +53,10 @@
         "auto": "Auto",
         "dark": "Dark",
         "description": "Control how Whisper looks",
+        "tokyoNight": "Tokyo Night",
         "light": "Light",
         "theme": "Theme",
-        "themeDescription": "Choose light, dark, or match your system",
+        "themeDescription": "Choose Light, Dark, Tokyo Night, or follow your system",
         "showMenuBarIcon": "Show in menu bar",
         "showMenuBarIconDescription": "Show the Whisper icon in the macOS menu bar",
         "title": "Appearance"

@@ -1,4 +1,4 @@
-//! Design tokens for light and dark mode.
+//! Semantic design tokens for every application theme.
 
 use std::sync::Arc;
 
@@ -9,6 +9,25 @@ use crate::settings::ThemePreference;
 #[derive(Clone, Copy, Debug)]
 pub struct Palette {
     pub dark: bool,
+    /// Voice activity and live dictation emphasis.
+    pub voice: Hsla,
+    /// Analytics series stay legible independently of the action accent.
+    pub chart_current: Hsla,
+    pub chart_comparison: Hsla,
+    pub chart_rhythm: Hsla,
+    /// Selected navigation and segmented controls.
+    pub selection: Hsla,
+    pub nav_app: Hsla,
+    pub nav_settings: Hsla,
+    pub list_highlight: Hsla,
+    pub field_background: Hsla,
+    pub field_hover_border: Hsla,
+    pub destructive_fill: Hsla,
+    pub switch_on: Hsla,
+    pub switch_off: Hsla,
+    pub switch_knob: Hsla,
+    pub switch_edge: Hsla,
+    pub selection_foreground: Hsla,
     pub primary: Hsla,
     pub primary_foreground: Hsla,
     pub muted: Hsla,
@@ -62,6 +81,22 @@ impl Palette {
     pub fn light() -> Self {
         Self {
             dark: false,
+            voice: c(0xffffff),
+            chart_current: gpui_kit::hsla(c(0x1b4ed8).h, 0.55, 0.60, 1.),
+            chart_comparison: c(0x18181b).opacity(0.5),
+            chart_rhythm: c(0x18181b).opacity(0.22),
+            selection: c(0xffffff),
+            nav_app: c(0xffffff),
+            nav_settings: c(0xffffff),
+            list_highlight: c(0x18181b).opacity(0.08),
+            field_background: c(0xffffff),
+            field_hover_border: c(0xd4d4d8).blend(c(0x18181b).opacity(0.08)),
+            destructive_fill: c(0xdc2626),
+            switch_on: c(0x1b4ed8),
+            switch_off: c(0x18181b).opacity(0.2),
+            switch_knob: c(0xffffff),
+            switch_edge: c(0x18181b).opacity(0.4),
+            selection_foreground: c(0x18181b),
             primary: c(0x1b4ed8),
             primary_foreground: c(0xffffff),
             muted: c(0xf4f4f5),
@@ -101,6 +136,22 @@ impl Palette {
     pub fn dark() -> Self {
         Self {
             dark: true,
+            voice: c(0xffffff),
+            chart_current: gpui_kit::hsla(c(0x346bf1).h, 0.55, 0.50, 1.),
+            chart_comparison: c(0xf5f5f5).opacity(0.42),
+            chart_rhythm: c(0xf5f5f5).opacity(0.28),
+            selection: c(0xffffff).opacity(0.15),
+            nav_app: c(0xffffff).opacity(0.1),
+            nav_settings: c(0xffffff).opacity(0.08),
+            list_highlight: c(0xf5f5f5).opacity(0.08),
+            field_background: c(0xffffff).opacity(0.035),
+            field_hover_border: c(0xffffff).opacity(0.18),
+            destructive_fill: c(0xdc2626),
+            switch_on: c(0x346bf1),
+            switch_off: c(0xffffff).opacity(0.22),
+            switch_knob: c(0xffffff),
+            switch_edge: c(0xffffff).opacity(0.32),
+            selection_foreground: c(0xf5f5f5),
             primary: c(0x346bf1),
             primary_foreground: c(0xffffff),
             muted: c(0x141414),
@@ -134,6 +185,62 @@ impl Palette {
         }
     }
 
+    /// Tokyo Night adapted to Whisper's reading surfaces and voice controls.
+    /// Reference: https://github.com/folke/tokyonight.nvim
+    /// Quiet neutral surfaces follow the T3 Code reference. Accent is reserved
+    /// for actions and focus; reading text remains legible without bright outlines.
+    pub fn tokyo_night() -> Self {
+        Self {
+            dark: true,
+            voice: c(0x8da9cf),
+            chart_current: c(0x647fae),
+            chart_comparison: c(0x757987),
+            chart_rhythm: c(0x687388),
+            selection: c(0x222430),
+            nav_app: c(0x222430),
+            nav_settings: c(0x222430),
+            list_highlight: c(0x30333f),
+            field_background: c(0x15161e),
+            field_hover_border: c(0x555c73),
+            destructive_fill: c(0xa33250),
+            switch_on: c(0x3c5895),
+            switch_off: c(0x101116),
+            switch_knob: c(0x1a1b26),
+            switch_edge: c(0x101116),
+            selection_foreground: c(0xd4d7e2),
+            primary: c(0x4969aa),
+            primary_foreground: c(0xf0f1f6),
+            muted: c(0x20222e),
+            muted_foreground: c(0x9a9cab),
+            subtle_foreground: c(0x9395a3),
+            destructive: c(0xd98294),
+            border: c(0x11121a),
+            input: c(0x15161e),
+            input_border: c(0x2c2e3b),
+            control_border: c(0x292b37),
+            ring: c(0x8099c6),
+            background: c(0x1a1b26),
+            foreground: c(0xb4bcd8),
+            card: c(0x181923),
+            popover: c(0x20222e),
+            success: c(0x92b786),
+            warning: c(0xe0af68),
+            surface_1: c(0x171822),
+            surface_3: c(0x20222e),
+            surface_raised: c(0x252734),
+            surface_window: c(0x15161e),
+            settings_sidebar: c(0x15161e),
+            border_subtle: c(0x12131b),
+            border_hover: c(0x454957),
+            amber_border: c(0xe0af68).opacity(0.4),
+            amber_bg: c(0xe0af68).opacity(0.08),
+            amber_text: c(0xe0af68),
+            amber_icon: c(0xe0af68),
+            toast_surface: c(0x1a1b26),
+            white: c(0xffffff),
+        }
+    }
+
     /// Hover wash: foreground in light mode, white in dark mode, at `alpha`.
     pub fn hover_wash(&self, alpha: f32) -> Hsla {
         if self.dark {
@@ -155,7 +262,7 @@ impl Global for Theme {}
 pub fn resolve_dark(preference: ThemePreference, appearance: WindowAppearance) -> bool {
     match preference {
         ThemePreference::Light => false,
-        ThemePreference::Dark => true,
+        ThemePreference::Dark | ThemePreference::TokyoNight => true,
         ThemePreference::Auto => matches!(
             appearance,
             WindowAppearance::Dark | WindowAppearance::VibrantDark
@@ -163,13 +270,18 @@ pub fn resolve_dark(preference: ThemePreference, appearance: WindowAppearance) -
     }
 }
 
-pub fn init(preference: ThemePreference, cx: &mut App) {
-    let dark = resolve_dark(preference, cx.window_appearance());
-    let palette = if dark {
+pub fn resolve_palette(preference: ThemePreference, appearance: WindowAppearance) -> Palette {
+    if preference == ThemePreference::TokyoNight {
+        Palette::tokyo_night()
+    } else if resolve_dark(preference, appearance) {
         Palette::dark()
     } else {
         Palette::light()
-    };
+    }
+}
+
+pub fn init(preference: ThemePreference, cx: &mut App) {
+    let palette = resolve_palette(preference, cx.window_appearance());
     cx.set_global(Theme {
         preference,
         palette,
@@ -192,15 +304,10 @@ fn sync_component_theme(palette: &Palette, cx: &mut App) {
 
 /// Re-resolves the palette after a preference or system appearance change.
 pub fn apply(preference: ThemePreference, cx: &mut App) {
-    let dark = resolve_dark(preference, cx.window_appearance());
+    let palette = resolve_palette(preference, cx.window_appearance());
     let theme = cx.global_mut::<Theme>();
     theme.preference = preference;
-    theme.palette = if dark {
-        Palette::dark()
-    } else {
-        Palette::light()
-    };
-    let palette = theme.palette;
+    theme.palette = palette;
     sync_component_theme(&palette, cx);
     cx.refresh_windows();
 }
@@ -430,6 +537,65 @@ pub fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_theme_is_stable_across_system_appearance() {
+        for appearance in [WindowAppearance::Light, WindowAppearance::Dark] {
+            let p = resolve_palette(ThemePreference::TokyoNight, appearance);
+            assert!(p.dark);
+            assert_eq!(p.background, Palette::tokyo_night().background);
+        }
+        assert!(!resolve_dark(
+            ThemePreference::Auto,
+            WindowAppearance::Light
+        ));
+        assert!(resolve_dark(ThemePreference::Auto, WindowAppearance::Dark));
+    }
+
+    #[test]
+    fn tokyo_night_reading_and_control_contrast() {
+        fn luminance(color: Hsla) -> f32 {
+            let rgba = gpui_kit::Rgba::from(color);
+            let linear = |v: f32| {
+                if v <= 0.04045 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(rgba.r) + 0.7152 * linear(rgba.g) + 0.0722 * linear(rgba.b)
+        }
+        fn contrast(a: Hsla, b: Hsla) -> f32 {
+            let (a, b) = (luminance(a), luminance(b));
+            (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        }
+        let p = Palette::tokyo_night();
+        for surface in [
+            p.background,
+            p.card,
+            p.popover,
+            p.input,
+            p.surface_raised,
+            p.settings_sidebar,
+        ] {
+            for text in [p.foreground, p.muted_foreground, p.subtle_foreground] {
+                assert!(
+                    contrast(text, surface) >= 4.5,
+                    "Reading contrast: {}",
+                    contrast(text, surface)
+                );
+            }
+            assert!(contrast(p.ring, surface) >= 3.);
+        }
+        assert!(contrast(p.ring, p.field_background) >= 3.);
+        for bar in [p.chart_current, p.chart_comparison, p.chart_rhythm] {
+            assert!(contrast(bar, p.background) >= 3.);
+        }
+        assert!(contrast(p.white, p.destructive_fill) >= 4.5);
+        assert!(contrast(p.foreground, p.list_highlight) >= 4.5);
+        assert!(contrast(p.primary_foreground, p.primary) >= 4.5);
+        assert!(contrast(p.selection_foreground, p.selection) >= 4.5);
+    }
 
     #[test]
     fn bezier_endpoints_and_monotonic() {

@@ -214,16 +214,14 @@ impl RenderOnce for Toggle {
         let id = self.id.clone();
         let track = if self.disabled {
             if self.checked {
-                p.primary.opacity(0.4)
+                p.switch_on.opacity(0.4)
             } else {
                 p.muted
             }
         } else if self.checked {
-            p.primary
-        } else if p.dark {
-            p.white.opacity(0.22)
+            p.switch_on
         } else {
-            p.foreground.opacity(0.2)
+            p.switch_off
         };
         let track = color_tx((id.clone(), "track"), track, DUR_SNAP, window, cx);
         let knob_x = f32_tx(
@@ -234,10 +232,11 @@ impl RenderOnce for Toggle {
             window,
             cx,
         );
-        // The knob stays light in both themes, like the macOS switch, so the
-        // off state reads as a control and not an empty slot.
+        // The enabled knob contrasts with its track; the off knob stays readable.
         let knob = if self.disabled {
             p.muted_foreground.opacity(0.5)
+        } else if self.checked {
+            p.switch_knob
         } else if p.dark {
             p.foreground
         } else {
@@ -268,15 +267,11 @@ impl RenderOnce for Toggle {
             .h(px(20.))
             .rounded_full()
             .bg(track)
-            // An off track is pale against its card; an inner edge keeps
-            // its outline at about 3:1, as WCAG 1.4.11 asks.
+            // Each theme defines the off track's edge; the visible thumb
+            // and its position also distinguish the control and its state.
             .when(!checked && !disabled, |d| {
                 d.shadow(vec![BoxShadow {
-                    color: if p.dark {
-                        p.white.opacity(0.32)
-                    } else {
-                        p.foreground.opacity(0.4)
-                    },
+                    color: p.switch_edge,
                     offset: point(px(0.), px(0.)),
                     blur_radius: px(0.),
                     spread_radius: px(1.),
@@ -593,11 +588,7 @@ pub fn backdrop(p: &Palette) -> Hsla {
 /// for legibility on black, too bright under white text, so dark fills use
 /// a deeper red that keeps white labels at 4.5:1.
 fn destructive_fill(p: &Palette) -> Hsla {
-    if p.dark {
-        Hsla::from(rgb(0xdc2626))
-    } else {
-        p.destructive
-    }
+    p.destructive_fill
 }
 
 struct ButtonStyle {
@@ -815,7 +806,7 @@ pub fn settings_section(
     p: &Palette,
 ) -> Div {
     div()
-        .child(section_header(title, description, p))
+        .child(section_header(title, description, p).px(px(16.)))
         .child(settings_panel(rows, p))
 }
 
@@ -984,15 +975,15 @@ pub fn nav_row(
     let p = &cx.palette();
     let label: SharedString = label.into();
     let (fg, icon_color) = if active {
-        (p.foreground, p.foreground)
+        (p.selection_foreground, p.selection_foreground)
     } else {
         (p.muted_foreground, p.muted_foreground.opacity(0.85))
     };
     // Dark washes (active / hover): the selected row always reads stronger
     // than a hovered one.
-    let (active_wash, hover_wash) = match surface {
-        NavSurface::App => (0.1, 0.07),
-        NavSurface::Settings => (0.08, 0.05),
+    let (active_fill, hover_wash) = match surface {
+        NavSurface::App => (p.nav_app, 0.07),
+        NavSurface::Settings => (p.nav_settings, 0.05),
     };
     let hover_bg = p.hover_wash(if p.dark { hover_wash } else { 0.04 });
     let hover_fg = p.foreground;
@@ -1017,7 +1008,7 @@ pub fn nav_row(
         .border_color(transparent_black())
         .when(active, |d| {
             if p.dark {
-                d.bg(p.white.opacity(active_wash))
+                d.bg(active_fill)
             } else {
                 d.bg(p.card)
                     .border_color(p.border_hover)
@@ -1080,10 +1071,9 @@ pub fn segment(
         .border_1()
         .border_color(transparent_black())
         .when(active, |d| {
-            d.text_color(p.foreground).map(|d| {
+            d.text_color(p.selection_foreground).map(|d| {
                 if p.dark {
-                    d.bg(p.white.opacity(0.15))
-                        .border_color(p.white.opacity(0.08))
+                    d.bg(p.selection).border_color(p.white.opacity(0.08))
                 } else {
                     d.bg(p.card)
                         .border_color(p.border_hover)
