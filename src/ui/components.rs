@@ -679,33 +679,16 @@ fn variant_style(p: &Palette, variant: ButtonVariant) -> ButtonStyle {
 /// Helper text wraps at about 90 characters instead of spanning a wide card.
 pub const DESCRIPTION_MAX_WIDTH: f32 = 560.;
 
-/// `SectionHeader`: a semibold title with an optional description.
-pub fn section_header(
-    title: impl Into<SharedString>,
-    description: Option<SharedString>,
-    p: &Palette,
-) -> Div {
-    div()
-        .mb(px(10.))
-        .child(
-            div()
-                .text_size(px(TEXT_TITLE))
-                .font_weight(FontWeight::SEMIBOLD)
-                .line_height(px(LINE_TITLE))
-                .text_color(p.foreground)
-                .child(title.into()),
-        )
-        .when_some(description, |d, desc| {
-            d.child(
-                div()
-                    .mt(px(2.))
-                    .max_w(px(DESCRIPTION_MAX_WIDTH))
-                    .text_size(px(TEXT_SMALL))
-                    .line_height(px(LINE_SMALL))
-                    .text_color(p.subtle_foreground)
-                    .child(desc),
-            )
-        })
+/// `SectionHeader`: a semibold settings group title.
+pub fn section_header(title: impl Into<SharedString>, p: &Palette) -> Div {
+    div().mb(px(10.)).child(
+        div()
+            .text_size(px(TEXT_TITLE))
+            .font_weight(FontWeight::SEMIBOLD)
+            .line_height(px(LINE_TITLE))
+            .text_color(p.foreground)
+            .child(title.into()),
+    )
 }
 
 /// A one-line tooltip on the popover surface.
@@ -799,14 +782,9 @@ pub fn settings_panel(rows: Vec<AnyElement>, p: &Palette) -> Div {
 }
 
 /// A titled settings group: a `section_header` over a `settings_panel`.
-pub fn settings_section(
-    title: impl Into<SharedString>,
-    description: Option<SharedString>,
-    rows: Vec<AnyElement>,
-    p: &Palette,
-) -> Div {
+pub fn settings_section(title: impl Into<SharedString>, rows: Vec<AnyElement>, p: &Palette) -> Div {
     div()
-        .child(section_header(title, description, p).px(px(16.)))
+        .child(section_header(title, p).px(px(16.)))
         .child(settings_panel(rows, p))
 }
 
