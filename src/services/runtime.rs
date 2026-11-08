@@ -16,7 +16,7 @@ static BLOCKING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
 type StorageJob = Box<dyn FnOnce() + Send>;
 
 static STORAGE: LazyLock<async_channel::Sender<StorageJob>> = LazyLock::new(|| {
-    let (tx, rx) = async_channel::bounded::<StorageJob>(32);
+    let (tx, rx) = async_channel::unbounded::<StorageJob>();
     std::thread::Builder::new()
         .name("whisper-storage".into())
         .spawn(move || {
@@ -60,17 +60,11 @@ where
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
         let _ = tx.send(result);
     });
-    // Enqueue immediately when there is capacity, so dropping an accepted
-    // operation's UI task cannot cancel its durable mutation.
-    let pending = match STORAGE.try_send(job) {
-        Ok(()) => None,
-        Err(async_channel::TrySendError::Full(job)) => Some(job),
-        Err(async_channel::TrySendError::Closed(_)) => panic!("storage worker unavailable"),
-    };
+    // Accept every operation at submission, preserving order even when the
+    // worker is busy. A bounded mailbox deferred overflow into caller futures,
+    // which could be polled out of order or dropped before the write was queued.
+    STORAGE.try_send(job).expect("storage worker available");
     async move {
-        if let Some(job) = pending {
-            STORAGE.send(job).await.expect("storage worker available");
-        }
         match rx.await.expect("storage job completed") {
             Ok(value) => value,
             Err(panic) => std::panic::resume_unwind(panic),
@@ -152,14 +146,17 @@ mod tests {
     #[test]
     fn accepted_storage_writes_survive_dropped_receivers_and_drain_in_order() {
         let values = Arc::new(parking_lot::Mutex::new(Vec::new()));
-        for index in 0..16 {
+        let (release, blocked) = std::sync::mpsc::channel();
+        drop(storage(move || blocked.recv().unwrap()));
+        for index in 0..64 {
             let values = values.clone();
             // These futures deliberately never get polled: acceptance must
             // happen at submission, not when a UI task first runs.
             drop(storage(move || values.lock().push(index)));
         }
+        release.send(()).unwrap();
         drain_storage();
-        assert_eq!(*values.lock(), (0..16).collect::<Vec<_>>());
+        assert_eq!(*values.lock(), (0..64).collect::<Vec<_>>());
     }
 
     #[test]

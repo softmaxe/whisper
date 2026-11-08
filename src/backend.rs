@@ -336,10 +336,6 @@ pub fn monitor_corrections(
 pub fn undo_learned_words(words: &[String], cx: &mut gpui_kit::App) {
     let none: [&str; 0] = [];
     crate::app_state::AppState::global(cx).update(cx, |s, cx| {
-        if let Err(err) =
-            s.change_dictionary(&none, words, crate::db::DictionarySource::Learned, cx)
-        {
-            log::warn!("failed to undo learned words: {err}");
-        }
+        s.change_dictionary(&none, words, crate::db::DictionarySource::Learned, cx);
     });
 }

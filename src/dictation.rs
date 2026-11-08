@@ -441,21 +441,12 @@ impl Dictation {
 
     // ---- Processing --------------------------------------------------------------------------
 
-    fn pipeline_input(audio: bytes::Bytes, cx: &App) -> PipelineInput {
+    fn pipeline_input(
+        audio: bytes::Bytes,
+        cx: &App,
+    ) -> impl std::future::Future<Output = PipelineInput> + Send + 'static {
         let state = AppState::global(cx).read(cx);
-        PipelineInput {
-            audio,
-            settings: state.settings.clone(),
-            dictionary: state.dictionary.clone(),
-            dictionary_priority: Vec::new(),
-            known_corrections: if state.settings.auto_learn_corrections {
-                state.known_corrections.clone()
-            } else {
-                Vec::new()
-            },
-            snippets: state.snippets.clone(),
-            cleanup_api_key: None,
-        }
+        capture_pipeline_input(audio, state.settings.clone(), state.db.clone())
     }
 
     fn process(&mut self, audio: RecordedAudio, cx: &mut Context<Self>) {
@@ -465,7 +456,6 @@ impl Dictation {
             .unwrap_or_else(|| (Instant::now(), Utc::now()));
         let duration = started.elapsed();
         let input = Self::pipeline_input(bytes::Bytes::new(), cx);
-        let db = AppState::global(cx).read(cx).db.clone();
         let generation = self.generation;
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
@@ -493,9 +483,9 @@ impl Dictation {
             if cancel.is_cancelled() {
                 return (PipelineOutcome::Cancelled, wav);
             }
-            let mut input = input;
+            let mut input = input.await;
             input.audio = wav.clone();
-            let outcome = run_prepared_pipeline(input, db, cancel).await;
+            let outcome = run_prepared_pipeline(input, cancel).await;
             log::info!(
                 "[perf] operation={generation} stage=pipeline_complete elapsed_ms={:.3}",
                 stopped.elapsed().as_secs_f64() * 1000.0
@@ -550,8 +540,9 @@ impl Dictation {
         let input = Self::pipeline_input(wav.clone(), cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
-        let db = AppState::global(cx).read(cx).db.clone();
-        let handle = crate::services::runtime::spawn(run_prepared_pipeline(input, db, cancel));
+        let handle = crate::services::runtime::spawn(async move {
+            run_prepared_pipeline(input.await, cancel).await
+        });
         cx.spawn(async move |this, cx| {
             let outcome = handle.await.unwrap_or(PipelineOutcome::Failed {
                 message: "pipeline task failed".into(),
@@ -777,28 +768,51 @@ fn pipeline_task_failed() -> PipelineOutcome {
     }
 }
 
+/// Enqueue at the UI action, before conversion or audio loading can yield.
+/// Earlier edits have settled before this read, and later edits cannot change
+/// this request's rules. Never send optimistic UI projections to the pipeline.
+fn capture_pipeline_input(
+    audio: bytes::Bytes,
+    settings: Settings,
+    db: Arc<crate::db::Database>,
+) -> impl std::future::Future<Output = PipelineInput> + Send + 'static {
+    crate::services::runtime::storage(move || PipelineInput {
+        audio,
+        dictionary: db
+            .get_dictionary_entries()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| entry.word)
+            .collect(),
+        dictionary_priority: db.get_dictionary_by_priority().unwrap_or_default(),
+        known_corrections: if settings.auto_learn_corrections {
+            db.get_known_corrections().unwrap_or_default()
+        } else {
+            Vec::new()
+        },
+        snippets: db.get_snippets().unwrap_or_default(),
+        settings,
+        cleanup_api_key: None,
+    })
+}
+
 async fn run_prepared_pipeline(
     mut input: PipelineInput,
-    db: Arc<crate::db::Database>,
     cancel: CancellationToken,
 ) -> PipelineOutcome {
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
     let needs_key = pipeline::cleanup_enabled(&input.settings);
-    let preparation = crate::services::runtime::blocking(move || {
-        (
-            db.get_dictionary_by_priority().unwrap_or_default(),
-            needs_key
-                .then(backend::cleanup_api_key)
-                .filter(|k| !k.is_empty()),
-        )
-    })
-    .await;
-    let Ok((priority, key)) = preparation else {
+    // Keychain access stays off the storage worker.
+    let key = crate::services::runtime::blocking(move || {
+        needs_key
+            .then(backend::cleanup_api_key)
+            .filter(|k| !k.is_empty())
+    });
+    let Ok(key) = key.await else {
         return pipeline_task_failed();
     };
-    input.dictionary_priority = priority;
     input.cleanup_api_key = key;
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
@@ -810,21 +824,18 @@ async fn run_prepared_pipeline(
 /// pipeline as a live Dictation.
 pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
     let history = AppState::global(cx).read(cx).history_store.clone();
-    let db = AppState::global(cx).read(cx).db.clone();
-    let mut input = Dictation::pipeline_input(bytes::Bytes::new(), cx);
+    let input = Dictation::pipeline_input(bytes::Bytes::new(), cx);
     cx.spawn(async move |cx| {
         let audio = crate::services::runtime::storage(move || history.retry_audio(id)).await;
         let Some(audio) = audio else {
             return Err(t("controlPanel.history.audioNotFound"));
         };
+        let mut input = input.await;
         input.audio = audio.into();
-        let outcome = crate::services::runtime::spawn(run_prepared_pipeline(
-            input,
-            db,
-            CancellationToken::new(),
-        ))
-        .await
-        .map_err(|e| e.to_string())?;
+        let outcome =
+            crate::services::runtime::spawn(run_prepared_pipeline(input, CancellationToken::new()))
+                .await
+                .map_err(|e| e.to_string())?;
         match outcome {
             PipelineOutcome::Transcribed(transcript) => {
                 let failure = transcript.cleanup_failure.clone();
@@ -866,11 +877,20 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
 
 #[cfg(test)]
 mod tests {
-    use super::ErrorActions;
+    use super::{ErrorActions, capture_pipeline_input, run_prepared_pipeline};
+    use crate::db::{Database, DictionarySource, Snippet};
+    use crate::pipeline::PipelineOutcome;
     use crate::services::transcription::{
         CONNECTION_FAILED_CODE, CUSTOM_ENDPOINT_INVALID_CODE, RATE_LIMITED_CODE,
         REQUEST_TIMEOUT_CODE,
     };
+    use crate::services::{
+        runtime,
+        test_server::{MockServer, Reply, run},
+    };
+    use crate::settings::Settings;
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
 
     fn actions(code: Option<&str>) -> (bool, bool) {
         let a = ErrorActions::for_transcription_failure(code);
@@ -892,5 +912,126 @@ mod tests {
     #[test]
     fn an_invalid_endpoint_is_fixed_in_settings_not_by_resending() {
         assert_eq!(actions(Some(CUSTOM_ENDPOINT_INVALID_CODE)), (false, true));
+    }
+
+    #[test]
+    fn failed_edits_never_enter_the_pipeline_even_before_ui_reconciliation() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.lock()
+            .execute_batch(
+                "CREATE TRIGGER reject_snippet BEFORE INSERT ON snippets
+             BEGIN SELECT RAISE(ABORT, 'synthetic snippet failure'); END;
+             CREATE TRIGGER reject_word BEFORE INSERT ON custom_dictionary
+             BEGIN SELECT RAISE(ABORT, 'synthetic dictionary failure'); END;",
+            )
+            .unwrap();
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"hello"}"#));
+        let settings = Settings {
+            remote_transcription_url: server.url("/v1"),
+            use_cleanup_model: false,
+            ..Settings::default()
+        };
+        let (release, blocked) = std::sync::mpsc::channel();
+        drop(runtime::storage(move || blocked.recv().unwrap()));
+        let writing = {
+            let db = db.clone();
+            runtime::storage(move || {
+                (
+                    db.apply_snippet_changes(&[], &[Snippet::new("hello", "rejected replacement")]),
+                    db.apply_dictionary_changes(
+                        &["hello"],
+                        &[] as &[&str],
+                        DictionarySource::Manual,
+                    ),
+                )
+            })
+        };
+        // Capture while the edits are still queued and no UI completion has run.
+        let input = capture_pipeline_input(
+            bytes::Bytes::from_static(b"RIFF test"),
+            settings,
+            db.clone(),
+        );
+        let later_edit = {
+            let db = db.clone();
+            runtime::storage(move || {
+                db.lock()
+                    .execute_batch("DROP TRIGGER reject_snippet;")
+                    .unwrap();
+                db.set_snippets(&[Snippet::new("hello", "later replacement")])
+                    .unwrap();
+            })
+        };
+        release.send(()).unwrap();
+        run(async {
+            later_edit.await;
+            let (snippet, dictionary) = writing.await;
+            assert!(snippet.is_err());
+            assert!(dictionary.is_err());
+            let input = input.await;
+            assert!(input.snippets.is_empty());
+            assert!(input.dictionary.is_empty());
+            assert!(input.dictionary_priority.is_empty());
+            let outcome = run_prepared_pipeline(input, CancellationToken::new()).await;
+            let PipelineOutcome::Transcribed(transcript) = outcome else {
+                panic!("unexpected outcome: {outcome:?}");
+            };
+            assert_eq!(transcript.text, "hello");
+        });
+    }
+
+    #[test]
+    fn pipeline_rules_capture_prior_writes_and_exclude_later_edits() {
+        use crate::text::correction_learner::Correction;
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let writing = {
+            let db = db.clone();
+            runtime::storage(move || {
+                db.apply_dictionary_changes(
+                    &["Claude Code"],
+                    &[] as &[&str],
+                    DictionarySource::Manual,
+                )
+                .unwrap();
+                db.set_snippets(&[Snippet::new("signature", "Regards")])
+                    .unwrap();
+                let correction = Correction {
+                    misheard: "cloud code".into(),
+                    term: "Claude Code".into(),
+                    needs_repeat: false,
+                };
+                db.record_corrections(std::slice::from_ref(&correction))
+                    .unwrap();
+                db.record_corrections(&[correction]).unwrap();
+            })
+        };
+        let enabled = capture_pipeline_input(bytes::Bytes::new(), Settings::default(), db.clone());
+        let disabled = capture_pipeline_input(
+            bytes::Bytes::new(),
+            Settings {
+                auto_learn_corrections: false,
+                ..Settings::default()
+            },
+            db.clone(),
+        );
+        let clearing = runtime::storage(move || {
+            db.clear_dictionary().unwrap();
+            db.set_snippets(&[]).unwrap();
+        });
+        run(async {
+            // Poll in reverse order: submission, not polling, fixes the snapshot.
+            clearing.await;
+            writing.await;
+            let input = enabled.await;
+            assert_eq!(input.dictionary, vec!["Claude Code"]);
+            assert_eq!(input.dictionary_priority, vec!["Claude Code"]);
+            assert_eq!(input.snippets, vec![Snippet::new("signature", "Regards")]);
+            assert_eq!(input.known_corrections.len(), 1);
+            assert!(input.known_corrections[0].applies_automatically());
+            let disabled = disabled.await;
+            assert!(disabled.known_corrections.is_empty());
+            assert_eq!(disabled.dictionary, input.dictionary);
+            assert_eq!(disabled.snippets, input.snippets);
+        });
     }
 }

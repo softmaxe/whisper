@@ -52,6 +52,62 @@ pub struct DictionaryEntry {
     pub last_used_at: Option<DateTime<Utc>>,
 }
 
+impl DictionaryEntry {
+    /// Projects a queued edit without waiting for SQLite. Normalization and
+    /// insertion order match `apply_dictionary_changes`; stored metadata is
+    /// reconciled after the write finishes.
+    pub fn project_changes<A: AsRef<str>, R: AsRef<str>>(
+        entries: &mut Vec<Self>,
+        add: &[A],
+        remove: &[R],
+        source: DictionarySource,
+    ) {
+        let additions = normalize_words(add);
+        let addition_keys: HashSet<&str> = additions.iter().map(|(key, _)| key.as_str()).collect();
+        let removals: HashSet<String> = normalize_words(remove)
+            .into_iter()
+            .map(|(key, _)| key)
+            .filter(|key| !addition_keys.contains(key.as_str()))
+            .collect();
+        let before: HashMap<String, usize> = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.word.to_lowercase(), index))
+            .collect();
+        let removed: HashSet<usize> = removals
+            .iter()
+            .filter_map(|key| before.get(key).copied())
+            .collect();
+        let mut index = 0;
+        entries.retain(|_| {
+            let keep = !removed.contains(&index);
+            index += 1;
+            keep
+        });
+        let positions: HashMap<String, usize> = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.word.to_lowercase(), index))
+            .collect();
+        for (key, word) in additions {
+            if let Some(&index) = positions.get(&key) {
+                let entry = &mut entries[index];
+                entry.word = word;
+                if source == DictionarySource::Manual {
+                    entry.source = source;
+                }
+            } else {
+                entries.push(Self {
+                    word,
+                    source,
+                    use_count: 0,
+                    last_used_at: None,
+                });
+            }
+        }
+    }
+}
+
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 /// Freshness tiers by last use: within a day, within two weeks, older.
 const FRESHNESS_TIER_LIMITS_MS: [i64; 2] = [DAY_MS, 14 * DAY_MS];
@@ -593,6 +649,77 @@ mod tests {
 
     fn manual() -> DictionarySource {
         DictionarySource::Manual
+    }
+
+    #[test]
+    fn immediate_edits_match_sqlite_across_rapid_case_and_source_changes() {
+        let db = Database::open_in_memory().unwrap();
+        let mut projected = Vec::new();
+        let edits = [
+            (
+                vec![" Alpha ", "BETA", "Éclair", "İstanbul"],
+                vec![],
+                DictionarySource::Learned,
+            ),
+            (
+                vec!["alpha", "Gamma", "éclair", "i̇stanbul"],
+                vec!["ALPHA", "Beta"],
+                DictionarySource::Manual,
+            ),
+            (
+                vec!["GAMMA", "\u{feff}新词\u{feff}", "", "新词"],
+                vec!["missing", "alpha"],
+                DictionarySource::Learned,
+            ),
+            (
+                vec!["Alpha", "BETA"],
+                vec!["éclair", "GAMMA"],
+                DictionarySource::Manual,
+            ),
+            (
+                vec!["beta"],
+                vec!["BETA", "İSTANBUL"],
+                DictionarySource::Learned,
+            ),
+        ];
+        for (add, remove, source) in edits {
+            DictionaryEntry::project_changes(&mut projected, &add, &remove, source);
+            db.apply_dictionary_changes(&add, &remove, source).unwrap();
+            assert_eq!(projected, db.get_dictionary_entries().unwrap());
+        }
+        db.record_dictionary_usage("Alpha beta").unwrap();
+        projected = db.get_dictionary_entries().unwrap();
+        DictionaryEntry::project_changes(
+            &mut projected,
+            &["ALPHA"],
+            &[] as &[&str],
+            DictionarySource::Learned,
+        );
+        db.apply_dictionary_changes(&["ALPHA"], &[] as &[&str], DictionarySource::Learned)
+            .unwrap();
+        assert_eq!(
+            projected,
+            db.get_dictionary_entries().unwrap(),
+            "respelling preserves usage and source"
+        );
+    }
+
+    #[test]
+    fn projection_preserves_sqlite_non_ascii_case_distinctions_in_legacy_rows() {
+        let db = Database::open_in_memory().unwrap();
+        db.lock()
+            .execute_batch("INSERT INTO custom_dictionary(word) VALUES ('Éclair'), ('éclair');")
+            .unwrap();
+        let mut projected = db.get_dictionary_entries().unwrap();
+        DictionaryEntry::project_changes(
+            &mut projected,
+            &[] as &[&str],
+            &["ÉCLAIR"],
+            DictionarySource::Manual,
+        );
+        db.apply_dictionary_changes(&[] as &[&str], &["ÉCLAIR"], DictionarySource::Manual)
+            .unwrap();
+        assert_eq!(projected, db.get_dictionary_entries().unwrap());
     }
 
     #[test]

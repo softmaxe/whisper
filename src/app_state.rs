@@ -4,6 +4,10 @@
 //! The control panel and the dictation window stay in sync by observing this
 //! one entity.
 
+mod dictionary_snapshot;
+
+use dictionary_snapshot::DictionarySnapshot;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -11,7 +15,7 @@ use gpui_kit::*;
 
 use crate::audio_storage::{AudioStorage, RetentionCleanupReport};
 use crate::db::{Database, DictionaryEntry, DictionarySource, Snippet, TranscriptionItem};
-use crate::history::{HistoryStore, Recorded};
+use crate::history::{HistoryStore, HistoryWrite};
 use crate::i18n::{self, Language};
 use crate::native::text_monitor::SessionReport;
 use crate::settings::Settings;
@@ -54,6 +58,9 @@ pub struct AppState {
     pub history_loaded: bool,
     history_revision: u64,
     dictionary_revision: Arc<AtomicU64>,
+    dictionary_write_revision: u64,
+    dictionary_snapshot_sequence: u64,
+    snippets_revision: u64,
     pub dictionary: Vec<String>,
     /// The same words as `dictionary`, with source and usage.
     pub dictionary_entries: Vec<DictionaryEntry>,
@@ -86,6 +93,9 @@ impl AppState {
             history_loaded: false,
             history_revision: 0,
             dictionary_revision: Arc::new(AtomicU64::new(0)),
+            dictionary_write_revision: 0,
+            dictionary_snapshot_sequence: 0,
+            snippets_revision: 0,
             dictionary,
             dictionary_entries,
             known_corrections,
@@ -165,9 +175,7 @@ impl AppState {
     pub fn record_history(
         &mut self,
         cx: &mut Context<Self>,
-        write: impl FnOnce(&HistoryStore, &Settings) -> anyhow::Result<Option<Recorded>>
-        + Send
-        + 'static,
+        write: impl FnOnce(&HistoryStore, &Settings) -> HistoryWrite + Send + 'static,
     ) -> Task<anyhow::Result<Option<i64>>> {
         self.history_revision += 1;
         let revision = self.history_revision;
@@ -180,8 +188,10 @@ impl AppState {
         let job = crate::services::runtime::storage(move || {
             let written = write(&store, &settings);
             let rows = db.get_transcriptions(HISTORY_LIMIT);
-            let dictionary = (db.get_dictionary_entries(), db.get_known_corrections());
-            (written, rows, dictionary)
+            let dictionary = written
+                .dictionary_changed
+                .then(|| DictionarySnapshot::read(&db));
+            (written.result, rows, dictionary)
         });
         cx.spawn(async move |this, cx| {
             let (written, rows, dictionary) = job.await;
@@ -198,7 +208,9 @@ impl AppState {
                     cx.emit(AppEvent::HistoryChanged);
                     cx.notify();
                 }
-                if this.dictionary_revision.load(Ordering::SeqCst) == dictionary_revision {
+                if this.dictionary_revision.load(Ordering::SeqCst) == dictionary_revision
+                    && let Some(dictionary) = dictionary
+                {
                     this.apply_dictionary_snapshot(dictionary, cx);
                 }
                 if written
@@ -298,36 +310,93 @@ impl AppState {
         })
     }
 
-    /// Adds and removes Dictionary words, then shows the stored list.
+    /// Publishes the edit immediately for consecutive UI actions, then persists
+    /// it on the storage worker and reconciles with the authoritative rows.
     pub fn change_dictionary<A: AsRef<str>, R: AsRef<str>>(
         &mut self,
         add: &[A],
         remove: &[R],
         source: DictionarySource,
         cx: &mut Context<Self>,
-    ) -> anyhow::Result<()> {
-        self.dictionary_revision.fetch_add(1, Ordering::SeqCst);
-        let result = self.db.apply_dictionary_changes(add, remove, source);
-        self.reload_dictionary(cx);
-        result
+    ) {
+        DictionaryEntry::project_changes(&mut self.dictionary_entries, add, remove, source);
+        // SQLite's NOCASE collation folds ASCII only. Match its correction
+        // joins, including case-only respellings and newly protected words.
+        let entries: std::collections::HashMap<String, &str> = self
+            .dictionary_entries
+            .iter()
+            .map(|entry| (entry.word.to_ascii_lowercase(), entry.word.as_str()))
+            .collect();
+        self.known_corrections.retain_mut(|correction| {
+            let Some(&word) = entries.get(&correction.term.to_ascii_lowercase()) else {
+                return false;
+            };
+            correction.term = word.to_string();
+            entries
+                .get(&correction.misheard.to_ascii_lowercase())
+                .is_none_or(|other| *other == word)
+        });
+        let add: Vec<String> = add.iter().map(|word| word.as_ref().to_string()).collect();
+        let remove: Vec<String> = remove
+            .iter()
+            .map(|word| word.as_ref().to_string())
+            .collect();
+        self.persist_dictionary_edit(cx, "failed to update the dictionary", move |db| {
+            db.apply_dictionary_changes(&add, &remove, source)
+        });
     }
 
     /// Forgets one way `term` was misheard.
     pub fn remove_correction(&mut self, misheard: &str, term: &str, cx: &mut Context<Self>) {
-        self.dictionary_revision.fetch_add(1, Ordering::SeqCst);
-        if let Err(err) = self.db.remove_correction(misheard, term) {
-            log::warn!("failed to remove a correction: {err}");
-        }
-        self.reload_dictionary(cx);
+        self.known_corrections.retain(|correction| {
+            !(correction.misheard.eq_ignore_ascii_case(misheard)
+                && correction.term.eq_ignore_ascii_case(term))
+        });
+        let (misheard, term) = (misheard.to_string(), term.to_string());
+        self.persist_dictionary_edit(cx, "failed to remove a correction", move |db| {
+            db.remove_correction(&misheard, &term)
+        });
     }
 
     /// Empties the Dictionary and what auto-learn knows about it.
     pub fn clear_dictionary(&mut self, cx: &mut Context<Self>) {
+        self.dictionary_entries.clear();
+        self.known_corrections.clear();
+        self.persist_dictionary_edit(
+            cx,
+            "failed to clear the dictionary",
+            Database::clear_dictionary,
+        );
+    }
+
+    fn persist_dictionary_edit(
+        &mut self,
+        cx: &mut Context<Self>,
+        error_context: &'static str,
+        write: impl FnOnce(&Database) -> anyhow::Result<()> + Send + 'static,
+    ) {
         self.dictionary_revision.fetch_add(1, Ordering::SeqCst);
-        if let Err(err) = self.db.clear_dictionary() {
-            log::warn!("failed to clear the dictionary: {err}");
-        }
-        self.reload_dictionary(cx);
+        self.dictionary_write_revision += 1;
+        let revision = self.dictionary_write_revision;
+        self.publish_dictionary(cx);
+        let db = self.db.clone();
+        let job = crate::services::runtime::storage(move || {
+            if let Err(err) = write(&db) {
+                log::warn!("{error_context}: {err}");
+            }
+            // Read even after failure, so an optimistic edit cannot remain as
+            // phantom data. Keep the old reload behavior on read failure.
+            DictionarySnapshot::read(&db).default_on_read_failure()
+        });
+        cx.spawn(async move |this, cx| {
+            let snapshot = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.dictionary_write_revision == revision {
+                    this.apply_dictionary_snapshot(snapshot, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// Learns from a finished post-paste session. Returns the words added to
@@ -377,8 +446,7 @@ impl AppState {
                 {
                     log::warn!("failed to save auto-learn stats: {err}");
                 }
-                let dictionary = (!corrections.is_empty())
-                    .then(|| (db.get_dictionary_entries(), db.get_known_corrections()));
+                let dictionary = (!corrections.is_empty()).then(|| DictionarySnapshot::read(&db));
                 (learned, dictionary)
             })
             .await;
@@ -395,46 +463,50 @@ impl AppState {
         })
     }
 
-    fn apply_dictionary_snapshot(
-        &mut self,
-        snapshot: (
-            anyhow::Result<Vec<DictionaryEntry>>,
-            anyhow::Result<Vec<KnownCorrection>>,
-        ),
-        cx: &mut Context<Self>,
-    ) {
-        let (Ok(entries), Ok(corrections)) = snapshot else {
-            return;
-        };
-        self.dictionary_entries = entries;
-        self.dictionary = self
-            .dictionary_entries
-            .iter()
-            .map(|e| e.word.clone())
-            .collect();
-        self.known_corrections = corrections;
-        cx.emit(AppEvent::DictionaryChanged);
-        cx.notify();
+    fn apply_dictionary_snapshot(&mut self, snapshot: DictionarySnapshot, cx: &mut Context<Self>) {
+        if snapshot.apply(
+            &mut self.dictionary_snapshot_sequence,
+            &mut self.dictionary_entries,
+            &mut self.known_corrections,
+        ) {
+            self.publish_dictionary(cx);
+        }
     }
 
-    fn reload_dictionary(&mut self, cx: &mut Context<Self>) {
-        self.dictionary_entries = self.db.get_dictionary_entries().unwrap_or_default();
+    fn publish_dictionary(&mut self, cx: &mut Context<Self>) {
         self.dictionary = self
             .dictionary_entries
             .iter()
             .map(|e| e.word.clone())
             .collect();
-        self.known_corrections = self.db.get_known_corrections().unwrap_or_default();
         cx.emit(AppEvent::DictionaryChanged);
         cx.notify();
     }
 
     pub fn set_snippets(&mut self, snippets: Vec<Snippet>, cx: &mut Context<Self>) {
-        if let Err(err) = self.db.set_snippets(&snippets) {
-            log::warn!("failed to save snippets: {err}");
-        }
-        self.snippets = self.db.get_snippets().unwrap_or(snippets);
+        self.snippets_revision += 1;
+        let revision = self.snippets_revision;
+        let before = self.snippets.clone();
+        self.snippets = Snippet::project_list(&before, &snippets);
         cx.emit(AppEvent::SnippetsChanged);
         cx.notify();
+        let db = self.db.clone();
+        let job = crate::services::runtime::storage(move || {
+            if let Err(err) = db.apply_snippet_changes(&before, &snippets) {
+                log::warn!("failed to save snippets: {err}");
+            }
+            db.get_snippets().unwrap_or(snippets)
+        });
+        cx.spawn(async move |this, cx| {
+            let snippets = job.await;
+            let _ = this.update(cx, |this, cx| {
+                if this.snippets_revision == revision {
+                    this.snippets = snippets;
+                    cx.emit(AppEvent::SnippetsChanged);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 }
