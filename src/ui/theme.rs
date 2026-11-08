@@ -383,7 +383,11 @@ pub const LINE_TITLE: f32 = 24.;
 /// Workspace geometry. These keep the top bar, sidebar rows and settings
 /// navigation on the same compact control rhythm.
 /// The top bar centers on the traffic lights.
-pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 52.;
+pub const WORKSPACE_TOP_BAR_HEIGHT: f32 = 40.;
+/// AppKit's standard button frames are 14 points tall. Center them on the same
+/// axis as the workspace controls instead of spacing the titlebar independently.
+pub const WINDOW_CONTROL_INSET_X: f32 = 10.;
+pub const WINDOW_CONTROL_INSET_Y: f32 = (WORKSPACE_TOP_BAR_HEIGHT - 14.) / 2.;
 pub const NAV_ROW_HEIGHT: f32 = 32.;
 /// Height of buttons, inputs and selects at their default size.
 pub const CONTROL_HEIGHT: f32 = 32.;

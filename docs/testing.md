@@ -24,6 +24,7 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 
 ## Sidebar interaction regression check
 
+- Check that the native window buttons, sidebar toggle, brand, and page title share the centerline of the compact 40-point top bar. The toggle's hit target must stay 18 points clear of the green window button, with 12 points between the toggle's hit target and the brand. In the collapsed state, the page title should start at the same inset as the expanded brand. Repeat with Settings covering the window and after leaving fullscreen.
 - Leave the pointer on the sidebar toggle and repeatedly click it, including slow press/release and reversals before the animation finishes. The toggle must stay beside the native window controls, with no unexpected reopening or window movement. Hovering it or the left edge must never change the sidebar state.
 - Verify the sidebar and workspace move together without an overlay, clipping leaks, or a jump at either end. Check Home, Insights, Upload, and Dictionary with a long transcript list and at the minimum window size. The active page and scroll position must survive toggling.
 - Check that the brand slides with navigation within its own clipping slot, while the window controls and sidebar toggle stay fixed. During the 200 ms transition and reversals, no brand text may cross into the toggle or window controls.

@@ -41,7 +41,10 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<ControlPanelWindow> {
         titlebar: Some(TitlebarOptions {
             title: Some("Whisper".into()),
             appears_transparent: true,
-            traffic_light_position: Some(point(px(20.), px(20.))),
+            traffic_light_position: Some(point(
+                px(ui::theme::WINDOW_CONTROL_INSET_X),
+                px(ui::theme::WINDOW_CONTROL_INSET_Y),
+            )),
         }),
         window_min_size: Some(size(px(720.), px(480.))),
         app_id: Some("com.softmaxe.whisper".into()),

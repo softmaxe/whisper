@@ -29,10 +29,10 @@ actions!(control_panel, [OpenSearch, OpenSettings, CloseOverlay]);
 
 pub const SIDEBAR_WIDTH: f32 = 232.;
 /// Separate window controls from app navigation, with a fixed toggle in both states.
-const SIDEBAR_TOGGLE_LEFT: f32 = 96.;
+const SIDEBAR_TOGGLE_LEFT: f32 = 88.;
 const SIDEBAR_TOGGLE_SIZE: f32 = 28.;
-const BRAND_INSET: f32 = 128.;
-const COLLAPSED_TITLE_INSET: f32 = 140.;
+const BRAND_INSET: f32 = SIDEBAR_TOGGLE_LEFT + SIDEBAR_TOGGLE_SIZE + 12.;
+const COLLAPSED_TITLE_INSET: f32 = BRAND_INSET;
 const SIDEBAR_DURATION: u64 = 200;
 /// Height of the fade that softens content scrolled under the top bar.
 const SCROLL_FADE: f32 = 28.;
