@@ -2,9 +2,10 @@
 //! screenshots of every view need no pointer input.
 //!
 //! Values: `home`, `insights`, `upload`, `dictionary`, `search`,
-//! `settings[:general|hotkeys|speech|llms|privacy]`, and the pill states
+//! `settings[:general|language|hotkeys|speech|llms|privacy]`, and the pill states
 //! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
 //! `pill:error`, `pill:fallback`.
+//! `WHISPER_DEV_SCROLL_FRACTION=0.5` or `1` captures the middle or bottom of Settings.
 
 use std::time::Duration;
 

@@ -6,8 +6,9 @@
 //! over the pill and its panels.
 //!
 //! The pill, its panels and its hints share one dark HUD surface in both
-//! themes, like the system volume HUD, so they read as one component over any
-//! wallpaper or app. The window never takes keyboard focus: Escape reaches it
+//! light and neutral dark themes, with a matching surface for Tokyo Night,
+//! so they read as one component over any wallpaper or app. The window never
+//! takes keyboard focus: Escape reaches it
 //! through a global shortcut registered only while the microphone is live or
 //! the lossless copy-recovery panel is open. The error card never takes it,
 //! since it can hold the only copy of a recording.
@@ -21,7 +22,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use crate::i18n::t;
-use crate::settings::PanelStartPosition;
+use crate::settings::{PanelStartPosition, ThemePreference};
 
 use crate::app_state::{AppState, DictationSnapshot};
 use crate::backend;
@@ -122,9 +123,13 @@ const PREPARE_W: f32 = 104.;
 const PREPARE_DOT: f32 = 6.;
 const PREPARE_MORPH_MS: u64 = 680;
 
-/// The pill's surfaces always use the dark palette; see the module docs.
-fn hud() -> Palette {
-    Palette::dark()
+/// The floating HUD remains dark over any wallpaper, while honoring named themes.
+fn hud(cx: &App) -> Palette {
+    if cx.global::<super::theme::Theme>().preference == ThemePreference::TokyoNight {
+        Palette::tokyo_night()
+    } else {
+        Palette::dark()
+    }
 }
 
 /// The HUD's outline. Brighter than the dark palette's borders so the
@@ -163,8 +168,8 @@ struct HudTip {
 }
 
 impl Render for HudTip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let p = hud();
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = hud(cx);
         div()
             .font_family(FONT_UI)
             .flex()
@@ -962,7 +967,7 @@ impl PillView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let p = hud();
+        let p = hud(cx);
         let reduce = cx.reduce_motion();
         let finishing = !snapshot.is_active();
         let recording = snapshot.is_recording;
@@ -1036,7 +1041,7 @@ impl PillView {
                     .w(px(w))
                     .h(px(h))
                     .rounded_full()
-                    .bg(p.white.opacity(alpha * bars_alpha)),
+                    .bg(p.voice.opacity(alpha * bars_alpha)),
             );
         }
         let dot_color = p
@@ -1207,7 +1212,7 @@ impl PillView {
                 features: tabular_nums(),
                 ..font(FONT_UI)
             },
-            color: hud().foreground,
+            color: Palette::dark().foreground,
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -1245,7 +1250,7 @@ impl PillView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (AnyElement, f32) {
-        let p = hud();
+        let p = hud(cx);
         let reduce = cx.reduce_motion();
         let t_in = f32_tx(
             "cancel-emerge",
@@ -1319,8 +1324,8 @@ impl PillView {
 
     /// What the pointed-at control does, shown above the pill on hover. The
     /// processing pill already names itself, so it has no hint of its own.
-    fn render_hint(snapshot: &DictationSnapshot, on_cancel: bool) -> Option<Div> {
-        let p = hud();
+    fn render_hint(snapshot: &DictationSnapshot, on_cancel: bool, cx: &App) -> Option<Div> {
+        let p = hud(cx);
         let caption = |text: String, color: Hsla| div().text_color(color).child(text);
         let row = div()
             .flex()
@@ -1367,7 +1372,7 @@ impl PillView {
         on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut App,
     ) -> Stateful<Div> {
-        let p = hud();
+        let p = hud(cx);
         let now = Instant::now();
         let remaining = countdown.map_or(0., |c| c.remaining(now));
         let closes_in = countdown.map(|c| {
@@ -1447,7 +1452,7 @@ impl PillView {
         primary: bool,
         cx: &mut App,
     ) -> Stateful<Div> {
-        let p = hud();
+        let p = hud(cx);
         // The primary action takes the app's accent, as primary actions do
         // in the main window.
         let (bg, hover, fg) = if primary {
@@ -1479,8 +1484,8 @@ impl PillView {
     }
 
     /// The HUD card both panels sit on.
-    fn panel_card(id: &'static str) -> Stateful<Div> {
-        let p = hud();
+    fn panel_card(id: &'static str, cx: &App) -> Stateful<Div> {
+        let p = hud(cx);
         div()
             .id(id)
             .relative()
@@ -1505,8 +1510,9 @@ impl PillView {
         title: String,
         body: Option<String>,
         dismiss: Stateful<Div>,
+        cx: &App,
     ) -> Div {
-        let p = hud();
+        let p = hud(cx);
         let line = div()
             .flex()
             .items_start()
@@ -1563,7 +1569,7 @@ impl PillView {
     }
 
     fn render_error(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let p = hud();
+        let p = hud(cx);
         let reduce = cx.reduce_motion();
         let error = self.error.as_ref()?;
         let countdown = error.countdown;
@@ -1680,13 +1686,14 @@ impl PillView {
             .child(record)
             .children(settings);
         Some(
-            Self::panel_card("pill-error")
+            Self::panel_card("pill-error", cx)
                 .child(Self::panel_header(
                     "alert-circle",
                     p.destructive,
                     title,
                     Some(description),
                     dismiss,
+                    cx,
                 ))
                 .child(actions)
                 .with_animation(
@@ -1702,7 +1709,7 @@ impl PillView {
     }
 
     fn render_recovery(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let p = hud();
+        let p = hud(cx);
         let reduce = cx.reduce_motion();
         let recovery = self.recovery.as_ref()?;
         let countdown = recovery.countdown;
@@ -1809,7 +1816,7 @@ impl PillView {
                 )
             });
         Some(
-            Self::panel_card("pill-recovery")
+            Self::panel_card("pill-recovery", cx)
                 .max_h(px(420.))
                 .overflow_hidden()
                 .child(Self::panel_header(
@@ -1818,6 +1825,7 @@ impl PillView {
                     title,
                     description,
                     dismiss,
+                    cx,
                 ))
                 .child(transcript)
                 .child(footer)
@@ -1837,7 +1845,7 @@ impl PillView {
         if self.toasts.is_empty() {
             return None;
         }
-        let p = hud();
+        let p = hud(cx);
         let mut stack = div().flex().flex_col().gap(px(6.)).w(px(TOAST_W));
         for (i, toast) in self.toasts.iter().enumerate() {
             let (icon_name, accent) = match toast.kind {
@@ -2012,7 +2020,7 @@ impl Render for PillView {
             // The hint sits above the pill, aligned with it; toasts take
             // that spot when present.
             let hint = (self.hovered && active && self.toasts.is_empty())
-                .then(|| Self::render_hint(&snapshot, self.cancel_hovered))
+                .then(|| Self::render_hint(&snapshot, self.cancel_hovered, cx))
                 .flatten();
             if let Some(hint) = hint {
                 let hint =

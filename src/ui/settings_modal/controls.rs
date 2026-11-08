@@ -156,15 +156,10 @@ pub(super) fn activation_mode_cards(
                 .rounded(px(RADIUS_XL))
                 .border_1()
                 .map(|d| {
-                    // Selection takes the accent, as an open select or a
-                    // focused field does.
-                    // Both start from the card tone every settings group uses;
-                    // selection tints it with the accent rather than dimming it.
+                    // Selection is a quiet surface and radio dot; the focus ring
+                    // remains reserved for keyboard focus.
                     if selected {
-                        d.border_color(p.ring)
-                            .bg(p
-                                .card
-                                .blend(p.primary.opacity(if p.dark { 0.12 } else { 0.06 })))
+                        d.border_color(p.control_border).bg(p.selection)
                     } else {
                         d.border_color(p.border).bg(p.card)
                     }

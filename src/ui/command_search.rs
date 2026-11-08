@@ -275,9 +275,7 @@ impl Render for CommandSearch {
                         .py(px(6.))
                         .rounded(px(RADIUS_LG))
                         .cursor_pointer()
-                        .when(selected, |d| {
-                            d.bg(p.hover_wash(if p.dark { 0.11 } else { 0.08 }))
-                        })
+                        .when(selected, |d| d.bg(p.list_highlight))
                         .when(!selected, |d| {
                             d.hover(move |s| s.bg(p.foreground.opacity(0.06)))
                         })
@@ -296,14 +294,18 @@ impl Render for CommandSearch {
                                 .font_family(FONT_VOICE)
                                 .text_size(px(TEXT_BODY))
                                 .text_color(if selected {
-                                    p.foreground
+                                    p.selection_foreground
                                 } else {
                                     p.foreground.opacity(0.85)
                                 })
                                 .child(highlighted(
                                     &match_window(&item.text, &needle),
                                     &needle,
-                                    p.foreground,
+                                    if selected {
+                                        p.selection_foreground
+                                    } else {
+                                        p.foreground
+                                    },
                                     p.primary.opacity(if p.dark { 0.32 } else { 0.16 }),
                                 )),
                         )

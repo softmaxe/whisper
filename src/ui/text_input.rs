@@ -141,11 +141,7 @@ fn field_frame(
     let disabled = state == FieldState::Disabled;
     let border = if focused { p.ring } else { p.input_border };
     let border = color_tx(("field-border", id), border, DUR_BASE, window, cx);
-    let bg = if p.dark {
-        p.white.opacity(0.035)
-    } else {
-        p.input
-    };
+    let bg = p.field_background;
     // Focus draws a 3 px ring outside the border; at rest a faint lift.
     let shadow = if focused {
         vec![BoxShadow {
@@ -191,11 +187,7 @@ fn field_frame(
             if focused || disabled {
                 s
             } else {
-                s.border_color(if p.dark {
-                    p.white.opacity(0.18)
-                } else {
-                    p.border_hover.blend(p.foreground.opacity(0.08))
-                })
+                s.border_color(p.field_hover_border)
             }
         })
         .child(

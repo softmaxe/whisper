@@ -47,7 +47,7 @@ typing in.
   and weekly rhythm. Everything is computed on device.
 - **Fits into macOS.** Menu bar icon, standard app menu, start at login
   (macOS 13+), optional media pause while recording, English and Simplified
-  Chinese UI, and light, dark or automatic themes.
+  Chinese UI, and light, dark, Tokyo Night or automatic themes.
 - **Keyboard and VoiceOver.** Every control is reachable with Tab and named for
   VoiceOver, lists and charts move with the arrow keys, and animations follow
   the macOS Reduce motion setting.
