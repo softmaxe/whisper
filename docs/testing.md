@@ -22,6 +22,15 @@ Both pull requests and pushes to `main` can restore Cargo output from an older l
 
 The Release workflow builds and publishes a signed package for a `v<version>` tag on `main` once CI has passed on that commit. See the workflow files for the exact steps and [macOS signing](macos-signing.md) for the release identity.
 
+## Sidebar interaction regression check
+
+- Leave the pointer on the sidebar toggle and repeatedly click it, including slow press/release and reversals before the animation finishes. The toggle must stay beside the native window controls, with no unexpected reopening or window movement. Hovering it or the left edge must never change the sidebar state.
+- Verify the sidebar and workspace move together without an overlay, clipping leaks, or a jump at either end. Check Home, Insights, Upload, and Dictionary with a long transcript list and at the minimum window size. The active page and scroll position must survive toggling.
+- Check that the brand slides with navigation within its own clipping slot, while the window controls and sidebar toggle stay fixed. During the 200 ms transition and reversals, no brand text may cross into the toggle or window controls.
+- Watch the toggle itself: its chevron must morph into the divider on collapse and emerge from it on expansion, with the outline stationary. Click again during the morph; the path must continue from its visible shape. With Reduce motion enabled, the icon must snap directly to its final shape.
+- Activate the toggle with Tab and Return or Space. After collapse completes, Tab and Shift-Tab must skip hidden navigation; after expanding, navigation must be reachable again. Repeat after closing Settings and command search.
+- Reopen the app in each sidebar state and confirm the saved state appears immediately. Check both interface languages and light, dark, and Tokyo Night themes. With macOS Reduce motion enabled, toggling must change layout immediately.
+
 ## Dropdown interaction regression check
 
 - In Settings, open and close each select by clicking its trigger again: interface language, speech language, Chinese script, microphone, recording pill position, audio retention, and transcript retention. Repeat with a slow press and release and with several consecutive clicks.

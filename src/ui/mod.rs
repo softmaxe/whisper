@@ -14,6 +14,7 @@ pub mod pill;
 mod scroll;
 pub mod select;
 pub mod settings_modal;
+mod sidebar_icon;
 pub mod text_input;
 pub mod theme;
 pub mod upload_view;
