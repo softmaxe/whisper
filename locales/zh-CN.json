@@ -448,6 +448,7 @@
     }
   },
   "upload": {
+    "transcriptionTimeout": "文件转写超时。请重试或检查服务器。",
     "chooseFiles": "选择文件",
     "unsupportedFiles": "已跳过 {{names}}：不支持的音频或视频格式。",
     "transcribe": "转录",

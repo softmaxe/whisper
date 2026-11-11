@@ -527,6 +527,7 @@
     "perWeekValue": "{{count}} words/week"
   },
   "upload": {
+    "transcriptionTimeout": "File transcription timed out. Try again or check the server.",
     "chooseFiles": "Choose Files",
     "unsupportedFiles": "Skipped {{names}}: not a supported audio or video format.",
     "transcribe": "Transcribe",

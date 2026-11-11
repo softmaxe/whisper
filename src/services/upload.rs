@@ -5,14 +5,17 @@
 //! may not accept are re-encoded to mono 16 kHz MP3 first.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::services::ffmpeg::{FfmpegError, convert_to_mp3};
-use crate::services::runtime::http_client;
+use crate::services::runtime::file_http_client;
 use crate::services::transcription::resolve_route;
 use crate::text::api_error::extract_api_error_message;
+
+const FILE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// Extensions the upload picker admits.
 pub const UPLOAD_AUDIO_EXTENSIONS: &[&str] = &[
@@ -138,9 +141,18 @@ pub async fn transcribe_audio_file(
     request: FileTranscriptionRequest,
     cancel: CancellationToken,
 ) -> Result<String, UploadError> {
+    transcribe_with_timeout(request, cancel, FILE_TIMEOUT).await
+}
+
+async fn transcribe_with_timeout(
+    request: FileTranscriptionRequest,
+    cancel: CancellationToken,
+    timeout: Duration,
+) -> Result<String, UploadError> {
     let result = tokio::select! {
         biased;
         _ = cancel.cancelled() => Err(cancelled_error()),
+        _ = tokio::time::sleep(timeout) => Err(timeout_error()),
         result = transcribe_file_inner(&request, &cancel) => result,
     };
     match result {
@@ -158,6 +170,23 @@ pub async fn transcribe_audio_file(
 
 fn cancelled_error() -> UploadError {
     UploadError::plain("Cancelled")
+}
+
+fn timeout_error() -> UploadError {
+    UploadError {
+        message: "File transcription timed out. Try again or check the server.".into(),
+        code: Some("FILE_TRANSCRIPTION_TIMEOUT".into()),
+        message_key: Some("upload.transcriptionTimeout".into()),
+    }
+}
+
+fn request_error(error: reqwest::Error) -> UploadError {
+    if error.is_timeout() {
+        timeout_error()
+    } else {
+        // The endpoint may carry credentials in its query.
+        UploadError::plain(error.without_url().to_string())
+    }
 }
 
 async fn transcribe_file_inner(
@@ -211,18 +240,14 @@ async fn transcribe_file_inner(
         form = form.text("language", language);
     }
 
-    let response = http_client()
+    let response = file_http_client()
         .post(&route.endpoint)
         .multipart(form)
         .send()
         .await
-        // The endpoint may carry credentials in its query.
-        .map_err(|e| UploadError::plain(e.without_url().to_string()))?;
+        .map_err(request_error)?;
     let status = response.status().as_u16();
-    let text = response
-        .text()
-        .await
-        .map_err(|e| UploadError::plain(e.without_url().to_string()))?;
+    let text = response.text().await.map_err(request_error)?;
     let Ok(data) = serde_json::from_str::<Value>(&text) else {
         // Proxies and gateways return non-JSON error pages (413, 504).
         let excerpt: String = text.chars().take(120).collect();
@@ -429,6 +454,120 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.message, "Cancelled");
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn file_deadline_reports_a_localized_error_and_allows_the_next_file() {
+        let server = MockServer::start(|request| {
+            let reply = Reply::json(200, r#"{"text":"next file"}"#);
+            if request.path.starts_with("/slow/") {
+                reply.delayed(Duration::from_secs(2))
+            } else {
+                reply
+            }
+        });
+        let (_dir, path) = temp_audio("wav");
+        let cancel = CancellationToken::new();
+        let mut request = FileTranscriptionRequest {
+            file_path: path,
+            remote_transcription_url: server.url("/slow/v1"),
+            ..Default::default()
+        };
+        let error = run(transcribe_with_timeout(
+            request.clone(),
+            cancel.clone(),
+            Duration::from_millis(100),
+        ))
+        .unwrap_err();
+        assert_eq!(error, timeout_error());
+        assert!(!cancel.is_cancelled());
+        for locale in [
+            include_str!("../../locales/en.json"),
+            include_str!("../../locales/zh-CN.json"),
+        ] {
+            let locale: Value = serde_json::from_str(locale).unwrap();
+            assert!(
+                !locale["upload"]["transcriptionTimeout"]
+                    .as_str()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        request.remote_transcription_url = server.url("/v1");
+        assert_eq!(
+            run(transcribe_audio_file(request, cancel)).unwrap(),
+            "next file"
+        );
+    }
+
+    #[test]
+    fn file_deadline_includes_a_stalled_response_body() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let (sent, headers) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let started = std::time::Instant::now();
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(started.elapsed() < Duration::from_secs(5));
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buffer = [0; 4096];
+            assert!(stream.read(&mut buffer).unwrap() > 0);
+            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10000\r\nContent-Type: application/json\r\n\r\n{").unwrap();
+            sent.send(()).unwrap();
+            wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        let (_dir, path) = temp_audio("wav");
+        let error = run(transcribe_with_timeout(
+            FileTranscriptionRequest {
+                file_path: path,
+                remote_transcription_url: format!("http://{address}/v1"),
+                ..Default::default()
+            },
+            CancellationToken::new(),
+            Duration::from_millis(500),
+        ))
+        .unwrap_err();
+        release.send(()).unwrap();
+        server.join().unwrap();
+        headers.try_recv().unwrap();
+        assert_eq!(error, timeout_error());
+    }
+
+    #[test]
+    fn request_timeouts_use_the_same_error_and_cancel_takes_precedence() {
+        let server = MockServer::start(|_| Reply::json(200, "{}").delayed(Duration::from_secs(2)));
+        let error = run(async {
+            file_http_client()
+                .get(server.url("/slow"))
+                .timeout(Duration::from_millis(100))
+                .send()
+                .await
+        })
+        .unwrap_err();
+        assert_eq!(request_error(error), timeout_error());
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = run(transcribe_with_timeout(
+            FileTranscriptionRequest::default(),
+            cancel,
+            Duration::ZERO,
+        ))
+        .unwrap_err();
+        assert_eq!(error, cancelled_error());
     }
 
     #[test]

@@ -91,6 +91,14 @@ static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
         })
 });
 
+static FILE_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .no_proxy()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("file transcription HTTP client")
+});
+
 fn build_runtime() -> Runtime {
     let multi = Builder::new_multi_thread()
         .worker_threads(2)
@@ -120,6 +128,11 @@ fn build_runtime() -> Runtime {
 /// The shared HTTP client (connection pool reused across requests).
 pub fn http_client() -> &'static reqwest::Client {
     &HTTP_CLIENT
+}
+
+/// File uploads have their own connection limit; dictation keeps its policy.
+pub fn file_http_client() -> &'static reqwest::Client {
+    &FILE_HTTP_CLIENT
 }
 
 /// Spawns a future on the shared runtime. The handle can be awaited from any
