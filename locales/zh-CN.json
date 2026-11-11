@@ -487,6 +487,8 @@
     "historyOff": "历史记录已关闭。转录结果只在此处显示，不会保存。",
     "openHistory": "打开历史记录",
     "copyText": "复制文本",
+    "savingToHistory": "正在保存到历史记录…",
+    "retryFailed": "重试失败项",
     "saveFailed": "未能保存到历史记录",
     "transcribeFiles": "转录 {{count}} 个文件",
     "removeFromQueue": "从队列中移除 {{name}}"

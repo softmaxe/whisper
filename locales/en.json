@@ -566,6 +566,8 @@
     "historyOff": "History is off. Transcripts show here but aren’t saved.",
     "openHistory": "Open History",
     "copyText": "Copy Text",
+    "savingToHistory": "Saving to History…",
+    "retryFailed": "Retry failed",
     "saveFailed": "Couldn’t save to History",
     "transcribeFiles_one": "Transcribe {{count}} File",
     "transcribeFiles_other": "Transcribe {{count}} Files",
