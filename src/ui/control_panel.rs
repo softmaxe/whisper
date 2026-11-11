@@ -10,13 +10,13 @@ use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
-    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
-    MenuTriggerBounds, NavSurface, drop, f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row,
-    scroll_thumb, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, NavSurface, drop,
+    f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
+use super::menu::{MenuAppearance, MenuFocus, MenuPlacement, PopupMenu};
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::sidebar_icon::SidebarIcon;
@@ -547,10 +547,12 @@ impl ControlPanel {
 
     fn close_page_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.page_menu_open = false;
-        if keyed_focus_handle("history-page-clear".into(), cx).is_focused(window) {
-            let trigger = keyed_focus_handle("history-page-menu".into(), cx);
-            window.focus(&trigger, cx);
-        }
+        MenuFocus::new(
+            ["history-page-clear".into()],
+            "history-page-menu".into(),
+            cx,
+        )
+        .restore(false, window, cx);
         cx.notify();
     }
 
@@ -582,47 +584,27 @@ impl ControlPanel {
                 this.close_page_menu(window, cx);
                 HistoryView::clear_all(cx);
             }));
-        let menu = div()
-            .id("history-page-menu-list")
-            .role(Role::Menu)
-            .occlude()
-            .mt(px(4.))
-            .min_w(px(200.))
-            .p(px(4.))
-            .rounded(px(RADIUS_LG))
-            .border_1()
-            .border_color(if p.dark {
-                p.border_hover
-            } else {
-                p.border.opacity(0.7)
-            })
-            .bg(if p.dark { p.surface_3 } else { p.popover })
-            .shadow_lg()
-            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                if !trigger.contains(event.position) {
-                    this.page_menu_open = false;
-                    cx.notify();
-                }
-            }))
-            .key_context(MENU_CONTEXT)
-            .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
-                this.close_page_menu(window, cx);
-            }))
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                if e.keystroke.key == "escape" {
-                    this.close_page_menu(window, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(item);
-        deferred(
-            anchored()
-                .anchor(Anchor::TopRight)
-                .snap_to_window_with_margin(px(8.))
-                .child(menu),
+        PopupMenu {
+            id: "history-page-menu-list".into(),
+            min_width: 200.,
+            appearance: MenuAppearance::History,
+            placement: MenuPlacement::TriggerRight,
+            trigger: Some(trigger),
+            focus: MenuFocus::new(
+                ["history-page-clear".into()],
+                "history-page-menu".into(),
+                cx,
+            ),
+            navigate: false,
+        }
+        .render(
+            [item.into_any_element()],
+            |this, _, cx| {
+                this.page_menu_open = false;
+                cx.notify();
+            },
+            cx,
         )
-        .with_priority(1)
-        .into_any_element()
     }
 
     fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

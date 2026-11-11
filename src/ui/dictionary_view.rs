@@ -22,21 +22,22 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
-    MenuTriggerBounds, drop, empty_state, icon, kbd, keyed_focus_handle, page_container, segment,
-    segmented_track, surface_card, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, drop, empty_state,
+    icon, kbd, keyed_focus_handle, page_container, segment, segmented_track, surface_card,
+    text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
 use super::format::day_label;
+use super::menu::{MenuAppearance, MenuFocus, MenuPlacement, PopupMenu};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
 };
 use super::text_input::{text_field, text_field_small, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_SNAP, LINE_SMALL, PAGE_GUTTER, PAGE_MAX_WIDTH, Palette, PaletteExt, RADIUS_LG,
-    RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out,
-    ease_snap, motion, tabular_nums,
+    DUR_BASE, LINE_SMALL, PAGE_GUTTER, PAGE_MAX_WIDTH, Palette, PaletteExt, RADIUS_LG, RADIUS_MD,
+    RADIUS_SM, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, motion,
+    tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
@@ -772,7 +773,12 @@ impl DictionaryView {
     fn close_menu(&mut self, restore_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take() {
             if restore_focus {
-                focus_key(menu.return_focus, window, cx);
+                MenuFocus::new(
+                    (0..menu.entries.len()).map(menu_item_key),
+                    menu.return_focus,
+                    cx,
+                )
+                .restore(true, window, cx);
             }
             cx.notify();
         }
@@ -1088,15 +1094,7 @@ impl Render for DictionaryView {
             .menu
             .clone()
             .and_then(|m| m.position.map(|at| (m, at)))
-            .map(|(m, at)| {
-                deferred(
-                    anchored()
-                        .position(at)
-                        .snap_to_window_with_margin(px(8.))
-                        .child(self.render_menu(m, None, cx)),
-                )
-                .with_priority(2)
-            });
+            .map(|(m, _)| self.render_menu(m, None, cx));
         let undo = self.render_undo(window, cx);
         page_container()
             .pb(px(40.))

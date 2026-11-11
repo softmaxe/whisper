@@ -15,11 +15,12 @@ use crate::app_state::{AppEvent, AppState, HistoryLoadState};
 use crate::backend;
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
-    MenuTriggerBounds, empty_state, f32_tx, icon, kbd, keyed_focus_handle, page_container,
-    retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, empty_state, f32_tx,
+    icon, kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
+    spinner, text_tooltip,
 };
 use super::control_panel::CloseOverlay;
+use super::menu::{MenuAppearance, MenuFocus, MenuPlacement, PopupMenu};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, remove_toast, show_dialog, show_toast, show_tracked_toast,
 };
@@ -1043,14 +1044,12 @@ impl HistoryView {
 
     fn close_menu(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         self.open_menu = None;
-        // Hand focus back to the button that opened the menu.
-        let in_menu = (0..3usize).any(|action| {
-            keyed_focus_handle(("history-menu-item", action).into(), cx).is_focused(window)
-        });
-        if in_menu {
-            let more = keyed_focus_handle(("more-row", id as usize).into(), cx);
-            window.focus(&more, cx);
-        }
+        MenuFocus::new(
+            (0..3usize).map(|action| ("history-menu-item", action).into()),
+            ("more-row", id as usize).into(),
+            cx,
+        )
+        .restore(false, window, cx);
         cx.notify();
     }
 
@@ -1080,64 +1079,29 @@ impl HistoryView {
             ));
         }
         entries.push(("trash2", t("controlPanel.history.deleteItem"), 2, true));
-        let handles: Vec<_> = entries
-            .iter()
-            .map(|(_, _, action, _)| {
-                keyed_focus_handle(("history-menu-item", *action as usize).into(), cx)
-            })
-            .collect();
-
-        let mut menu = div()
-            .id(("row-menu", id as usize))
-            .occlude()
-            .mt(px(4.))
-            .min_w(px(180.))
-            .p(px(4.))
-            .flex()
-            .flex_col()
-            .rounded(px(RADIUS_LG))
-            .border_1()
-            .border_color(if p.dark {
-                p.border_hover
-            } else {
-                p.border.opacity(0.7)
-            })
-            .bg(if p.dark { p.surface_3 } else { p.popover })
-            .shadow_lg()
-            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                if !trigger.contains(event.position) {
-                    this.open_menu = None;
-                    cx.notify();
-                }
-            }))
-            .key_context(MENU_CONTEXT)
-            .on_action(cx.listener(move |this, _: &DismissMenu, window, cx| {
-                this.close_menu(id, window, cx);
-            }))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
-                match e.keystroke.key.as_str() {
-                    "escape" => this.close_menu(id, window, cx),
-                    "down" | "up" => {
-                        let current = handles.iter().position(|h| h.is_focused(window));
-                        let next = match (e.keystroke.key.as_str(), current) {
-                            ("down", Some(index)) => (index + 1) % handles.len(),
-                            ("up", Some(index)) => (index + handles.len() - 1) % handles.len(),
-                            ("up", None) => handles.len() - 1,
-                            _ => 0,
-                        };
-                        window.focus(&handles[next], cx);
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            }));
+        let popup = PopupMenu {
+            id: ("row-menu", id as usize).into(),
+            min_width: 180.,
+            appearance: MenuAppearance::History,
+            placement: MenuPlacement::TriggerRight,
+            trigger: Some(trigger),
+            focus: MenuFocus::new(
+                entries
+                    .iter()
+                    .map(|(_, _, action, _)| ("history-menu-item", *action as usize).into()),
+                ("more-row", id as usize).into(),
+                cx,
+            ),
+            navigate: true,
+        };
+        let mut items = Vec::new();
         for (icon_name, label, action, destructive) in entries {
             let color = if destructive {
                 p.destructive
             } else {
                 p.foreground
             };
-            menu = menu.child(
+            items.push(
                 div()
                     .id(("row-menu-item", action as usize))
                     .keyboard_focusable(
@@ -1174,17 +1138,18 @@ impl HistoryView {
                             _ => this.delete(id, cx),
                         }
                         cx.notify();
-                    })),
+                    }))
+                    .into_any_element(),
             );
         }
-        deferred(
-            anchored()
-                .anchor(Anchor::TopRight)
-                .snap_to_window_with_margin(px(8.))
-                .child(menu),
+        popup.render(
+            items,
+            |this, _, cx| {
+                this.open_menu = None;
+                cx.notify();
+            },
+            cx,
         )
-        .with_priority(1)
-        .into_any_element()
     }
 }
 
