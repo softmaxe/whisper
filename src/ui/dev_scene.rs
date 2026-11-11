@@ -50,6 +50,7 @@ pub fn scene() -> Option<Scene> {
             "cleanup" => "cleanup",
             "cleanup-transition" => "cleanup-transition",
             "error" => "error",
+            "no-speech" => "no-speech",
             "fallback" => "fallback",
             _ => "recording",
         }),
@@ -135,6 +136,16 @@ pub fn apply_pill(cx: &mut App) {
                 cx.notify();
             });
         }
+        "no-speech" => Dictation::global(cx).update(cx, |_, cx| {
+            cx.emit(DictationNotice::Error {
+                title: t("dictation.noAudio.title"),
+                description: t("dictation.noAudio.description"),
+                actions: ErrorActions::for_transcription_failure(Some(
+                    crate::audio::vad::NO_SPEECH_CODE,
+                )),
+                kept: Some(Duration::from_secs(10)),
+            });
+        }),
         "error" => Dictation::global(cx).update(cx, |_, cx| {
             cx.emit(DictationNotice::Error {
                 title: t("dictation.errorTitles.transcriptionTimeout"),

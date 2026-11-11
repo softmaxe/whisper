@@ -54,6 +54,8 @@ url = "2"
 
 # Audio
 cpal = "0.18"
+hound = "3.5"
+tract-onnx = { version = "=0.23.10", default-features = false }
 
 # Text
 ferrous-opencc = "0.4"
@@ -80,7 +82,6 @@ block2 = "0.6"
 base64 = "0.22"
 
 [dev-dependencies]
-hound = "3.5"
 tempfile = "3"
 ttf-parser = "0.25"
 tiny_http = "0.12"

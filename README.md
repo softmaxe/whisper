@@ -35,6 +35,9 @@ typing in.
   `/audio/transcriptions` endpoint; optional cleanup goes to a
   `/chat/completions` endpoint, with an editable prompt and a Prompt Studio to
   test it. Test Connection checks each server and lists its models.
+- **Skip silence locally.** Embedded Silero VAD trims pauses and non-speech
+  sound from dictation uploads, with buffers around speech. History and recovery
+  retain the original recording; Send anyway can bypass a no-speech result once.
 - **Fewer hesitation sounds.** Optional local filler-word removal works even
   with text cleanup off, while preserving the raw transcript in History.
 - **Gets better with use.** A dictionary supplies spelling hints, corrections

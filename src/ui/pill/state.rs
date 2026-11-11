@@ -205,6 +205,7 @@ mod tests {
             None,
             ErrorActions {
                 retry: true,
+                send_anyway: false,
                 open_settings: false,
             },
             None,
@@ -298,6 +299,7 @@ mod tests {
     fn a_card_holding_the_recording_never_times_out() {
         let retry = ErrorActions {
             retry: true,
+            send_anyway: false,
             open_settings: true,
         };
         // Closing drops the recording, so only the user may close it.

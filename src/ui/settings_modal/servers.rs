@@ -284,6 +284,15 @@ impl SettingsModal {
             );
         }
         language_rows.push(toggle_row(
+            "silence-filtering",
+            t("settings.speechToText.skipSilence"),
+            Some(t("settings.speechToText.skipSilenceDescription")),
+            settings(cx).silence_filtering,
+            false,
+            |v, _, cx| update_settings(cx, |s| s.silence_filtering = v),
+            &p,
+        ));
+        language_rows.push(toggle_row(
             "remove-filler-words",
             t("settings.speechToText.removeFillerWords"),
             Some(t("settings.speechToText.removeFillerWordsDescription")),

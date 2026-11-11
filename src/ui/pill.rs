@@ -515,6 +515,7 @@ impl PillView {
                     Some((text, false)),
                     ErrorActions {
                         retry: kept.is_some(),
+                        send_anyway: false,
                         open_settings: false,
                     },
                     kept,

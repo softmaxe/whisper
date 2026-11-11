@@ -165,7 +165,9 @@
       "serverModels": "此服务器上的模型",
       "protocolTag": "OpenAI 兼容 · 无鉴权",
       "removeFillerWords": "移除语气词",
-      "removeFillerWordsDescription": "自动去掉转录中的“呃”、um、uh 等犹豫音，无需开启文本整理。"
+      "removeFillerWordsDescription": "自动去掉转录中的“呃”、um、uh 等犹豫音，无需开启文本整理。",
+      "skipSilence": "跳过静音",
+      "skipSilenceDescription": "在这台 Mac 上过滤录音中的停顿和非人声，再发送给服务器；保留语音前后的一小段声音，避免截断词句。"
     },
     "llms": {
       "server": {
@@ -328,7 +330,8 @@
       "viewTranscript": "查看转录",
       "recordNew": "新录音",
       "resend": "重新发送",
-      "openSettings": "设置…"
+      "openSettings": "设置…",
+      "sendAnyway": "仍然发送"
     },
     "noAudio": {
       "title": "我们没听清",

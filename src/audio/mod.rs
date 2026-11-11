@@ -9,6 +9,7 @@ pub mod devices;
 pub mod gate;
 pub mod microphone_test;
 pub mod playback;
+pub mod vad;
 pub mod validation;
 pub mod wav;
 
