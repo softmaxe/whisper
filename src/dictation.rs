@@ -116,6 +116,13 @@ pub enum DictationNotice {
         text: String,
         copied: bool,
     },
+    /// Holds text for explicit recovery, with a resend when audio is kept.
+    TranscriptRecovery {
+        title: String,
+        description: String,
+        text: String,
+        kept: Option<Duration>,
+    },
     /// Escape while only the copy-recovery panel is open closes it. The
     /// error card never takes Escape: it can hold the only copy of a
     /// recording, and a stray Escape meant for another app must not lose it.
@@ -651,6 +658,17 @@ impl Dictation {
                 self.set_phase(Phase::Idle, cx);
                 cx.emit(DictationNotice::NoAudio);
             }
+            PipelineOutcome::PromptEcho { text } => {
+                let notice = self.recover_transcript(
+                    "dictation.promptEcho",
+                    text,
+                    wav,
+                    duration,
+                    occurred_at,
+                );
+                self.set_phase(Phase::Idle, cx);
+                cx.emit(notice);
+            }
             PipelineOutcome::Failed {
                 message,
                 code,
@@ -694,6 +712,27 @@ impl Dictation {
             PipelineOutcome::Transcribed(transcript) => {
                 self.persist_and_deliver(transcript, wav, duration, occurred_at, cx);
             }
+        }
+    }
+
+    fn recover_transcript(
+        &mut self,
+        message: &str,
+        text: String,
+        wav: bytes::Bytes,
+        duration: Duration,
+        occurred_at: DateTime<Utc>,
+    ) -> DictationNotice {
+        self.failed = (!wav.is_empty()).then_some(FailedRecording {
+            wav,
+            duration,
+            occurred_at,
+        });
+        DictationNotice::TranscriptRecovery {
+            title: t(&format!("{message}.title")),
+            description: t(&format!("{message}.description")),
+            text,
+            kept: self.failed.as_ref().map(|failed| failed.duration),
         }
     }
 
@@ -937,6 +976,21 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
                 Ok(())
             }
             PipelineOutcome::NoAudio => Err(t("dictation.noAudio.title")),
+            PipelineOutcome::PromptEcho { text } => {
+                // The History row still owns its audio. Keep this candidate
+                // copyable without replacing that row or live capture state.
+                cx.update(|cx| {
+                    Dictation::global(cx).update(cx, |_, cx| {
+                        cx.emit(DictationNotice::TranscriptRecovery {
+                            title: t("dictation.promptEcho.title"),
+                            description: t("dictation.promptEcho.description"),
+                            text,
+                            kept: None,
+                        });
+                    });
+                });
+                Err(t("dictation.promptEcho.title"))
+            }
             PipelineOutcome::Failed {
                 message,
                 message_key,
@@ -1046,6 +1100,49 @@ mod tests {
         assert_eq!(audio.samples, vec![0.2; 16_000]);
         assert!(!dictation.recorder.is_capture_active());
         assert!(!dictation.accepts_device_loss(current_id));
+    }
+
+    #[test]
+    fn dictionary_word_echo_keeps_text_and_audio_for_recovery() {
+        use super::{DictationNotice, Phase};
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.apply_dictionary_changes(&["Supabase"], &[] as &[&str], DictionarySource::Manual)
+            .unwrap();
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"Supabase"}"#));
+        let settings = Settings {
+            remote_transcription_url: server.url("/v1"),
+            use_cleanup_model: false,
+            ..Settings::default()
+        };
+        let wav = bytes::Bytes::from_static(b"RIFF original audio");
+        let outcome = run(async {
+            let input = capture_pipeline_input(wav.clone(), settings, db).await;
+            run_prepared_pipeline(input, CancellationToken::new()).await
+        });
+        let PipelineOutcome::PromptEcho { text } = outcome else {
+            panic!("unexpected outcome: {outcome:?}");
+        };
+        let mut dictation = dictation(Phase::Processing);
+        let occurred_at = chrono::Utc::now();
+        let duration = std::time::Duration::from_secs(3);
+        let notice = dictation.recover_transcript(
+            "dictation.promptEcho",
+            text,
+            wav.clone(),
+            duration,
+            occurred_at,
+        );
+        let DictationNotice::TranscriptRecovery { text, kept, .. } = notice else {
+            panic!("echo must not report NoAudio or Delivered");
+        };
+        assert_eq!(text, "Supabase");
+        assert_eq!(kept, Some(duration));
+        let retry = dictation.failed.take().unwrap();
+        assert_eq!(retry.wav, wav);
+        assert_eq!(retry.duration, duration);
+        assert_eq!(retry.occurred_at, occurred_at);
+        dictation.discard_failed();
+        assert!(dictation.failed.is_none());
     }
 
     #[test]

@@ -15,6 +15,8 @@ fn normalize(s: &str) -> String {
     WHITESPACE_RE.replace_all(&stripped, " ").trim().to_string()
 }
 
+/// Flags a candidate for review, not proof of silence: spoken dictionary
+/// words and a model's prompt echo can produce identical text.
 pub fn matches_dictionary_prompt(text: &str, dictionary_prompt: &str) -> bool {
     if text.is_empty() || dictionary_prompt.is_empty() {
         return false;

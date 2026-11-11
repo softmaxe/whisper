@@ -432,7 +432,9 @@ impl ErrorCard {
 
     /// Starts the countdown over, for when the user comes back to the card.
     fn restart(&mut self) {
-        self.countdown = Self::countdown(self.actions);
+        if self.countdown.is_some() {
+            self.countdown = Self::countdown(self.actions);
+        }
     }
 
     fn countdown(actions: ErrorActions) -> Option<Countdown> {
@@ -451,6 +453,10 @@ struct Recovery {
 }
 
 impl Recovery {
+    fn expired(&self, now: Instant) -> bool {
+        self.copied && self.countdown.expired(now)
+    }
+
     fn keep_if_uncopied(self, copy: impl FnOnce(&str) -> bool) -> Option<Self> {
         if self.copied || copy(&self.text) {
             None
@@ -759,11 +765,7 @@ impl PillView {
         {
             self.close_error(cx);
         }
-        if self
-            .recovery
-            .as_ref()
-            .is_some_and(|r| r.countdown.expired(now))
-        {
+        if self.recovery.as_ref().is_some_and(|r| r.expired(now)) {
             self.recovery = None;
         }
         self.toasts.retain(|toast| !toast.countdown.expired(now));
@@ -839,6 +841,26 @@ impl PillView {
                 kept,
             } => {
                 self.error = Some(ErrorCard::new(title, description, None, actions, kept));
+            }
+            DictationNotice::TranscriptRecovery {
+                title,
+                description,
+                text,
+                kept,
+            } => {
+                let mut error = ErrorCard::new(
+                    title,
+                    description,
+                    Some((text, false)),
+                    ErrorActions {
+                        retry: kept.is_some(),
+                        open_settings: false,
+                    },
+                    kept,
+                );
+                // This card may hold the only text, even without audio.
+                error.countdown = None;
+                self.error = Some(error);
             }
             DictationNotice::NoAudio => {
                 self.error = Some(ErrorCard::new(
@@ -1743,7 +1765,7 @@ impl PillView {
 
         let dismiss = Self::dismiss_button(
             "pill-recovery-close",
-            Some(&countdown),
+            recovery.copied.then_some(&countdown),
             true,
             cx.listener(|this, _, _, cx| {
                 this.recovery = None;
@@ -2266,6 +2288,25 @@ mod tests {
         assert!(ErrorCard::countdown(retry).is_none());
         let plain = ErrorCard::countdown(ErrorActions::default()).unwrap();
         assert_eq!(plain.duration, ERROR_HOLD);
+    }
+
+    #[test]
+    fn uncopied_recovery_survives_time_and_settings_reopening() {
+        let mut card = ErrorCard::new(
+            "Review".into(),
+            "Kept words".into(),
+            Some(("Supabase".into(), false)),
+            ErrorActions::default(),
+            None,
+        );
+        card.countdown = None;
+        card.restart();
+        assert!(card.countdown.is_none());
+        let mut recovery = super::Recovery::new("Review".into(), None, "Supabase".into(), false);
+        let later = Instant::now() + Duration::from_secs(60);
+        assert!(!recovery.expired(later));
+        recovery.copied = true;
+        assert!(recovery.expired(later));
     }
 
     #[test]

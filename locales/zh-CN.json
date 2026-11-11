@@ -328,6 +328,10 @@
       "title": "我们没听清",
       "description": "请检查麦克风后重试。"
     },
+    "promptEcho": {
+      "title": "请确认这段转录",
+      "description": "结果看起来像词典提示词。如果这就是你说的内容，可以查看并复制文字，也可以重新发送录音。"
+    },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "3 秒内无法连接转录服务器。请确认它已启动且可以访问。",
       "transcriptionTimeout": "服务器在 30 秒内没有响应。",

@@ -332,6 +332,10 @@
       "title": "We didn’t catch that",
       "description": "Check your microphone and try again."
     },
+    "promptEcho": {
+      "title": "Check this transcription",
+      "description": "The result looks like the dictionary prompt. View and copy the text if it’s what you said, or resend the recording."
+    },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "Couldn’t reach the transcription server within 3 seconds. Check that it’s running and reachable.",
       "transcriptionTimeout": "The server didn’t answer within 30 seconds.",
