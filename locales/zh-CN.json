@@ -662,6 +662,7 @@
   "app": {
     "toasts": {
       "hotkeyUnavailable": {
+        "listenerStopped": "快捷键监听已停止。请检查辅助功能和输入监控权限，然后重启 Whisper。",
         "title": "快捷键不可用"
       },
       "hotkeyHint": {

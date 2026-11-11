@@ -683,6 +683,7 @@
   "app": {
     "toasts": {
       "hotkeyUnavailable": {
+        "listenerStopped": "The shortcut listener stopped. Check Accessibility and Input Monitoring permissions, then restart Whisper.",
         "title": "Hotkey unavailable"
       },
       "hotkeyHint": {

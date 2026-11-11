@@ -67,7 +67,9 @@ impl Protocol for LidWatch {
         self.sample = None;
         match down {
             Down::NotStarted(error) => log::warn!("[lid] cannot start the lid monitor: {error}"),
-            Down::Failed(error) => log::warn!("[lid] laptop lid monitor unavailable: {error}"),
+            Down::Failed(error) | Down::Unavailable(error) => {
+                log::warn!("[lid] laptop lid monitor unavailable: {error}")
+            }
             Down::Stopped | Down::Missing | Down::Exited { .. } => {}
         }
     }

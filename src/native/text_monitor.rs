@@ -631,9 +631,12 @@ impl Protocol for EditWatch {
                     ax_unsupported: false,
                 });
             }
-            Down::Failed(_) | Down::Exited { .. } => cx.emit(WatchEvent::Ended {
-                ax_unsupported: self.no_element && is_persistent_ax_no_value_failure(&self.stderr),
-            }),
+            Down::Failed(_) | Down::Unavailable(_) | Down::Exited { .. } => {
+                cx.emit(WatchEvent::Ended {
+                    ax_unsupported: self.no_element
+                        && is_persistent_ax_no_value_failure(&self.stderr),
+                })
+            }
         }
     }
 }

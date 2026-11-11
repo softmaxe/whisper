@@ -24,6 +24,7 @@ use super::timer::{TimerId, Timers, lock};
 /// Largest piece of output a reader thread delivers at once; a longer line
 /// arrives in several pieces.
 const READ_CHUNK: u64 = 64 * 1024;
+const TERMINATION_GRACE: Duration = Duration::from_millis(500);
 
 /// Output and lifecycle of a spawned helper.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +64,7 @@ pub struct ProcessSpawner;
 struct ProcessChild {
     pid: u32,
     stdin: Option<ChildStdin>,
+    exited: Arc<Mutex<bool>>,
 }
 
 impl HelperChild for ProcessChild {
@@ -81,7 +83,11 @@ impl HelperChild for ProcessChild {
     }
 
     fn kill(&mut self, signal: i32) {
-        signal_pid(self.pid, signal);
+        // Synchronize with wait/reaping so a reused PID is never signalled.
+        let exited = lock(&self.exited);
+        if !*exited {
+            signal_pid(self.pid, signal);
+        }
     }
 }
 
@@ -132,8 +138,36 @@ impl HelperSpawner for ProcessSpawner {
         .into_iter()
         .flatten()
         .collect();
+        let exited = Arc::new(Mutex::new(false));
+        let exit_state = Arc::clone(&exited);
         std::thread::spawn(move || {
-            let status = child.wait();
+            // Wait without reaping: the zombie reserves its PID until `wait`
+            // and the exited flag are updated under the same lock as signals.
+            let waited = loop {
+                let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::uninit();
+                // SAFETY: pid is our direct child and info points to writable storage.
+                let result = unsafe {
+                    libc::waitid(
+                        libc::P_PID,
+                        pid,
+                        info.as_mut_ptr(),
+                        libc::WEXITED | libc::WNOWAIT,
+                    )
+                };
+                if result == 0 {
+                    break Ok(());
+                }
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    break Err(error);
+                }
+            };
+            let status = {
+                let mut exited = lock(&exit_state);
+                let status = waited.and_then(|()| child.wait());
+                *exited = true;
+                status
+            };
             // Deliver remaining output before the exit, like a "close".
             for reader in readers {
                 let _ = reader.join();
@@ -149,7 +183,7 @@ impl HelperSpawner for ProcessSpawner {
                 Err(error) => sink(ChildEvent::Error(error.to_string())),
             }
         });
-        Ok(Box::new(ProcessChild { pid, stdin }))
+        Ok(Box::new(ProcessChild { pid, stdin, exited }))
     }
 }
 
@@ -165,6 +199,8 @@ pub enum Down {
     /// It was terminated after an I/O error, an overlong line, a missed
     /// heartbeat or [`Control::fail`].
     Failed(String),
+    /// A permission or configuration failure that cannot recover by respawning.
+    Unavailable(String),
     /// It exited by itself.
     Exited {
         code: Option<i32>,
@@ -188,9 +224,10 @@ pub enum Recovery {
 #[derive(Debug, Clone, Copy)]
 pub enum RestartPolicy {
     Never,
-    /// Restarts after a clean exit (status 0) only, at most `max_attempts`
-    /// times until a child stays up for `reset_after`.
-    CleanExit {
+    /// Restarts exits and runtime failures with exponential backoff, at most
+    /// `max_attempts` times until sustained uptime resets the budget.
+    /// Missing binaries, spawn failures and explicitly permanent failures stop.
+    Bounded {
         delay: Duration,
         max_attempts: u32,
         reset_after: Duration,
@@ -240,7 +277,7 @@ pub struct Control<'a, E> {
     child: Option<&'a mut Box<dyn HelperChild>>,
     events: &'a mut Vec<E>,
     heartbeat: bool,
-    failure: Option<String>,
+    failure: Option<Down>,
 }
 
 impl<E> Control<'_, E> {
@@ -269,7 +306,13 @@ impl<E> Control<'_, E> {
     /// Terminates the running child as [`Down::Failed`] once the callback
     /// returns.
     pub fn fail(&mut self, reason: impl Into<String>) {
-        self.failure.get_or_insert_with(|| reason.into());
+        self.failure
+            .get_or_insert_with(|| Down::Failed(reason.into()));
+    }
+
+    /// Stops without retrying a permission or configuration failure.
+    pub fn unavailable(&mut self, reason: impl Into<String>) {
+        self.failure = Some(Down::Unavailable(reason.into()));
     }
 }
 
@@ -408,7 +451,7 @@ impl<P: Protocol> Inner<P> {
             self.arm_heartbeat(&mut state.core);
         }
         if let Some(reason) = failure {
-            self.retire(state, events, Down::Failed(reason), true);
+            self.retire(state, events, reason, true);
         }
         result
     }
@@ -438,7 +481,7 @@ impl<P: Protocol> Inner<P> {
         let core = &mut state.core;
         core.child = Some((generation, child));
         core.stdout.clear();
-        if let RestartPolicy::CleanExit { reset_after, .. } = self.options.restart {
+        if let RestartPolicy::Bounded { reset_after, .. } = self.options.restart {
             self.arm_reset(core, reset_after);
         }
         self.arm_heartbeat(core);
@@ -452,6 +495,12 @@ impl<P: Protocol> Inner<P> {
         };
         if kill {
             child.kill(libc::SIGTERM);
+            self.options.timers.schedule(
+                TERMINATION_GRACE,
+                Box::new(move || {
+                    child.kill(libc::SIGKILL);
+                }),
+            );
         }
         self.went_down(state, events, down);
     }
@@ -466,7 +515,9 @@ impl<P: Protocol> Inner<P> {
         }
         core.stdout.clear();
         let recovery = self.recovery(core, &down);
-        if let (Recovery::Restarting { .. }, Some(delay)) = (recovery, self.restart_delay()) {
+        if let (Recovery::Restarting { .. }, Some(delay)) =
+            (recovery, self.restart_delay(core.restart_count))
+        {
             self.schedule_restart(core, delay);
         }
         self.call(state, events, |protocol, cx| {
@@ -480,8 +531,8 @@ impl<P: Protocol> Inner<P> {
         }
         match self.options.restart {
             RestartPolicy::Never => Recovery::NotRestarting,
-            RestartPolicy::CleanExit { max_attempts, .. } => {
-                if !matches!(down, Down::Exited { code: Some(0), .. }) {
+            RestartPolicy::Bounded { max_attempts, .. } => {
+                if !matches!(down, Down::Exited { .. } | Down::Failed(_)) {
                     Recovery::NotRestarting
                 } else if core.restart_count < max_attempts {
                     core.restart_count += 1;
@@ -501,10 +552,13 @@ impl<P: Protocol> Inner<P> {
         }
     }
 
-    fn restart_delay(&self) -> Option<Duration> {
+    fn restart_delay(&self, attempt: u32) -> Option<Duration> {
         match self.options.restart {
             RestartPolicy::Never => None,
-            RestartPolicy::CleanExit { delay, .. } | RestartPolicy::Always { delay } => Some(delay),
+            RestartPolicy::Bounded { delay, .. } => {
+                Some(delay.saturating_mul(1u32 << attempt.saturating_sub(1).min(5)))
+            }
+            RestartPolicy::Always { delay } => Some(delay),
         }
     }
 
@@ -801,6 +855,90 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn retired_child_is_killed_after_the_grace_period() {
+        let h = harness(RestartPolicy::Never, None);
+        h.child.start();
+        h.child.stop();
+        assert_eq!(h.spawner.kills(0), [libc::SIGTERM]);
+        h.timers.advance(500);
+        assert_eq!(h.spawner.kills(0), [libc::SIGTERM, libc::SIGKILL]);
+    }
+
+    #[test]
+    fn real_child_ignoring_sigterm_is_eventually_reaped() {
+        struct Shell;
+        impl Protocol for Shell {
+            type Event = String;
+            fn args(&self) -> Vec<String> {
+                vec![
+                    "-c".into(),
+                    "trap '' TERM; echo $$; while :; do :; done".into(),
+                ]
+            }
+            fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, String>) {
+                cx.emit(line.into());
+            }
+            fn on_down(&mut self, _: &Down, _: Recovery, _: &mut Control<'_, String>) {}
+        }
+        // The system shell is universal; bypass the helper-only thin Mach-O check.
+        struct ShellSpawner;
+        impl HelperSpawner for ShellSpawner {
+            fn spawn(
+                &self,
+                _: &Path,
+                args: &[String],
+                sink: ChildSink,
+            ) -> std::io::Result<Box<dyn HelperChild>> {
+                ProcessSpawner.spawn(Path::new("/bin/sh"), args, sink)
+            }
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let timers = FakeTimers::new();
+        let child = SupervisedChild::new(
+            ChildOptions {
+                label: "Ignoring child",
+                resolve_binary: Arc::new(|| Some(PathBuf::from("/fake/shell"))),
+                spawner: Arc::new(ShellSpawner),
+                timers: timers.clone(),
+                restart: RestartPolicy::Never,
+                heartbeat: None,
+                max_line: 64,
+            },
+            Shell,
+            Arc::new(move |event| {
+                let _ = tx.send(event);
+            }),
+        );
+        child.start();
+        let pid: i32 = rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .parse()
+            .unwrap();
+        child.stop();
+        timers.advance(499);
+        // SAFETY: signal 0 checks whether this test's child still exists.
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        timers.advance(1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            // SAFETY: signal 0 has no effect on the process.
+            if unsafe { libc::kill(pid, 0) } == -1 {
+                assert_eq!(
+                    std::io::Error::last_os_error().raw_os_error(),
+                    Some(libc::ESRCH)
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retired child was not reaped"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
     fn stdout_is_framed_into_lines_across_chunks() {
         let h = harness(RestartPolicy::Never, None);
         h.child.start();
@@ -865,7 +1003,7 @@ pub(crate) mod tests {
     #[test]
     fn stop_terminates_cancels_timers_and_ignores_the_late_exit() {
         let h = harness(
-            RestartPolicy::CleanExit {
+            RestartPolicy::Bounded {
                 delay: Duration::from_millis(1000),
                 max_attempts: 3,
                 reset_after: Duration::from_millis(10_000),
@@ -875,7 +1013,7 @@ pub(crate) mod tests {
         h.child.start();
         h.child.stop();
         assert_eq!(h.spawner.kills(0), vec![libc::SIGTERM]);
-        assert_eq!(h.timers.pending(), 0);
+        assert_eq!(h.timers.pending(), 1);
         h.exit(0, 0);
         h.timers.advance(20_000);
         assert_eq!(h.spawner.count(), 1);
@@ -903,7 +1041,7 @@ pub(crate) mod tests {
     #[test]
     fn clean_exits_restart_within_a_budget_that_uptime_resets() {
         let h = harness(
-            RestartPolicy::CleanExit {
+            RestartPolicy::Bounded {
                 delay: Duration::from_millis(1000),
                 max_attempts: 2,
                 reset_after: Duration::from_millis(10_000),
@@ -913,7 +1051,7 @@ pub(crate) mod tests {
         h.child.start();
         for index in 0..3 {
             h.exit(index, 0);
-            h.timers.advance(1000);
+            h.timers.advance(1000 * (1 << index));
         }
         assert_eq!(h.spawner.count(), 3);
         let downs: Vec<String> = h
@@ -941,8 +1079,8 @@ pub(crate) mod tests {
                 signal: Some(libc::SIGKILL),
             },
         );
-        h.timers.advance(1000);
-        assert_eq!(h.spawner.count(), 5);
+        h.timers.advance(2000);
+        assert_eq!(h.spawner.count(), 6);
         let downs: Vec<String> = h
             .take()
             .into_iter()
@@ -952,7 +1090,7 @@ pub(crate) mod tests {
             downs,
             vec![
                 "down Exited { code: Some(0), signal: None } Restarting { attempt: 1 }",
-                "down Exited { code: None, signal: Some(9) } NotRestarting",
+                "down Exited { code: None, signal: Some(9) } Restarting { attempt: 2 }",
             ]
         );
     }
