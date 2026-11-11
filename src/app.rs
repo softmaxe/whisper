@@ -10,7 +10,7 @@ use crate::settings::{ActivationMode, Settings};
 use crate::app_state::{AppEvent, AppState};
 use crate::dictation::{Dictation, DictationNotice, StatusMirror};
 use crate::ui::control_panel::{CloseOverlay, ControlPanel, OpenSearch, OpenSettings};
-use crate::ui::overlays::{Toast, ToastVariant, show_toast};
+use crate::ui::overlays::{Overlays, Toast, ToastVariant, show_toast};
 use crate::ui::pill::{PillView, WINDOW_SIZE};
 use crate::ui::settings_modal::SettingsSection;
 use crate::{backend, macos, menu, tray, ui};
@@ -52,7 +52,8 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<ControlPanelWindow> {
     };
     let (handle, panel) = gpui_kit::open_window(options, cx, |window, cx| {
         // Closing the panel drops it to the menu bar.
-        window.on_window_should_close(cx, |_, _| {
+        window.on_window_should_close(cx, |_, cx| {
+            prepare_control_panel_close(cx);
             crate::native::dock::set_control_panel_visible(false);
             true
         });
@@ -66,6 +67,7 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<ControlPanelWindow> {
 /// also works from a key binding, while the window is still borrowed.
 pub fn close_control_panel(cx: &mut App) {
     cx.defer(|cx| {
+        prepare_control_panel_close(cx);
         for window in cx.windows() {
             if window.downcast::<gpui_kit::base::Root>().is_some() {
                 let _ = window.update(cx, |_, window, _| window.remove_window());
@@ -73,6 +75,10 @@ pub fn close_control_panel(cx: &mut App) {
         }
         crate::native::dock::set_control_panel_visible(false);
     });
+}
+
+fn prepare_control_panel_close(cx: &mut App) {
+    Overlays::global(cx).update(cx, |o, cx| o.clear_panel(cx));
 }
 
 /// Shows the control panel and opens Settings, at `section` when given.

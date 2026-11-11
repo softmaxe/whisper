@@ -190,6 +190,14 @@ impl Overlays {
         self.custom.clone()
     }
 
+    pub fn clear_panel(&mut self, cx: &mut Context<Self>) {
+        self.dialog = None;
+        self.dialog_needs_focus = false;
+        self.custom = None;
+        self.toasts.clear();
+        cx.notify();
+    }
+
     pub fn close_custom(&mut self, cx: &mut Context<Self>) {
         if self.custom.take().is_some() {
             cx.notify();
