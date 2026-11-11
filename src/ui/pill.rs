@@ -451,6 +451,14 @@ struct Recovery {
 }
 
 impl Recovery {
+    fn keep_if_uncopied(self, copy: impl FnOnce(&str) -> bool) -> Option<Self> {
+        if self.copied || copy(&self.text) {
+            None
+        } else {
+            Some(self)
+        }
+    }
+
     fn new(title: String, description: Option<String>, text: String, copied: bool) -> Self {
         let duration = if copied {
             RECOVERY_COPIED
@@ -492,6 +500,8 @@ pub struct PillView {
     was_active: bool,
     error: Option<ErrorCard>,
     recovery: Option<Recovery>,
+    /// Failed clipboard writes remain retrievable after the live dictation.
+    deferred_recoveries: Vec<Recovery>,
     /// Whether Escape is registered to dismiss the copy-recovery panel.
     panel_escape: bool,
     /// Whether the Settings sheet is open. The error card's countdown stands
@@ -547,6 +557,7 @@ impl PillView {
             was_active: false,
             error: None,
             recovery: None,
+            deferred_recoveries: Vec::new(),
             panel_escape: false,
             settings_open: false,
             toasts: Vec::new(),
@@ -575,6 +586,7 @@ impl PillView {
             || self.finishing_until.is_some_and(|t| Instant::now() < t)
             || self.error.is_some()
             || self.recovery.is_some()
+            || !self.deferred_recoveries.is_empty()
             || !self.toasts.is_empty()
     }
 
@@ -600,6 +612,13 @@ impl PillView {
         let active = snapshot.is_active();
         let processing = snapshot.is_processing;
         if active && !self.was_active {
+            if let Some(recovery) = self.recovery.take()
+                && let Some(recovery) = recovery.keep_if_uncopied(backend::write_clipboard)
+            {
+                self.deferred_recoveries.push(recovery);
+            }
+            self.panel_escape = false;
+            backend::set_panel_cancel_hotkey(false);
             self.finishing_until = None;
             self.lanes = [0.; BARS];
             self.error = None;
@@ -849,6 +868,9 @@ impl PillView {
                 ));
             }
             DictationNotice::DeliveryFallback { text, copied } => {
+                if let Some(previous) = self.recovery.take().filter(|r| !r.copied) {
+                    self.deferred_recoveries.push(previous);
+                }
                 self.recovery = Some(Recovery::new(
                     t("transcriptionPreview.recovery.title"),
                     Some(t("transcriptionPreview.recovery.pasteFailed")),
@@ -1928,18 +1950,26 @@ impl PillView {
 impl Render for PillView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.regions.borrow_mut().clear();
+        let snapshot = Self::snapshot(cx);
+        if !snapshot.is_active()
+            && self.error.is_none()
+            && self.recovery.is_none()
+            && let Some(mut recovery) = self.deferred_recoveries.pop()
+        {
+            recovery.countdown = Countdown::new(RECOVERY_UNCOPIED, Instant::now());
+            self.recovery = Some(recovery);
+        }
         // Escape closes the copy-recovery panel, which loses nothing: its
         // words are in History and usually on the clipboard. The binding is
         // global because this window never takes keyboard focus, so the
         // error card, which may hold the only copy of a recording, never
         // takes it; a stray Escape meant for another app must not lose it.
         let panel_open = self.error.is_some() || self.recovery.is_some();
-        let escape = self.error.is_none() && self.recovery.is_some();
+        let escape = !snapshot.is_active() && self.error.is_none() && self.recovery.is_some();
         if escape != self.panel_escape {
             self.panel_escape = escape;
             backend::set_panel_cancel_hotkey(escape);
         }
-        let snapshot = Self::snapshot(cx);
         let dock = Self::dock(cx);
         let active = snapshot.is_active();
         let finishing = self.finishing_until.is_some_and(|t| Instant::now() < t);
@@ -2094,6 +2124,25 @@ mod tests {
 
     fn at(ms: u64) -> Option<Duration> {
         Some(Duration::from_millis(ms))
+    }
+
+    #[test]
+    fn new_recording_preserves_recovery_when_copying_fails() {
+        let recovery = super::Recovery::new("Recovery".into(), None, "unsaved words".into(), false);
+        let deferred = recovery
+            .keep_if_uncopied(|text| {
+                assert_eq!(text, "unsaved words");
+                false
+            })
+            .unwrap();
+        assert_eq!(deferred.text, "unsaved words");
+        assert!(deferred.keep_if_uncopied(|_| true).is_none());
+        let copied = super::Recovery::new("Recovery".into(), None, "copied words".into(), true);
+        assert!(
+            copied
+                .keep_if_uncopied(|_| panic!("must not overwrite a newer copy"))
+                .is_none()
+        );
     }
 
     fn db(level: f32) -> f32 {
