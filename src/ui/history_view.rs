@@ -1033,6 +1033,12 @@ impl HistoryView {
             ));
         }
         entries.push(("trash2", t("controlPanel.history.deleteItem"), 2, true));
+        let handles: Vec<_> = entries
+            .iter()
+            .map(|(_, _, action, _)| {
+                keyed_focus_handle(("history-menu-item", *action as usize).into(), cx)
+            })
+            .collect();
 
         let mut menu = div()
             .id(("row-menu", id as usize))
@@ -1066,8 +1072,16 @@ impl HistoryView {
                         this.close_menu(id, window, cx);
                         return;
                     }
-                    "down" => window.focus_next(cx),
-                    "up" => window.focus_prev(cx),
+                    "down" | "up" => {
+                        let current = handles.iter().position(|h| h.is_focused(window));
+                        let next = match (e.keystroke.key.as_str(), current) {
+                            ("down", Some(index)) => (index + 1) % handles.len(),
+                            ("up", Some(index)) => (index + handles.len() - 1) % handles.len(),
+                            ("up", None) => handles.len() - 1,
+                            _ => 0,
+                        };
+                        window.focus(&handles[next], cx);
+                    }
                     _ => return,
                 }
                 cx.stop_propagation();
