@@ -79,6 +79,10 @@ Storage failure and callback-order regressions use temporary databases in automa
 - Repeat in a narrow window where Settings covers the workspace and a wide window where it floats above it. Check opening and closing animations, Escape, keyboard focus, and window resizing with Settings open.
 - When profiling the full-window sheet after its opening animation, the covered workspace must not participate in layout or paint. The floating sheet and closing animation still render the visible workspace.
 
+## Permission refresh regression check
+
+For Settings permission rows, use a test Mac or test account with undetermined microphone access. Accept or deny the first prompt and verify the row updates without switching sections. Change microphone or Accessibility access in System Settings, return to Whisper, and verify both rows refresh. Close Settings while the first prompt is pending and verify no late result affects a reopened sheet. Do not reset permissions on the installed release for this check.
+
 ## Release smoke check
 
 Automated checks do not establish microphone, Accessibility, or server compatibility on a user's Mac. Before calling a release ready, check the packaged app on macOS:

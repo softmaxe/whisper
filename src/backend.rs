@@ -47,11 +47,12 @@ pub fn microphone_permission_granted() -> bool {
         == crate::native::permissions::MicrophoneAccess::Granted
 }
 
+/// Blocks until the first system prompt is answered; call off the UI thread.
 pub fn request_microphone_permission() {
     use crate::native::permissions::{MicrophoneAccess, microphone_access};
     match microphone_access() {
         MicrophoneAccess::NotDetermined => {
-            std::thread::spawn(crate::native::permissions::request_microphone_access);
+            crate::native::permissions::request_microphone_access();
         }
         MicrophoneAccess::Granted => {}
         _ => open_microphone_privacy_settings(),

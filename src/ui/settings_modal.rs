@@ -205,6 +205,7 @@ pub struct SettingsModal {
     clearing_audio: bool,
     mic_permission: bool,
     accessibility_permission: bool,
+    permission_request: Option<Task<()>>,
 
     scroll: ScrollHandle,
     /// The section whose scroll extent has been measured for the bottom fade.
@@ -401,6 +402,11 @@ impl SettingsModal {
         let restore_focus = window.focused(cx);
         let s = settings(cx);
         let mut subscriptions = Vec::new();
+        subscriptions.push(cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.refresh_permissions(cx);
+            }
+        }));
 
         let stt_url = cx.new(|cx| {
             InputState::new(window, cx)
@@ -734,6 +740,7 @@ impl SettingsModal {
             clearing_audio: false,
             mic_permission: backend::microphone_permission_granted(),
             accessibility_permission: backend::accessibility_granted(),
+            permission_request: None,
             scroll: ScrollHandle::new(),
             measured_section: None,
             focus,
@@ -756,8 +763,7 @@ impl SettingsModal {
             self.scroll.set_offset(point(px(0.), px(0.)));
             if section == SettingsSection::PrivacyData {
                 self.load_storage_usage(cx);
-                self.mic_permission = backend::microphone_permission_granted();
-                self.accessibility_permission = backend::accessibility_granted();
+                self.refresh_permissions(cx);
             }
             cx.notify();
         }
