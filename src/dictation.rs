@@ -803,14 +803,15 @@ impl Dictation {
         text: String,
         recording: FailedRecording,
     ) -> Option<DictationNotice> {
+        // With paste or the clipboard on, deliver as usual: withholding the
+        // paste would punish the user for a History fault they cannot fix.
+        if settings.auto_paste_enabled || settings.keep_transcription_in_clipboard {
+            return None;
+        }
         let message = match saved {
             Err(_) => "dictation.historySaveFailed",
-            Ok(None)
-                if !settings.auto_paste_enabled && !settings.keep_transcription_in_clipboard =>
-            {
-                "dictation.noDestination"
-            }
-            _ => return None,
+            Ok(None) => "dictation.noDestination",
+            Ok(Some(_)) => return None,
         };
         Some(self.recover_transcript(
             message,
@@ -1250,18 +1251,22 @@ mod tests {
                     .map(|recorded| recorded.map(|r| r.item.id));
                 assert!(saved.is_err());
                 let mut dictation = dictation(Phase::Processing);
-                let notice = dictation
-                    .persistence_recovery(
-                        &saved,
-                        &settings,
-                        transcript.text.clone(),
-                        FailedRecording {
-                            wav: wav.clone(),
-                            duration,
-                            occurred_at,
-                        },
-                    )
-                    .unwrap();
+                let notice = dictation.persistence_recovery(
+                    &saved,
+                    &settings,
+                    transcript.text.clone(),
+                    FailedRecording {
+                        wav: wav.clone(),
+                        duration,
+                        occurred_at,
+                    },
+                );
+                if auto_paste_enabled || keep_transcription_in_clipboard {
+                    // Paste or the clipboard still receives the text.
+                    assert!(notice.is_none());
+                    continue;
+                }
+                let notice = notice.unwrap();
                 let DictationNotice::TranscriptRecovery { text, kept, .. } = notice else {
                     panic!("failed persistence must not report Delivered");
                 };
