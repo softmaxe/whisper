@@ -272,9 +272,13 @@ pub fn resume_media() {
     crate::native::media::resume_media();
 }
 
-/// The cpal device name for the configured microphone, `None` for the system default.
+/// The device UID for capture, `None` for the system default.
 pub fn preferred_input_device(settings: &crate::settings::Settings) -> Option<String> {
-    crate::native::mic::resolve_preferred_microphone(settings).map(|d| d.label)
+    preferred_input_selector(crate::native::mic::resolve_preferred_microphone(settings))
+}
+
+fn preferred_input_selector(device: Option<crate::native::mic::MicDevice>) -> Option<String> {
+    device.map(|d| d.id)
 }
 
 /// The Target app at the hotkey press.
@@ -338,4 +342,58 @@ pub fn undo_learned_words(words: &[String], cx: &mut gpui_kit::App) {
     crate::app_state::AppState::global(cx).update(cx, |s, cx| {
         s.change_dictionary(&none, words, crate::db::DictionarySource::Learned, cx);
     });
+}
+
+#[cfg(test)]
+mod microphone_tests {
+    use super::*;
+    use crate::native::mic::{MicDevice, MicSnapshot};
+    use crate::settings::{MicrophoneSelectionMode, Settings};
+
+    #[test]
+    fn capture_selector_preserves_the_resolved_id_for_duplicate_names() {
+        let devices = ["usb-first", "usb-second"].map(|id| MicDevice {
+            id: id.into(),
+            label: "USB Audio".into(),
+            is_built_in: false,
+            is_default: id == "usb-second",
+        });
+        let mut snapshot = MicSnapshot {
+            devices: devices.into(),
+            system_default_name: Some("USB Audio".into()),
+            lid_closed: Some(false),
+        };
+        for mode in [
+            MicrophoneSelectionMode::Specific,
+            MicrophoneSelectionMode::Auto,
+        ] {
+            let settings = Settings {
+                microphone_selection_mode: mode,
+                selected_mic_device_id: "usb-second".into(),
+                selected_mic_device_label: "USB Audio".into(),
+                ..Settings::default()
+            };
+            assert_eq!(
+                preferred_input_selector(snapshot.next_device(&settings)).as_deref(),
+                Some("usb-second")
+            );
+        }
+        let unavailable = Settings {
+            microphone_selection_mode: MicrophoneSelectionMode::Specific,
+            selected_mic_device_id: "disconnected".into(),
+            selected_mic_device_label: "USB Audio".into(),
+            ..Settings::default()
+        };
+        assert_eq!(
+            preferred_input_selector(snapshot.next_device(&unavailable)).as_deref(),
+            Some("usb-second")
+        );
+        snapshot.devices[0].is_default = true;
+        snapshot.devices[1].is_default = false;
+        assert_eq!(
+            preferred_input_selector(snapshot.next_device(&unavailable)).as_deref(),
+            Some("usb-first")
+        );
+        assert_eq!(preferred_input_selector(None), None);
+    }
 }

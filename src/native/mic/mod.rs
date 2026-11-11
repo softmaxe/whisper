@@ -277,7 +277,7 @@ pub fn watch_laptop_lid() {
 /// while the helper restarts, or on a Mac without a lid) counts as open, so
 /// Auto keeps the built-in microphone.
 pub fn resolve_preferred_microphone(settings: &Settings) -> Option<MicDevice> {
-    MicSnapshot::read().resolve(settings)
+    MicSnapshot::read().next_device(settings)
 }
 
 #[cfg(test)]
