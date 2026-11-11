@@ -10,8 +10,9 @@ use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, NavSurface, drop,
-    f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
+    MenuTriggerBounds, NavSurface, drop, f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row,
+    scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
@@ -595,8 +596,12 @@ impl ControlPanel {
                     cx.notify();
                 }
             }))
+            .key_context(MENU_CONTEXT)
+            .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
+                this.close_page_menu(window, cx);
+            }))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                if matches!(e.keystroke.key.as_str(), "escape" | "tab") {
+                if e.keystroke.key == "escape" {
                     this.close_page_menu(window, cx);
                     cx.stop_propagation();
                 }

@@ -307,6 +307,10 @@ impl DictionaryView {
                     }
                 }),
             )
+            .key_context(MENU_CONTEXT)
+            .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
+                this.close_menu(true, window, cx);
+            }))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 let current = (0..count)
                     .find(|&i| keyed_focus_handle(menu_item_key(i), cx).is_focused(window));
@@ -314,7 +318,7 @@ impl DictionaryView {
                 match e.keystroke.key.as_str() {
                     "down" => focus_key(menu_item_key(step(1)), window, cx),
                     "up" => focus_key(menu_item_key(step(count - 1)), window, cx),
-                    "escape" | "tab" => this.close_menu(true, window, cx),
+                    "escape" => this.close_menu(true, window, cx),
                     _ => return,
                 }
                 cx.stop_propagation();

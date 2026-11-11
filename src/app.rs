@@ -9,6 +9,7 @@ use crate::settings::{ActivationMode, Settings};
 
 use crate::app_state::{AppEvent, AppState};
 use crate::dictation::{Dictation, DictationNotice, StatusMirror};
+use crate::ui::components::{DismissMenu, MENU_CONTEXT};
 use crate::ui::control_panel::{CloseOverlay, ControlPanel, OpenSearch, OpenSettings};
 use crate::ui::overlays::{Overlays, Toast, ToastVariant, show_toast};
 use crate::ui::pill::{PillView, WINDOW_SIZE};
@@ -285,6 +286,8 @@ pub fn run() {
             KeyBinding::new("cmd-,", ShowSettings, None),
             KeyBinding::new("escape", CloseOverlay, Some("ControlPanel")),
             KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("tab", DismissMenu, Some(MENU_CONTEXT)),
+            KeyBinding::new("shift-tab", DismissMenu, Some(MENU_CONTEXT)),
         ]);
         cx.on_app_quit(|cx| {
             AppState::global(cx).update(cx, |state, _| state.invalidate_learning());

@@ -22,9 +22,9 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, drop, empty_state,
-    icon, kbd, keyed_focus_handle, page_container, segment, segmented_track, surface_card,
-    text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
+    MenuTriggerBounds, drop, empty_state, icon, kbd, keyed_focus_handle, page_container, segment,
+    segmented_track, surface_card, text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
 use super::format::day_label;

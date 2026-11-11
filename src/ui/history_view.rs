@@ -15,8 +15,9 @@ use crate::app_state::{AppEvent, AppState};
 use crate::backend;
 
 use super::components::{
-    KeyboardFocusable, MenuTriggerBounds, empty_state, f32_tx, icon, kbd, keyed_focus_handle,
-    page_container, retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
+    DismissMenu, KeyboardFocusable, MENU_CONTEXT, MenuTriggerBounds, empty_state, f32_tx, icon,
+    kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
+    spinner, text_tooltip,
 };
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, remove_toast, show_dialog, show_toast, show_tracked_toast,
@@ -1121,15 +1122,13 @@ impl HistoryView {
                     cx.notify();
                 }
             }))
+            .key_context(MENU_CONTEXT)
+            .on_action(cx.listener(move |this, _: &DismissMenu, window, cx| {
+                this.close_menu(id, window, cx);
+            }))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 match e.keystroke.key.as_str() {
                     "escape" => this.close_menu(id, window, cx),
-                    // Tab leaves the menu: close it so it never floats over
-                    // the page while focus is elsewhere.
-                    "tab" => {
-                        this.close_menu(id, window, cx);
-                        return;
-                    }
                     "down" | "up" => {
                         let current = handles.iter().position(|h| h.is_focused(window));
                         let next = match (e.keystroke.key.as_str(), current) {
