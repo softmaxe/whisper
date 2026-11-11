@@ -77,6 +77,7 @@ pub struct ControlPanel {
     dictionary: Option<Entity<DictionaryView>>,
     upload: Entity<UploadView>,
     settings: Option<Entity<SettingsModal>>,
+    history_after_settings: Option<i64>,
     scroll: ScrollHandle,
     /// Whether the History page's ⋯ menu in the top bar is open.
     page_menu_open: bool,
@@ -126,6 +127,7 @@ impl ControlPanel {
             dictionary: None,
             upload,
             settings: None,
+            history_after_settings: None,
             scroll,
             page_menu_open: false,
             measured_view: None,
@@ -171,6 +173,9 @@ impl ControlPanel {
             |this, _, event: &SettingsModalEvent, cx| match event {
                 SettingsModalEvent::Close => {
                     this.settings = None;
+                    if let Some(id) = this.history_after_settings.take() {
+                        this.history.update(cx, |h, cx| h.highlight(id, cx));
+                    }
                     cx.notify();
                 }
             },
@@ -189,9 +194,7 @@ impl ControlPanel {
                 // is delivered would drop this listener with it.
                 CommandSearchEvent::Selected(id) => {
                     super::overlays::close_custom(cx);
-                    this.set_view(PanelView::Home, cx);
-                    let id = *id;
-                    this.history.update(cx, |h, cx| h.highlight(id, cx));
+                    this.reveal_history(*id, cx);
                 }
             },
         )
@@ -201,6 +204,17 @@ impl ControlPanel {
 
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         self.open_settings(None, window, cx);
+    }
+
+    fn reveal_history(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.set_view(PanelView::Home, cx);
+        if let Some(modal) = &self.settings {
+            // Start the spotlight only after the sheet's close transition ends.
+            self.history_after_settings = Some(id);
+            modal.update(cx, |m, cx| m.request_close(cx));
+        } else {
+            self.history.update(cx, |h, cx| h.highlight(id, cx));
+        }
     }
 
     fn on_close_overlay(&mut self, _: &CloseOverlay, _window: &mut Window, cx: &mut Context<Self>) {
