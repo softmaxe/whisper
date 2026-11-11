@@ -80,7 +80,11 @@ pub fn system_default_microphone() -> Option<String> {
 pub fn normalize_microphone_label(label: &str) -> String {
     let mut text: String = label.nfkc().collect();
     let trimmed = text.trim_start();
-    if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("default") {
+    // `get` rather than indexing: byte 7 can fall inside a multibyte character.
+    if trimmed
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("default"))
+    {
         let rest = trimmed[7..].trim_start();
         if let Some(rest) = rest.strip_prefix('-') {
             text = rest.trim_start().to_string();
@@ -526,6 +530,16 @@ mod tests {
             None
         );
         assert_eq!(resolve_mic_device_selection(&[device], "", ""), None);
+    }
+
+    #[test]
+    fn labels_with_multibyte_names_normalize() {
+        // Byte 7 falls inside the third character.
+        assert_eq!(normalize_microphone_label("桌面麦克风"), "桌面麦克风");
+        assert_eq!(
+            normalize_microphone_label("Default - 桌面麦克风"),
+            "桌面麦克风"
+        );
     }
 
     #[test]
