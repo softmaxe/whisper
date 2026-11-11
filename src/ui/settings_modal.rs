@@ -530,7 +530,6 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(SELECT_WIDTH))
-            .with_menu_min_width(px(240.))
             .with_label(t("settings.language.uiLabel"))
         });
         #[cfg(debug_assertions)]
@@ -554,7 +553,6 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(SELECT_WIDTH))
-            .with_menu_min_width(px(240.))
             .with_label(t("settings.general.output.mode"))
         });
         subscriptions.push(cx.subscribe(&output_mode, |_, _, e: &SelectEvent, cx| {
@@ -570,7 +568,6 @@ impl SettingsModal {
                 cx,
             )
             .with_width(px(SELECT_WIDTH))
-            .with_menu_min_width(px(240.))
             .with_label(t("settings.language.transcriptionLabel"))
         });
         subscriptions.push(cx.subscribe(&stt_language, |_, _, e: &SelectEvent, cx| {
@@ -656,7 +653,6 @@ impl SettingsModal {
         let microphone = cx.new(|cx| {
             Select::new(Vec::new(), None, window, cx)
                 .with_width_range(px(SELECT_WIDTH), px(MIC_SELECT_WIDTH))
-                .with_menu_min_width(px(280.))
                 .with_label(t("microphoneSettings.inputDevice"))
         });
         subscriptions.push(cx.subscribe(&microphone, |this, _, e: &SelectEvent, cx| {

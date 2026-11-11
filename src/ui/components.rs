@@ -31,11 +31,21 @@ impl MenuTriggerBounds {
     /// Place inside a relatively positioned trigger or its tight wrapper.
     pub fn measure(&self) -> impl IntoElement + use<> {
         let bounds = self.0.clone();
-        canvas(move |rect, _, _| bounds.set(rect), |_, _, _, _| {})
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
+        canvas(
+            move |rect, window, _| {
+                let previous = bounds.replace(rect);
+                // Menus read this width during render, before prepaint measures
+                // the trigger. Refresh once when it changes to keep them aligned.
+                if previous.size.width != rect.size.width {
+                    window.request_animation_frame();
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
     }
 
     pub fn contains(&self, position: Point<Pixels>) -> bool {
