@@ -167,11 +167,89 @@ pub(super) struct PillToast {
     pub(super) undo_words: Option<Vec<String>>,
 }
 
+/// Only the front card's visible, advancing countdown needs continuous frames.
+/// Toast expiry and hidden countdowns are handled by the pointer poll.
+pub(super) fn card_needs_animation_frame(
+    error: Option<&ErrorCard>,
+    recovery: Option<&Recovery>,
+    now: Instant,
+) -> bool {
+    let countdown = if let Some(error) = error {
+        error.countdown.as_ref()
+    } else {
+        recovery.filter(|r| r.copied).map(|r| &r.countdown)
+    };
+    countdown.is_some_and(|c| c.paused_at.is_none() && !c.expired(now))
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
-    use super::{Countdown, ERROR_HOLD, ErrorActions, ErrorCard};
+    use super::{
+        Countdown, ERROR_HOLD, ErrorActions, ErrorCard, Recovery, card_needs_animation_frame,
+    };
+
+    #[test]
+    fn card_frames_follow_only_the_visible_countdown() {
+        let now = Instant::now();
+        let mut recovery = Recovery::new("Recovery".into(), None, "words".into(), false);
+        recovery.countdown = Countdown::new(Duration::from_secs(4), now);
+        assert!(!card_needs_animation_frame(None, None, now));
+        assert!(!card_needs_animation_frame(None, Some(&recovery), now));
+        recovery.copied = true;
+        assert!(card_needs_animation_frame(None, Some(&recovery), now));
+        let error = ErrorCard::new(
+            "Retry".into(),
+            "Kept audio".into(),
+            None,
+            ErrorActions {
+                retry: true,
+                open_settings: false,
+            },
+            None,
+        );
+        assert!(!card_needs_animation_frame(
+            Some(&error),
+            Some(&recovery),
+            now
+        ));
+        assert!(!card_needs_animation_frame(
+            None,
+            Some(&recovery),
+            now + Duration::from_secs(4)
+        ));
+    }
+
+    #[test]
+    fn card_frames_stop_when_paused_and_restart_when_resumed() {
+        let now = Instant::now();
+        let mut error = ErrorCard::new(
+            "Error".into(),
+            "Details".into(),
+            None,
+            ErrorActions::default(),
+            None,
+        );
+        error.countdown = Some(Countdown::new(Duration::from_secs(4), now));
+        assert!(card_needs_animation_frame(Some(&error), None, now));
+        error.countdown.as_mut().unwrap().set_paused(true, now);
+        let later = now + Duration::from_secs(10);
+        assert!(!card_needs_animation_frame(Some(&error), None, later));
+        error.countdown.as_mut().unwrap().set_paused(false, later);
+        assert!(card_needs_animation_frame(Some(&error), None, later));
+        assert!(!card_needs_animation_frame(
+            Some(&error),
+            None,
+            later + Duration::from_secs(4)
+        ));
+        let mut recovery = Recovery::new("Recovery".into(), None, "words".into(), true);
+        recovery.countdown = Countdown::new(Duration::from_secs(4), now);
+        recovery.countdown.set_paused(true, now);
+        assert!(!card_needs_animation_frame(None, Some(&recovery), later));
+        recovery.countdown.set_paused(false, later);
+        assert!(card_needs_animation_frame(None, Some(&recovery), later));
+    }
 
     #[test]
     fn new_recording_preserves_recovery_when_copying_fails() {

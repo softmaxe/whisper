@@ -135,8 +135,7 @@ pub(super) fn pill_motion(
             if ms(r) >= RESOLVE_EXIT_AT as f32 {
                 m.alpha = 0.;
             }
-            // Still draws the frame where the check goes.
-            m.running = r < RESOLVE;
+            // A one-shot wake draws the frame where the check goes.
         }
         return m;
     }
@@ -171,9 +170,16 @@ pub(super) fn pill_motion(
             m.scale *= 1. - 0.1 * x;
             m.alpha = 1. - x;
         }
-        m.running = r < RESOLVE;
+        // The check is fully drawn at 320 ms and holds still until its exit.
+        m.running = r_ms < 320. || (r_ms >= RESOLVE_EXIT_AT as f32 && r < RESOLVE);
     }
     m
+}
+
+/// Recording samples live levels and elapsed time even with reduced motion.
+/// Preparation and processing only change continuously when their dots move.
+fn waveform_needs_animation_frame(snapshot: &DictationSnapshot, reduce: bool) -> bool {
+    snapshot.is_recording || (!reduce && snapshot.is_active())
 }
 
 impl PillView {
@@ -221,7 +227,7 @@ impl PillView {
         let finishing = !snapshot.is_active();
         let recording = snapshot.is_recording;
         let processing = snapshot.is_processing;
-        if !finishing {
+        if waveform_needs_animation_frame(snapshot, reduce) {
             window.request_animation_frame();
         }
         let now_ms = self.started.elapsed().as_secs_f32() * 1000.;
@@ -618,8 +624,9 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        BAR_MAX, BAR_MIN, BAR_W, BREATH, DUR_BASE, ENVELOPE, RESOLVE, bar_level, live_target,
-        pill_motion, prepare_ease, prepare_mark, think_opacity,
+        BAR_MAX, BAR_MIN, BAR_W, BREATH, DUR_BASE, DictationSnapshot, ENVELOPE, RESOLVE,
+        RESOLVE_EXIT_AT, bar_level, live_target, pill_motion, prepare_ease, prepare_mark,
+        think_opacity, waveform_needs_animation_frame,
     };
 
     fn at(ms: u64) -> Option<Duration> {
@@ -628,6 +635,47 @@ mod tests {
 
     fn db(level: f32) -> f32 {
         10f32.powf(level / 20.)
+    }
+
+    #[test]
+    fn waveform_frames_follow_live_levels_and_motion_preferences() {
+        for snapshot in [
+            DictationSnapshot::default(),
+            DictationSnapshot {
+                is_preparing: true,
+                ..Default::default()
+            },
+            DictationSnapshot {
+                is_processing: true,
+                ..Default::default()
+            },
+            DictationSnapshot {
+                is_recording: true,
+                ..Default::default()
+            },
+        ] {
+            assert_eq!(
+                waveform_needs_animation_frame(&snapshot, false),
+                snapshot.is_active()
+            );
+            assert_eq!(
+                waveform_needs_animation_frame(&snapshot, true),
+                snapshot.is_recording
+            );
+        }
+    }
+
+    #[test]
+    fn delivered_check_requests_frames_only_while_changing() {
+        for ms in [0, 100, 319, RESOLVE_EXIT_AT, RESOLVE_EXIT_AT + 60] {
+            assert!(pill_motion(None, None, at(ms), false).running);
+        }
+        for ms in [320, 400, RESOLVE_EXIT_AT - 1, RESOLVE.as_millis() as u64] {
+            assert!(!pill_motion(None, None, at(ms), false).running);
+        }
+        for ms in [0, 100, 400, RESOLVE_EXIT_AT] {
+            assert!(!pill_motion(None, None, at(ms), true).running);
+        }
     }
 
     #[test]

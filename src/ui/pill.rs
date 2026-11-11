@@ -363,7 +363,7 @@ impl PillView {
 
     /// Follows the Settings sheet. Closing it gives the error card a fresh
     /// countdown, so the user has the full time to resend after a fix.
-    fn track_settings(&mut self, cx: &App) {
+    fn track_settings(&mut self, cx: &mut Context<Self>) {
         let open = crate::app::settings_open(cx);
         if open == self.settings_open {
             return;
@@ -373,6 +373,7 @@ impl PillView {
             error.restart();
         }
         self.set_hovered(self.hovered);
+        cx.notify();
     }
 
     /// Polls the pointer so the transparent window only takes clicks over its
@@ -580,7 +581,21 @@ impl PillView {
                 );
             }
             DictationNotice::Delivered => {
-                self.resolved_at = Some(Instant::now());
+                let resolved_at = Instant::now();
+                self.resolved_at = Some(resolved_at);
+                // The check holds still before its exit, so wake once at the
+                // exit boundary instead of drawing throughout the hold.
+                cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(RESOLVE_EXIT_AT))
+                        .await;
+                    let _ = this.update_in(cx, |this, _, cx| {
+                        if this.resolved_at == Some(resolved_at) {
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
                 // The phase is already idle in the shared state when this
                 // arrives, though the pill may not have run its finish yet.
                 // Start (or stretch) the finish here so the visibility check
@@ -671,9 +686,6 @@ impl Render for PillView {
             self.resolved_at.map(|t| now - t),
             cx.reduce_motion(),
         );
-        if motion_fx.running {
-            window.request_animation_frame();
-        }
         // The pill fades out for the finish and while an error/recovery card
         // owns the window; the delivered check runs its own exit.
         let pill_shown = (active || resolving) && !panel_open;
@@ -686,6 +698,9 @@ impl Render for PillView {
             cx,
         ) * motion_fx.alpha;
         let show_pill = (active || finishing) && pill_alpha > 0.001;
+        if show_pill && motion_fx.running {
+            window.request_animation_frame();
+        }
         let recording = snapshot.is_recording;
         let cancel_visible = (recording || snapshot.is_processing) && !panel_open;
         if !cancel_visible || !self.hovered {
@@ -766,7 +781,9 @@ impl Render for PillView {
                     .left(px(DOCK_INSET))
                     .child(tracked),
             );
-            window.request_animation_frame();
+            if card_needs_animation_frame(self.error.as_ref(), self.recovery.as_ref(), now) {
+                window.request_animation_frame();
+            }
         }
 
         if let Some(toasts) = self.render_toasts(cx) {
@@ -788,7 +805,6 @@ impl Render for PillView {
                     })
                     .child(tracked),
             );
-            window.request_animation_frame();
         }
         root
     }
