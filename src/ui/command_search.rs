@@ -1,6 +1,7 @@
 //! The Cmd+K transcript palette. Keyboard-first, so it appears and
 //! disappears without animation.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use chrono::{DateTime, Local, Utc};
@@ -42,14 +43,21 @@ struct SearchResults {
     /// Arc identity is the data revision: History publishes immutable snapshots
     /// and uses copy-on-write for immediate deletions.
     history: Arc<Vec<TranscriptionItem>>,
+    /// Undo changes visibility without replacing the history snapshot.
+    pending_deletes: Arc<HashSet<i64>>,
     matches: Arc<Vec<TranscriptionItem>>,
 }
 
 impl SearchResults {
-    fn new(query: String, history: Arc<Vec<TranscriptionItem>>) -> Self {
+    fn new(
+        query: String,
+        history: Arc<Vec<TranscriptionItem>>,
+        pending_deletes: Arc<HashSet<i64>>,
+    ) -> Self {
         let matches = Arc::new(
             history
                 .iter()
+                .filter(|item| !pending_deletes.contains(&item.id))
                 .filter(|item| query.is_empty() || item.text.to_lowercase().contains(&query))
                 .take(if query.is_empty() {
                     RECENT_LIMIT
@@ -62,12 +70,20 @@ impl SearchResults {
         Self {
             query,
             history,
+            pending_deletes,
             matches,
         }
     }
 
-    fn is_current(&self, query: &str, history: &Arc<Vec<TranscriptionItem>>) -> bool {
-        self.query == query && Arc::ptr_eq(&self.history, history)
+    fn is_current(
+        &self,
+        query: &str,
+        history: &Arc<Vec<TranscriptionItem>>,
+        pending_deletes: &Arc<HashSet<i64>>,
+    ) -> bool {
+        self.query == query
+            && Arc::ptr_eq(&self.history, history)
+            && Arc::ptr_eq(&self.pending_deletes, pending_deletes)
     }
 }
 
@@ -165,6 +181,8 @@ pub(super) fn relative_time_label(ts: DateTime<Utc>) -> String {
 
 impl CommandSearch {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        cx.observe(&AppState::global(cx), |_, _, cx| cx.notify())
+            .detach();
         let input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("commandSearch.placeholder")));
         input.update(cx, |i, cx| i.focus(window, cx));
@@ -187,13 +205,15 @@ impl CommandSearch {
 
     fn results(&mut self, cx: &App) -> Arc<Vec<TranscriptionItem>> {
         let query = self.input.read(cx).value().trim().to_lowercase();
-        let history = AppState::global(cx).read(cx).history.clone();
+        let state = AppState::global(cx).read(cx);
+        let history = state.history.clone();
+        let pending_deletes = state.pending_history_deletes.clone();
         if self
             .results
             .as_ref()
-            .is_none_or(|cached| !cached.is_current(&query, &history))
+            .is_none_or(|cached| !cached.is_current(&query, &history, &pending_deletes))
         {
-            self.results = Some(SearchResults::new(query, history));
+            self.results = Some(SearchResults::new(query, history, pending_deletes));
         }
         self.results.as_ref().unwrap().matches.clone()
     }
@@ -467,31 +487,78 @@ impl Render for CommandSearch {
 
 #[cfg(test)]
 mod tests {
-    use super::{SearchResults, TranscriptionItem, match_window};
+    use super::{RECENT_LIMIT, RESULT_LIMIT, SearchResults, TranscriptionItem, match_window};
+    use std::collections::HashSet;
     use std::sync::Arc;
 
-    #[test]
-    fn cached_results_invalidate_after_a_query_change_or_history_edit() {
-        let mut history = Arc::new(vec![TranscriptionItem {
-            id: 1,
+    fn transcript(id: i64) -> TranscriptionItem {
+        TranscriptionItem {
+            id,
             text: "Deployment finished".into(),
             raw_text: None,
             timestamp: String::new(),
             created_at: String::new(),
             has_audio: false,
             audio_duration_ms: None,
-        }]);
-        let cache = SearchResults::new("deployment".into(), history.clone());
-        assert!(cache.is_current("deployment", &history));
+        }
+    }
+
+    #[test]
+    fn cached_results_invalidate_after_a_query_change_or_history_edit() {
+        let mut history = Arc::new(vec![transcript(1)]);
+        let pending = Arc::default();
+        let cache = SearchResults::new("deployment".into(), history.clone(), Arc::clone(&pending));
+        assert!(cache.is_current("deployment", &history, &pending));
         assert_eq!(cache.matches.len(), 1);
-        assert!(!cache.is_current("finished", &history));
+        assert!(!cache.is_current("finished", &history, &pending));
         Arc::make_mut(&mut history).clear();
-        assert!(!cache.is_current("deployment", &history));
+        assert!(!cache.is_current("deployment", &history, &pending));
         assert!(
-            SearchResults::new("deployment".into(), history)
+            SearchResults::new("deployment".into(), history, pending)
                 .matches
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn pending_delete_and_undo_invalidate_cached_recent_and_query_results() {
+        let history = Arc::new(vec![transcript(1), transcript(2)]);
+        for query in ["", "deployment"] {
+            let mut pending = Arc::new(HashSet::new());
+            let before = SearchResults::new(query.into(), history.clone(), pending.clone());
+            Arc::make_mut(&mut pending).insert(1);
+            assert!(!before.is_current(query, &history, &pending));
+            let deleted = SearchResults::new(query.into(), history.clone(), pending.clone());
+            assert_eq!(
+                deleted.matches.iter().map(|r| r.id).collect::<Vec<_>>(),
+                [2]
+            );
+            assert!(deleted.is_current(query, &history, &pending));
+            Arc::make_mut(&mut pending).remove(&1);
+            assert!(!deleted.is_current(query, &history, &pending));
+            let undone = SearchResults::new(query.into(), history.clone(), pending);
+            assert_eq!(
+                undone.matches.iter().map(|r| r.id).collect::<Vec<_>>(),
+                [1, 2]
+            );
+            assert!(Arc::ptr_eq(&before.history, &undone.history));
+        }
+    }
+
+    #[test]
+    fn pending_deletes_do_not_use_up_recent_or_query_result_limits() {
+        let history = Arc::new(
+            (1..=(RESULT_LIMIT + 2) as i64)
+                .map(transcript)
+                .collect::<Vec<_>>(),
+        );
+        let pending = Arc::new(HashSet::from([1, 2]));
+        for (query, limit) in [("", RECENT_LIMIT), ("deployment", RESULT_LIMIT)] {
+            let results = SearchResults::new(query.into(), history.clone(), pending.clone());
+            assert_eq!(results.matches.len(), limit);
+            assert_eq!(results.matches.first().unwrap().id, 3);
+            assert_eq!(results.matches.last().unwrap().id, (limit + 2) as i64);
+        }
     }
 
     #[test]

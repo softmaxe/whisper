@@ -349,6 +349,9 @@ impl HistoryView {
                 .action(t("common.undo"), move |_, cx| {
                     let _ = this.update(cx, |this, cx| {
                         if let Some(pending) = this.deleting.undo(operation_id, Instant::now()) {
+                            AppState::global(cx).update(cx, |s, cx| {
+                                s.set_history_delete_pending(pending.row_id, false, cx);
+                            });
                             remove_toast(pending.toast_id, cx);
                             cx.notify();
                         } else if this.deleting.is_current(operation_id) {
@@ -359,6 +362,7 @@ impl HistoryView {
             cx,
         );
         self.deleting.begin(id, deadline, toast_id);
+        AppState::global(cx).update(cx, |s, cx| s.set_history_delete_pending(id, true, cx));
         cx.notify();
     }
 
@@ -371,7 +375,11 @@ impl HistoryView {
         let id = pending.row_id;
         self.committing_deletes.insert(id);
         self.groups = None;
-        let delete = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
+        let delete = AppState::global(cx).update(cx, |s, cx| {
+            let delete = s.delete_transcription(id, cx);
+            s.set_history_delete_pending(id, false, cx);
+            delete
+        });
         cx.spawn(async move |this, cx| {
             let result = delete.await;
             let _ = this.update(cx, |this, cx| {

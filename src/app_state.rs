@@ -8,6 +8,7 @@ mod dictionary_snapshot;
 
 use dictionary_snapshot::DictionarySnapshot;
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -84,6 +85,8 @@ pub struct AppState {
     pub audio: Arc<AudioStorage>,
     pub history_store: Arc<HistoryStore>,
     pub history: Arc<Vec<TranscriptionItem>>,
+    /// Rows hidden during the Undo window, before the database delete begins.
+    pub pending_history_deletes: Arc<HashSet<i64>>,
     pub history_load: HistoryLoadState,
     history_revision: u64,
     dictionary_revision: Arc<AtomicU64>,
@@ -119,6 +122,7 @@ impl AppState {
             db,
             audio,
             history: Arc::new(Vec::new()),
+            pending_history_deletes: Arc::default(),
             history_load: HistoryLoadState::Unloaded,
             history_revision: 0,
             dictionary_revision: Arc::new(AtomicU64::new(0)),
@@ -269,6 +273,19 @@ impl AppState {
             written?;
             Ok(id)
         })
+    }
+
+    pub fn set_history_delete_pending(&mut self, id: i64, pending: bool, cx: &mut Context<Self>) {
+        if self.pending_history_deletes.contains(&id) == pending {
+            return;
+        }
+        let ids = Arc::make_mut(&mut self.pending_history_deletes);
+        if pending {
+            ids.insert(id);
+        } else {
+            ids.remove(&id);
+        }
+        cx.notify();
     }
 
     pub fn remove_history_item(&mut self, id: i64, cx: &mut Context<Self>) {
