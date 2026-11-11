@@ -257,7 +257,8 @@ async fn run(
     match tokio::time::timeout(options.connection_timeout, probe).await {
         Ok(Ok(_)) => {}
         Ok(Err(err)) => {
-            log::warn!("transcription server unreachable: {err}");
+            // The endpoint may carry credentials in its query.
+            log::warn!("transcription server unreachable: {}", err.without_url());
             return Err(TranscriptionError::ConnectionFailed);
         }
         Err(_) => return Err(TranscriptionError::ConnectionFailed),

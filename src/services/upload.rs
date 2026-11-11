@@ -216,12 +216,13 @@ async fn transcribe_file_inner(
         .multipart(form)
         .send()
         .await
-        .map_err(|e| UploadError::plain(e.to_string()))?;
+        // The endpoint may carry credentials in its query.
+        .map_err(|e| UploadError::plain(e.without_url().to_string()))?;
     let status = response.status().as_u16();
     let text = response
         .text()
         .await
-        .map_err(|e| UploadError::plain(e.to_string()))?;
+        .map_err(|e| UploadError::plain(e.without_url().to_string()))?;
     let Ok(data) = serde_json::from_str::<Value>(&text) else {
         // Proxies and gateways return non-JSON error pages (413, 504).
         let excerpt: String = text.chars().take(120).collect();
