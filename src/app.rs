@@ -206,7 +206,17 @@ fn handle_hotkey(command: HotkeyCommand, cx: &mut App) {
                 cx,
             );
         }
-        HotkeyCommand::ListenerError { message } => log::warn!("hotkey listener error: {message}"),
+        HotkeyCommand::ListenerError { message } => {
+            log::warn!("hotkey listener error: {message}");
+            show_toast(
+                Toast::new(crate::i18n::t("app.toasts.hotkeyUnavailable.title"))
+                    .description(crate::i18n::t(
+                        "app.toasts.hotkeyUnavailable.listenerStopped",
+                    ))
+                    .variant(ToastVariant::Destructive),
+                cx,
+            );
+        }
     }
 }
 

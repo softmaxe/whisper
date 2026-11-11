@@ -857,7 +857,26 @@ mod tests {
                 HotkeyCommand::Stop,
             ]
         );
-        assert!(matches!(commands[4], HotkeyCommand::ListenerError { .. }));
+        assert_eq!(
+            commands.len(),
+            4,
+            "crashes recover before reporting an error"
+        );
+        for index in 1..=3 {
+            h.timers.advance(1000 * (1 << (index - 1)));
+            h.spawner.emit(
+                index,
+                ChildEvent::Exit {
+                    code: Some(1),
+                    signal: None,
+                },
+            );
+        }
+        assert!(
+            h.drain()
+                .iter()
+                .any(|command| matches!(command, HotkeyCommand::ListenerError { .. }))
+        );
     }
 
     #[test]
