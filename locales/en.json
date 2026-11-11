@@ -166,7 +166,9 @@
       "serverTitle": "Server",
       "modelHelp": "The model your server should run. Test Connection lists the ones it offers.",
       "serverModels": "Models on this server",
-      "protocolTag": "OpenAI-compatible · no auth"
+      "protocolTag": "OpenAI-compatible · no auth",
+      "removeFillerWords": "Remove filler words",
+      "removeFillerWordsDescription": "Drops hesitation sounds such as “um” and “uh” from transcripts. Works without text cleanup."
     },
     "llms": {
       "server": {

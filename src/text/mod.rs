@@ -5,6 +5,7 @@ pub mod chinese_script;
 pub mod correction_learner;
 pub mod dictionary_import;
 pub mod echo_filter;
+pub mod filler_words;
 pub mod format;
 pub mod hotkeys;
 pub mod language;

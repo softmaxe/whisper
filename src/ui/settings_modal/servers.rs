@@ -283,6 +283,15 @@ impl SettingsModal {
                 .into_any_element(),
             );
         }
+        language_rows.push(toggle_row(
+            "remove-filler-words",
+            t("settings.speechToText.removeFillerWords"),
+            Some(t("settings.speechToText.removeFillerWordsDescription")),
+            settings(cx).remove_filler_words,
+            false,
+            |v, _, cx| update_settings(cx, |s| s.remove_filler_words = v),
+            &p,
+        ));
         let server = settings_section(
             t("settings.speechToText.serverTitle"),
             vec![

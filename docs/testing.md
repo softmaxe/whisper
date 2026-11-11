@@ -126,3 +126,11 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 - Tab through theme choices, buttons, switches, inputs, and dropdowns. Check focus, hover, selected, disabled, and destructive states. The filled action must retain a clearly contrasting label; switches must remain distinguishable by both thumb position and track color.
 - With `WHISPER_USER_DATA_DIR` pointing to a temporary directory, use `WHISPER_DEV_SCENE` in a debug build to inspect `pill:recording`, `pill:processing`, `pill:preparing`, `pill:error`, and `pill:fallback`. Tokyo Night uses the same indigo surface family as the workspace, muted blue voice activity, and distinct error/recovery colors. Light and Dark retain their dark floating HUD.
 - Automated tests cover preference serialization, system-appearance resolution, reading contrast, focus indicators, and selected/action text. They complement visual review; they do not prove native interaction or rendering quality.
+
+## Filler-word removal regression check
+
+- In Settings > Speech to text, toggle Remove filler words, restart, and verify the preference persists. Existing settings enable it by default.
+- With cleanup off and English selected, dictate “Um, we should go”; delivery should read “We should go” while History's raw transcript retains the hesitation. With Auto selected, “um carro” must remain intact.
+- Check Chinese hesitation runs and the exceptions 打呃 and 呃逆. Newlines, ordinary words, and the non-filler Chinese words 嗯, 啊, 额, 那个, 然后, and 就是 must remain.
+- Check filler-only input produces no-audio feedback, and a whole snippet still expands when preceded by a filler. Turn removal off and verify the transcript is unchanged. File uploads must continue returning raw server text.
+- Tab to the switch and activate it with the keyboard; verify its VoiceOver label in both interface languages and all three themes.

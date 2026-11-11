@@ -163,7 +163,9 @@
       "serverTitle": "服务器",
       "modelHelp": "服务器要运行的模型。点“测试连接”可列出它提供的模型。",
       "serverModels": "此服务器上的模型",
-      "protocolTag": "OpenAI 兼容 · 无鉴权"
+      "protocolTag": "OpenAI 兼容 · 无鉴权",
+      "removeFillerWords": "移除语气词",
+      "removeFillerWordsDescription": "自动去掉转录中的“呃”、um、uh 等犹豫音，无需开启文本整理。"
     },
     "llms": {
       "server": {

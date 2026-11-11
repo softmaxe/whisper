@@ -133,6 +133,7 @@ pub struct Settings {
     pub remote_transcription_url: String,
     pub remote_transcription_model: String,
 
+    pub remove_filler_words: bool,
     pub use_cleanup_model: bool,
     pub cleanup_model: String,
     pub cleanup_remote_url: String,
@@ -170,6 +171,7 @@ impl Default for Settings {
             chinese_script_preference: ChineseScriptPreference::AsTranscribed,
             remote_transcription_url: String::new(),
             remote_transcription_model: String::new(),
+            remove_filler_words: true,
             use_cleanup_model: true,
             cleanup_model: String::new(),
             cleanup_remote_url: String::new(),
@@ -359,5 +361,6 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(s.theme, ThemePreference::Dark);
         assert_eq!(s.audio_retention_days, 30);
+        assert!(s.remove_filler_words);
     }
 }

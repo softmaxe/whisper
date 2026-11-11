@@ -33,6 +33,8 @@ typing in.
   `/audio/transcriptions` endpoint; optional cleanup goes to a
   `/chat/completions` endpoint, with an editable prompt and a Prompt Studio to
   test it. Test Connection checks each server and lists its models.
+- **Fewer hesitation sounds.** Optional local filler-word removal works even
+  with text cleanup off, while preserving the raw transcript in History.
 - **Gets better with use.** A dictionary supplies spelling hints, corrections
   you make right after a paste are learned, and Snippets expand short phrases
   into longer text. Removing a word or snippet can be undone.

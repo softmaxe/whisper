@@ -173,6 +173,14 @@ fn cleanup_failure(err: &CleanupError) -> CleanupFailure {
     }
 }
 
+fn filter_fillers(text: &str, settings: &Settings) -> String {
+    if settings.remove_filler_words {
+        crate::text::filler_words::remove_filler_words(text, &settings.preferred_language)
+    } else {
+        text.to_string()
+    }
+}
+
 /// The deterministic Chinese script pass, run on the cleaned text.
 pub fn finalize_script(text: &str, settings: &Settings) -> String {
     let target = resolve_chinese_script_target(
@@ -207,15 +215,19 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         Err(err) => return PipelineOutcome::failed_from(&err),
     };
     let raw = response.text;
+    let filtered = filter_fillers(&raw, &input.settings);
+    if filtered.trim().is_empty() {
+        return PipelineOutcome::NoAudio;
+    }
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
     // A whole trigger is intentional input even when it equals the ASR hint.
     // Deliver saved text verbatim, without letting cleanup rewrite the trigger.
-    if let Some(text) = whole_snippet_replacement(&raw, &input.snippets) {
+    if let Some(text) = whole_snippet_replacement(&filtered, &input.snippets) {
         return PipelineOutcome::Transcribed(Transcript {
             text,
-            spoken_text: raw.trim().to_string(),
+            spoken_text: filtered.trim().to_string(),
             raw_text: raw,
             cleanup_failure: None,
         });
@@ -234,13 +246,13 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let (cleaned, cleanup_failure) = clean_up(&raw, &input, &cancel).await;
+    let (cleaned, cleanup_failure) = clean_up(&filtered, &input, &cancel).await;
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
     // Mishearings were learned from delivered text, so they match it here.
     let spoken_text = apply_known_corrections(
-        &finalize_script(&cleaned, &input.settings),
+        &finalize_script(&filter_fillers(&cleaned, &input.settings), &input.settings),
         &input.known_corrections,
     );
     if spoken_text.trim().is_empty() {
@@ -490,6 +502,55 @@ mod tests {
             run_test(run(served(&asr, None), CancellationToken::new())),
             PipelineOutcome::NoAudio
         );
+    }
+
+    #[test]
+    fn filler_only_transcripts_are_no_audio_without_cleanup() {
+        let asr = asr("Um, uh, 呃，");
+        assert_eq!(
+            run_test(run(served(&asr, None), CancellationToken::new())),
+            PipelineOutcome::NoAudio
+        );
+    }
+
+    #[test]
+    fn filler_removal_preserves_raw_text_and_can_be_disabled() {
+        for enabled in [true, false] {
+            let asr = asr("Um, we should go");
+            let mut input = served(&asr, None);
+            input.settings.remove_filler_words = enabled;
+            let t = transcribed(run_test(run(input, CancellationToken::new())));
+            assert_eq!(t.raw_text, "Um, we should go");
+            assert_eq!(
+                t.text,
+                if enabled {
+                    "We should go"
+                } else {
+                    "Um, we should go"
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn filler_removal_wraps_cleanup_and_precedes_whole_snippet_matching() {
+        let asr = asr("Um, we should go");
+        let llm = llm(completion("Uh, we should go."));
+        let t = transcribed(run_test(run(
+            served(&asr, Some(&llm)),
+            CancellationToken::new(),
+        )));
+        assert_eq!(t.text, "We should go.");
+        assert!(String::from_utf8_lossy(&llm.requests()[0].body).contains("We should go"));
+        let asr = self::asr("Um, sig.");
+        let mut input = served(&asr, None);
+        input.snippets = vec![Snippet {
+            trigger: "sig".into(),
+            replacement: "Best regards".into(),
+        }];
+        let t = transcribed(run_test(run(input, CancellationToken::new())));
+        assert_eq!(t.text, "Best regards");
+        assert_eq!(t.raw_text, "Um, sig.");
     }
 
     #[test]
