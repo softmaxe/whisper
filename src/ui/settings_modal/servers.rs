@@ -13,9 +13,6 @@ impl SettingsModal {
         cx: &mut Context<Self>,
     ) {
         let draft = self.cleanup_draft(cx);
-        if draft.is_empty() {
-            return;
-        }
         if draft != settings(cx).cleanup_remote_url.trim() {
             self.apply_cleanup_base(window, cx);
         }
@@ -92,6 +89,8 @@ impl SettingsModal {
         let raw = base_override.unwrap_or_else(|| settings(cx).cleanup_remote_url.clone());
         let normalized = normalize_base_url(&raw);
         if normalized.is_empty() {
+            // A pending request must not publish the previous server's models.
+            self.models_request = None;
             self.models.clear();
             self.models_error = None;
             self.models_loading = false;
@@ -153,7 +152,6 @@ impl SettingsModal {
         if base.is_empty() {
             return;
         }
-        let model = s.remote_transcription_model.trim().to_string();
         self.stt_check = ConnectionCheck::Checking;
         self.stt_error_details = false;
         cx.notify();
@@ -164,7 +162,9 @@ impl SettingsModal {
                 this.stt_check = match result {
                     Ok((_, models)) => {
                         this.stt_models = models;
-                        ConnectionCheck::connected(&this.stt_models, &model)
+                        // The model field may have changed while checking.
+                        let model = settings(cx).remote_transcription_model;
+                        ConnectionCheck::connected(&this.stt_models, model.trim())
                     }
                     Err(error) => ConnectionCheck::Failed(error),
                 };

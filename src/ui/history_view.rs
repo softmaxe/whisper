@@ -367,10 +367,11 @@ impl HistoryView {
         let at = self.cursor.and_then(|c| ids.iter().position(|id| *id == c));
         let key = e.keystroke.key.as_str();
         let cmd = e.keystroke.modifiers.platform;
+        let list = keyed_focus_handle("history-list".into(), cx);
+        let list_focused = list.is_focused(window);
         match key {
-            "down" | "up" if !keyed_focus_handle("history-list".into(), cx).is_focused(window) => {
+            "down" | "up" if !list_focused => {
                 // Arrows from a row's button hand focus back to the list.
-                let list = keyed_focus_handle("history-list".into(), cx);
                 window.focus(&list, cx);
                 self.cursor = self.cursor.or(ids.first().copied());
                 self.reveal_pending = self.cursor;
@@ -385,6 +386,9 @@ impl HistoryView {
                 self.cursor = Some(ids[prev]);
                 self.reveal_pending = self.cursor;
             }
+            // A focused row button handles its own keys; the cursor may sit
+            // on another row.
+            "enter" | "space" | "backspace" | "delete" if !list_focused => return,
             "enter" => {
                 let Some(id) = self.cursor else { return };
                 let text = AppState::global(cx)

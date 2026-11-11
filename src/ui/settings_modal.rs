@@ -194,7 +194,6 @@ pub struct SettingsModal {
     stt_request: Option<Task<()>>,
 
     auto_start: AutoStartState,
-    auto_start_loading: bool,
     mic_snapshot: MicSnapshot,
     mic_capture_status: CaptureStatus,
     mic_refresh: async_channel::Sender<()>,
@@ -723,7 +722,6 @@ impl SettingsModal {
             stt_models: Vec::new(),
             stt_request: None,
             auto_start: backend::auto_start_state(),
-            auto_start_loading: false,
             mic_snapshot: MicSnapshot::default(),
             mic_capture_status: CaptureStatus::Idle,
             mic_refresh,

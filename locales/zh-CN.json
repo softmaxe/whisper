@@ -11,8 +11,6 @@
       "chineseScriptAsTranscribed": "保持转录原样",
       "chineseScriptSimplified": "简体",
       "chineseScriptTraditional": "繁体",
-      "transcriptionSectionDescription": "你说的语言，以及中文的书写方式",
-      "uiSectionDescription": "Whisper 自身界面使用的语言",
       "autoDetect": "自动检测",
       "uiDescriptionLink": "语音转文字 ›"
     },
@@ -45,14 +43,12 @@
     "dictionary": {
       "autoLearnTitle": "从纠正中自动学习",
       "autoLearnDescription": "你在其他应用里改正转录内容后，Whisper 会记住这个词被误听成什么，下次自动修正",
-      "title": "词典",
-      "description": "词典如何随听写不断完善"
+      "title": "词典"
     },
     "general": {
       "appearance": {
         "auto": "自动",
         "dark": "深色",
-        "description": "控制 Whisper 的外观",
         "tokyoNight": "Tokyo Night",
         "light": "浅色",
         "theme": "主题",
@@ -67,24 +63,20 @@
         "startPositionDescription": "录音胶囊在屏幕上的显示位置",
         "bottomRight": "右下角",
         "center": "底部居中",
-        "bottomLeft": "左下角",
-        "description": "听写进行时显示的浮动胶囊"
+        "bottomLeft": "左下角"
       },
       "hotkey": {
         "activationMode": "激活模式",
         "activationModeHoldDescription": "按住 {{hotkey}} 说话，松开即结束",
         "activationModeTapDescription": "双击 Globe 等单个按键开始免提听写，再按一下结束；组合键按一下即可开始或结束",
-        "description": "用于开始和停止听写的按键",
         "resetToDefault": "重置为 {{hotkey}}",
         "title": "听写快捷键",
-        "activationModeDescription": "快捷键如何开始和结束听写",
         "toggle": "单击切换",
         "theHotkey": "快捷键",
         "activationModeDoubleTapDescription": "双击 {{hotkey}} 开始免提听写，再按一下结束",
         "activationModeToggleDescription": "按一下 {{hotkey}} 开始，再按一下结束"
       },
       "microphone": {
-        "description": "选择用于听写的输入设备",
         "title": "麦克风"
       },
       "soundEffects": {
@@ -92,22 +84,19 @@
         "dictationSoundsDescription": "在录音开始和停止时播放提示音",
         "pauseMedia": "暂停媒体",
         "pauseMediaDescription": "开始听写时自动暂停音乐",
-        "title": "声音与媒体",
-        "description": "听写时如何处理声音"
+        "title": "声音与媒体"
       },
       "clipboard": {
         "title": "剪贴板",
         "autoPaste": "自动粘贴",
         "autoPasteDescription": "听写结束后自动将转录文本粘贴到当前活动的应用中",
         "keepInClipboard": "将转录内容保留在剪贴板",
-        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴",
-        "description": "转录完成后文本的去向"
+        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴"
       },
       "startup": {
         "launchAtLogin": "登录时启动",
         "launchAtLoginDescription": "登录时在后台启动 Whisper",
         "title": "启动",
-        "description": "控制 Whisper 启动时的行为",
         "startMinimized": "启动时最小化",
         "startMinimizedDescription": "启动时不显示控制面板窗口",
         "needsApproval": {
@@ -120,7 +109,6 @@
     "permissions": {
       "accessibilityDescription": "转录后自动粘贴需要此权限",
       "accessibilityTitle": "辅助功能",
-      "description": "Whisper 需要这些权限来听取语音并自动粘贴",
       "microphoneDescription": "录制您的声音用于听写和转录",
       "microphoneTitle": "麦克风",
       "resetAccessibility": {
@@ -138,8 +126,7 @@
       "grantAccess": "授予访问权限",
       "granted": "已授权",
       "title": "权限",
-      "troubleshootingTitle": "问题排查",
-      "troubleshootingDescription": "权限问题的修复方法"
+      "troubleshootingTitle": "问题排查"
     },
     "privacy": {
       "dataRetention": "保存历史记录",
@@ -148,7 +135,6 @@
       "transcriptRetentionDescription": "过期的转录会连同录音和 Insights 计数一起删除",
       "transcriptRetentionForever": "永久",
       "audioRetention": "录音",
-      "audioRetentionDescription": "在这台 Mac 上保留已保存听写的录音，以便重新转录",
       "audioRetentionDisabled": "不保留",
       "retentionDays_one": "{{count}} 天",
       "retentionDays_other": "{{count}} 天",
@@ -163,16 +149,13 @@
       "clearAudioConfirm": "清除音频",
       "audioCleared": "已删除 {{count}} 个音频文件（{{size}}）",
       "needsHistory": "开启“保存历史记录”后可用",
-      "historyDescription": "Whisper 保留哪些转录，以及保留多久",
       "keepAudioForDescription": "可重新转录听写，例如换用其他模型",
       "audioStorageOff": "未保存录音。选择音频保留时长后即可开始保存。"
     },
     "prompts": {
-      "title": "提示词工作室",
-      "description": "整理模型遵循的指令"
+      "title": "提示词工作室"
     },
     "speechToText": {
-      "sharedDescription": "用于转录听写和上传文件的服务器",
       "serverUrlHelp": "粘贴服务器的基础地址，通常以 /v1 结尾。也可以填完整的接口地址。",
       "serverTitle": "服务器",
       "modelHelp": "服务器要运行的模型。点“测试连接”可列出它提供的模型。",
@@ -182,17 +165,14 @@
     "llms": {
       "server": {
         "title": "服务器",
-        "description": "用于整理听写文本的服务器",
         "fillIn": "填入 {{server}} 的默认地址",
         "protocolTag": "OpenAI 兼容 · 可选密钥"
       },
       "cleanup": {
-        "title": "整理",
-        "description": "在粘贴前润色你的听写内容"
+        "title": "整理"
       },
       "output": {
-        "title": "输出",
-        "description": "模型如何作答"
+        "title": "输出"
       }
     },
     "selfHosted": {
@@ -531,7 +511,7 @@
     "wordCount_other": "{{count}} 个词",
     "wordCountFiltered": "{{shown}} / {{total}} 个词",
     "filterEmpty": "这个来源还没有词",
-    "promptLimitNotice": "词典当前共 {{chars}} 个字符。Whisper 模型只会读取其中最后几百个字符，因此手动添加和最近使用的词会放在最后，很少使用的词可能被忽略；其他模型会收到完整列表。",
+    "promptLimitNotice": "词典当前共 {{chars}} 个字符。Whisper 模型只会读取其中最后几百个字符，因此手动添加和最近使用的词会放在最后，很少使用的词可能被忽略。",
     "exportFailed": "导出失败",
     "wordsReady_one": "{{count}} 个词语就绪",
     "noMatches": "没有与“{{word}}”匹配的词",
@@ -545,6 +525,7 @@
       "replacementPlaceholder": "说出触发词时插入的文本…",
       "create": "创建片段",
       "duplicate": "已存在使用此触发词的片段",
+      "tooLong": "触发词不能超过 {{max}} 个字符",
       "emptyTitle": "同样的话，只说",
       "emptyTitleAccent": "一遍",
       "emptyDescription": "说出触发词，Whisper 会把它替换为你保存的内容：链接、开场白、签名、提示词。",
@@ -709,7 +690,6 @@
       "recent": "最近"
     },
     "noResults": "无结果",
-    "emptyState": "输入内容开始搜索",
     "footer": {
       "navigate": "导航",
       "open": "打开",

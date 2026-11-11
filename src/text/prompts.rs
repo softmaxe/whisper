@@ -138,7 +138,7 @@ pub fn resolve_prompt_template<S: AsRef<str>>(
     append_dictionary_suffix(&prompt, custom_dictionary, ui_language)
 }
 
-/// The cleanup system prompt: the user's custom prompt unless it is empty,
+/// The cleanup system prompt: the user's custom prompt unless it is blank,
 /// else the default for the UI language.
 pub fn resolve_cleanup_prompt<S: AsRef<str>>(
     custom_prompt: &str,
@@ -146,9 +146,10 @@ pub fn resolve_cleanup_prompt<S: AsRef<str>>(
     custom_dictionary: &[S],
     ui_language: &str,
 ) -> String {
-    let template = match custom_prompt {
-        "" => default_cleanup_prompt(ui_language),
-        custom => custom,
+    let template = if custom_prompt.trim().is_empty() {
+        default_cleanup_prompt(ui_language)
+    } else {
+        custom_prompt
     };
     resolve_prompt_template(template, language, custom_dictionary, ui_language)
 }

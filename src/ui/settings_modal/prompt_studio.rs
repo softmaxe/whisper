@@ -13,7 +13,7 @@ impl SettingsModal {
         let edited = self.prompt_editor.read(cx).value().to_string();
         let default = Self::default_prompt(cx);
         // Keep the shipped default eligible for future prompt updates.
-        let custom = if edited == default {
+        let custom = if edited == default || edited.trim().is_empty() {
             String::new()
         } else {
             edited

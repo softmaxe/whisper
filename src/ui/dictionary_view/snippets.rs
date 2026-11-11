@@ -12,6 +12,25 @@ impl DictionaryView {
         })
     }
 
+    /// Why `trigger` cannot be saved, as the message shown under the field.
+    /// Storage drops overlong triggers, so they must never reach it.
+    pub(super) fn trigger_problem(
+        snippets: &[Snippet],
+        trigger: &str,
+        except: Option<&str>,
+    ) -> Option<String> {
+        if trigger.chars().count() > MAX_SNIPPET_TRIGGER_LENGTH {
+            Some(t_with(
+                "dictionary.snippets.tooLong",
+                &[("max", &MAX_SNIPPET_TRIGGER_LENGTH.to_string())],
+            ))
+        } else if !trigger.is_empty() && Self::trigger_exists(snippets, trigger, except) {
+            Some(t("dictionary.snippets.duplicate"))
+        } else {
+            None
+        }
+    }
+
     pub(super) fn create_snippet(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let trigger = self.trigger_input.read(cx).value().trim().to_string();
         let replacement = self.expansion.read(cx).value().trim().to_string();
@@ -20,7 +39,7 @@ impl DictionaryView {
         let mut snippets = state.read(cx).snippets.clone();
         if trigger.is_empty()
             || replacement.is_empty()
-            || Self::trigger_exists(&snippets, &trigger, None)
+            || Self::trigger_problem(&snippets, &trigger, None).is_some()
         {
             return;
         }
@@ -303,9 +322,10 @@ impl DictionaryView {
         let p = cx.palette();
         let snippets = AppState::global(cx).read(cx).snippets.clone();
         let trigger = self.trigger_input.read(cx).value().trim().to_string();
-        let duplicate = !trigger.is_empty() && Self::trigger_exists(&snippets, &trigger, None);
-        let can_create =
-            !trigger.is_empty() && !self.expansion.read(cx).value().trim().is_empty() && !duplicate;
+        let problem = Self::trigger_problem(&snippets, &trigger, None);
+        let can_create = !trigger.is_empty()
+            && !self.expansion.read(cx).value().trim().is_empty()
+            && problem.is_none();
         let label = |key: &str| {
             div()
                 .px(px(2.))
@@ -332,13 +352,13 @@ impl DictionaryView {
                     .gap(px(6.))
                     .child(label("dictionary.snippets.triggerLabel"))
                     .child(text_field_small(&self.trigger_input, false, window, cx))
-                    .when(duplicate, |d| {
+                    .when_some(problem, |d, problem| {
                         d.child(
                             div()
                                 .px(px(2.))
                                 .text_size(px(TEXT_SMALL))
                                 .text_color(p.destructive)
-                                .child(t("dictionary.snippets.duplicate")),
+                                .child(problem),
                         )
                     }),
             )
@@ -528,18 +548,18 @@ impl SnippetEditor {
         }
     }
 
-    fn state(&self, cx: &App) -> (String, String, bool) {
+    fn state(&self, cx: &App) -> (String, String, Option<String>) {
         let trigger = self.trigger.read(cx).value().trim().to_string();
         let replacement = self.replacement.read(cx).value().trim().to_string();
         let snippets = AppState::global(cx).read(cx).snippets.clone();
-        let duplicate = !trigger.is_empty()
-            && DictionaryView::trigger_exists(&snippets, &trigger, Some(&self.original.trigger));
-        (trigger, replacement, duplicate)
+        let problem =
+            DictionaryView::trigger_problem(&snippets, &trigger, Some(&self.original.trigger));
+        (trigger, replacement, problem)
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (trigger, replacement, duplicate) = self.state(cx);
-        if trigger.is_empty() || replacement.is_empty() || duplicate {
+        let (trigger, replacement, problem) = self.state(cx);
+        if trigger.is_empty() || replacement.is_empty() || problem.is_some() {
             return;
         }
         let state = AppState::global(cx);
@@ -569,8 +589,8 @@ impl SnippetEditor {
 impl Render for SnippetEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
-        let (trigger, replacement, duplicate) = self.state(cx);
-        let can_save = !trigger.is_empty() && !replacement.is_empty() && !duplicate;
+        let (trigger, replacement, problem) = self.state(cx);
+        let can_save = !trigger.is_empty() && !replacement.is_empty() && problem.is_none();
         let label = |text: String| {
             div()
                 .text_size(px(TEXT_SMALL))
@@ -612,12 +632,12 @@ impl Render for SnippetEditor {
                     .gap(px(6.))
                     .child(label(t("dictionary.snippets.triggerLabel")))
                     .child(text_field(&self.trigger, false, window, cx))
-                    .when(duplicate, |d| {
+                    .when_some(problem, |d, problem| {
                         d.child(
                             div()
                                 .text_size(px(TEXT_SMALL))
                                 .text_color(p.destructive)
-                                .child(t("dictionary.snippets.duplicate")),
+                                .child(problem),
                         )
                     }),
             )
