@@ -806,6 +806,19 @@ impl SettingsModal {
         if self.closing {
             return;
         }
+        let this = cx.entity().downgrade();
+        if !self.confirm_prompt_close(
+            move |cx| {
+                let _ = this.update(cx, |this, cx| this.begin_close(cx));
+            },
+            cx,
+        ) {
+            return;
+        }
+        self.begin_close(cx);
+    }
+
+    fn begin_close(&mut self, cx: &mut Context<Self>) {
         self.closing = true;
         cx.notify();
         cx.spawn(async move |this, cx| {

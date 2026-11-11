@@ -53,6 +53,66 @@ impl SettingsModal {
         default_cleanup_prompt(&settings(cx).ui_language).to_string()
     }
 
+    fn saved_prompt(cx: &App) -> String {
+        let s = settings(cx);
+        if s.custom_prompt_cleanup.is_empty() {
+            Self::default_prompt(cx)
+        } else {
+            s.custom_prompt_cleanup.clone()
+        }
+    }
+
+    /// Both sheet dismissal and native window closing protect the same draft.
+    /// Returns true only when the caller can close immediately.
+    pub fn confirm_prompt_close(
+        &mut self,
+        on_close: impl Fn(&mut App) + 'static,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.prompt_editor.read(cx).value().as_ref() == Self::saved_prompt(cx) {
+            return true;
+        }
+        if Overlays::global(cx).read(cx).has_dialog() {
+            return false;
+        }
+        let on_close = std::rc::Rc::new(on_close);
+        let save_close = on_close.clone();
+        let this = cx.entity().downgrade();
+        let discard_view = this.clone();
+        let mut request = DialogRequest::confirm(
+            t("promptStudio.dialogs.unsaved.title"),
+            Some(t("promptStudio.dialogs.unsaved.description").into()),
+            false,
+            move |window, cx| {
+                if this
+                    .update(cx, |this, cx| this.save_prompt(window, cx))
+                    .is_ok()
+                {
+                    save_close(cx);
+                }
+            },
+        );
+        request.confirm_label = t("promptStudio.common.save").into();
+        request.cancel_label = Some(t("promptStudio.dialogs.unsaved.keepEditing").into());
+        request.alternative = Some((
+            t("promptStudio.dialogs.unsaved.discard").into(),
+            std::rc::Rc::new(move |window, cx| {
+                if discard_view
+                    .update(cx, |this, cx| {
+                        let saved = Self::saved_prompt(cx);
+                        this.prompt_editor
+                            .update(cx, |input, cx| input.set_value(saved, window, cx));
+                    })
+                    .is_ok()
+                {
+                    on_close(cx);
+                }
+            }),
+        ));
+        show_dialog(request, cx);
+        false
+    }
+
     /// Saving is routine, so it confirms with a toast rather than a dialog
     /// to dismiss.
     pub(super) fn save_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {

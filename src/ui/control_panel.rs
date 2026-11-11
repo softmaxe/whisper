@@ -156,6 +156,14 @@ impl ControlPanel {
         self.settings.is_some()
     }
 
+    pub fn can_close(&mut self, cx: &mut Context<Self>) -> bool {
+        self.settings.as_ref().is_none_or(|modal| {
+            modal.update(cx, |m, cx| {
+                m.confirm_prompt_close(crate::app::close_control_panel, cx)
+            })
+        })
+    }
+
     pub fn prepare_close(&mut self, cx: &mut Context<Self>) {
         self.history.update(cx, |h, cx| h.commit_delete(cx));
     }

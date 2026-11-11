@@ -411,6 +411,12 @@
     },
     "defaultTestInput": "um please send the report by thursday no wait friday",
     "dialogs": {
+      "unsaved": {
+        "title": "Save your prompt changes?",
+        "description": "Your prompt has unsaved changes.",
+        "keepEditing": "Keep Editing",
+        "discard": "Discard"
+      },
       "reset": {
         "description": "Your custom prompt will be replaced. This can’t be undone.",
         "title": "Reset to the default prompt?",

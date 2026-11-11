@@ -407,6 +407,12 @@
     },
     "defaultTestInput": "嗯请在周四不对周五之前把报告发给我",
     "dialogs": {
+      "unsaved": {
+        "title": "保存提示词更改？",
+        "description": "提示词还有未保存的更改。",
+        "keepEditing": "继续编辑",
+        "discard": "放弃更改"
+      },
       "reset": {
         "description": "你的自定义提示词将被替换，且无法撤销。",
         "title": "恢复为默认提示词？",
