@@ -742,6 +742,28 @@ impl Recorder {
             .is_some_and(|a| a.recording)
     }
 
+    /// Installs a hardware-free recording for lifecycle regression tests.
+    #[cfg(test)]
+    pub(crate) fn with_test_audio(samples: Vec<f32>) -> Self {
+        let recorder = Self::new(None);
+        let core = Arc::new(Core::new(Instant::now()));
+        core.set_format(16_000, 1);
+        core.begin(false, FIRST_AUDIO_TIMEOUT, Instant::now())
+            .unwrap();
+        core.push(samples.into_iter(), Instant::now());
+        let (commands, _) = mpsc::channel();
+        recorder.inner.lock().active = Some(ActiveCapture {
+            session: CaptureSession {
+                core,
+                commands,
+                selector: None,
+            },
+            recording: true,
+            generation: 1,
+        });
+        recorder
+    }
+
     /// The microphone is open (prepared, starting or recording).
     #[cfg(test)]
     pub fn is_capture_active(&self) -> bool {

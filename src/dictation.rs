@@ -82,6 +82,19 @@ struct FailedRecording {
     occurred_at: DateTime<Utc>,
 }
 
+impl FailedRecording {
+    fn from_interrupted_audio(
+        (audio, duration, occurred_at): (RecordedAudio, Duration, DateTime<Utc>),
+    ) -> Option<Self> {
+        let wav = audio.to_wav_16k();
+        audio.is_usable(wav.len()).then(|| Self {
+            wav: wav.into(),
+            duration,
+            occurred_at,
+        })
+    }
+}
+
 /// What happened, for the pill window to present.
 #[derive(Clone, Debug)]
 pub enum DictationNotice {
@@ -437,12 +450,51 @@ impl Dictation {
         if !matches!(self.phase, Phase::Recording | Phase::Preparing) {
             return;
         }
-        self.cancel_recording(cx);
+        let audio = self.interrupt_capture();
+        let generation = self.generation;
+        self.set_phase(Phase::Processing, cx);
+        let conversion = crate::services::runtime::blocking(move || {
+            audio.and_then(FailedRecording::from_interrupted_audio)
+        });
+        cx.spawn(async move |this, cx| {
+            let failed = conversion.await.unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                if generation != this.generation {
+                    return;
+                }
+                this.failed = failed;
+                this.set_phase(Phase::Idle, cx);
+                this.show_microphone_error(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Device failure stops capture without applying the user's discard action.
+    fn interrupt_capture(&mut self) -> Option<(RecordedAudio, Duration, DateTime<Utc>)> {
+        self.generation += 1;
+        self.start_lock = false;
+        self.recorder.cancel_prepared();
+        let timing = self.started_at.take();
+        if self.phase != Phase::Recording {
+            self.recorder.cancel();
+            return None;
+        }
+        self.recorder.stop().map(|audio| {
+            let (started, occurred_at) = timing.unwrap_or_else(|| (Instant::now(), Utc::now()));
+            (audio, started.elapsed(), occurred_at)
+        })
+    }
+
+    fn show_microphone_error(&self, cx: &mut Context<Self>) {
         cx.emit(DictationNotice::Error {
             title: t("dictation.errorTitles.microphoneUnavailable"),
             description: t("dictation.errorDescriptions.microphoneUnavailable"),
-            actions: ErrorActions::default(),
-            kept: None,
+            actions: ErrorActions {
+                retry: self.failed.is_some(),
+                open_settings: false,
+            },
+            kept: self.failed.as_ref().map(|failed| failed.duration),
         });
     }
 
@@ -897,6 +949,62 @@ mod tests {
     use crate::settings::Settings;
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
+
+    fn dictation(phase: super::Phase) -> super::Dictation {
+        super::Dictation {
+            phase,
+            recorder: super::Recorder::new(None),
+            generation: 7,
+            start_lock: false,
+            cancel: None,
+            target_pid: None,
+            started_at: None,
+            effects_held: false,
+            media_paused: false,
+            push_force_stopped: false,
+            failed: None,
+            status: super::StatusMirror::default(),
+            _device_events: gpui_kit::Task::ready(()),
+        }
+    }
+
+    #[test]
+    fn microphone_loss_keeps_partial_audio_but_user_cancel_discards_it() {
+        use super::{FailedRecording, Phase, Recorder};
+        let occurred_at = chrono::Utc::now();
+        for interrupted in [true, false] {
+            let mut dictation = dictation(Phase::Recording);
+            dictation.recorder = Recorder::with_test_audio(vec![0.1; 16_000]);
+            dictation.started_at = Some((std::time::Instant::now(), occurred_at));
+            if interrupted {
+                let audio = dictation.interrupt_capture().unwrap();
+                let kept = FailedRecording::from_interrupted_audio(audio).unwrap();
+                assert_eq!(kept.occurred_at, occurred_at);
+                assert!(kept.wav.starts_with(b"RIFF"));
+                assert!(kept.wav.len() > 32_000);
+            } else {
+                assert!(dictation.cancel_capture());
+                assert!(dictation.failed.is_none());
+            }
+            assert_eq!(dictation.generation, 8);
+            assert!(dictation.started_at.is_none());
+            assert!(!dictation.recorder.is_capture_active());
+            assert!(dictation.recorder.stop().is_none());
+        }
+    }
+
+    #[test]
+    fn microphone_loss_without_usable_audio_does_not_offer_resend() {
+        use super::{FailedRecording, Phase, Recorder};
+        let mut dictation = dictation(Phase::Recording);
+        dictation.recorder = Recorder::with_test_audio(vec![0.1; 10]);
+        assert!(
+            dictation
+                .interrupt_capture()
+                .and_then(FailedRecording::from_interrupted_audio)
+                .is_none()
+        );
+    }
 
     #[test]
     fn recording_cancel_does_not_invalidate_processing_or_idle() {
