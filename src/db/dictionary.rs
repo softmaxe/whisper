@@ -599,27 +599,6 @@ impl Database {
         Ok(())
     }
 
-    /// Counts one finished auto-learn session for `app`.
-    pub fn record_auto_learn_session(
-        &self,
-        app: &str,
-        readable: bool,
-        edited: bool,
-        learned: usize,
-    ) -> Result<()> {
-        self.lock().execute(
-            "INSERT INTO auto_learn_stats (app, sessions, readable, edited, learned)
-             VALUES (?1, 1, ?2, ?3, ?4)
-             ON CONFLICT (app) DO UPDATE SET
-               sessions = sessions + 1,
-               readable = readable + ?2,
-               edited = edited + ?3,
-               learned = learned + ?4",
-            params![app, readable, edited, learned as i64],
-        )?;
-        Ok(())
-    }
-
     /// The stored source of a word, if present.
     #[cfg(test)]
     pub fn dictionary_word_source(&self, word: &str) -> Result<Option<String>> {
@@ -1208,24 +1187,6 @@ mod tests {
         db.apply_dictionary_changes(&["Cloud"], NONE, manual())
             .unwrap();
         assert!(db.get_known_corrections().unwrap().is_empty());
-    }
-
-    #[test]
-    fn auto_learn_sessions_add_up_per_app() {
-        let db = db();
-        db.record_auto_learn_session("com.apple.Notes", true, true, 2)
-            .unwrap();
-        db.record_auto_learn_session("com.apple.Notes", false, false, 0)
-            .unwrap();
-        let row: (i64, i64, i64, i64) = db
-            .lock()
-            .query_row(
-                "SELECT sessions, readable, edited, learned FROM auto_learn_stats",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .unwrap();
-        assert_eq!(row, (2, 1, 1, 2));
     }
 
     // Priority ranking

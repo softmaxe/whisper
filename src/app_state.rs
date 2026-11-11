@@ -409,12 +409,7 @@ impl AppState {
         let revision = self.dictionary_revision.load(Ordering::SeqCst);
         let token = self.dictionary_revision.clone();
         cx.spawn(async move |this, cx| {
-            let SessionReport {
-                app,
-                readable,
-                edit,
-            } = report;
-            let edited = edit.is_some();
+            let SessionReport { edit, .. } = report;
             let corrections = if let Some(edit) = edit {
                 crate::services::runtime::blocking(move || {
                     crate::text::correction_learner::extract_corrections(
@@ -440,12 +435,6 @@ impl AppState {
                     .record_corrections_if_current(&corrections, &token, revision)
                     .inspect_err(|err| log::warn!("failed to save learned words: {err}"))
                     .unwrap_or_default();
-                if let Some(app) = app
-                    && let Err(err) =
-                        db.record_auto_learn_session(&app, readable, edited, learned.len())
-                {
-                    log::warn!("failed to save auto-learn stats: {err}");
-                }
                 let dictionary = (!corrections.is_empty()).then(|| DictionarySnapshot::read(&db));
                 (learned, dictionary)
             })
