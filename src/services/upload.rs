@@ -587,8 +587,7 @@ mod tests {
 
     #[test]
     fn non_native_containers_are_reencoded_to_mp3() {
-        if crate::services::ffmpeg::ffmpeg_path().is_none() {
-            eprintln!("skipping: FFmpeg is not available");
+        if crate::services::ffmpeg::test_ffmpeg_path().is_none() {
             return;
         }
         let dir = tempfile::tempdir().unwrap();

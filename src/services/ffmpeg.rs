@@ -149,15 +149,70 @@ pub async fn convert_to_mp3(
     run_conversion(args, output, cancel).await
 }
 
+/// Developer machines may omit FFmpeg; CI must exercise real conversions.
+#[cfg(test)]
+pub(crate) fn test_ffmpeg_path() -> Option<PathBuf> {
+    let path = ffmpeg_path();
+    if path.is_none() {
+        assert!(
+            std::env::var_os("WHISPER_REQUIRE_FFMPEG").is_none(),
+            "FFmpeg is required by CI but was not found"
+        );
+        eprintln!("skipping: FFmpeg is not available");
+    }
+    path
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::services::test_server::run as block;
 
     #[test]
+    fn cancels_a_running_conversion() {
+        if test_ffmpeg_path().is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("running.mp3");
+        block(async {
+            let cancel = CancellationToken::new();
+            let conversion = run_conversion(
+                os_args(&[
+                    "-re",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=frequency=440:sample_rate=16000",
+                    "-t",
+                    "60",
+                ]),
+                &output,
+                &cancel,
+            );
+            let trigger = async {
+                // FFmpeg creates the destination only after it has started.
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    while !output.exists() {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                })
+                .await
+                .expect("conversion never started");
+                cancel.cancel();
+            };
+            let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                tokio::join!(conversion, trigger)
+            })
+            .await
+            .expect("conversion did not cancel");
+            assert_eq!(result, Err(FfmpegError::Cancelled));
+        });
+    }
+
+    #[test]
     fn converts_and_cancels() {
-        if ffmpeg_path().is_none() {
-            eprintln!("skipping: FFmpeg is not available");
+        if test_ffmpeg_path().is_none() {
             return;
         }
         let dir = tempfile::tempdir().unwrap();
