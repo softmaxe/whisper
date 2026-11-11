@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use serde_json::Value;
+use super::asr::{self, AsrError};
 use tokio_util::sync::CancellationToken;
 
 use crate::services::runtime::http_client;
@@ -275,48 +275,29 @@ async fn run(
             Ok(p) => p,
             Err(err) => return Err(TranscriptionError::Network(err.to_string())),
         };
-        let mut form = reqwest::multipart::Form::new().part("file", part);
-        if let Some(model) = request.model.filter(|m| !m.is_empty()) {
-            form = form.text("model", model);
-        }
-        if let Some(language) = request.language.filter(|l| !l.is_empty()) {
-            form = form.text("language", language);
-        }
-        if let Some(prompt) = request.prompt.filter(|p| !p.is_empty()) {
-            form = form.text("prompt", prompt);
-        }
-        let response = client
-            .post(&request.endpoint)
-            .multipart(form)
-            .send()
-            .await
-            .map_err(|e| TranscriptionError::Network(e.to_string()))?;
-        let status = response.status().as_u16();
-        // The deadline covers the body as well as the headers.
-        let body = response
-            .text()
-            .await
-            .map_err(|e| TranscriptionError::Network(e.to_string()))?;
-        Ok((status, body))
+        asr::transcribe(
+            client,
+            &request.endpoint,
+            part,
+            request.model.as_deref(),
+            request.language.as_deref(),
+            request.prompt.as_deref(),
+        )
+        .await
+        .map_err(|error| match error {
+            AsrError::Network(error) => TranscriptionError::Network(error.to_string()),
+            AsrError::Http { status, message } => TranscriptionError::Http {
+                status,
+                body: message,
+            },
+            AsrError::InvalidResponse(message) => TranscriptionError::InvalidResponse(message),
+        })
     };
-    let (status, body) = match tokio::time::timeout(options.request_timeout, upload).await {
+    let text = match tokio::time::timeout(options.request_timeout, upload).await {
         Ok(result) => result?,
         Err(_) => return Err(TranscriptionError::RequestTimeout),
     };
 
-    if !(200..300).contains(&status) {
-        log::error!("transcription API error response: status={status}");
-        return Err(TranscriptionError::Http { status, body });
-    }
-    let json: Value = serde_json::from_str(&body)
-        .map_err(|e| TranscriptionError::InvalidResponse(e.to_string()))?;
-    let text = json
-        .get("text")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            TranscriptionError::InvalidResponse("Expected a string field `text`".into())
-        })?
-        .to_string();
     if text.trim().is_empty() {
         log::info!("transcription returned empty text");
         return Err(TranscriptionError::EmptyText);
@@ -595,7 +576,18 @@ mod tests {
                     .await
                     .unwrap_err();
                 assert_eq!(err.code(), code, "status {status}");
-                assert_eq!(err.to_string(), format!("API Error: {status} {body}"));
+                let message = if status == 401 {
+                    "Self-hosted API Error: 401".to_string()
+                } else {
+                    format!("Server error {status}: {body}")
+                };
+                assert_eq!(
+                    err,
+                    TranscriptionError::Http {
+                        status,
+                        body: message
+                    }
+                );
             }
             let server = MockServer::start(|_| Reply::json(200, r#"{"text":"   "}"#));
             let err = transcribe(request_for(&server), CancellationToken::new())

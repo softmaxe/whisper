@@ -7,13 +7,14 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+#[cfg(test)]
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
+use super::asr::{self, AsrError};
 use crate::services::ffmpeg::{FfmpegError, convert_to_mp3};
 use crate::services::runtime::file_http_client;
 use crate::services::transcription::resolve_route;
-use crate::text::api_error::extract_api_error_message;
 
 const FILE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -185,7 +186,7 @@ fn request_error(error: reqwest::Error) -> UploadError {
         timeout_error()
     } else {
         // The endpoint may carry credentials in its query.
-        UploadError::plain(error.without_url().to_string())
+        UploadError::plain(asr::request_error(error).to_string())
     }
 }
 
@@ -232,38 +233,21 @@ async fn transcribe_file_inner(
             .file_name(file_name.into_owned())
             .mime_str(provider_content_type(&upload.path))
             .map_err(|e| UploadError::plain(e.to_string()))?;
-    let mut form = reqwest::multipart::Form::new().part("file", part);
-    if let Some(model) = route.model.clone() {
-        form = form.text("model", model);
-    }
-    if let Some(language) = route.language.clone() {
-        form = form.text("language", language);
-    }
-
-    let response = file_http_client()
-        .post(&route.endpoint)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(request_error)?;
-    let status = response.status().as_u16();
-    let text = response.text().await.map_err(request_error)?;
-    let Ok(data) = serde_json::from_str::<Value>(&text) else {
-        // Proxies and gateways return non-JSON error pages (413, 504).
-        let excerpt: String = text.chars().take(120).collect();
-        return Err(UploadError::plain(format!(
-            "Server error {status}: {excerpt}"
-        )));
-    };
-    if status != 200 {
-        let message = extract_api_error_message(&data, &format!("Self-hosted API Error: {status}"));
-        return Err(UploadError::plain(message));
-    }
-    Ok(data
-        .get("text")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string())
+    // Files skip the reachability probe; the outer deadline includes conversion,
+    // streaming the payload and consuming the bounded response body.
+    asr::transcribe(
+        file_http_client(),
+        &route.endpoint,
+        part,
+        route.model.as_deref(),
+        route.language.as_deref(),
+        None,
+    )
+    .await
+    .map_err(|error| match error {
+        AsrError::Network(error) => request_error(error),
+        error => UploadError::plain(error.to_string()),
+    })
 }
 
 /// Opens the system file picker filtered to upload formats. `None` when the
@@ -346,6 +330,37 @@ mod tests {
         assert!(body.contains("name=\"model\"\r\n\r\nwhisper-large-v3"));
         assert!(body.contains("name=\"language\"\r\n\r\nen"));
         assert!(!body.contains("name=\"prompt\""));
+    }
+
+    #[test]
+    fn file_responses_accept_2xx_and_reject_missing_or_non_string_text() {
+        let (_dir, path) = temp_audio("wav");
+        for (status, body, expected) in [
+            (201, r#"{"text":"accepted"}"#, Some("accepted")),
+            (202, "{}", None),
+            (200, r#"{"text":null}"#, None),
+            (200, r#"{"text":123}"#, None),
+        ] {
+            let server = MockServer::start(move |_| Reply::json(status, body));
+            let result = run(transcribe_audio_file(
+                FileTranscriptionRequest {
+                    file_path: path.clone(),
+                    remote_transcription_url: server.url("/v1"),
+                    ..Default::default()
+                },
+                CancellationToken::new(),
+            ));
+            if let Some(expected) = expected {
+                assert_eq!(result.unwrap(), expected);
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .message
+                        .contains("Expected a string field `text`")
+                );
+            }
+        }
     }
 
     #[test]
