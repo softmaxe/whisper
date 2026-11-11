@@ -80,7 +80,6 @@ pub struct Select {
     /// value up to this cap, so short values keep a shared column edge while
     /// long ones (device names) get more room before truncating.
     max_width: Option<Pixels>,
-    menu_min_width: Pixels,
     disabled: bool,
     /// Model selectors accept IDs the server does not list.
     custom_value: bool,
@@ -120,7 +119,6 @@ impl Select {
             open: false,
             width: None,
             max_width: None,
-            menu_min_width: px(160.),
             disabled: false,
             custom_value: false,
             search,
@@ -146,11 +144,6 @@ impl Select {
 
     pub fn with_label(mut self, label: impl Into<SharedString>) -> Self {
         self.label = label.into();
-        self
-    }
-
-    pub fn with_menu_min_width(mut self, width: Pixels) -> Self {
-        self.menu_min_width = width;
         self
     }
 
@@ -668,11 +661,7 @@ impl Select {
             .id("select-menu")
             .occlude()
             .mt(px(4.))
-            .min_w(self.menu_min_width.max(self.trigger_bounds.width()))
-            .when(self.custom_value, |d| {
-                d.w(self.menu_min_width.max(self.trigger_bounds.width()))
-            })
-            .when_some(self.width, |d, w| d.w(w.max(self.menu_min_width)))
+            .w(self.trigger_bounds.width())
             .flex()
             .flex_col()
             .rounded(px(RADIUS_LG))
