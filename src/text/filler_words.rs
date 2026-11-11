@@ -14,6 +14,10 @@ fn horizontal(c: char) -> bool {
 }
 
 fn sentence_start(text: &str) -> bool {
+    let line = text.rsplit('\n').next().unwrap_or("").trim();
+    if matches!(line, "-" | "*" | "•") {
+        return true;
+    }
     text.trim_end_matches([' ', '\t', '"', '\'', '“', '‘', '('])
         .chars()
         .next_back()
@@ -32,7 +36,8 @@ fn protected(text: &str, start: usize, end: usize) -> bool {
     let span = &text[span_start..span_end];
     span.contains("://")
         || span.contains('@')
-        || (span.starts_with('`') && span.ends_with('`'))
+        || inside_backticks(text, start, end)
+        || mentioned(before, after)
         || before.ends_with([
             '.', '/', '\\', ':', '_', '-', '=', '#', '$', '%', '&', '+', '~', '@',
         ])
@@ -43,10 +48,27 @@ fn protected(text: &str, start: usize, end: usize) -> bool {
         || after.trim_start_matches(horizontal).starts_with('=')
 }
 
+/// A filler wrapped in quotes, brackets or emphasis is being talked about,
+/// not hesitated over: `He said "uh" today`, `(hmm)`, `*uh*`.
+fn mentioned(before: &str, after: &str) -> bool {
+    before.ends_with(['"', '\'', '“', '‘', '(', '[', '*'])
+        && after
+            .trim_start_matches(punctuation)
+            .starts_with(['"', '\'', '”', '’', ')', ']', '*'])
+}
+
+/// Inline code on one line: an odd number of backticks before the token and
+/// a closing one after it, whatever punctuation or spaces surround them.
+fn inside_backticks(text: &str, start: usize, end: usize) -> bool {
+    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
+    text[line_start..start].matches('`').count() % 2 == 1 && text[end..line_end].contains('`')
+}
+
 fn punctuation(c: char) -> bool {
     matches!(
         c,
-        '.' | ',' | '!' | '?' | '…' | '。' | '，' | '！' | '？' | '、'
+        '.' | ',' | ';' | '!' | '?' | '…' | '。' | '，' | '；' | '！' | '？' | '、'
     )
 }
 
@@ -56,6 +78,8 @@ fn append_kept(out: &mut String, kept: &str, capitalize: &mut bool) {
             out.extend(c.to_uppercase());
             *capitalize = false;
         } else {
+            // A sentence that now opens with a number has nothing to recase.
+            *capitalize &= !c.is_numeric();
             out.push(c);
         }
     }
@@ -140,61 +164,133 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
     if ranges.is_empty() {
         return text.to_string();
     }
-    let mut merged: Vec<(usize, usize, bool)> = Vec::new();
-    for (mut start, mut end, recase) in ranges {
-        // Consume the filler-owned punctuation as a run, including ellipses.
-        end = text.len() - text[end..].trim_start_matches(punctuation).len();
-        let after_spaces = text[end..].trim_start_matches(horizontal);
-        if after_spaces.starts_with(['-', '–', '—'])
-            && after_spaces.chars().nth(1).is_none_or(char::is_whitespace)
-        {
-            end = text.len() - after_spaces.trim_start_matches(['-', '–', '—']).len();
-        }
-        start = text[..start].trim_end_matches(horizontal).len();
-        end = text.len() - text[end..].trim_start_matches(horizontal).len();
-        if let Some(previous) = merged.last_mut().filter(|previous| start <= previous.1) {
-            previous.1 = previous.1.max(end);
-            previous.2 |= recase;
+    let mut groups: Vec<Group> = Vec::new();
+    for (token_start, token_end, recase) in ranges {
+        let mut end = token_end;
+        let mut terminal = None;
+        let attached = punctuation_run(text, end);
+        if attached > end {
+            terminal = terminal_in(text, end, attached);
+            end = attached;
         } else {
-            merged.push((start, end, recase));
+            // Punctuation set off by a space is the filler's only when it
+            // stands alone (`uh , hello`); `uh .env` keeps its dot.
+            let from = skip_horizontal(text, end);
+            let spaced = punctuation_run(text, from);
+            if spaced > from
+                && text[spaced..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+            {
+                terminal = terminal_in(text, from, spaced);
+                end = spaced;
+            }
+        }
+        let from = skip_horizontal(text, end);
+        let mut rest = text[from..].chars();
+        // A hyphen must stand apart to be a pause (`uh-oh` is a word); the
+        // long dashes are pause marks even when set tight (`Uh—we go`).
+        if let Some(dash) = rest.next().filter(|c| matches!(c, '-' | '–' | '—'))
+            && (dash != '-' || rest.next().is_none_or(char::is_whitespace))
+        {
+            end = from + dash.len_utf8();
+        }
+        let start = text[..token_start].trim_end_matches(horizontal).len();
+        let end = skip_horizontal(text, end);
+        if let Some(previous) = groups.last_mut().filter(|previous| start <= previous.end) {
+            previous.end = previous.end.max(end);
+            previous.recase |= recase;
+            previous.terminal = terminal.or(previous.terminal);
+        } else {
+            groups.push(Group {
+                start,
+                end,
+                recase,
+                terminal,
+            });
         }
     }
     let mut out = String::with_capacity(text.len());
     let mut previous = 0;
     let mut capitalize = false;
-    for (start, end, recase) in merged {
-        append_kept(&mut out, &text[previous..start], &mut capitalize);
-        let removed = &text[start..end];
-        let right = text[end..].chars().next();
-        // A terminal after a filler still closes the preceding clause when
-        // that clause ended in a comma (e.g. 好的，呃。我们走).
-        if out.ends_with([',', '，', '、'])
-            && right.is_some_and(char::is_alphanumeric)
-            && let Some(terminal @ ('.' | '!' | '?' | '。' | '！' | '？' | '…')) =
-                removed.trim_end_matches(horizontal).chars().next_back()
-        {
-            out.pop();
-            out.push(terminal);
+    for group in groups {
+        append_kept(&mut out, &text[previous..group.start], &mut capitalize);
+        let right = text[group.end..].chars().next();
+        let left = out.chars().next_back();
+        // The whole group goes, punctuation included. What stays at the seam
+        // is the strongest mark the surviving clause still needs: a terminal
+        // spoken after the filler closes the clause before it, replacing that
+        // clause's comma; a comma was only ever the filler's own.
+        let terminal: String = group
+            .terminal
+            .map(|(start, end)| text[start..end].chars().filter(|c| terminal(*c)).collect())
+            .unwrap_or_default();
+        match left {
+            Some(c) if comma(c) && !terminal.is_empty() => {
+                out.pop();
+                out.push_str(&terminal);
+            }
+            // Nothing follows on this line for the comma to introduce.
+            Some(c) if comma(c) && right.is_none_or(|c| c == '\n') => {
+                out.pop();
+            }
+            Some(c) if word(c) || matches!(c, '"' | '\'' | '”' | '’' | ')' | ']') => {
+                out.push_str(&terminal);
+            }
+            _ => {}
         }
         if let (Some(left), Some(right)) = (out.chars().next_back(), right) {
-            let separated = removed.chars().any(horizontal);
-            let joined_words = word(left)
-                && word(right)
-                && !(('\u{3400}'..='\u{9fff}').contains(&left)
-                    && ('\u{3400}'..='\u{9fff}').contains(&right));
-            if !left.is_whitespace()
-                && !right.is_whitespace()
-                && !punctuation(right)
-                && (separated || joined_words)
-            {
+            let removed = &text[group.start..group.end];
+            // Space that led into the filler still separates what surrounds
+            // it; space that only trailed it has no place after an opener.
+            let separated = removed.starts_with(horizontal)
+                || (removed.ends_with(horizontal)
+                    && !matches!(left, '"' | '\'' | '“' | '‘' | '(' | '['));
+            let joined_words = word(left) && word(right) && !(cjk(left) && cjk(right));
+            if !left.is_whitespace() && !right.is_whitespace() && (separated || joined_words) {
                 out.push(' ');
             }
         }
-        capitalize |= recase;
-        previous = end;
+        capitalize |= group.recase;
+        previous = group.end;
     }
     append_kept(&mut out, &text[previous..], &mut capitalize);
     out
+}
+
+/// One or more fillers removed together, with the punctuation and spacing
+/// that belonged to them.
+struct Group {
+    start: usize,
+    end: usize,
+    recase: bool,
+    /// The last sentence-ending punctuation run inside the group.
+    terminal: Option<(usize, usize)>,
+}
+
+fn comma(c: char) -> bool {
+    matches!(c, ',' | ';' | '，' | '；' | '、')
+}
+
+fn terminal(c: char) -> bool {
+    punctuation(c) && !comma(c)
+}
+
+fn cjk(c: char) -> bool {
+    ('\u{3400}'..='\u{9fff}').contains(&c)
+}
+
+fn skip_horizontal(text: &str, from: usize) -> usize {
+    text.len() - text[from..].trim_start_matches(horizontal).len()
+}
+
+fn punctuation_run(text: &str, from: usize) -> usize {
+    text.len() - text[from..].trim_start_matches(punctuation).len()
+}
+
+fn terminal_in(text: &str, start: usize, end: usize) -> Option<(usize, usize)> {
+    text[start..end].contains(terminal).then_some((start, end))
 }
 
 #[cfg(test)]
@@ -234,6 +330,55 @@ mod tests {
                 assert_eq!(filtered(&format!("{token}{punctuation}"), "auto"), "");
             }
         }
+    }
+
+    #[test]
+    fn seam_keeps_the_punctuation_the_surviving_text_needs() {
+        for (text, expected) in [
+            ("好的呃。我们走", "好的。我们走"),
+            ("好的，呃。", "好的。"),
+            ("好的，呃。uh,我们走", "好的。我们走"),
+            ("Uh ... we go", "We go"),
+            ("uh , hello", "hello"),
+            ("so uh... we go", "so... we go"),
+            ("I was... uh... going", "I was... going"),
+            ("I think so uh.", "I think so."),
+            ("Wait, uh", "Wait"),
+            ("Really? Uh, yes.", "Really? Yes."),
+            ("foo uh, bar", "foo bar"),
+            ("line one\nuh, line two", "line one\nline two"),
+            ("see uh .env here", "see .env here"),
+            ("\"Uh, we go\"", "\"We go\""),
+            ("- Uh, we go\n- Um, stay", "- We go\n- Stay"),
+            ("Uh, 3.5 is right", "3.5 is right"),
+            ("uh; bar", "bar"),
+            ("Uh—we go", "We go"),
+            ("foo uh!uh?bar", "foo? bar"),
+        ] {
+            assert_eq!(filtered(text, "en"), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn inline_code_is_preserved_whatever_surrounds_the_backticks() {
+        for text in [
+            "`uh`, hello",
+            "(`uh`) hello",
+            "`say uh now`",
+            "run `hm` then `uh` ok",
+        ] {
+            assert_eq!(filtered(text, "en"), text);
+        }
+        for text in [
+            "He said \"uh\" today",
+            "He said \"uh,\" today",
+            "(hmm) hello",
+            "*uh* hello",
+        ] {
+            assert_eq!(filtered(text, "en"), text);
+        }
+        // An unmatched backtick protects nothing.
+        assert_eq!(filtered("it`s uh, fine", "en"), "it`s fine");
     }
 
     #[test]
