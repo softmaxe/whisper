@@ -46,6 +46,7 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 - Enter an unlisted model ID, including a mixed-case name with a source prefix and tag. Choose the Use action, then verify the saved ID preserves case and trims surrounding whitespace. Repeat before any server models have loaded and after a connection failure.
 - Reopen the picker and verify the search resets. Close it using Escape, Tab, a second trigger click, and an outside click; none should change the model. Check long IDs in a narrow window and verify the full value is available in a tooltip.
 - Change the server URL and verify choices from the previous server disappear while editing. Test Connection should load the new server's models without replacing a manually selected ID. Disable cleanup and verify the picker is unavailable.
+- With a server exposing models only under `/v1`, enter its address without `/v1` and test both speech-to-text and cleanup. The visible and saved addresses should adopt `/v1`; cleanup models and connected status should remain available, and real dictation should use the discovered speech endpoint. Delay the response and type a different address before it arrives; the old result must not replace the new draft or saved address.
 - Repeat with both interface languages and themes. Confirm the existing language and microphone dropdown interactions still work.
 
 ## Local data editing regression check

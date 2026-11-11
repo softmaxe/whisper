@@ -752,7 +752,7 @@ impl SettingsModal {
         }
         this.sync_selects(cx);
         if !s.cleanup_remote_url.trim().is_empty() {
-            this.load_models(None, false, cx);
+            this.load_models(None, false, window, cx);
         }
         this
     }
