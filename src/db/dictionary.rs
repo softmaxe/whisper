@@ -287,7 +287,19 @@ fn upsert_word(
         tx.prepare_cached("UPDATE custom_dictionary SET word = ?, updated_at = ? WHERE id = ?")?
             .execute(params![word, now, existing.id])?;
     }
+    if existing.word != word {
+        // SQLite NOCASE cannot follow a Unicode case-only respelling.
+        tx.prepare_cached("UPDATE dictionary_corrections SET term = ? WHERE term = ?")?
+            .execute(params![word, existing.word])?;
+    }
     Ok(())
+}
+
+fn rejected_words(conn: &Connection) -> Result<Vec<String>> {
+    Ok(conn
+        .prepare("SELECT word FROM dictionary_rejected_words")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<()> {
@@ -469,14 +481,18 @@ impl Database {
         let mut conn = self.lock();
         let by_lower = dictionary_rows(&conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if source == DictionarySource::Manual {
+            for rejected in rejected_words(&tx)? {
+                if addition_keys.contains(rejected.to_lowercase().as_str()) {
+                    tx.prepare_cached("DELETE FROM dictionary_rejected_words WHERE word = ?")?
+                        .execute([rejected])?;
+                }
+            }
+        }
         for (lower, _) in &removals {
             delete_row(&tx, by_lower.get(lower))?;
         }
         for (lower, word) in &additions {
-            if source == DictionarySource::Manual {
-                tx.prepare_cached("DELETE FROM dictionary_rejected_words WHERE word = ?")?
-                    .execute([word])?;
-            }
             upsert_word(&tx, word, by_lower.get(lower), source.as_str())?;
         }
         tx.commit()?;
@@ -518,25 +534,25 @@ impl Database {
         {
             return Ok(Vec::new());
         }
-        let by_lower = dictionary_rows(&conn)?;
+        let mut by_lower = dictionary_rows(&conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let rejected: HashSet<String> = rejected_words(&tx)?
+            .into_iter()
+            .map(|word| word.to_lowercase())
+            .collect();
         let mut added: Vec<String> = Vec::new();
         for correction in corrections {
             let term = trim_text(&correction.term);
-            let rejected: bool = tx
-                .prepare_cached(
-                    "SELECT EXISTS (SELECT 1 FROM dictionary_rejected_words WHERE word = ?)",
-                )?
-                .query_row([term], |row| row.get(0))?;
-            if term.is_empty() || rejected {
+            let lower = term.to_lowercase();
+            if term.is_empty() || rejected.contains(&lower) {
                 continue;
             }
             let sightings = record_correction(&tx, correction)?;
-            let lower = term.to_lowercase();
             let source = DictionarySource::Learned.as_str();
-            if let Some(existing) = by_lower.get(&lower) {
+            if let Some(existing) = by_lower.get_mut(&lower) {
                 if correction.misheard.to_lowercase() == lower {
                     upsert_word(&tx, term, Some(existing), source)?;
+                    existing.word = term.to_string();
                 }
                 continue;
             }
@@ -1116,6 +1132,103 @@ mod tests {
             ["GitHub"],
             "a correction from another spelling leaves it alone"
         );
+    }
+
+    #[test]
+    fn unicode_case_rename_keeps_corrections_joined_with_their_counts() {
+        let db = db();
+        let correction = correction("eclair", "Éclair", true);
+        db.record_corrections(std::slice::from_ref(&correction))
+            .unwrap();
+        db.record_corrections(&[correction]).unwrap();
+        db.apply_dictionary_changes(&["éclair"], &["Éclair"], manual())
+            .unwrap();
+        assert_eq!(db.get_dictionary().unwrap(), ["éclair"]);
+        let known = db.get_known_corrections().unwrap();
+        assert_eq!(known.len(), 1);
+        assert_eq!(known[0].misheard, "eclair");
+        assert_eq!(known[0].term, "éclair");
+        assert_eq!(known[0].count, 2);
+    }
+
+    #[test]
+    fn successive_unicode_case_corrections_follow_the_latest_spelling() {
+        let db = db();
+        db.record_corrections(&[correction("eclair", "Éclair", false)])
+            .unwrap();
+        db.record_corrections(&[
+            correction("Éclair", "éclair", false),
+            correction("éclair", "ÉCLAIR", false),
+        ])
+        .unwrap();
+        assert_eq!(db.get_dictionary().unwrap(), ["ÉCLAIR"]);
+        let known = db.get_known_corrections().unwrap();
+        assert!(
+            known
+                .iter()
+                .any(|c| c.misheard == "eclair" && c.term == "ÉCLAIR")
+        );
+        assert!(known.iter().all(|c| c.term == "ÉCLAIR"));
+    }
+
+    #[test]
+    fn unicode_case_rename_rolls_back_if_a_reference_conflicts() {
+        let db = db();
+        db.record_corrections(&[correction("eclair", "Éclair", false)])
+            .unwrap();
+        // Older data can contain both spellings under SQLite's ASCII collation.
+        db.lock()
+            .execute(
+                "INSERT INTO dictionary_corrections (misheard, term) VALUES ('eclair', 'éclair')",
+                [],
+            )
+            .unwrap();
+        assert!(
+            db.apply_dictionary_changes(&["éclair"], &["Éclair"], manual())
+                .is_err()
+        );
+        assert_eq!(db.get_dictionary().unwrap(), ["Éclair"]);
+        assert_eq!(
+            db.dictionary_word_source("Éclair").unwrap().as_deref(),
+            Some("learned")
+        );
+        let count: i64 = db
+            .lock()
+            .query_row("SELECT COUNT(*) FROM dictionary_corrections", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(db.get_known_corrections().unwrap()[0].term, "Éclair");
+    }
+
+    #[test]
+    fn unicode_rejected_terms_stay_removed_until_manually_added() {
+        let db = db();
+        db.record_corrections(&[correction("eclair", "Éclair", false)])
+            .unwrap();
+        db.apply_dictionary_changes(NONE, &["Éclair"], manual())
+            .unwrap();
+        for _ in 0..2 {
+            assert!(
+                db.record_corrections(&[correction("eclair", "éclair", true)])
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert!(db.get_dictionary().unwrap().is_empty());
+        let count: i64 = db
+            .lock()
+            .query_row("SELECT COUNT(*) FROM dictionary_corrections", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        db.apply_dictionary_changes(&["éclair"], NONE, manual())
+            .unwrap();
+        db.record_corrections(&[correction("eclair", "éclair", true)])
+            .unwrap();
+        assert_eq!(db.get_known_corrections().unwrap().len(), 1);
     }
 
     #[test]
