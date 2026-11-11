@@ -173,13 +173,17 @@ impl ControlPanel {
         }
         let modal = cx
             .new(|cx| SettingsModal::new(section.unwrap_or(SettingsSection::General), window, cx));
-        cx.subscribe(
+        cx.subscribe_in(
             &modal,
-            |this, _, event: &SettingsModalEvent, cx| match event {
-                SettingsModalEvent::Close => {
+            window,
+            |this, _, event: &SettingsModalEvent, window, cx| match event {
+                SettingsModalEvent::Close(restore_focus) => {
                     this.settings = None;
                     if let Some(id) = this.history_after_settings.take() {
                         this.history.update(cx, |h, cx| h.highlight(id, cx));
+                    } else if let Some(handle) = restore_focus.clone() {
+                        // Restore after the sheet's focus trap leaves the rendered tree.
+                        window.on_next_frame(move |window, cx| window.focus(&handle, cx));
                     }
                     cx.notify();
                 }

@@ -107,7 +107,7 @@ const SECTIONS: [SettingsSection; 5] = [
 ];
 
 pub enum SettingsModalEvent {
-    Close,
+    Close(Option<FocusHandle>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -398,6 +398,7 @@ impl SettingsModal {
     }
 
     pub fn new(section: SettingsSection, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let restore_focus = window.focused(cx);
         let s = settings(cx);
         let mut subscriptions = Vec::new();
 
@@ -736,7 +737,7 @@ impl SettingsModal {
             scroll: ScrollHandle::new(),
             measured_section: None,
             focus,
-            restore_focus: window.focused(cx),
+            restore_focus,
             _subscriptions: subscriptions,
         };
         if section == SettingsSection::PrivacyData {
@@ -763,10 +764,7 @@ impl SettingsModal {
     }
 
     /// Closes the sheet and returns keyboard focus to where it was before.
-    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(handle) = self.restore_focus.take() {
-            window.focus(&handle, cx);
-        }
+    fn close(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.request_close(cx);
     }
 
@@ -796,7 +794,9 @@ impl SettingsModal {
             cx.background_executor()
                 .timer(Duration::from_millis(DUR_SNAP))
                 .await;
-            let _ = this.update(cx, |_, cx| cx.emit(SettingsModalEvent::Close));
+            let _ = this.update(cx, |this, cx| {
+                cx.emit(SettingsModalEvent::Close(this.restore_focus.take()));
+            });
         })
         .detach();
     }

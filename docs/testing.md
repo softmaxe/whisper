@@ -75,6 +75,7 @@ Storage failure and callback-order regressions use temporary databases in automa
 - In View, repeat with hundreds of Markdown paragraphs and list items, rapidly scrolling in both directions. The preview should keep a fixed height and render only visible blocks; controls should remain responsive. Check a short prompt as well, and verify text selection and Copy still work after scrolling and resizing.
 - Save a custom prompt containing headings, bold text, lists, inline code, and a fenced code block. View should render Markdown with wrapped prose; Customize and Copy should preserve the Markdown source. Verify the preview updates after saving or resetting and with both interface languages and themes.
 - Close Settings and verify the History scroll position is preserved. Repeat from Insights, Upload and Dictionary.
+- Focus Dictionary search, open Settings with the keyboard, then close it with Escape, the close button, and the outside backdrop. After the exit animation, typing should return to Dictionary search. Repeat at narrow and wide window sizes.
 - Repeat in a narrow window where Settings covers the workspace and a wide window where it floats above it. Check opening and closing animations, Escape, keyboard focus, and window resizing with Settings open.
 - When profiling the full-window sheet after its opening animation, the covered workspace must not participate in layout or paint. The floating sheet and closing animation still render the visible workspace.
 
