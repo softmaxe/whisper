@@ -11,7 +11,7 @@ use crate::app_state::AppState;
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
     Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, NavSurface, drop,
-    f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
+    f32_tx, icon, inset, kbd, nav_row, scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
@@ -517,31 +517,21 @@ impl ControlPanel {
                                             .variant(ButtonVariant::Ghost)
                                             .size(ButtonSize::Sm)
                                             .aria_label(t("controlPanel.history.pageActions"))
-                                            .on_click(cx.listener(
-                                                |this, event: &ClickEvent, window, cx| {
-                                                    this.toggle_page_menu(
-                                                        event.is_keyboard(),
-                                                        window,
-                                                        cx,
-                                                    )
-                                                },
-                                            )),
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.toggle_page_menu(cx)
+                                            })),
                                     ),
                                 )
                                 .when(self.page_menu_open, |d| {
-                                    d.child(self.render_page_menu(trigger, cx))
+                                    d.child(self.render_page_menu(trigger, window, cx))
                                 }),
                         )
                     }),
             )
     }
 
-    fn toggle_page_menu(&mut self, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_page_menu(&mut self, cx: &mut Context<Self>) {
         self.page_menu_open = !self.page_menu_open;
-        if keyboard && self.page_menu_open {
-            let item = keyed_focus_handle("history-page-clear".into(), cx);
-            window.on_next_frame(move |window, cx| window.focus(&item, cx));
-        }
         cx.notify();
     }
 
@@ -561,6 +551,7 @@ impl ControlPanel {
     fn render_page_menu(
         &mut self,
         trigger: MenuTriggerBounds,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
@@ -595,7 +586,6 @@ impl ControlPanel {
                 "history-page-menu".into(),
                 cx,
             ),
-            navigate: false,
         }
         .render(
             [item.into_any_element()],
@@ -603,6 +593,7 @@ impl ControlPanel {
                 this.page_menu_open = false;
                 cx.notify();
             },
+            window,
             cx,
         )
     }

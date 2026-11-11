@@ -89,8 +89,6 @@ pub struct PopupMenu {
     pub placement: MenuPlacement,
     pub trigger: Option<MenuTriggerBounds>,
     pub focus: MenuFocus,
-    /// The one-item History page menu previously only handled dismissal.
-    pub navigate: bool,
 }
 
 impl PopupMenu {
@@ -98,8 +96,22 @@ impl PopupMenu {
         self,
         items: impl IntoIterator<Item = AnyElement>,
         on_dismiss: impl Fn(&mut V, &mut Window, &mut Context<V>) + 'static,
+        window: &mut Window,
         cx: &mut Context<V>,
     ) -> AnyElement {
+        // Initialize once per opening, after the menu enters the focus tree.
+        // Pointer and keyboard opens must both route keys through the menu.
+        let initial_focus = self.focus.clone();
+        let opening_focus = window.focused(cx);
+        window.use_keyed_state(self.id.clone(), cx, |window, _| {
+            window.on_next_frame(move |window, cx| {
+                if window.focused(cx) == opening_focus
+                    && let Some(first) = initial_focus.items.first()
+                {
+                    window.focus(first, cx);
+                }
+            });
+        });
         let p = cx.palette();
         let dictionary = self.appearance == MenuAppearance::Dictionary;
         let dismiss = Rc::new(on_dismiss);
@@ -108,7 +120,6 @@ impl PopupMenu {
         let action_focus = self.focus.clone();
         let key_focus = self.focus;
         let trigger = self.trigger;
-        let navigate = self.navigate;
         let menu = div()
             .id(self.id)
             .role(Role::Menu)
@@ -162,7 +173,7 @@ impl PopupMenu {
                         key_focus.restore(dictionary, window, cx);
                         dismiss(this, window, cx);
                     }
-                    "down" | "up" if navigate => {
+                    "down" | "up" => {
                         key_focus.step(event.keystroke.key == "up", dictionary, window, cx);
                     }
                     _ => return,
@@ -217,5 +228,12 @@ mod tests {
         assert_eq!(next_item(3, None, true, false), Some(2));
         assert_eq!(next_item(3, None, true, true), Some(0));
         assert_eq!(next_item(0, None, true, false), None);
+    }
+
+    #[test]
+    fn a_single_item_menu_takes_focus_and_keeps_it_on_either_arrow() {
+        assert_eq!(next_item(1, None, false, true), Some(0));
+        assert_eq!(next_item(1, Some(0), false, false), Some(0));
+        assert_eq!(next_item(1, Some(0), true, false), Some(0));
     }
 }

@@ -800,13 +800,11 @@ impl HistoryView {
                         .relative()
                         .child(menu_trigger.measure())
                         .aria_expanded(menu_open)
-                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                            this.toggle_menu(id, event.is_keyboard(), window, cx)
-                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_menu(id, cx)))
                         .into_any_element()
                     })
                     .when(menu_open, |d| {
-                        d.child(self.render_menu(item, menu_trigger, cx))
+                        d.child(self.render_menu(item, menu_trigger, window, cx))
                     }),
             );
 
@@ -877,9 +875,9 @@ impl HistoryView {
             // Right-click opens the same menu as the row's more button.
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _, window, cx| {
+                cx.listener(move |this, _, _, cx| {
                     if this.open_menu != Some(id) {
-                        this.toggle_menu(id, false, window, cx);
+                        this.toggle_menu(id, cx);
                     }
                 }),
             )
@@ -1014,31 +1012,13 @@ impl HistoryView {
         }
     }
 
-    /// Opens or closes a row's menu. Opened from the keyboard, it focuses
-    /// its first item so arrows, Return and Escape work at once.
-    fn toggle_menu(
-        &mut self,
-        id: i64,
-        keyboard: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Opens or closes a row's menu; the shared surface manages initial focus.
+    fn toggle_menu(&mut self, id: i64, cx: &mut Context<Self>) {
         self.open_menu = if self.open_menu == Some(id) {
             None
         } else {
             Some(id)
         };
-        if keyboard && self.open_menu.is_some() {
-            // Retry and Reveal need audio; Delete is always there.
-            let has_audio = AppState::global(cx)
-                .read(cx)
-                .history
-                .iter()
-                .any(|item| item.id == id && item.has_audio);
-            let first_action: usize = if has_audio { 0 } else { 2 };
-            let first = keyed_focus_handle(("history-menu-item", first_action).into(), cx);
-            window.on_next_frame(move |window, cx| window.focus(&first, cx));
-        }
         cx.notify();
     }
 
@@ -1057,6 +1037,7 @@ impl HistoryView {
         &self,
         item: &TranscriptionItem,
         trigger: MenuTriggerBounds,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
@@ -1092,7 +1073,6 @@ impl HistoryView {
                 ("more-row", id as usize).into(),
                 cx,
             ),
-            navigate: true,
         };
         let mut items = Vec::new();
         for (icon_name, label, action, destructive) in entries {
@@ -1148,6 +1128,7 @@ impl HistoryView {
                 this.open_menu = None;
                 cx.notify();
             },
+            window,
             cx,
         )
     }

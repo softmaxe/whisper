@@ -771,11 +771,8 @@ impl DictionaryView {
 
     // ---- Menus -------------------------------------------------------------------------------
 
-    fn open_menu(&mut self, menu: OpenMenu, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_menu(&mut self, menu: OpenMenu, _window: &mut Window, cx: &mut Context<Self>) {
         self.menu = Some(menu);
-        // Focus lands in the menu so arrows, Return and Escape work at once;
-        // the ring only shows when the keyboard opened it.
-        focus_key(menu_item_key(0), window, cx);
         cx.notify();
     }
 
@@ -1103,7 +1100,7 @@ impl Render for DictionaryView {
             .menu
             .clone()
             .and_then(|m| m.position.map(|at| (m, at)))
-            .map(|(m, _)| self.render_menu(m, None, cx));
+            .map(|(m, _)| self.render_menu(m, None, window, cx));
         let undo = self.render_undo(window, cx);
         page_container()
             .pb(px(40.))

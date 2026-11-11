@@ -117,7 +117,7 @@ impl DictionaryView {
     /// Dictionary…), drawn in the window's top bar so every page keeps its
     /// page-level menu in the same place. Its items act on words, so it shows
     /// only on the Words view once there is a word to act on.
-    pub fn render_page_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_page_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let has_words = !AppState::global(cx).read(cx).dictionary.is_empty();
         if self.tab != Tab::Words || !has_words {
             return Empty.into_any_element();
@@ -127,7 +127,7 @@ impl DictionaryView {
             .menu
             .clone()
             .filter(|m| m.position.is_none())
-            .map(|m| self.render_menu(m, Some(trigger.clone()), cx));
+            .map(|m| self.render_menu(m, Some(trigger.clone()), window, cx));
         div()
             .relative()
             .flex()
@@ -262,6 +262,7 @@ impl DictionaryView {
         &self,
         menu: OpenMenu,
         trigger: Option<MenuTriggerBounds>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
@@ -281,7 +282,6 @@ impl DictionaryView {
                 menu.return_focus,
                 cx,
             ),
-            navigate: true,
         };
         let mut items = Vec::new();
         for (index, entry) in menu.entries.into_iter().enumerate() {
@@ -359,6 +359,7 @@ impl DictionaryView {
                 this.menu = None;
                 cx.notify();
             },
+            window,
             cx,
         )
     }
