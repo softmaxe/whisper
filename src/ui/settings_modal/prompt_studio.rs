@@ -55,11 +55,17 @@ impl SettingsModal {
 
     /// Saving is routine, so it confirms with a toast rather than a dialog
     /// to dismiss.
-    pub(super) fn save_prompt(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let edited = self.prompt_editor.read(cx).value().to_string();
         let default = Self::default_prompt(cx);
         // Keep the shipped default eligible for future prompt updates.
-        let custom = if edited == default || edited.trim().is_empty() {
+        let custom = if edited == default {
+            String::new()
+        } else if edited.trim().is_empty() {
+            // A blank prompt means the default: show it, so the editor
+            // matches what dictation uses and follows the language.
+            self.prompt_editor
+                .update(cx, |input, cx| input.set_value(default, window, cx));
             String::new()
         } else {
             edited
@@ -366,7 +372,9 @@ impl SettingsModal {
                                 .label(t("promptStudio.common.save"))
                                 .size(ButtonSize::Sm)
                                 .full_width()
-                                .on_click(cx.listener(|this, _, _, cx| this.save_prompt(cx))),
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.save_prompt(window, cx)),
+                                ),
                         )
                         .child(
                             Button::new("reset-prompt")
