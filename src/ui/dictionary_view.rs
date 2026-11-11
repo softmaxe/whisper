@@ -3,6 +3,7 @@
 mod chrome;
 mod snippets;
 mod words;
+use snippets::{SnippetRows, SnippetRowsKey};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -415,6 +416,8 @@ impl WordRows {
 
 pub struct DictionaryView {
     word_rows: Option<(WordRowsKey, Arc<WordRows>)>,
+    snippet_rows: Option<(SnippetRowsKey, Arc<SnippetRows>)>,
+    snippet_revision: u64,
     tab: Tab,
     panel: Panel,
     // Words
@@ -535,6 +538,10 @@ impl DictionaryView {
 
         let state = AppState::global(cx);
         cx.subscribe(&state, |this, _, e: &AppEvent, cx| {
+            if matches!(e, AppEvent::SnippetsChanged) {
+                this.snippet_revision += 1;
+                this.snippet_rows = None;
+            }
             if matches!(e, AppEvent::DictionaryChanged | AppEvent::SnippetsChanged) {
                 this.word_rows = None;
                 cx.notify();
@@ -543,6 +550,8 @@ impl DictionaryView {
         .detach();
         Self {
             word_rows: None,
+            snippet_rows: None,
+            snippet_revision: 0,
             tab: Tab::Words,
             panel: Panel::None,
             word_search,

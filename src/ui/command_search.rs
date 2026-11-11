@@ -1,6 +1,8 @@
 //! The Cmd+K transcript palette. Keyboard-first, so it appears and
 //! disappears without animation.
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Local, Utc};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{Sizable, Size};
@@ -32,6 +34,41 @@ pub struct CommandSearch {
     input: Entity<InputState>,
     selected: usize,
     scroll: ScrollHandle,
+    results: Option<SearchResults>,
+}
+
+struct SearchResults {
+    query: String,
+    /// Arc identity is the data revision: History publishes immutable snapshots
+    /// and uses copy-on-write for immediate deletions.
+    history: Arc<Vec<TranscriptionItem>>,
+    matches: Arc<Vec<TranscriptionItem>>,
+}
+
+impl SearchResults {
+    fn new(query: String, history: Arc<Vec<TranscriptionItem>>) -> Self {
+        let matches = Arc::new(
+            history
+                .iter()
+                .filter(|item| query.is_empty() || item.text.to_lowercase().contains(&query))
+                .take(if query.is_empty() {
+                    RECENT_LIMIT
+                } else {
+                    RESULT_LIMIT
+                })
+                .cloned()
+                .collect(),
+        );
+        Self {
+            query,
+            history,
+            matches,
+        }
+    }
+
+    fn is_current(&self, query: &str, history: &Arc<Vec<TranscriptionItem>>) -> bool {
+        self.query == query && Arc::ptr_eq(&self.history, history)
+    }
 }
 
 /// Rows listed before anything is typed.
@@ -144,23 +181,21 @@ impl CommandSearch {
             input,
             selected: 0,
             scroll: ScrollHandle::new(),
+            results: None,
         }
     }
 
-    fn results(&self, cx: &App) -> Vec<TranscriptionItem> {
+    fn results(&mut self, cx: &App) -> Arc<Vec<TranscriptionItem>> {
         let query = self.input.read(cx).value().trim().to_lowercase();
-        AppState::global(cx)
-            .read(cx)
-            .history
-            .iter()
-            .filter(|item| query.is_empty() || item.text.to_lowercase().contains(&query))
-            .take(if query.is_empty() {
-                RECENT_LIMIT
-            } else {
-                RESULT_LIMIT
-            })
-            .cloned()
-            .collect()
+        let history = AppState::global(cx).read(cx).history.clone();
+        if self
+            .results
+            .as_ref()
+            .is_none_or(|cached| !cached.is_current(&query, &history))
+        {
+            self.results = Some(SearchResults::new(query, history));
+        }
+        self.results.as_ref().unwrap().matches.clone()
     }
 
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -432,7 +467,32 @@ impl Render for CommandSearch {
 
 #[cfg(test)]
 mod tests {
-    use super::match_window;
+    use super::{SearchResults, TranscriptionItem, match_window};
+    use std::sync::Arc;
+
+    #[test]
+    fn cached_results_invalidate_after_a_query_change_or_history_edit() {
+        let mut history = Arc::new(vec![TranscriptionItem {
+            id: 1,
+            text: "Deployment finished".into(),
+            raw_text: None,
+            timestamp: String::new(),
+            created_at: String::new(),
+            has_audio: false,
+            audio_duration_ms: None,
+        }]);
+        let cache = SearchResults::new("deployment".into(), history.clone());
+        assert!(cache.is_current("deployment", &history));
+        assert_eq!(cache.matches.len(), 1);
+        assert!(!cache.is_current("finished", &history));
+        Arc::make_mut(&mut history).clear();
+        assert!(!cache.is_current("deployment", &history));
+        assert!(
+            SearchResults::new("deployment".into(), history)
+                .matches
+                .is_empty()
+        );
+    }
 
     #[test]
     fn keeps_short_leads_and_windows_late_matches() {
