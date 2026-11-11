@@ -46,24 +46,43 @@ normalize() {
 
 # Nested code first, then the app; one "identifier<TAB>path<TAB>kind" per line.
 components() {
-  local app="$1" bin="$1/Contents/Resources/bin" file framework_id
+  local app="$1" bin="$1/Contents/Resources/bin" file framework_id file_kind
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" == "$app_id" ]] ||
     die "Whisper must keep CFBundleIdentifier $app_id."
   for file in "$bin"/*; do
-    if [[ -f "$file" && ! -L "$file" ]] && file -b "$file" | grep -q '^Mach-O'; then
-      printf '%s.%s\t%s\thelper\n' "$app_id" "$(basename "$file")" "$file"
+    if [[ -f "$file" && ! -L "$file" ]]; then
+      file_kind="$(file -b "$file")" || die "Cannot inspect component $file."
+      if [[ "$file_kind" == Mach-O* ]]; then
+        printf '%s.%s\t%s\thelper\n' "$app_id" "$(basename "$file")" "$file"
+      fi
     fi
   done
   if [[ -d "$bin/MediaRemoteAdapter.framework" ]]; then
     framework_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
-      "$bin/MediaRemoteAdapter.framework/Resources/Info.plist")"
+      "$bin/MediaRemoteAdapter.framework/Resources/Info.plist")" ||
+      die "Cannot read the framework identifier."
+    [[ -n "$framework_id" ]] || die "The framework identifier is empty."
     printf '%s\t%s\tframework\n' "$framework_id" "$bin/MediaRemoteAdapter.framework"
   fi
   printf '%s\t%s\tapp\n' "$app_id" "$app"
 }
 
+# Validate in the caller's control flow; process substitution hides failures.
+component_list() {
+  local app="$1" listing id path kind found_app=false
+  listing="$(components "$app")" || die "Cannot list signed components."
+  while IFS=$'\t' read -r id path kind; do
+    if [[ "$id" == "$app_id" && "$path" == "$app" && "$kind" == app ]]; then
+      found_app=true
+    fi
+  done <<<"$listing"
+  [[ "$found_app" == true ]] || die "Component list does not include the app."
+  printf '%s\n' "$listing"
+}
+
 verify() {
-  local app="$1" fp id path kind expected actual
+  local app="$1" fp id path kind expected actual listing
+  listing="$(component_list "$app")" || die "Cannot verify an incomplete component list."
   fp="$(fingerprint)"
   codesign --verify --deep --strict "$app" || die "Signature check failed for $app."
   while IFS=$'\t' read -r id path kind; do
@@ -74,12 +93,13 @@ verify() {
     if [[ "$(normalize <<<"$actual")" != "$(normalize <<<"$expected")" || "$actual" == *cdhash* ]]; then
       die "Unstable designated requirement for $(basename "$path")."
     fi
-  done < <(components "$app")
+  done <<<"$listing"
   echo "[sign] Verified release signatures against the pinned certificate."
 }
 
 sign() {
-  local app="$1" fp identity password work keychain keychain_password
+  local app="$1" fp identity password work keychain keychain_password listing
+  listing="$(component_list "$app")" || die "Cannot sign an incomplete component list."
   fp="$(fingerprint)"
 
   if [[ -n "${WHISPER_SIGNING_CERTIFICATE+set}" || -n "${WHISPER_SIGNING_PASSWORD+set}" ]]; then
@@ -135,7 +155,7 @@ sign() {
       --identifier "$id" --requirements "=designated => $(requirement "$id" "$fp")" \
       ${options[@]+"${options[@]}"} "$path" ||
       die "Signing $(basename "$path") failed."
-  done < <(components "$app")
+  done <<<"$listing"
 
   verify "$app"
 }
