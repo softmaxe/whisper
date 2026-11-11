@@ -4,7 +4,7 @@
 //!   focus at a hotkey press (the Target app), before the overlay steals focus.
 //! - [`TextEditMonitor::activate_pid`] / [`TextEditMonitor::can_paste_at_target`]
 //!   gate automatic paste.
-//! - [`TextEditMonitor::start_monitoring`] watches the focused field after an
+//! - [`TextEditMonitor::start_monitoring_after_paste`] watches the focused field after an
 //!   automatic paste. The session ends when the field empties (the message was
 //!   sent), focus leaves it, another paste starts or [`MONITOR_TIMEOUT`] runs
 //!   out, and reports the field's last text as one [`SessionReport`] for the
@@ -356,18 +356,25 @@ impl TextEditMonitor {
         target_pid: Option<i32>,
     ) -> async_channel::Receiver<SessionReport> {
         let (report, receiver) = async_channel::bounded(1);
+        let generation = self.prepare_start();
         let monitor = self.clone();
         let text = original_text.to_string();
-        std::thread::spawn(move || {
-            std::thread::sleep(MONITOR_START_DELAY);
-            monitor.start_monitoring(&text, MONITOR_TIMEOUT, target_pid, report);
-        });
+        self.inner.timers.schedule(
+            MONITOR_START_DELAY,
+            Box::new(move || {
+                // Helper resolution and AppKit lookups must not block the timer thread.
+                std::thread::spawn(move || {
+                    monitor.start_reserved(generation, &text, MONITOR_TIMEOUT, target_pid, report);
+                });
+            }),
+        );
         receiver
     }
 
     /// Watches the focused field of `target_pid` for `timeout`. Ends any
     /// previous session first. Returns immediately; `report` always receives
     /// the outcome.
+    #[cfg(test)]
     pub fn start_monitoring(
         &self,
         original_text: &str,
@@ -375,12 +382,31 @@ impl TextEditMonitor {
         target_pid: Option<i32>,
         report: async_channel::Sender<SessionReport>,
     ) {
-        self.stop_monitoring();
+        let generation = self.prepare_start();
+        self.start_reserved(generation, original_text, timeout, target_pid, report);
+    }
+
+    fn prepare_start(&self) -> u64 {
+        self.inner
+            .stop(None)
+            .expect("unconditional stop reserves a generation")
+    }
+
+    fn start_reserved(
+        &self,
+        generation: u64,
+        original_text: &str,
+        timeout: Duration,
+        target_pid: Option<i32>,
+        report: async_channel::Sender<SessionReport>,
+    ) {
         let inner = &self.inner;
-        let generation = inner.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let app = target_pid.and_then(appkit::bundle_identifier);
         {
             let mut monitoring = lock(&inner.monitoring);
+            if inner.generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
             let pasted = monitoring.remember_paste(target_pid, original_text);
             monitoring.session = Some(Session {
                 app,
@@ -393,17 +419,17 @@ impl TextEditMonitor {
 
         let Some(pid) = target_pid.filter(|p| *p > 0) else {
             log::debug!("[text-monitor] no target pid");
-            self.stop_monitoring();
+            inner.stop(Some(generation));
             return;
         };
         let Some(helper) = (inner.hooks.resolve_helper)() else {
             log::debug!("[text-monitor] helper unavailable");
-            self.stop_monitoring();
+            inner.stop(Some(generation));
             return;
         };
         if lock(&inner.unsupported_pids).contains(&pid) {
             log::debug!("[text-monitor] AX reads unsupported for {pid} this session");
-            self.stop_monitoring();
+            inner.stop(Some(generation));
             return;
         }
 
@@ -453,26 +479,27 @@ impl Inner {
     }
 
     /// Stops monitoring; with `Some(generation)` only if that run is current.
-    fn stop(&self, generation: Option<u64>) {
-        if let Some(generation) = generation
-            && self.generation.load(Ordering::SeqCst) != generation
-        {
-            return;
-        }
-        self.generation.fetch_add(1, Ordering::SeqCst);
-        let session = {
+    fn stop(&self, generation: Option<u64>) -> Option<u64> {
+        let (session, next_generation) = {
             let mut monitoring = lock(&self.monitoring);
+            if let Some(generation) = generation
+                && self.generation.load(Ordering::SeqCst) != generation
+            {
+                return None;
+            }
+            let next_generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
             if let Some(timer) = monitoring.timeout.take() {
                 self.timers.cancel(timer);
             }
             if let Some(run) = monitoring.run.take() {
                 run.stop();
             }
-            monitoring.session.take()
+            (monitoring.session.take(), next_generation)
         };
         if let Some(session) = session {
             session.finish();
         }
+        Some(next_generation)
     }
 
     fn arm_timeout(&self, generation: u64, timeout: Duration) {
@@ -485,14 +512,22 @@ impl Inner {
                 }
             }),
         );
-        lock(&self.monitoring).timeout = Some(timer);
+        let mut monitoring = lock(&self.monitoring);
+        if self.generation.load(Ordering::SeqCst) == generation {
+            monitoring.timeout = Some(timer);
+        } else {
+            self.timers.cancel(timer);
+        }
     }
 
     fn update_session(&self, generation: u64, update: impl FnOnce(&mut Session) -> bool) {
-        if self.generation.load(Ordering::SeqCst) != generation {
-            return;
-        }
-        let keep_going = lock(&self.monitoring).session.as_mut().is_none_or(update);
+        let keep_going = {
+            let mut monitoring = lock(&self.monitoring);
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            monitoring.session.as_mut().is_none_or(update)
+        };
         if !keep_going {
             log::debug!("[text-monitor] field emptied");
             self.stop(Some(generation));
@@ -785,6 +820,84 @@ mod tests {
             values.get(n).or(values.last()).copied().flatten()
         });
         (source, calls)
+    }
+
+    fn assert_pending_start_cancelled(receiver: &async_channel::Receiver<SessionReport>) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !receiver.is_closed() {
+            assert!(
+                Instant::now() < deadline,
+                "stale monitoring start was not cancelled"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            receiver.try_recv(),
+            Err(async_channel::TryRecvError::Closed)
+        );
+    }
+
+    #[test]
+    fn stop_invalidates_a_delayed_start() {
+        let spawner = Arc::new(FakeSpawner::default());
+        let timers = FakeTimers::new();
+        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
+        let pending = monitor.start_monitoring_after_paste("old", Some(42));
+        monitor.stop_monitoring();
+        timers.advance(MONITOR_START_DELAY.as_millis() as u64);
+        assert_pending_start_cancelled(&pending);
+        assert!(!monitor.is_monitoring());
+        assert_eq!(spawner.count(), 0);
+    }
+
+    #[test]
+    fn newer_delayed_start_invalidates_the_older_start() {
+        let spawner = Arc::new(FakeSpawner::default());
+        let timers = FakeTimers::new();
+        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
+        let old = monitor.start_monitoring_after_paste("old", Some(42));
+        timers.advance(500);
+        let new = monitor.start_monitoring_after_paste("new", Some(42));
+        timers.advance(500);
+        assert_pending_start_cancelled(&old);
+        assert!(!monitor.is_monitoring());
+        timers.advance(500);
+        wait_for_spawn(&spawner);
+        assert_eq!(spawner.count(), 1);
+        assert_eq!(
+            lock(&monitor.inner.monitoring)
+                .session
+                .as_ref()
+                .unwrap()
+                .pasted,
+            ["new"]
+        );
+        monitor.stop_monitoring();
+        assert!(new.recv_blocking().is_ok());
+    }
+
+    #[test]
+    fn a_delayed_start_cannot_replace_a_newer_immediate_session() {
+        let spawner = Arc::new(FakeSpawner::default());
+        let timers = FakeTimers::new();
+        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
+        let old = monitor.start_monitoring_after_paste("old", Some(42));
+        let new = watch(&monitor, "new", Some(42));
+        wait_for_spawn(&spawner);
+        timers.advance(MONITOR_START_DELAY.as_millis() as u64);
+        assert_pending_start_cancelled(&old);
+        assert!(monitor.is_monitoring());
+        assert_eq!(spawner.count(), 1);
+        assert_eq!(
+            lock(&monitor.inner.monitoring)
+                .session
+                .as_ref()
+                .unwrap()
+                .pasted,
+            ["new"]
+        );
+        monitor.stop_monitoring();
+        assert!(new.recv_blocking().is_ok());
     }
 
     #[test]
