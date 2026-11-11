@@ -117,7 +117,7 @@ impl DictionaryView {
     /// Dictionary…), drawn in the window's top bar so every page keeps its
     /// page-level menu in the same place. Its items act on words, so it shows
     /// only on the Words view once there is a word to act on.
-    pub fn render_page_menu(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub fn render_page_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let has_words = !AppState::global(cx).read(cx).dictionary.is_empty();
         if self.tab != Tab::Words || !has_words {
             return Empty.into_any_element();
@@ -127,7 +127,7 @@ impl DictionaryView {
             .menu
             .clone()
             .filter(|m| m.position.is_none())
-            .map(|m| self.render_menu(m, Some(trigger.clone()), cx));
+            .map(|m| self.render_menu(m, Some(trigger.clone()), window, cx));
         div()
             .relative()
             .flex()
@@ -145,20 +145,7 @@ impl DictionaryView {
                         ),
                 ),
             )
-            .when_some(menu, |d, menu| {
-                // Hangs from the button's right edge; deferred so it paints
-                // over the page below the top bar.
-                d.child(
-                    deferred(
-                        div()
-                            .absolute()
-                            .top(px(HEADER_CONTROL + 4.))
-                            .right_0()
-                            .child(menu),
-                    )
-                    .with_priority(2),
-                )
-            })
+            .children(menu)
             .into_any_element()
     }
 
@@ -275,54 +262,28 @@ impl DictionaryView {
         &self,
         menu: OpenMenu,
         trigger: Option<MenuTriggerBounds>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
-        let count = menu.entries.len();
-        let mut list = div()
-            .id("dict-menu")
-            .occlude()
-            .min_w(px(196.))
-            .p(px(4.))
-            .flex()
-            .flex_col()
-            .rounded(px(RADIUS_LG))
-            .border_1()
-            .border_color(p.foreground.opacity(0.1))
-            .bg(p.popover)
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., if p.dark { 0.55 } else { 0.22 }),
-                offset: point(px(0.), px(16.)),
-                blur_radius: px(40.),
-                spread_radius: px(-18.),
-                inset: false,
-            }])
-            .on_mouse_down_out(
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    if !trigger
-                        .as_ref()
-                        .is_some_and(|trigger| trigger.contains(event.position))
-                    {
-                        this.close_menu(false, window, cx);
-                    }
-                }),
-            )
-            .key_context(MENU_CONTEXT)
-            .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
-                this.close_menu(true, window, cx);
-            }))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
-                let current = (0..count)
-                    .find(|&i| keyed_focus_handle(menu_item_key(i), cx).is_focused(window));
-                let step = |delta: usize| current.map_or(0, |i| (i + delta) % count);
-                match e.keystroke.key.as_str() {
-                    "down" => focus_key(menu_item_key(step(1)), window, cx),
-                    "up" => focus_key(menu_item_key(step(count - 1)), window, cx),
-                    "escape" => this.close_menu(true, window, cx),
-                    _ => return,
-                }
-                cx.stop_propagation();
-            }));
+        let popup = PopupMenu {
+            id: "dict-menu".into(),
+            min_width: 196.,
+            appearance: MenuAppearance::Dictionary,
+            placement: menu.position.map_or(
+                MenuPlacement::ToolbarRight {
+                    top: px(HEADER_CONTROL + 4.),
+                },
+                MenuPlacement::Pointer,
+            ),
+            trigger,
+            focus: MenuFocus::new(
+                (0..menu.entries.len()).map(menu_item_key),
+                menu.return_focus,
+                cx,
+            ),
+        };
+        let mut items = Vec::new();
         for (index, entry) in menu.entries.into_iter().enumerate() {
             let fg = if entry.destructive {
                 p.destructive
@@ -336,10 +297,17 @@ impl DictionaryView {
             };
             // Destructive items sit apart from routine ones.
             if entry.destructive && index > 0 {
-                list = list.child(div().my(px(4.)).mx(px(4.)).h(px(1.)).bg(p.border));
+                items.push(
+                    div()
+                        .my(px(4.))
+                        .mx(px(4.))
+                        .h(px(1.))
+                        .bg(p.border)
+                        .into_any_element(),
+                );
             }
             let action = entry.action.clone();
-            list = list.child(
+            items.push(
                 div()
                     .id(menu_item_key(index))
                     .keyboard_focusable(
@@ -381,15 +349,19 @@ impl DictionaryView {
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.close_menu(false, window, cx);
                         this.run(action.clone(), window, cx);
-                    })),
+                    }))
+                    .into_any_element(),
             );
         }
-        list.with_animation(
-            "dict-menu-in",
-            motion(DUR_SNAP, cx).with_easing(ease_snap),
-            |d, t| d.opacity(t),
+        popup.render(
+            items,
+            |this, _, cx| {
+                this.menu = None;
+                cx.notify();
+            },
+            window,
+            cx,
         )
-        .into_any_element()
     }
 
     /// The floating "Removed … Undo" bar at the bottom of the window.

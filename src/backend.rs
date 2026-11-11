@@ -295,17 +295,14 @@ pub fn write_clipboard(text: &str) -> bool {
 pub fn paste_text(
     text: String,
     target_pid: Option<i32>,
-    restore_clipboard: bool,
+    output_mode: crate::settings::OutputMode,
 ) -> impl std::future::Future<Output = bool> + 'static {
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
         crate::native::text_monitor::TextEditMonitor::shared().stop_monitoring();
         let outcome = crate::native::paste::paste_text(
             &text,
-            crate::native::paste::PasteOptions {
-                target_pid,
-                restore_clipboard,
-            },
+            crate::native::paste::PasteOptions::new(target_pid, output_mode),
         );
         if let Some(failure) = &outcome.failure {
             log::warn!("automatic paste failed: {failure:?}");

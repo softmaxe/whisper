@@ -596,13 +596,12 @@ impl Database {
     /// Empties the Dictionary and everything learned about it. A fresh start,
     /// so unlike removing words it leaves auto-learn free to add them again.
     pub fn clear_dictionary(&self) -> Result<()> {
-        self.lock().execute_batch(
-            "BEGIN IMMEDIATE;
-             DELETE FROM custom_dictionary;
-             DELETE FROM dictionary_corrections;
-             DELETE FROM dictionary_rejected_words;
-             COMMIT;",
-        )?;
+        let mut conn = self.lock();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute("DELETE FROM custom_dictionary", [])?;
+        tx.execute("DELETE FROM dictionary_corrections", [])?;
+        tx.execute("DELETE FROM dictionary_rejected_words", [])?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -644,6 +643,30 @@ mod tests {
 
     fn manual() -> DictionarySource {
         DictionarySource::Manual
+    }
+
+    #[test]
+    fn failed_clear_rolls_back_and_releases_the_shared_connection() {
+        let db = db();
+        db.apply_dictionary_changes(&["keep"], NONE, manual())
+            .unwrap();
+        db.lock()
+            .execute_batch(
+                "CREATE TRIGGER reject_clear BEFORE DELETE ON dictionary_corrections
+             BEGIN SELECT RAISE(ABORT, 'synthetic clear failure'); END;
+             INSERT INTO dictionary_corrections(misheard, term, count) VALUES ('keap', 'keep', 1);",
+            )
+            .unwrap();
+        assert!(db.clear_dictionary().is_err());
+        assert!(db.lock().is_autocommit());
+        assert_eq!(db.get_dictionary().unwrap(), ["keep"]);
+        db.lock()
+            .execute_batch("DROP TRIGGER reject_clear;")
+            .unwrap();
+        db.apply_dictionary_changes(&["next"], NONE, manual())
+            .unwrap();
+        db.clear_dictionary().unwrap();
+        assert!(db.get_dictionary().unwrap().is_empty());
     }
 
     #[test]

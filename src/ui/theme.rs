@@ -346,11 +346,11 @@ impl PaletteExt for App {
 /// - `FONT_MONO`: code-like values (URLs, API keys, model ids, prompts, key
 ///   chips, error details)
 ///
-/// macOS maps the system UI family to SF Pro. JetBrains Mono Nerd Font Mono is
+/// macOS maps the system UI family to SF Pro. JetBrains Mono is
 /// bundled with the app. CJK text falls back to PingFang in both families.
 pub const FONT_UI: &str = ".AppleSystemUIFont";
 pub const FONT_VOICE: &str = ".AppleSystemUIFont";
-pub const FONT_MONO: &str = "JetBrainsMono Nerd Font Mono";
+pub const FONT_MONO: &str = "JetBrains Mono";
 
 /// Type scale shared by every window, in px. Reading text runs larger than
 /// body text: transcripts are a reading surface, the rest is controls.

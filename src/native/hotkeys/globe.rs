@@ -139,7 +139,7 @@ impl Protocol for Listener {
     fn on_stderr(&mut self, text: &str, cx: &mut Control<'_, GlobeEvent>) {
         let message = text.trim();
         if message.contains("Failed to create event monitor") {
-            cx.fail(message);
+            cx.unavailable(message);
         } else if !message.is_empty() {
             log::warn!("[globe] listener stderr: {message}");
         }
@@ -155,27 +155,15 @@ impl Protocol for Listener {
             Down::NotStarted(message) => self.report_error(message.clone(), cx),
             // Keys held when the listener goes away never report their release.
             Down::Stopped => cx.emit(GlobeEvent::ListenerStopped),
-            Down::Failed(message) => {
+            Down::Failed(message) | Down::Unavailable(message) => {
                 cx.emit(GlobeEvent::ListenerStopped);
-                self.report_error(message.clone(), cx);
+                if !matches!(recovery, Recovery::Restarting { .. }) {
+                    self.report_error(message.clone(), cx);
+                }
             }
             Down::Exited { code, signal } => {
                 log::info!("[globe] listener exited: code {code:?} signal {signal:?}");
                 cx.emit(GlobeEvent::ListenerStopped);
-                if matches!(signal, Some(libc::SIGINT | libc::SIGTERM)) {
-                    return;
-                }
-                if *code != Some(0) {
-                    let describe = |v: Option<i32>| v.map_or("null".to_string(), |v| v.to_string());
-                    let message = format!(
-                        "Globe key listener exited with code {} signal {}",
-                        describe(*code),
-                        describe(*signal)
-                    );
-                    return self.report_error(message, cx);
-                }
-                // Exit 0 without a stop request: the event tap was likely
-                // invalidated (sleep/wake). Restart a few times.
                 match recovery {
                     Recovery::Restarting { attempt } => log::warn!(
                         "[globe] unexpected exit, restarting (attempt {attempt}/{MAX_RESTART_ATTEMPTS})"
@@ -186,7 +174,8 @@ impl Protocol for Listener {
                         ),
                         cx,
                     ),
-                    Recovery::NotRestarting => {}
+                    Recovery::NotRestarting => self.report_error(
+                        format!("Globe key listener exited with code {code:?} signal {signal:?}"), cx),
                 }
             }
         }
@@ -208,7 +197,7 @@ impl GlobeListener {
                 resolve_binary: Arc::clone(&options.resolve_binary),
                 spawner: Arc::clone(&options.spawner),
                 timers: Arc::clone(&options.timers),
-                restart: RestartPolicy::CleanExit {
+                restart: RestartPolicy::Bounded {
                     delay: Duration::from_millis(RESTART_DELAY_MS),
                     max_attempts: MAX_RESTART_ATTEMPTS,
                     reset_after: Duration::from_millis(RESTART_RESET_MS),
@@ -677,7 +666,7 @@ pub(crate) mod tests {
                     signal: None,
                 },
             );
-            h.timers.advance(RESTART_DELAY_MS);
+            h.timers.advance(RESTART_DELAY_MS * (1 << attempt));
             assert_eq!(h.spawner.count(), attempt + 2);
         }
         h.spawner.emit(
@@ -697,9 +686,42 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn crash_reports_error_without_restart() {
+    fn crashes_restart_with_backoff_then_report_error() {
+        for (code, signal) in [(Some(1), None), (None, Some(libc::SIGSEGV))] {
+            let h = harness(false, false);
+            h.listener.start();
+            for index in 0..=MAX_RESTART_ATTEMPTS as usize {
+                h.spawner.emit(index, ChildEvent::Exit { code, signal });
+                if index < MAX_RESTART_ATTEMPTS as usize {
+                    assert!(
+                        !lock(&h.events)
+                            .iter()
+                            .any(|event| matches!(event, GlobeEvent::Error(_)))
+                    );
+                    let delay = RESTART_DELAY_MS * (1 << index);
+                    h.timers.advance(delay - 1);
+                    assert_eq!(h.spawner.count(), index + 1);
+                    h.timers.advance(1);
+                }
+            }
+            h.timers.advance(60_000);
+            assert_eq!(h.spawner.count(), MAX_RESTART_ATTEMPTS as usize + 1);
+            assert!(
+                lock(&h.events)
+                    .iter()
+                    .any(|event| matches!(event, GlobeEvent::Error(_)))
+            );
+        }
+    }
+
+    #[test]
+    fn missing_permission_does_not_respawn() {
         let h = harness(false, false);
         h.listener.start();
+        h.spawner.emit(
+            0,
+            ChildEvent::Stderr("Failed to create event monitor".into()),
+        );
         h.spawner.emit(
             0,
             ChildEvent::Exit {
@@ -707,12 +729,12 @@ pub(crate) mod tests {
                 signal: None,
             },
         );
-        h.timers.advance(5000);
+        h.timers.advance(60_000);
         assert_eq!(h.spawner.count(), 1);
         assert!(
             lock(&h.events)
                 .iter()
-                .any(|e| matches!(e, GlobeEvent::Error(m) if m.contains("code 1")))
+                .any(|event| matches!(event, GlobeEvent::Error(_)))
         );
     }
 }

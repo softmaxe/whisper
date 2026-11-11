@@ -1,8 +1,9 @@
 //! Upload: transcribe audio and video files one at a time or as a batch.
 //!
-//! The view entity outlives navigation, so a running batch keeps draining
-//! while the user looks at other pages.
+//! An app-global entity owns jobs and results. Closing the control panel only
+//! detaches its presentation; running jobs still finish and save to History.
 
+use std::collections::HashSet;
 use std::f32::consts::TAU;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -45,11 +46,14 @@ struct SelectedFile {
     size: String,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 enum Stage {
+    #[default]
     Idle,
     Selected,
     Transcribing,
+    /// The accepted History write cannot be cancelled.
+    Saving,
     Complete {
         text: String,
         transcription_id: Option<i64>,
@@ -58,10 +62,11 @@ enum Stage {
     Error(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ItemStatus {
     Queued,
     Transcribing,
+    Saving,
     Done,
     Error,
     /// Stopped by the user before it ran: neither done nor failed.
@@ -81,7 +86,49 @@ struct QueueItem {
     started: Option<Instant>,
 }
 
-pub struct UploadView {
+impl QueueItem {
+    /// Preserve a completed transcript: a save failure needs no new ASR request.
+    fn retry(&mut self) -> bool {
+        if self.status != ItemStatus::Error {
+            return false;
+        }
+        self.status = ItemStatus::Queued;
+        self.error = None;
+        self.started = None;
+        true
+    }
+
+    fn finish(
+        &mut self,
+        result: Result<String, UploadError>,
+        saved: Option<anyhow::Result<Option<i64>>>,
+    ) {
+        self.error = None;
+        match (result, saved) {
+            (Ok(text), Some(Ok(id))) => {
+                self.text = Some(text);
+                self.status = ItemStatus::Done;
+                self.transcription_id = id;
+            }
+            (Ok(text), Some(Err(_))) => {
+                self.text = Some(text);
+                self.status = ItemStatus::Error;
+                self.error = Some(t("upload.saveFailed"));
+            }
+            (Ok(_), None) => {
+                self.status = ItemStatus::Error;
+                self.error = Some(t("upload.batchTranscriptionFailed"));
+            }
+            (Err(err), _) => {
+                self.status = ItemStatus::Error;
+                self.error = Some(error_text(&err));
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct UploadStore {
     stage: Stage,
     file: Option<SelectedFile>,
     run_id: u64,
@@ -97,7 +144,10 @@ pub struct UploadView {
     ticking: bool,
 }
 
-impl EventEmitter<UploadEvent> for UploadView {}
+struct UploadStoreGlobal(Entity<UploadStore>);
+impl Global for UploadStoreGlobal {}
+
+impl EventEmitter<UploadEvent> for UploadStore {}
 
 fn format_file_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -166,25 +216,23 @@ fn run_transcription(
     }
 }
 
-impl UploadView {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
-        Self {
-            stage: Stage::Idle,
-            file: None,
-            run_id: 0,
-            active_request: None,
-            skipped_notice: None,
-            queue: Vec::new(),
-            batch_processing: false,
-            batch_run: 0,
-            batch_request: None,
-            started: None,
-            ticking: false,
+impl UploadStore {
+    /// One strong app-level owner, independent of control panel windows.
+    pub fn global(cx: &mut App) -> Entity<Self> {
+        if let Some(store) = cx.try_global::<UploadStoreGlobal>() {
+            return store.0.clone();
         }
+        let store = cx.new(|_| Self::default());
+        cx.set_global(UploadStoreGlobal(store.clone()));
+        store
+    }
+
+    fn single_running(&self) -> bool {
+        matches!(self.stage, Stage::Transcribing | Stage::Saving)
     }
 
     fn transcribing_now(&self) -> bool {
-        self.stage == Stage::Transcribing
+        self.single_running()
             || self
                 .queue
                 .iter()
@@ -254,7 +302,7 @@ impl UploadView {
             return;
         }
         let has_queue = !self.queue.is_empty();
-        if valid.len() == 1 && !self.batch_processing && !has_queue {
+        if valid.len() == 1 && !self.batch_processing && !has_queue && !self.single_running() {
             let path = valid.remove(0);
             let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
             self.file = Some(SelectedFile {
@@ -298,7 +346,7 @@ impl UploadView {
         let Some(file) = self.file.clone() else {
             return;
         };
-        if self.batch_processing {
+        if self.batch_processing || self.single_running() {
             return;
         }
         self.run_id += 1;
@@ -319,7 +367,12 @@ impl UploadView {
                         return None;
                     }
                     match &result {
-                        Ok(text) if !text.trim().is_empty() => Some(save_upload(text.clone(), cx)),
+                        Ok(text) if !text.trim().is_empty() => {
+                            this.stage = Stage::Saving;
+                            this.active_request = None;
+                            cx.notify();
+                            Some(save_upload(text.clone(), cx))
+                        }
                         _ => None,
                     }
                 })
@@ -330,53 +383,90 @@ impl UploadView {
                 None => None,
             };
             let _ = this.update(cx, |this, cx| {
-                // Every new run or cancel bumps `run_id`, so a stale run no
-                // longer owns `active_request`.
-                if run != this.run_id {
-                    return;
-                }
-                this.active_request = None;
-                this.stage = match result {
-                    Ok(text) if !text.trim().is_empty() => match saved {
-                        Some(Ok(id)) => Stage::Complete {
-                            text,
-                            transcription_id: id,
-                            save_error: None,
-                        },
-                        _ => Stage::Complete {
-                            text,
-                            transcription_id: None,
-                            save_error: Some(t("upload.saveFailed")),
-                        },
-                    },
-                    Ok(_) => Stage::Error(t("upload.transcriptionFailed")),
-                    Err(err) => Stage::Error(error_text(&err)),
-                };
+                this.finish_single(run, result, saved);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    fn cancel_transcription(&mut self, cx: &mut Context<Self>) {
+    /// Ignore completions from requests cancelled or superseded by the user.
+    fn finish_single(
+        &mut self,
+        run: u64,
+        result: Result<String, UploadError>,
+        saved: Option<anyhow::Result<Option<i64>>>,
+    ) -> bool {
+        // Every new run or cancel bumps `run_id`, so a stale run no
+        // longer owns `active_request`.
+        if run != self.run_id {
+            return false;
+        }
+        self.active_request = None;
+        self.stage = match result {
+            Ok(text) if !text.trim().is_empty() => match saved {
+                Some(Ok(id)) => Stage::Complete {
+                    text,
+                    transcription_id: id,
+                    save_error: None,
+                },
+                _ => Stage::Complete {
+                    text,
+                    transcription_id: None,
+                    save_error: Some(t("upload.saveFailed")),
+                },
+            },
+            Ok(_) => Stage::Error(t("upload.transcriptionFailed")),
+            Err(err) => Stage::Error(error_text(&err)),
+        };
+        true
+    }
+
+    fn stop_single(&mut self) {
         if let Some(cancel) = self.active_request.take() {
             cancel.cancel();
         }
         self.run_id += 1;
+    }
+
+    fn cancel_transcription(&mut self, cx: &mut Context<Self>) {
+        if self.stage == Stage::Saving {
+            return;
+        }
+        self.stop_single();
         self.reset(cx);
     }
 
     // ---- Batch -----------------------------------------------------------------------------
 
     fn process_queue(&mut self, cx: &mut Context<Self>) {
-        if self.batch_processing || self.stage == Stage::Transcribing {
+        self.start_queue(None, cx);
+    }
+
+    fn next_queued(
+        &mut self,
+        only: Option<&HashSet<String>>,
+        processed: &HashSet<String>,
+    ) -> Option<&mut QueueItem> {
+        self.queue.iter_mut().find(|item| {
+            item.status == ItemStatus::Queued
+                && !processed.contains(&item.id)
+                && only.is_none_or(|ids| ids.contains(&item.id))
+        })
+    }
+
+    fn start_queue(&mut self, only: Option<HashSet<String>>, cx: &mut Context<Self>) {
+        if self.batch_processing || self.single_running() {
             return;
         }
         self.skipped_notice = None;
-        // Files a cancel stopped go back in line with the rest.
-        for item in &mut self.queue {
-            if item.status == ItemStatus::Cancelled {
-                item.status = ItemStatus::Queued;
+        // Explicitly starting the queue resumes cancelled files. Retry actions
+        // select only their failed jobs and leave the user's other files alone.
+        if only.is_none() {
+            for item in &mut self.queue {
+                if item.status == ItemStatus::Cancelled {
+                    item.status = ItemStatus::Queued;
+                }
             }
         }
         self.batch_processing = true;
@@ -384,33 +474,35 @@ impl UploadView {
         let run = self.batch_run;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let mut processed = std::collections::HashSet::new();
+            let mut processed = HashSet::new();
             loop {
                 let next = this
                     .update(cx, |this, cx| {
                         if run != this.batch_run {
                             return None;
                         }
-                        let item = this.queue.iter_mut().find(|i| {
-                            i.status == ItemStatus::Queued && !processed.contains(&i.id)
-                        })?;
+                        let item = this.next_queued(only.as_ref(), &processed)?;
                         item.status = ItemStatus::Transcribing;
                         item.started = Some(Instant::now());
                         let request = build_request(item.path.clone(), cx);
                         let id = item.id.clone();
+                        let text = item.text.clone();
                         let cancel = CancellationToken::new();
                         this.batch_request = Some(cancel.clone());
                         this.start_ticker(cx);
                         cx.notify();
-                        Some((id, request, cancel))
+                        Some((id, text, request, cancel))
                     })
                     .ok()
                     .flatten();
-                let Some((id, request, cancel)) = next else {
+                let Some((id, text, request, cancel)) = next else {
                     break;
                 };
                 processed.insert(id.clone());
-                let result = run_transcription(request, cancel).await;
+                let result = match text {
+                    Some(text) => Ok(text),
+                    None => run_transcription(request, cancel).await,
+                };
                 let save = this
                     .update(cx, |this, cx| {
                         if run != this.batch_run {
@@ -418,6 +510,12 @@ impl UploadView {
                         }
                         match &result {
                             Ok(text) if !text.trim().is_empty() => {
+                                if let Some(item) = this.queue.iter_mut().find(|item| item.id == id)
+                                {
+                                    item.text = Some(text.clone());
+                                    item.status = ItemStatus::Saving;
+                                }
+                                cx.notify();
                                 Some(save_upload(text.clone(), cx))
                             }
                             _ => None,
@@ -431,34 +529,9 @@ impl UploadView {
                 };
                 let still_current = this
                     .update(cx, |this, cx| {
-                        if run != this.batch_run {
-                            return false;
-                        }
-                        this.batch_request = None;
-                        if let Some(item) = this.queue.iter_mut().find(|i| i.id == id) {
-                            match (&result, outcome) {
-                                (Ok(text), Some(Ok(saved))) => {
-                                    item.text = Some(text.clone());
-                                    item.status = ItemStatus::Done;
-                                    item.transcription_id = saved;
-                                }
-                                (Ok(text), Some(Err(_))) => {
-                                    item.text = Some(text.clone());
-                                    item.status = ItemStatus::Error;
-                                    item.error = Some(t("upload.saveFailed"));
-                                }
-                                (Ok(_), None) => {
-                                    item.status = ItemStatus::Error;
-                                    item.error = Some(t("upload.batchTranscriptionFailed"));
-                                }
-                                (Err(err), _) => {
-                                    item.status = ItemStatus::Error;
-                                    item.error = Some(error_text(err));
-                                }
-                            }
-                        }
+                        let current = this.finish_batch_item(run, &id, result, outcome);
                         cx.notify();
-                        true
+                        current
                     })
                     .unwrap_or(false);
                 if !still_current {
@@ -475,7 +548,68 @@ impl UploadView {
         .detach();
     }
 
-    fn cancel_batch(&mut self, cx: &mut Context<Self>) {
+    /// Accepted storage writes finish even when Cancel stops the batch queue.
+    /// A cancelled ASR request can never overwrite a newer attempt.
+    fn finish_batch_item(
+        &mut self,
+        run: u64,
+        id: &str,
+        result: Result<String, UploadError>,
+        saved: Option<anyhow::Result<Option<i64>>>,
+    ) -> bool {
+        let current = run == self.batch_run;
+        if current {
+            self.batch_request = None;
+        }
+        if let Some(item) = self.queue.iter_mut().find(|item| item.id == id)
+            && (current || (saved.is_some() && item.status == ItemStatus::Saving))
+        {
+            item.finish(result, saved);
+        }
+        current
+    }
+
+    fn retry_failed(&mut self, id: Option<&str>, cx: &mut Context<Self>) {
+        if self.batch_processing || self.single_running() {
+            return;
+        }
+        let mut retried = HashSet::new();
+        for item in &mut self.queue {
+            if id.is_none_or(|id| item.id == id) && item.retry() {
+                retried.insert(item.id.clone());
+            }
+        }
+        if !retried.is_empty() {
+            self.start_queue(Some(retried), cx);
+        }
+    }
+
+    fn retry_save(&mut self, cx: &mut Context<Self>) {
+        let Stage::Complete {
+            text,
+            save_error: Some(_),
+            ..
+        } = &self.stage
+        else {
+            return;
+        };
+        let text = text.clone();
+        self.run_id += 1;
+        let run = self.run_id;
+        self.stage = Stage::Saving;
+        let save = save_upload(text.clone(), cx);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let saved = save.await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_single(run, Ok(text), Some(saved));
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn stop_batch(&mut self) {
         self.batch_run += 1;
         if let Some(cancel) = self.batch_request.take() {
             cancel.cancel();
@@ -488,6 +622,10 @@ impl UploadView {
                 item.status = ItemStatus::Cancelled;
             }
         }
+    }
+
+    fn cancel_batch(&mut self, cx: &mut Context<Self>) {
+        self.stop_batch();
         cx.notify();
     }
 
@@ -504,14 +642,14 @@ impl UploadView {
         let p = cx.palette();
         let ready = Self::provider_ready(cx);
         let stage = self.stage.clone();
-        let accepts_drop = ready && stage != Stage::Transcribing;
+        let accepts_drop = ready && !self.single_running();
         let browsable = ready && stage == Stage::Idle;
         let complete = matches!(stage, Stage::Complete { .. });
         let content = match stage.clone() {
             Stage::Idle if !ready => self.render_no_provider(window, cx),
             Stage::Idle => self.render_idle(cx),
             Stage::Selected => self.render_selected(cx),
-            Stage::Transcribing => self.render_transcribing(cx),
+            Stage::Transcribing | Stage::Saving => self.render_transcribing(cx),
             Stage::Complete {
                 text,
                 transcription_id,
@@ -700,7 +838,11 @@ impl UploadView {
             .child(live_waveform(&p, cx))
             .child(
                 stage_title(
-                    t_with("upload.transcribingElapsed", &[("time", &elapsed)]),
+                    if self.stage == Stage::Saving {
+                        t("upload.savingToHistory")
+                    } else {
+                        t_with("upload.transcribingElapsed", &[("time", &elapsed)])
+                    },
                     &p,
                 )
                 .mt(px(16.))
@@ -710,14 +852,16 @@ impl UploadView {
                 d.child(stage_text(name, &p).mt(px(2.)).truncate())
             })
             .child(stage_hint(t("upload.completionHint"), &p).mt(px(6.)))
-            .child(
-                div().mt(px(20.)).flex().child(
-                    Button::new("upload-cancel-transcription")
-                        .label(t("upload.cancelTranscription"))
-                        .variant(ButtonVariant::Outline)
-                        .on_click(cx.listener(|this, _, _, cx| this.cancel_transcription(cx))),
-                ),
-            )
+            .when(self.stage != Stage::Saving, |d| {
+                d.child(
+                    div().mt(px(20.)).flex().child(
+                        Button::new("upload-cancel-transcription")
+                            .label(t("upload.cancelTranscription"))
+                            .variant(ButtonVariant::Outline)
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_transcription(cx))),
+                    ),
+                )
+            })
             .into_any_element()
     }
 
@@ -823,6 +967,15 @@ impl UploadView {
                             })
                             .child(status),
                     )
+                    .when(save_error.is_some(), |d| {
+                        d.child(
+                            Button::new("upload-retry-save")
+                                .label(t("upload.retry"))
+                                .variant(ButtonVariant::Ghost)
+                                .size(ButtonSize::Sm)
+                                .on_click(cx.listener(|this, _, _, cx| this.retry_save(cx))),
+                        )
+                    })
                     .when_some(saved, |d, id| {
                         d.child(
                             Button::new("upload-view-history")
@@ -1018,7 +1171,7 @@ impl UploadView {
         // Cancelled files can be started again with the ones still queued.
         let startable = queued + cancelled;
         let can_start = !self.batch_processing && startable > 0;
-        let start_disabled = !Self::provider_ready(cx) || self.stage == Stage::Transcribing;
+        let start_disabled = !Self::provider_ready(cx) || self.single_running();
 
         let header = div()
             .flex()
@@ -1080,6 +1233,16 @@ impl UploadView {
                         }
                     })),
             )
+            .when(failed > 0, |d| {
+                d.child(
+                    Button::new("upload-retry-failed")
+                        .label(t("upload.retryFailed"))
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .disabled(self.batch_processing || self.single_running())
+                        .on_click(cx.listener(|this, _, _, cx| this.retry_failed(None, cx))),
+                )
+            })
             .when(can_start, |d| {
                 d.child(
                     Button::new("upload-batch-transcribe")
@@ -1149,7 +1312,7 @@ impl UploadView {
             ItemStatus::Cancelled => {
                 icon("circle-slash", 13., p.subtle_foreground).into_any_element()
             }
-            ItemStatus::Transcribing => {
+            ItemStatus::Transcribing | ItemStatus::Saving => {
                 spinner(("upload-batch-spin", index), 13., p.muted_foreground).into_any_element()
             }
         };
@@ -1167,6 +1330,7 @@ impl UploadView {
         let note = match item.status {
             ItemStatus::Error => item.error.clone().map(|e| (e, p.muted_foreground)),
             ItemStatus::Cancelled => Some((t("upload.batchCancelled"), p.subtle_foreground)),
+            ItemStatus::Saving => Some((t("upload.savingToHistory"), p.subtle_foreground)),
             ItemStatus::Transcribing => item.started.map(|started| {
                 (
                     t_with(
@@ -1241,6 +1405,19 @@ impl UploadView {
                         .on_click(move |_, _, cx| copy_with_toast(text.clone(), cx)),
                 )
             })
+            .when(item.status == ItemStatus::Error, |d| {
+                let id = id.clone();
+                d.child(
+                    Button::new(("upload-batch-retry", index))
+                        .label(t("upload.retry"))
+                        .variant(ButtonVariant::Ghost)
+                        .size(ButtonSize::Sm)
+                        .disabled(self.batch_processing || self.single_running())
+                        .on_click(
+                            cx.listener(move |this, _, _, cx| this.retry_failed(Some(&id), cx)),
+                        ),
+                )
+            })
             .when(item.status == ItemStatus::Queued, |d| {
                 d.child(
                     Button::new(("upload-batch-remove", index))
@@ -1257,7 +1434,7 @@ impl UploadView {
     }
 }
 
-impl UploadView {
+impl UploadStore {
     /// Where finished transcripts go, under the idle drop target, so the
     /// page answers "what happens next" before a file is chosen. It lines up
     /// with the settings strip's text, and its link is plain text so the line
@@ -1299,7 +1476,7 @@ impl UploadView {
     }
 }
 
-impl Render for UploadView {
+impl Render for UploadStore {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stage = self.render_stage_panel(window, cx);
         // The destination line only answers "where does this go" before a
@@ -1490,7 +1667,160 @@ fn stage_key(stage: &Stage) -> &'static str {
         Stage::Idle => "idle",
         Stage::Selected => "selected",
         Stage::Transcribing => "transcribing",
+        Stage::Saving => "saving",
         Stage::Complete { .. } => "complete",
         Stage::Error(_) => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CancellationToken, HashSet, ItemStatus, QueueItem, Stage, UploadStore};
+
+    fn queue_item() -> QueueItem {
+        QueueItem {
+            id: "job".into(),
+            name: "audio.wav".into(),
+            path: "audio.wav".into(),
+            status: ItemStatus::Transcribing,
+            error: None,
+            text: None,
+            transcription_id: None,
+            started: None,
+        }
+    }
+
+    #[test]
+    fn failed_save_retries_with_the_original_transcript() {
+        let mut item = queue_item();
+        item.finish(
+            Ok("keep me".into()),
+            Some(Err(anyhow::anyhow!("storage failed"))),
+        );
+        assert_eq!(item.status, ItemStatus::Error);
+        assert!(item.retry());
+        assert_eq!(item.status, ItemStatus::Queued);
+        assert_eq!(item.text.as_deref(), Some("keep me"));
+        assert!(item.error.is_none());
+        item.finish(Ok(item.text.clone().unwrap()), Some(Ok(Some(7))));
+        assert_eq!(item.status, ItemStatus::Done);
+        assert_eq!(item.transcription_id, Some(7));
+        assert!(!item.retry());
+    }
+
+    #[test]
+    fn failed_transcription_retries_without_a_cached_transcript() {
+        let mut item = queue_item();
+        item.finish(Ok(String::new()), None);
+        assert!(item.retry());
+        assert!(item.text.is_none());
+    }
+
+    #[test]
+    fn retry_selection_leaves_other_queued_files_untouched() {
+        let mut waiting = queue_item();
+        waiting.status = ItemStatus::Queued;
+        waiting.id = "waiting".into();
+        let mut failed = queue_item();
+        failed.status = ItemStatus::Error;
+        failed.retry();
+        let mut store = UploadStore {
+            queue: vec![waiting, failed],
+            ..Default::default()
+        };
+        let selected = HashSet::from(["job".to_string()]);
+        assert_eq!(
+            store
+                .next_queued(Some(&selected), &HashSet::new())
+                .unwrap()
+                .id,
+            "job"
+        );
+        assert!(store.next_queued(Some(&selected), &selected).is_none());
+        assert_eq!(store.queue[0].status, ItemStatus::Queued);
+    }
+
+    #[test]
+    fn single_completion_retains_text_and_history_id() {
+        let mut store = UploadStore {
+            stage: Stage::Transcribing,
+            ..Default::default()
+        };
+        assert!(store.finish_single(0, Ok("finished".into()), Some(Ok(Some(42)))));
+        assert_eq!(
+            store.stage,
+            Stage::Complete {
+                text: "finished".into(),
+                transcription_id: Some(42),
+                save_error: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cancellation_rejects_a_late_completion() {
+        let cancel = CancellationToken::new();
+        let mut store = UploadStore {
+            stage: Stage::Transcribing,
+            active_request: Some(cancel.clone()),
+            ..Default::default()
+        };
+        store.stop_single();
+        store.stage = Stage::Selected;
+        assert!(cancel.is_cancelled());
+        assert!(!store.finish_single(0, Ok("stale".into()), Some(Ok(Some(42)))));
+        assert_eq!(store.stage, Stage::Selected);
+    }
+
+    #[test]
+    fn stopping_a_batch_retains_accepted_save_results() {
+        let mut item = queue_item();
+        item.status = ItemStatus::Saving;
+        item.text = Some("finished".into());
+        let mut queued = queue_item();
+        queued.id = "next".into();
+        queued.status = ItemStatus::Queued;
+        let mut store = UploadStore {
+            batch_processing: true,
+            queue: vec![item, queued],
+            ..Default::default()
+        };
+        store.stop_batch();
+        assert_eq!(store.queue[0].status, ItemStatus::Saving);
+        assert_eq!(store.queue[1].status, ItemStatus::Cancelled);
+        assert!(!store.finish_batch_item(
+            0,
+            "job",
+            Ok("finished".into()),
+            Some(Err(anyhow::anyhow!("save failed")))
+        ));
+        assert!(store.queue[0].retry());
+        assert_eq!(store.queue[0].text.as_deref(), Some("finished"));
+    }
+
+    #[test]
+    fn cancelled_request_cannot_replace_a_new_batch_attempt() {
+        let mut store = UploadStore {
+            queue: vec![queue_item()],
+            batch_run: 2,
+            ..Default::default()
+        };
+        assert!(!store.finish_batch_item(1, "job", Ok("stale".into()), None));
+        assert_eq!(store.queue[0].status, ItemStatus::Transcribing);
+        assert!(store.queue[0].text.is_none());
+    }
+
+    #[test]
+    fn batch_cancellation_stops_request_and_invalidates_run() {
+        let cancel = CancellationToken::new();
+        let mut store = UploadStore {
+            batch_processing: true,
+            batch_request: Some(cancel.clone()),
+            ..Default::default()
+        };
+        store.stop_batch();
+        assert!(cancel.is_cancelled());
+        assert!(!store.batch_processing);
+        assert_eq!(store.batch_run, 1);
     }
 }

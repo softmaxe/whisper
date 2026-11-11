@@ -9,6 +9,7 @@ pub mod format;
 pub mod history_view;
 pub mod hotkey_input;
 pub mod insights_view;
+mod menu;
 pub mod overlays;
 pub mod pill;
 mod scroll;

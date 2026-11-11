@@ -102,6 +102,7 @@ impl Select {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.open = false);
         let search = if options.len() > LIST_SEARCH_THRESHOLD {
             Some(Self::search_input(
                 "languageSelector.searchPlaceholder",

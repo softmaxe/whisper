@@ -439,31 +439,16 @@ async fn post_json(
     })
 }
 
-async fn read_cleanup_body(mut response: reqwest::Response) -> Result<String, CleanupError> {
-    let too_large = || {
-        CleanupError::new(
-            CleanupErrorKind::InvalidResponse,
-            format!("Cleanup response exceeds {MAX_CLEANUP_RESPONSE_BYTES} bytes"),
-        )
-    };
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_CLEANUP_RESPONSE_BYTES as u64)
-    {
-        return Err(too_large());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
+async fn read_cleanup_body(response: reqwest::Response) -> Result<String, CleanupError> {
+    super::http_body::read_body(response, MAX_CLEANUP_RESPONSE_BYTES)
         .await
-        .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))?
-    {
-        if chunk.len() > MAX_CLEANUP_RESPONSE_BYTES - body.len() {
-            return Err(too_large());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(String::from_utf8_lossy(&body).into_owned())
+        .map_err(|error| {
+            let kind = match error {
+                super::http_body::BodyError::Network(_) => CleanupErrorKind::Network,
+                super::http_body::BodyError::TooLarge(_) => CleanupErrorKind::InvalidResponse,
+            };
+            CleanupError::new(kind, error.to_string())
+        })
 }
 
 /// A model offered by `/models`.
@@ -580,9 +565,14 @@ async fn fetch_model_options(
         request = request.bearer_auth(key);
     }
     let fetch = async {
-        let response = request.send().await.map_err(|e| e.to_string())?;
+        let response = request
+            .send()
+            .await
+            .map_err(|e| e.without_url().to_string())?;
         let status = response.status();
-        let text = response.text().await.unwrap_or_default();
+        let text = read_cleanup_body(response)
+            .await
+            .map_err(|error| error.to_string())?;
         Ok::<_, String>((status, text))
     };
     let (status, text) = tokio::time::timeout(LIST_MODELS_TIMEOUT, fetch)
@@ -937,6 +927,30 @@ mod tests {
         };
         let out = run(process("raw", &config, &fast_tuning())).unwrap();
         assert_eq!(out, "<think>a</think>B");
+    }
+
+    #[test]
+    fn model_list_rejects_oversized_length_and_chunked_bodies() {
+        use std::io::Write;
+        let body = "x".repeat(MAX_CLEANUP_RESPONSE_BYTES + 1);
+        let server = MockServer::start(move |_| Reply::json(200, &body));
+        assert!(
+            run(fetch_model_options(&server.url("/v1"), None))
+                .unwrap_err()
+                .contains("exceeds")
+        );
+        let (base, server) = chunked_server(|stream| {
+            let chunk = vec![b'x'; MAX_CLEANUP_RESPONSE_BYTES + 1];
+            write!(stream, "{:x}\r\n", chunk.len()).unwrap();
+            let _ = stream.write_all(&chunk);
+            let _ = stream.write_all(b"\r\n");
+        });
+        assert!(
+            run(fetch_model_options(&base, None))
+                .unwrap_err()
+                .contains("exceeds")
+        );
+        server.join().unwrap();
     }
 
     #[test]

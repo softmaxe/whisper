@@ -10,13 +10,13 @@ use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
-    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
-    MenuTriggerBounds, NavSurface, drop, f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row,
-    scroll_thumb, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, NavSurface, drop,
+    f32_tx, icon, inset, kbd, nav_row, scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
 use super::insights_view::InsightsView;
+use super::menu::{MenuAppearance, MenuFocus, MenuPlacement, PopupMenu};
 use super::overlays::{Overlays, render_dialog, render_toasts};
 use super::settings_modal::{SettingsModal, SettingsModalEvent, SettingsSection};
 use super::sidebar_icon::SidebarIcon;
@@ -24,7 +24,7 @@ use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG, RADIUS_MD,
     TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_css, ease_out, ease_snap, motion,
 };
-use super::upload_view::{UploadEvent, UploadView};
+use super::upload_view::{UploadEvent, UploadStore};
 
 actions!(control_panel, [OpenSearch, OpenSettings, CloseOverlay]);
 
@@ -76,7 +76,7 @@ pub struct ControlPanel {
     history: Entity<HistoryView>,
     insights: Option<Entity<InsightsView>>,
     dictionary: Option<Entity<DictionaryView>>,
-    upload: Entity<UploadView>,
+    upload: Entity<UploadStore>,
     settings: Option<Entity<SettingsModal>>,
     history_after_settings: Option<i64>,
     scroll: ScrollHandle,
@@ -89,6 +89,7 @@ pub struct ControlPanel {
 
 impl ControlPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.page_menu_open = false);
         let collapsed = AppState::settings(cx).sidebar_collapsed;
         let state = AppState::global(cx);
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
@@ -105,7 +106,7 @@ impl ControlPanel {
             let scroll = scroll.clone();
             cx.new(|cx| HistoryView::new(scroll, cx))
         };
-        let upload = cx.new(UploadView::new);
+        let upload = UploadStore::global(cx);
         cx.subscribe_in(
             &upload,
             window,
@@ -156,6 +157,14 @@ impl ControlPanel {
         self.settings.is_some()
     }
 
+    pub fn can_close(&mut self, cx: &mut Context<Self>) -> bool {
+        self.settings.as_ref().is_none_or(|modal| {
+            modal.update(cx, |m, cx| {
+                m.confirm_prompt_close(crate::app::close_control_panel, cx)
+            })
+        })
+    }
+
     pub fn prepare_close(&mut self, cx: &mut Context<Self>) {
         self.history.update(cx, |h, cx| h.commit_delete(cx));
     }
@@ -166,6 +175,7 @@ impl ControlPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        super::overlays::dismiss_menus(cx);
         if let Some(modal) = &self.settings {
             if let Some(section) = section {
                 modal.update(cx, |m, cx| m.set_section(section, cx));
@@ -509,40 +519,32 @@ impl ControlPanel {
                                             .variant(ButtonVariant::Ghost)
                                             .size(ButtonSize::Sm)
                                             .aria_label(t("controlPanel.history.pageActions"))
-                                            .on_click(cx.listener(
-                                                |this, event: &ClickEvent, window, cx| {
-                                                    this.toggle_page_menu(
-                                                        event.is_keyboard(),
-                                                        window,
-                                                        cx,
-                                                    )
-                                                },
-                                            )),
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.toggle_page_menu(cx)
+                                            })),
                                     ),
                                 )
                                 .when(self.page_menu_open, |d| {
-                                    d.child(self.render_page_menu(trigger, cx))
+                                    d.child(self.render_page_menu(trigger, window, cx))
                                 }),
                         )
                     }),
             )
     }
 
-    fn toggle_page_menu(&mut self, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn toggle_page_menu(&mut self, cx: &mut Context<Self>) {
         self.page_menu_open = !self.page_menu_open;
-        if keyboard && self.page_menu_open {
-            let item = keyed_focus_handle("history-page-clear".into(), cx);
-            window.on_next_frame(move |window, cx| window.focus(&item, cx));
-        }
         cx.notify();
     }
 
     fn close_page_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.page_menu_open = false;
-        if keyed_focus_handle("history-page-clear".into(), cx).is_focused(window) {
-            let trigger = keyed_focus_handle("history-page-menu".into(), cx);
-            window.focus(&trigger, cx);
-        }
+        MenuFocus::new(
+            ["history-page-clear".into()],
+            "history-page-menu".into(),
+            cx,
+        )
+        .restore(false, window, cx);
         cx.notify();
     }
 
@@ -551,6 +553,7 @@ impl ControlPanel {
     fn render_page_menu(
         &mut self,
         trigger: MenuTriggerBounds,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
@@ -574,47 +577,27 @@ impl ControlPanel {
                 this.close_page_menu(window, cx);
                 HistoryView::clear_all(cx);
             }));
-        let menu = div()
-            .id("history-page-menu-list")
-            .role(Role::Menu)
-            .occlude()
-            .mt(px(4.))
-            .min_w(px(200.))
-            .p(px(4.))
-            .rounded(px(RADIUS_LG))
-            .border_1()
-            .border_color(if p.dark {
-                p.border_hover
-            } else {
-                p.border.opacity(0.7)
-            })
-            .bg(if p.dark { p.surface_3 } else { p.popover })
-            .shadow_lg()
-            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                if !trigger.contains(event.position) {
-                    this.page_menu_open = false;
-                    cx.notify();
-                }
-            }))
-            .key_context(MENU_CONTEXT)
-            .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
-                this.close_page_menu(window, cx);
-            }))
-            .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                if e.keystroke.key == "escape" {
-                    this.close_page_menu(window, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(item);
-        deferred(
-            anchored()
-                .anchor(Anchor::TopRight)
-                .snap_to_window_with_margin(px(8.))
-                .child(menu),
+        PopupMenu {
+            id: "history-page-menu-list".into(),
+            min_width: 200.,
+            appearance: MenuAppearance::History,
+            placement: MenuPlacement::TriggerRight,
+            trigger: Some(trigger),
+            focus: MenuFocus::new(
+                ["history-page-clear".into()],
+                "history-page-menu".into(),
+                cx,
+            ),
+        }
+        .render(
+            [item.into_any_element()],
+            |this, _, cx| {
+                this.page_menu_open = false;
+                cx.notify();
+            },
+            window,
+            cx,
         )
-        .with_priority(1)
-        .into_any_element()
     }
 
     fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -652,6 +635,7 @@ impl Focusable for ControlPanel {
 
 impl Render for ControlPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let p = cx.palette();
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();

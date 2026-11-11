@@ -14,11 +14,11 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use objc2::rc::Retained;
-use objc2_app_kit::{
-    NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypePNG, NSPasteboardTypeRTF,
-    NSPasteboardTypeString, NSPasteboardTypeTIFF,
-};
+use objc2::runtime::ProtocolObject;
+use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSData, NSString};
+
+use crate::settings::OutputMode;
 
 use super::helper::{RunOutput, resolve_helper, run_with_timeout};
 use super::permissions::{SettingsPane, is_accessibility_trusted, open_settings};
@@ -70,11 +70,14 @@ fn ends_with_cjk(c: char) -> bool {
 // ---------------------------------------------------------------------------
 // Clipboard
 
-/// The clipboard formats preserved across a paste: text, HTML, RTF and image.
+// Bound both payload and metadata copied into Rust on each dictation.
+const MAX_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
+
+/// All pasteboard items, with each item's original types and data.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ClipboardSnapshot {
     /// (pasteboard type, data) pairs in their original order.
-    pub items: Vec<(String, Vec<u8>)>,
+    pub items: Vec<Vec<(String, Vec<u8>)>>,
 }
 
 impl ClipboardSnapshot {
@@ -82,15 +85,18 @@ impl ClipboardSnapshot {
     pub fn text(&self) -> Option<String> {
         self.items
             .iter()
+            .flatten()
             .find(|(kind, _)| kind == "public.utf8-plain-text")
             .map(|(_, data)| String::from_utf8_lossy(data).into_owned())
     }
 }
 
 pub trait Pasteboard: Send + Sync {
+    #[cfg(test)]
     fn read_text(&self) -> Option<String>;
+    fn change_count(&self) -> isize;
     fn write_text(&self, text: &str) -> bool;
-    fn snapshot(&self) -> ClipboardSnapshot;
+    fn snapshot(&self) -> Option<ClipboardSnapshot>;
     fn restore(&self, snapshot: &ClipboardSnapshot);
 }
 
@@ -101,22 +107,19 @@ fn general() -> Retained<NSPasteboard> {
     NSPasteboard::generalPasteboard()
 }
 
-fn preserved_types() -> [&'static NSString; 5] {
-    // SAFETY: AppKit's pasteboard type constants are immutable NSStrings.
-    unsafe {
-        [
-            NSPasteboardTypeString,
-            NSPasteboardTypeHTML,
-            NSPasteboardTypeRTF,
-            NSPasteboardTypePNG,
-            NSPasteboardTypeTIFF,
-        ]
-    }
+fn reserve_snapshot_bytes(remaining: &mut usize, size: usize) -> Option<()> {
+    let Some(left) = remaining.checked_sub(size) else {
+        log::warn!("[paste] clipboard snapshot exceeds 16 MiB; skipping restore");
+        return None;
+    };
+    *remaining = left;
+    Some(())
 }
 
 impl Pasteboard for SystemPasteboard {
+    #[cfg(test)]
     fn read_text(&self) -> Option<String> {
-        // SAFETY: see `preserved_types`.
+        // SAFETY: AppKit pasteboard type constants are immutable NSStrings.
         let kind = unsafe { NSPasteboardTypeString };
         general().stringForType(kind).map(|s| s.to_string())
     }
@@ -124,45 +127,68 @@ impl Pasteboard for SystemPasteboard {
     fn write_text(&self, text: &str) -> bool {
         let pasteboard = general();
         pasteboard.clearContents();
-        // SAFETY: see `preserved_types`.
+        // SAFETY: AppKit pasteboard type constants are immutable NSStrings.
         let kind = unsafe { NSPasteboardTypeString };
         pasteboard.setString_forType(&NSString::from_str(text), kind)
     }
 
-    fn snapshot(&self) -> ClipboardSnapshot {
+    fn change_count(&self) -> isize {
+        general().changeCount()
+    }
+
+    fn snapshot(&self) -> Option<ClipboardSnapshot> {
         let pasteboard = general();
+        let count = pasteboard.changeCount();
+        let mut remaining = MAX_SNAPSHOT_BYTES;
         let mut items = Vec::new();
-        for kind in preserved_types() {
-            if let Some(data) = pasteboard.dataForType(kind)
-                && data.length() > 0
-            {
-                items.push((kind.to_string(), data.to_vec()));
+        if let Some(originals) = pasteboard.pasteboardItems() {
+            for original in originals.iter() {
+                reserve_snapshot_bytes(&mut remaining, size_of::<Vec<(String, Vec<u8>)>>())?;
+                let mut types = Vec::new();
+                for kind in original.types().iter() {
+                    reserve_snapshot_bytes(
+                        &mut remaining,
+                        kind.len() + size_of::<(String, Vec<u8>)>(),
+                    )?;
+                    let Some(data) = original.dataForType(&kind) else {
+                        log::warn!("[paste] incomplete clipboard snapshot; skipping restore");
+                        return None;
+                    };
+                    reserve_snapshot_bytes(&mut remaining, data.length())?;
+                    types.push((kind.to_string(), data.to_vec()));
+                }
+                items.push(types);
             }
         }
-        ClipboardSnapshot { items }
+        if pasteboard.changeCount() != count {
+            log::warn!("[paste] clipboard changed during snapshot; skipping restore");
+            return None;
+        }
+        Some(ClipboardSnapshot { items })
     }
 
     fn restore(&self, snapshot: &ClipboardSnapshot) {
+        // Build every item before clearing the current clipboard.
+        let mut items = Vec::new();
+        for types in &snapshot.items {
+            let item = NSPasteboardItem::new();
+            for (kind, data) in types {
+                if !item.setData_forType(&NSData::with_bytes(data), &NSString::from_str(kind)) {
+                    log::warn!("[paste] could not rebuild clipboard item; skipping restore");
+                    return;
+                }
+            }
+            items.push(item);
+        }
+        let refs: Vec<&ProtocolObject<dyn NSPasteboardWriting>> = items
+            .iter()
+            .map(|item| ProtocolObject::from_ref(&**item))
+            .collect();
         let pasteboard = general();
         pasteboard.clearContents();
-        if snapshot.items.is_empty() {
-            return;
+        if !refs.is_empty() && !pasteboard.writeObjects(&NSArray::from_slice(&refs)) {
+            log::warn!("[paste] clipboard restore failed");
         }
-        let kinds: Vec<Retained<NSString>> = snapshot
-            .items
-            .iter()
-            .map(|(kind, _)| NSString::from_str(kind))
-            .collect();
-        let refs: Vec<&NSString> = kinds.iter().map(|k| &**k).collect();
-        let array = NSArray::from_slice(&refs);
-        // SAFETY: declareTypes:owner: accepts a nil owner.
-        unsafe {
-            pasteboard.declareTypes_owner(&array, None);
-        }
-        for ((_, data), kind) in snapshot.items.iter().zip(&kinds) {
-            pasteboard.setData_forType(Some(&NSData::with_bytes(data)), kind);
-        }
-        log::debug!("[paste] clipboard restored");
     }
 }
 
@@ -180,6 +206,15 @@ pub struct PasteOptions {
     pub target_pid: Option<i32>,
     /// Put the previous clipboard back after pasting.
     pub restore_clipboard: bool,
+}
+
+impl PasteOptions {
+    pub fn new(target_pid: Option<i32>, mode: OutputMode) -> Self {
+        Self {
+            target_pid,
+            restore_clipboard: mode.restores_clipboard(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -289,7 +324,7 @@ pub struct Paster {
 
 struct PastedRestore {
     original: ClipboardSnapshot,
-    expected: String,
+    expected: isize,
 }
 
 impl Paster {
@@ -325,7 +360,7 @@ impl Paster {
                         pasteboard.as_ref(),
                         &restore.original,
                         delay,
-                        &restore.expected,
+                        restore.expected,
                     );
                     drop(ticket);
                 });
@@ -348,8 +383,12 @@ impl Paster {
         options: PasteOptions,
     ) -> (PasteOutcome, Option<PastedRestore>) {
         let pasteboard = &self.hooks.pasteboard;
-        let original = options.restore_clipboard.then(|| pasteboard.snapshot());
+        let original = options
+            .restore_clipboard
+            .then(|| pasteboard.snapshot())
+            .flatten();
         pasteboard.write_text(text);
+        let mut expected = pasteboard.change_count();
 
         if !self.check_accessibility() {
             log::info!("[paste] no Accessibility permission, text left on the clipboard");
@@ -377,6 +416,7 @@ impl Paster {
             Err(first) => {
                 log::warn!("[paste] first attempt failed ({first:?}), retrying");
                 pasteboard.write_text(text);
+                expected = pasteboard.change_count();
                 std::thread::sleep(self.hooks.retry_delay);
                 self.paste_command()
             }
@@ -387,10 +427,7 @@ impl Paster {
                     pasted: true,
                     failure: None,
                 },
-                original.map(|original| PastedRestore {
-                    original,
-                    expected: text.to_string(),
-                }),
+                original.map(|original| PastedRestore { original, expected }),
             ),
             Err(failure) => (
                 PasteOutcome {
@@ -462,15 +499,15 @@ impl Paster {
 }
 
 /// Puts `original` back after `delay`, unless the clipboard no longer holds
-/// the pasted text (another copy won the race).
+/// the same change count (another copy won the race).
 fn restore_after_delay(
     pasteboard: &dyn Pasteboard,
     original: &ClipboardSnapshot,
     delay: Duration,
-    expected: &str,
+    expected: isize,
 ) {
     std::thread::sleep(delay);
-    if pasteboard.read_text().as_deref() != Some(expected) {
+    if pasteboard.change_count() != expected {
         log::debug!("[paste] skipping clipboard restore because the clipboard changed");
         return;
     }
@@ -547,11 +584,15 @@ mod tests {
     struct FakePasteboard {
         current: Mutex<ClipboardSnapshot>,
         writes: Mutex<Vec<String>>,
+        count: AtomicUsize,
     }
 
     fn text_snapshot(text: &str) -> ClipboardSnapshot {
         ClipboardSnapshot {
-            items: vec![("public.utf8-plain-text".into(), text.as_bytes().to_vec())],
+            items: vec![vec![(
+                "public.utf8-plain-text".into(),
+                text.as_bytes().to_vec(),
+            )]],
         }
     }
 
@@ -560,14 +601,30 @@ mod tests {
             lock(&self.current).text()
         }
         fn write_text(&self, text: &str) -> bool {
+            self.count.fetch_add(1, Ordering::SeqCst);
             *lock(&self.current) = text_snapshot(text);
             lock(&self.writes).push(format!("writeText:{text}"));
             true
         }
-        fn snapshot(&self) -> ClipboardSnapshot {
-            lock(&self.current).clone()
+        fn change_count(&self) -> isize {
+            self.count.load(Ordering::SeqCst) as isize
+        }
+        fn snapshot(&self) -> Option<ClipboardSnapshot> {
+            let current = lock(&self.current);
+            let mut remaining = MAX_SNAPSHOT_BYTES;
+            for item in &current.items {
+                reserve_snapshot_bytes(&mut remaining, size_of::<Vec<(String, Vec<u8>)>>())?;
+                for (kind, data) in item {
+                    reserve_snapshot_bytes(
+                        &mut remaining,
+                        kind.len() + size_of::<(String, Vec<u8>)>() + data.len(),
+                    )?;
+                }
+            }
+            Some(current.clone())
         }
         fn restore(&self, snapshot: &ClipboardSnapshot) {
+            self.count.fetch_add(1, Ordering::SeqCst);
             *lock(&self.current) = snapshot.clone();
             lock(&self.writes).push("restore".into());
         }
@@ -637,10 +694,7 @@ mod tests {
     }
 
     fn opts(pid: Option<i32>) -> PasteOptions {
-        PasteOptions {
-            target_pid: pid,
-            restore_clipboard: true,
-        }
+        PasteOptions::new(pid, OutputMode::PasteAndRestore)
     }
 
     fn settle(f: &Fixture) {
@@ -651,16 +705,52 @@ mod tests {
     #[test]
     fn restore_skipped_when_another_write_wins() {
         let pasteboard = FakePasteboard::default();
-        pasteboard.write_text("user copied something else");
+        pasteboard.write_text("dictated text");
+        let expected = pasteboard.change_count();
+        pasteboard.write_text("dictated text");
         restore_after_delay(
             &pasteboard,
             &text_snapshot("previous clipboard"),
             Duration::ZERO,
-            "dictated text",
+            expected,
         );
-        assert_eq!(
-            pasteboard.read_text().as_deref(),
-            Some("user copied something else")
+        assert_eq!(pasteboard.read_text().as_deref(), Some("dictated text"));
+    }
+
+    #[test]
+    fn restores_custom_formats_files_and_multiple_items() {
+        let f = fixture(true, true);
+        let original = ClipboardSnapshot {
+            items: vec![
+                vec![
+                    ("public.file-url".into(), b"file:///tmp/a".to_vec()),
+                    ("app.custom".into(), vec![0, 255]),
+                    ("empty.format".into(), vec![]),
+                ],
+                vec![("public.file-url".into(), b"file:///tmp/b".to_vec())],
+            ],
+        };
+        *lock(&f.pasteboard.current) = original.clone();
+        assert!(f.paster.paste_text("dictated", opts(Some(42))).pasted);
+        settle(&f);
+        assert_eq!(*lock(&f.pasteboard.current), original);
+    }
+
+    #[test]
+    fn oversized_snapshot_is_skipped_entirely() {
+        let f = fixture(true, true);
+        lock(&f.pasteboard.current).items = vec![
+            text_snapshot("previous").items.remove(0),
+            vec![("large.custom".into(), vec![0; MAX_SNAPSHOT_BYTES])],
+        ];
+        assert!(f.pasteboard.snapshot().is_none());
+        assert!(f.paster.paste_text("dictated", opts(Some(42))).pasted);
+        settle(&f);
+        assert_eq!(f.pasteboard.read_text().as_deref(), Some("dictated "));
+        assert!(
+            !lock(&f.pasteboard.writes)
+                .iter()
+                .any(|write| write == "restore")
         );
     }
 
@@ -798,15 +888,12 @@ mod tests {
     }
 
     #[test]
-    fn no_restore_when_not_requested() {
+    fn paste_and_keep_mode_leaves_the_transcript_on_the_clipboard() {
         let f = fixture(true, true);
         f.pasteboard.write_text("previous clipboard");
         f.paster.paste_text(
             "keep me",
-            PasteOptions {
-                restore_clipboard: false,
-                ..opts(Some(42))
-            },
+            PasteOptions::new(Some(42), OutputMode::PasteAndKeep),
         );
         settle(&f);
         assert_eq!(f.pasteboard.read_text().as_deref(), Some("keep me "));

@@ -11,8 +11,8 @@ use gpui_kit::*;
 use gpui_kit::base::FocusTrapElement;
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, focus_ring,
-    icon, keyed_focus_handle, text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, backdrop, dialog_shadow,
+    focus_ring, icon, keyed_focus_handle, text_tooltip,
 };
 use super::theme::{
     DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
@@ -30,6 +30,8 @@ pub struct DialogRequest {
     /// `None` makes an alert with a single OK button.
     pub cancel_label: Option<SharedString>,
     pub destructive: bool,
+    /// An optional third choice, beside Cancel and Confirm.
+    pub alternative: Option<(SharedString, Callback)>,
     pub on_confirm: Option<Callback>,
 }
 
@@ -41,6 +43,7 @@ impl DialogRequest {
             confirm_label: "OK".into(),
             cancel_label: None,
             destructive: false,
+            alternative: None,
             on_confirm: None,
         }
     }
@@ -57,6 +60,7 @@ impl DialogRequest {
             confirm_label: "Confirm".into(),
             cancel_label: Some(crate::i18n::t("common.cancel").into()),
             destructive,
+            alternative: None,
             on_confirm: Some(Rc::new(on_confirm)),
         }
     }
@@ -174,6 +178,8 @@ pub struct Overlays {
     next_id: u64,
 }
 
+impl EventEmitter<DismissMenu> for Overlays {}
+
 struct OverlaysGlobal(Entity<Overlays>);
 impl Global for OverlaysGlobal {}
 
@@ -257,6 +263,7 @@ impl Overlays {
 
 pub fn show_dialog(request: DialogRequest, cx: &mut App) {
     Overlays::global(cx).update(cx, |o, cx| {
+        cx.emit(DismissMenu);
         o.dialog = Some(request);
         o.dialog_needs_focus = true;
         cx.notify();
@@ -265,9 +272,14 @@ pub fn show_dialog(request: DialogRequest, cx: &mut App) {
 
 pub fn show_custom(view: AnyView, cx: &mut App) {
     Overlays::global(cx).update(cx, |o, cx| {
+        cx.emit(DismissMenu);
         o.custom = Some(view);
         cx.notify();
     });
+}
+
+pub fn dismiss_menus(cx: &mut App) {
+    Overlays::global(cx).update(cx, |_, cx| cx.emit(DismissMenu));
 }
 
 pub fn close_custom(cx: &mut App) {
@@ -370,7 +382,9 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         overlays.update(cx, |o, _| o.dialog_needs_focus = false);
         // Destructive dialogs start on Cancel, as macOS alerts do, so a stray
         // Return never deletes anything.
-        let key = if request.destructive && request.cancel_label.is_some() {
+        let key = if (request.destructive || request.alternative.is_some())
+            && request.cancel_label.is_some()
+        {
             "dialog-cancel"
         } else {
             "dialog-confirm"
@@ -447,6 +461,18 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                     p.white.opacity(0.02)
                 } else {
                     p.muted.opacity(0.72)
+                })
+                .when_some(request.alternative.clone(), |d, (label, action)| {
+                    let overlays = overlays.clone();
+                    d.child(
+                        Button::new("dialog-alternative")
+                            .label(label)
+                            .variant(ButtonVariant::Ghost)
+                            .on_click(move |_, window, cx| {
+                                overlays.update(cx, |o, cx| o.close_dialog(cx));
+                                action(window, cx);
+                            }),
+                    )
                 })
                 .when_some(request.cancel_label.clone(), |d, label| {
                     d.child(

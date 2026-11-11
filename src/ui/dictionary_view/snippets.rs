@@ -2,6 +2,36 @@
 
 use super::*;
 
+#[derive(PartialEq, Eq)]
+pub(super) struct SnippetRowsKey {
+    query: String,
+    pending: Option<String>,
+    revision: u64,
+}
+
+pub(super) struct SnippetRows {
+    total: usize,
+    visible: Vec<Snippet>,
+}
+
+impl SnippetRows {
+    fn new(snippets: &[Snippet], key: &SnippetRowsKey) -> Self {
+        let mut total = 0;
+        let visible = snippets
+            .iter()
+            .filter(|snippet| Some(&snippet.trigger) != key.pending.as_ref())
+            .filter(|snippet| {
+                total += 1;
+                key.query.is_empty()
+                    || snippet.trigger.to_lowercase().contains(&key.query)
+                    || snippet.replacement.to_lowercase().contains(&key.query)
+            })
+            .cloned()
+            .collect();
+        Self { total, visible }
+    }
+}
+
 impl DictionaryView {
     pub(super) fn trigger_exists(snippets: &[Snippet], value: &str, except: Option<&str>) -> bool {
         let lower = value.to_lowercase();
@@ -88,30 +118,29 @@ impl DictionaryView {
 
     pub(super) fn render_snippets(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let p = cx.palette();
-        let pending = self.pending_trigger().map(str::to_string);
-        let snippets: Vec<Snippet> = AppState::global(cx)
-            .read(cx)
-            .snippets
-            .iter()
-            .filter(|s| Some(&s.trigger) != pending.as_ref())
-            .cloned()
-            .collect();
         let query_raw = self.snippet_search.read(cx).value().trim().to_string();
-        let query = query_raw.to_lowercase();
-        let visible: Vec<Snippet> = snippets
-            .iter()
-            .filter(|s| {
-                query.is_empty()
-                    || s.trigger.to_lowercase().contains(&query)
-                    || s.replacement.to_lowercase().contains(&query)
-            })
-            .cloned()
-            .collect();
+        let key = SnippetRowsKey {
+            query: query_raw.to_lowercase(),
+            pending: self.pending_trigger().map(str::to_string),
+            revision: self.snippet_revision,
+        };
+        if self
+            .snippet_rows
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != key)
+        {
+            let state = AppState::global(cx);
+            let rows = Arc::new(SnippetRows::new(&state.read(cx).snippets, &key));
+            self.snippet_rows = Some((key, rows));
+        }
+        let rows = self.snippet_rows.as_ref().unwrap().1.clone();
+        let visible = &rows.visible;
+        let total = rows.total;
 
         let panel =
             (self.panel == Panel::NewSnippet).then(|| self.render_snippet_panel(window, cx));
         let col = div().flex().flex_col().gap(px(12.)).children(panel);
-        if snippets.is_empty() {
+        if total == 0 {
             self.row_keys.clear();
             return col.child(self.render_snippets_empty(&p, cx));
         }
@@ -171,17 +200,17 @@ impl DictionaryView {
             focused_row |= focused;
             table = table.child(row);
         }
-        let count = if visible.len() == snippets.len() {
+        let count = if visible.len() == total {
             t_with(
                 "dictionary.snippets.count",
-                &[("count", &snippets.len().to_string())],
+                &[("count", &total.to_string())],
             )
         } else {
             t_with(
                 "dictionary.snippets.countFiltered",
                 &[
                     ("shown", &visible.len().to_string()),
-                    ("total", &snippets.len().to_string()),
+                    ("total", &total.to_string()),
                 ],
             )
         };
@@ -674,5 +703,31 @@ impl Render for SnippetEditor {
             |_, cx| close_custom(cx),
             cx,
         )
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::{Snippet, SnippetRows, SnippetRowsKey};
+
+    #[test]
+    fn filtered_snippets_match_replacements_and_exclude_pending_removals() {
+        let snippets = vec![
+            Snippet::new("hello", "Good morning"),
+            Snippet::new("bye", "Good night"),
+        ];
+        let mut key = SnippetRowsKey {
+            query: "good".into(),
+            pending: Some("hello".into()),
+            revision: 0,
+        };
+        let rows = SnippetRows::new(&snippets, &key);
+        assert_eq!(rows.total, 1);
+        assert_eq!(rows.visible[0].trigger, "bye");
+        key.pending = None;
+        key.query = "morning".into();
+        let rows = SnippetRows::new(&snippets, &key);
+        assert_eq!(rows.total, 2);
+        assert_eq!(rows.visible[0].trigger, "hello");
     }
 }

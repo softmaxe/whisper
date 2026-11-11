@@ -3,6 +3,7 @@
 mod chrome;
 mod snippets;
 mod words;
+use snippets::{SnippetRows, SnippetRowsKey};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,21 +23,22 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
-    MenuTriggerBounds, drop, empty_state, icon, kbd, keyed_focus_handle, page_container, segment,
-    segmented_track, surface_card, text_tooltip,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, drop, empty_state,
+    icon, kbd, keyed_focus_handle, page_container, segment, segmented_track, surface_card,
+    text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
 use super::format::day_label;
+use super::menu::{MenuAppearance, MenuFocus, MenuPlacement, PopupMenu};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, close_custom, modal_frame, show_custom, show_dialog,
     show_toast,
 };
 use super::text_input::{text_field, text_field_small, textarea_field};
 use super::theme::{
-    DUR_BASE, DUR_SNAP, LINE_SMALL, PAGE_GUTTER, PAGE_MAX_WIDTH, Palette, PaletteExt, RADIUS_LG,
-    RADIUS_MD, RADIUS_SM, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out,
-    ease_snap, motion, tabular_nums,
+    DUR_BASE, LINE_SMALL, PAGE_GUTTER, PAGE_MAX_WIDTH, Palette, PaletteExt, RADIUS_LG, RADIUS_MD,
+    RADIUS_SM, TEXT_BODY, TEXT_CAPTION, TEXT_SMALL, TEXT_TITLE, delayed, ease_out, motion,
+    tabular_nums,
 };
 
 /// Rows ease in one after another as a list opens: 50 ms, then 30 ms more
@@ -414,6 +416,8 @@ impl WordRows {
 
 pub struct DictionaryView {
     word_rows: Option<(WordRowsKey, Arc<WordRows>)>,
+    snippet_rows: Option<(SnippetRowsKey, Arc<SnippetRows>)>,
+    snippet_revision: u64,
     tab: Tab,
     panel: Panel,
     // Words
@@ -454,6 +458,7 @@ fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
 
 impl DictionaryView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.menu = None);
         let notify_on_change = |cx: &mut Context<Self>, state: &Entity<InputState>| {
             cx.subscribe(state, |_, _, e: &InputEvent, cx| {
                 if matches!(e, InputEvent::Change) {
@@ -534,6 +539,10 @@ impl DictionaryView {
 
         let state = AppState::global(cx);
         cx.subscribe(&state, |this, _, e: &AppEvent, cx| {
+            if matches!(e, AppEvent::SnippetsChanged) {
+                this.snippet_revision += 1;
+                this.snippet_rows = None;
+            }
             if matches!(e, AppEvent::DictionaryChanged | AppEvent::SnippetsChanged) {
                 this.word_rows = None;
                 cx.notify();
@@ -542,6 +551,8 @@ impl DictionaryView {
         .detach();
         Self {
             word_rows: None,
+            snippet_rows: None,
+            snippet_revision: 0,
             tab: Tab::Words,
             panel: Panel::None,
             word_search,
@@ -761,18 +772,20 @@ impl DictionaryView {
 
     // ---- Menus -------------------------------------------------------------------------------
 
-    fn open_menu(&mut self, menu: OpenMenu, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_menu(&mut self, menu: OpenMenu, _window: &mut Window, cx: &mut Context<Self>) {
         self.menu = Some(menu);
-        // Focus lands in the menu so arrows, Return and Escape work at once;
-        // the ring only shows when the keyboard opened it.
-        focus_key(menu_item_key(0), window, cx);
         cx.notify();
     }
 
     fn close_menu(&mut self, restore_focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.menu.take() {
             if restore_focus {
-                focus_key(menu.return_focus, window, cx);
+                MenuFocus::new(
+                    (0..menu.entries.len()).map(menu_item_key),
+                    menu.return_focus,
+                    cx,
+                )
+                .restore(true, window, cx);
             }
             cx.notify();
         }
@@ -1058,6 +1071,7 @@ impl DictionaryView {
 
 impl Render for DictionaryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let header = self.render_header(window, cx);
         let body = match self.tab {
             Tab::Words => self.render_words(window, cx),
@@ -1087,15 +1101,7 @@ impl Render for DictionaryView {
             .menu
             .clone()
             .and_then(|m| m.position.map(|at| (m, at)))
-            .map(|(m, at)| {
-                deferred(
-                    anchored()
-                        .position(at)
-                        .snap_to_window_with_margin(px(8.))
-                        .child(self.render_menu(m, None, cx)),
-                )
-                .with_priority(2)
-            });
+            .map(|(m, _)| self.render_menu(m, None, window, cx));
         let undo = self.render_undo(window, cx);
         page_container()
             .pb(px(40.))

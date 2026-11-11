@@ -24,8 +24,8 @@ use gpui_kit::*;
 
 use crate::i18n::{t, t_with};
 use crate::settings::{
-    ActivationMode, ChineseScriptPreference, MicrophoneSelectionMode, PanelStartPosition, Settings,
-    ThemePreference,
+    ActivationMode, ChineseScriptPreference, MicrophoneSelectionMode, OutputMode,
+    PanelStartPosition, Settings, ThemePreference,
 };
 use crate::text::hotkeys::{Hotkey, parse_hotkey_list};
 use crate::text::url::{EndpointIssue, endpoint_check};
@@ -179,6 +179,7 @@ pub struct SettingsModal {
     copied_prompt: bool,
 
     ui_language: Entity<Select>,
+    output_mode: Entity<Select>,
     stt_language: Entity<Select>,
     chinese_script: Entity<Select>,
     pill_position: Entity<Select>,
@@ -224,6 +225,7 @@ impl EventEmitter<SettingsModalEvent> for SettingsModal {}
 /// rebuilding their options. Recording and History notifications still repaint.
 fn select_settings_changed(before: &Settings, after: &Settings) -> bool {
     before.ui_language != after.ui_language
+        || before.output_mode != after.output_mode
         || before.preferred_language != after.preferred_language
         || before.chinese_script_preference != after.chinese_script_preference
         || before.panel_start_position != after.panel_start_position
@@ -292,6 +294,23 @@ fn position_options() -> Vec<SelectOption> {
         SelectOption::new("center", t("settings.general.floatingIcon.center")),
         SelectOption::new("bottom-left", t("settings.general.floatingIcon.bottomLeft")),
     ]
+}
+
+fn output_mode_options() -> Vec<SelectOption> {
+    [
+        (
+            OutputMode::PasteAndRestore,
+            "settings.general.output.pasteAndRestore",
+        ),
+        (
+            OutputMode::PasteAndKeep,
+            "settings.general.output.pasteAndKeep",
+        ),
+        (OutputMode::CopyOnly, "settings.general.output.copyOnly"),
+    ]
+    .into_iter()
+    .map(|(mode, key)| SelectOption::new(mode.as_str(), t(key)))
+    .collect()
 }
 
 fn chinese_script_options() -> Vec<SelectOption> {
@@ -527,6 +546,22 @@ impl SettingsModal {
             update_settings(cx, |s| s.ui_language = value);
         }));
 
+        let output_mode = cx.new(|cx| {
+            Select::new(
+                output_mode_options(),
+                Some(s.output_mode.as_str().into()),
+                window,
+                cx,
+            )
+            .with_width(px(SELECT_WIDTH))
+            .with_menu_min_width(px(240.))
+            .with_label(t("settings.general.output.mode"))
+        });
+        subscriptions.push(cx.subscribe(&output_mode, |_, _, e: &SelectEvent, cx| {
+            let SelectEvent::Change(value) = e;
+            update_settings(cx, |s| s.output_mode = OutputMode::parse(value));
+        }));
+
         let stt_language = cx.new(|cx| {
             Select::new(
                 language_options(),
@@ -730,6 +765,7 @@ impl SettingsModal {
             test_loading: false,
             copied_prompt: false,
             ui_language,
+            output_mode,
             stt_language,
             chinese_script,
             pill_position,
@@ -806,6 +842,19 @@ impl SettingsModal {
         if self.closing {
             return;
         }
+        let this = cx.entity().downgrade();
+        if !self.confirm_prompt_close(
+            move |cx| {
+                let _ = this.update(cx, |this, cx| this.begin_close(cx));
+            },
+            cx,
+        ) {
+            return;
+        }
+        self.begin_close(cx);
+    }
+
+    fn begin_close(&mut self, cx: &mut Context<Self>) {
         self.closing = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -821,6 +870,10 @@ impl SettingsModal {
 
     fn sync_selects(&mut self, cx: &mut Context<Self>) {
         let s = settings(cx);
+        self.output_mode.update(cx, |sel, cx| {
+            sel.set_options(output_mode_options(), cx);
+            sel.set_selected(Some(s.output_mode.as_str().into()), cx);
+        });
         self.audio_retention.update(cx, |sel, cx| {
             sel.set_options(
                 retention_options(
@@ -1236,12 +1289,13 @@ mod tests {
         let unrelated = Settings {
             cleanup_model: "different-model".into(),
             remote_transcription_url: "http://localhost:8000/v1".into(),
-            auto_paste_enabled: !baseline.auto_paste_enabled,
+            audio_cues_enabled: !baseline.audio_cues_enabled,
             ..baseline.clone()
         };
         assert!(!super::select_settings_changed(&baseline, &unrelated));
-        let changes: [fn(&mut Settings); 10] = [
+        let changes: [fn(&mut Settings); 11] = [
             |s| s.ui_language = "zh-CN".into(),
+            |s| s.output_mode = crate::settings::OutputMode::CopyOnly,
             |s| s.preferred_language = "en".into(),
             |s| s.chinese_script_preference = crate::settings::ChineseScriptPreference::Traditional,
             |s| s.panel_start_position = crate::settings::PanelStartPosition::Center,

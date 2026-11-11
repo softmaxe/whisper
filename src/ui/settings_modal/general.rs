@@ -182,22 +182,28 @@ impl SettingsModal {
                 &p,
             ))
             .child(settings_section(
-                t("settings.general.clipboard.title"),
+                t("settings.general.output.title"),
                 vec![
-                    toggle(
-                        "auto-paste",
-                        "settings.general.clipboard.autoPaste",
-                        "settings.general.clipboard.autoPasteDescription",
-                        s.auto_paste_enabled,
-                        |s, v| s.auto_paste_enabled = v,
-                    ),
-                    toggle(
-                        "keep-clipboard",
-                        "settings.general.clipboard.keepInClipboard",
-                        "settings.general.clipboard.keepInClipboardDescription",
-                        s.keep_transcription_in_clipboard,
-                        |s, v| s.keep_transcription_in_clipboard = v,
-                    ),
+                    settings_row(
+                        t("settings.general.output.mode"),
+                        Some(
+                            t(match s.output_mode {
+                                OutputMode::PasteAndRestore => {
+                                    "settings.general.output.pasteAndRestoreDescription"
+                                }
+                                OutputMode::PasteAndKeep => {
+                                    "settings.general.output.pasteAndKeepDescription"
+                                }
+                                OutputMode::CopyOnly => {
+                                    "settings.general.output.copyOnlyDescription"
+                                }
+                            })
+                            .into(),
+                        ),
+                        self.output_mode.clone(),
+                        &p,
+                    )
+                    .into_any_element(),
                 ],
                 &p,
             ))

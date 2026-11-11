@@ -16,7 +16,7 @@ use futures::future::Shared;
 use gpui_kit::*;
 use tokio_util::sync::CancellationToken;
 
-use crate::audio::capture::{CaptureEvent, CaptureStatus, RecordedAudio, Recorder};
+use crate::audio::capture::{CaptureEvent, CaptureId, CaptureStatus, RecordedAudio, Recorder};
 use crate::audio::cues;
 use crate::history::Recording;
 use crate::i18n::t;
@@ -82,6 +82,19 @@ struct FailedRecording {
     occurred_at: DateTime<Utc>,
 }
 
+impl FailedRecording {
+    fn from_interrupted_audio(
+        (audio, duration, occurred_at): (RecordedAudio, Duration, DateTime<Utc>),
+    ) -> Option<Self> {
+        let wav = audio.to_wav_16k();
+        audio.is_usable(wav.len()).then(|| Self {
+            wav: wav.into(),
+            duration,
+            occurred_at,
+        })
+    }
+}
+
 /// What happened, for the pill window to present.
 #[derive(Clone, Debug)]
 pub enum DictationNotice {
@@ -102,6 +115,13 @@ pub enum DictationNotice {
     DeliveryFallback {
         text: String,
         copied: bool,
+    },
+    /// Holds text for explicit recovery, with a resend when audio is kept.
+    TranscriptRecovery {
+        title: String,
+        description: String,
+        text: String,
+        kept: Option<Duration>,
     },
     /// Escape while only the copy-recovery panel is open closes it. The
     /// error card never takes Escape: it can hold the only copy of a
@@ -172,10 +192,14 @@ impl Dictation {
             })));
             let device_events = cx.spawn(async move |this, cx| {
                 while let Ok(event) = rx.recv().await {
-                    let CaptureEvent::DeviceLost { message } = event;
-                    log::warn!("microphone lost: {message}");
+                    let CaptureEvent::DeviceLost {
+                        capture_id,
+                        message,
+                    } = event;
                     if this
-                        .update(cx, |this: &mut Dictation, cx| this.fail_microphone(cx))
+                        .update(cx, |this: &mut Dictation, cx| {
+                            this.fail_microphone(capture_id, &message, cx)
+                        })
                         .is_err()
                     {
                         break;
@@ -433,16 +457,67 @@ impl Dictation {
         self.set_phase(Phase::Idle, cx);
     }
 
-    fn fail_microphone(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.phase, Phase::Recording | Phase::Preparing) {
+    fn fail_microphone(&mut self, capture_id: CaptureId, message: &str, cx: &mut Context<Self>) {
+        if !self.accepts_device_loss(capture_id) {
             return;
         }
-        self.cancel_recording(cx);
+        log::warn!("microphone lost: {message}");
+        let audio = self.interrupt_capture(capture_id);
+        let generation = self.generation;
+        self.set_phase(Phase::Processing, cx);
+        let conversion = crate::services::runtime::blocking(move || {
+            audio.and_then(FailedRecording::from_interrupted_audio)
+        });
+        cx.spawn(async move |this, cx| {
+            let failed = conversion.await.unwrap_or_default();
+            let _ = this.update(cx, |this, cx| {
+                if generation != this.generation {
+                    return;
+                }
+                this.failed = failed;
+                this.set_phase(Phase::Idle, cx);
+                this.show_microphone_error(cx);
+            });
+        })
+        .detach();
+    }
+
+    fn accepts_device_loss(&self, capture_id: CaptureId) -> bool {
+        matches!(self.phase, Phase::Recording | Phase::Preparing)
+            && self.recorder.active_capture_id() == Some(capture_id)
+    }
+
+    /// Device failure stops capture without applying the user's discard action.
+    fn interrupt_capture(
+        &mut self,
+        capture_id: CaptureId,
+    ) -> Option<(RecordedAudio, Duration, DateTime<Utc>)> {
+        if !self.accepts_device_loss(capture_id) {
+            return None;
+        }
+        self.generation += 1;
+        self.start_lock = false;
+        self.recorder.cancel_prepared();
+        let timing = self.started_at.take();
+        if self.phase != Phase::Recording {
+            self.recorder.cancel();
+            return None;
+        }
+        self.recorder.stop().map(|audio| {
+            let (started, occurred_at) = timing.unwrap_or_else(|| (Instant::now(), Utc::now()));
+            (audio, started.elapsed(), occurred_at)
+        })
+    }
+
+    fn show_microphone_error(&self, cx: &mut Context<Self>) {
         cx.emit(DictationNotice::Error {
             title: t("dictation.errorTitles.microphoneUnavailable"),
             description: t("dictation.errorDescriptions.microphoneUnavailable"),
-            actions: ErrorActions::default(),
-            kept: None,
+            actions: ErrorActions {
+                retry: self.failed.is_some(),
+                open_settings: false,
+            },
+            kept: self.failed.as_ref().map(|failed| failed.duration),
         });
     }
 
@@ -583,6 +658,17 @@ impl Dictation {
                 self.set_phase(Phase::Idle, cx);
                 cx.emit(DictationNotice::NoAudio);
             }
+            PipelineOutcome::PromptEcho { text } => {
+                let notice = self.recover_transcript(
+                    "dictation.promptEcho",
+                    text,
+                    wav,
+                    duration,
+                    occurred_at,
+                );
+                self.set_phase(Phase::Idle, cx);
+                cx.emit(notice);
+            }
             PipelineOutcome::Failed {
                 message,
                 code,
@@ -629,6 +715,27 @@ impl Dictation {
         }
     }
 
+    fn recover_transcript(
+        &mut self,
+        message: &str,
+        text: String,
+        wav: bytes::Bytes,
+        duration: Duration,
+        occurred_at: DateTime<Utc>,
+    ) -> DictationNotice {
+        self.failed = (!wav.is_empty()).then_some(FailedRecording {
+            wav,
+            duration,
+            occurred_at,
+        });
+        DictationNotice::TranscriptRecovery {
+            title: t(&format!("{message}.title")),
+            description: t(&format!("{message}.description")),
+            text,
+            kept: self.failed.as_ref().map(|failed| failed.duration),
+        }
+    }
+
     fn persist_and_deliver(
         &mut self,
         transcript: Transcript,
@@ -639,12 +746,13 @@ impl Dictation {
     ) {
         let generation = self.generation;
         let saved_transcript = transcript.clone();
+        let saved_wav = wav;
         let save = AppState::global(cx).update(cx, |state, cx| {
             state.record_history(cx, move |history, settings| {
                 history.record_delivered(
                     &saved_transcript,
                     &Recording {
-                        wav: &wav,
+                        wav: &saved_wav,
                         duration,
                         occurred_at,
                     },
@@ -654,7 +762,8 @@ impl Dictation {
         });
         let started = Instant::now();
         cx.spawn(async move |this, cx| {
-            if let Err(err) = save.await {
+            let saved = save.await;
+            if let Err(err) = &saved {
                 log::error!("failed to save the History row: {err:#}");
             }
             log::info!(
@@ -663,14 +772,14 @@ impl Dictation {
             );
             let _ = this.update(cx, |this, cx| {
                 if generation == this.generation && this.phase == Phase::Processing {
-                    this.deliver(transcript, cx);
+                    this.deliver(transcript, matches!(saved, Ok(Some(_))), cx);
                 }
             });
         })
         .detach();
     }
 
-    fn deliver(&mut self, transcript: Transcript, cx: &mut Context<Self>) {
+    fn deliver(&mut self, transcript: Transcript, history_saved: bool, cx: &mut Context<Self>) {
         cx.emit(DictationNotice::DismissError);
         let settings = AppState::settings(cx);
         let Transcript {
@@ -679,15 +788,14 @@ impl Dictation {
             ..
         } = transcript;
 
-        let restore_clipboard = !settings.keep_transcription_in_clipboard;
-        if self.push_force_stopped && settings.auto_paste_enabled {
+        if self.push_force_stopped && settings.output_mode.pastes_automatically() {
             let kept = backend::write_clipboard(&text);
             self.set_phase(Phase::Idle, cx);
             cx.emit(DictationNotice::PushForceStopped {
                 kept_in_clipboard: kept,
                 transcript: text,
             });
-        } else if settings.auto_paste_enabled {
+        } else if settings.output_mode.pastes_automatically() {
             let generation = self.generation;
             let target = self.target_pid.clone();
             cx.spawn(async move |this, cx| {
@@ -704,7 +812,8 @@ impl Dictation {
                     return;
                 }
                 let paste_started = Instant::now();
-                let pasted = backend::paste_text(text.clone(), target_pid, restore_clipboard).await;
+                let pasted =
+                    backend::paste_text(text.clone(), target_pid, settings.output_mode).await;
                 log::info!(
                     "[perf] operation={generation} stage=paste_complete elapsed_ms={:.3}",
                     paste_started.elapsed().as_secs_f64() * 1000.0
@@ -757,11 +866,24 @@ impl Dictation {
             })
             .detach();
         } else {
-            if settings.keep_transcription_in_clipboard {
-                backend::write_clipboard(&text);
-            }
-            cx.emit(DictationNotice::Delivered);
+            let copied = backend::write_clipboard(&text);
+            cx.emit(clipboard_delivery_notice(text, history_saved, copied));
             self.set_phase(Phase::Idle, cx);
+        }
+    }
+}
+
+fn clipboard_delivery_notice(text: String, history_saved: bool, copied: bool) -> DictationNotice {
+    if history_saved || copied {
+        DictationNotice::Delivered
+    } else {
+        // Clipboard-only delivery can fail too. The existing card keeps the
+        // sole transcript copy until the user recovers it.
+        DictationNotice::TranscriptRecovery {
+            title: t("dictation.clipboardWriteFailed.title"),
+            description: t("dictation.clipboardWriteFailed.description"),
+            text,
+            kept: None,
         }
     }
 }
@@ -869,6 +991,21 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
                 Ok(())
             }
             PipelineOutcome::NoAudio => Err(t("dictation.noAudio.title")),
+            PipelineOutcome::PromptEcho { text } => {
+                // The History row still owns its audio. Keep this candidate
+                // copyable without replacing that row or live capture state.
+                cx.update(|cx| {
+                    Dictation::global(cx).update(cx, |_, cx| {
+                        cx.emit(DictationNotice::TranscriptRecovery {
+                            title: t("dictation.promptEcho.title"),
+                            description: t("dictation.promptEcho.description"),
+                            text,
+                            kept: None,
+                        });
+                    });
+                });
+                Err(t("dictation.promptEcho.title"))
+            }
             PipelineOutcome::Failed {
                 message,
                 message_key,
@@ -897,6 +1034,208 @@ mod tests {
     use crate::settings::Settings;
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
+
+    fn dictation(phase: super::Phase) -> super::Dictation {
+        super::Dictation {
+            phase,
+            recorder: super::Recorder::new(None),
+            generation: 7,
+            start_lock: false,
+            cancel: None,
+            target_pid: None,
+            started_at: None,
+            effects_held: false,
+            media_paused: false,
+            push_force_stopped: false,
+            failed: None,
+            status: super::StatusMirror::default(),
+            _device_events: gpui_kit::Task::ready(()),
+        }
+    }
+
+    #[test]
+    fn microphone_loss_keeps_partial_audio_but_user_cancel_discards_it() {
+        use super::{FailedRecording, Phase, Recorder};
+        let occurred_at = chrono::Utc::now();
+        for interrupted in [true, false] {
+            let mut dictation = dictation(Phase::Recording);
+            dictation.recorder = Recorder::with_test_audio(vec![0.1; 16_000]);
+            dictation.started_at = Some((std::time::Instant::now(), occurred_at));
+            if interrupted {
+                let audio = dictation
+                    .interrupt_capture(dictation.recorder.active_capture_id().unwrap())
+                    .unwrap();
+                let kept = FailedRecording::from_interrupted_audio(audio).unwrap();
+                assert_eq!(kept.occurred_at, occurred_at);
+                assert!(kept.wav.starts_with(b"RIFF"));
+                assert!(kept.wav.len() > 32_000);
+            } else {
+                assert!(dictation.cancel_capture());
+                assert!(dictation.failed.is_none());
+            }
+            assert_eq!(dictation.generation, 8);
+            assert!(dictation.started_at.is_none());
+            assert!(!dictation.recorder.is_capture_active());
+            assert!(dictation.recorder.stop().is_none());
+        }
+    }
+
+    #[test]
+    fn microphone_loss_without_usable_audio_does_not_offer_resend() {
+        use super::{FailedRecording, Phase, Recorder};
+        let mut dictation = dictation(Phase::Recording);
+        dictation.recorder = Recorder::with_test_audio(vec![0.1; 10]);
+        let capture_id = dictation.recorder.active_capture_id().unwrap();
+        assert!(
+            dictation
+                .interrupt_capture(capture_id)
+                .and_then(FailedRecording::from_interrupted_audio)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn queued_device_loss_cannot_stop_a_newer_recording() {
+        use super::{Phase, Recorder};
+        let mut dictation = dictation(Phase::Recording);
+        dictation.recorder = Recorder::with_test_audio(vec![0.1; 16_000]);
+        let old_id = dictation.recorder.active_capture_id().unwrap();
+        assert!(dictation.cancel_capture());
+        dictation.recorder = Recorder::with_test_audio(vec![0.2; 16_000]);
+        let current_id = dictation.recorder.active_capture_id().unwrap();
+        let generation = dictation.generation;
+        assert_ne!(old_id, current_id);
+        assert!(!dictation.accepts_device_loss(old_id));
+        assert!(dictation.interrupt_capture(old_id).is_none());
+        assert_eq!(dictation.generation, generation);
+        assert!(dictation.recorder.is_recording());
+        assert_eq!(dictation.phase, Phase::Recording);
+        assert!(dictation.accepts_device_loss(current_id));
+        let (audio, _, _) = dictation.interrupt_capture(current_id).unwrap();
+        assert_eq!(audio.samples, vec![0.2; 16_000]);
+        assert!(!dictation.recorder.is_capture_active());
+        assert!(!dictation.accepts_device_loss(current_id));
+    }
+
+    #[test]
+    fn dictionary_word_echo_keeps_text_and_audio_for_recovery() {
+        use super::{DictationNotice, Phase};
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.apply_dictionary_changes(&["Supabase"], &[] as &[&str], DictionarySource::Manual)
+            .unwrap();
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"Supabase"}"#));
+        let settings = Settings {
+            remote_transcription_url: server.url("/v1"),
+            use_cleanup_model: false,
+            ..Settings::default()
+        };
+        let wav = bytes::Bytes::from_static(b"RIFF original audio");
+        let outcome = run(async {
+            let input = capture_pipeline_input(wav.clone(), settings, db).await;
+            run_prepared_pipeline(input, CancellationToken::new()).await
+        });
+        let PipelineOutcome::PromptEcho { text } = outcome else {
+            panic!("unexpected outcome: {outcome:?}");
+        };
+        let mut dictation = dictation(Phase::Processing);
+        let occurred_at = chrono::Utc::now();
+        let duration = std::time::Duration::from_secs(3);
+        let notice = dictation.recover_transcript(
+            "dictation.promptEcho",
+            text,
+            wav.clone(),
+            duration,
+            occurred_at,
+        );
+        let DictationNotice::TranscriptRecovery { text, kept, .. } = notice else {
+            panic!("echo must not report NoAudio or Delivered");
+        };
+        assert_eq!(text, "Supabase");
+        assert_eq!(kept, Some(duration));
+        let retry = dictation.failed.take().unwrap();
+        assert_eq!(retry.wav, wav);
+        assert_eq!(retry.duration, duration);
+        assert_eq!(retry.occurred_at, occurred_at);
+        dictation.discard_failed();
+        assert!(dictation.failed.is_none());
+    }
+
+    #[test]
+    fn unretained_or_failed_history_still_allows_clipboard_delivery_or_recovery() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.lock()
+            .execute_batch(
+                "CREATE TRIGGER reject_history BEFORE INSERT ON transcriptions
+                 BEGIN SELECT RAISE(FAIL, 'synthetic history failure'); END;",
+            )
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let history = crate::history::HistoryStore::new(
+            db,
+            Arc::new(crate::audio_storage::AudioStorage::new(
+                dir.path().join("audio"),
+            )),
+        );
+        let transcript = crate::pipeline::Transcript {
+            text: "words worth keeping".into(),
+            spoken_text: "words worth keeping".into(),
+            raw_text: "um words worth keeping".into(),
+            cleanup_failure: None,
+        };
+        for retention_enabled in [false, true] {
+            let saved = history
+                .record_delivered(
+                    &transcript,
+                    &crate::history::Recording {
+                        wav: b"RIFF original audio",
+                        duration: std::time::Duration::from_secs(3),
+                        occurred_at: chrono::Utc::now(),
+                    },
+                    &Settings {
+                        output_mode: crate::settings::OutputMode::CopyOnly,
+                        data_retention_enabled: retention_enabled,
+                        ..Settings::default()
+                    },
+                )
+                .result;
+            if retention_enabled {
+                assert!(saved.is_err());
+            } else {
+                assert!(matches!(saved, Ok(None)));
+            }
+            for copied in [false, true] {
+                let notice = super::clipboard_delivery_notice(
+                    transcript.text.clone(),
+                    matches!(saved, Ok(Some(_))),
+                    copied,
+                );
+                if copied {
+                    assert!(matches!(notice, super::DictationNotice::Delivered));
+                } else {
+                    assert!(
+                        matches!(notice, super::DictationNotice::TranscriptRecovery { text, kept: None, .. } if text == transcript.text)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn clipboard_only_failure_needs_recovery_unless_history_saved_the_words() {
+        use super::{DictationNotice, clipboard_delivery_notice};
+        for history_saved in [false, true] {
+            for copied in [false, true] {
+                let notice = clipboard_delivery_notice("kept words".into(), history_saved, copied);
+                if history_saved || copied {
+                    assert!(matches!(notice, DictationNotice::Delivered));
+                } else {
+                    assert!(
+                        matches!(notice, DictationNotice::TranscriptRecovery { text, kept: None, .. } if text == "kept words")
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn recording_cancel_does_not_invalidate_processing_or_idle() {

@@ -12,7 +12,8 @@ use super::theme::{FONT_MONO, FONT_UI, FONT_VOICE};
 #[derive(RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/*.svg"]
-#[include = "fonts/*.ttf"]
+#[include = "fonts/JetBrainsMono-Regular.ttf"]
+#[include = "fonts/JetBrainsMono-Medium.ttf"]
 #[include = "iconTemplate@3x.png"]
 struct Embedded;
 
@@ -36,7 +37,7 @@ impl AssetSource for Assets {
     }
 }
 
-/// Registers the bundled JetBrains Mono Nerd Font Mono faces, then checks that
+/// Registers the bundled JetBrains Mono faces, then checks that
 /// each family the UI asks for resolves without falling back.
 pub fn load_fonts(cx: &mut App) {
     let fonts: Vec<Cow<'static, [u8]>> = Embedded::iter()
@@ -95,29 +96,45 @@ mod tests {
             .collect()
     }
 
-    /// The system UI face is supplied by macOS, so only the bundled Nerd Font
-    /// weights are checked here.
+    /// Regular is used by fields, menu items and error details; Medium by
+    /// model triggers, suggestion chips and info values. Their parents do not
+    /// apply Semibold, which is reserved for sibling UI headings.
     #[test]
     fn bundled_mono_has_the_faces_the_ui_uses() {
         let have: BTreeSet<(String, u16, bool)> =
             faces().into_iter().map(|(f, w, i, _)| (f, w, i)).collect();
-        for weight in [400, 500, 600] {
+        let expected = [400, 500]
+            .into_iter()
+            .map(|weight| (FONT_MONO.to_string(), weight, false))
+            .collect();
+        assert_eq!(have, expected);
+    }
+
+    #[test]
+    fn bundled_mono_has_the_contextual_ligatures_disabled_by_mono_features() {
+        for (family, _, _, data) in faces() {
+            let face = ttf_parser::Face::parse(&data, 0).unwrap();
+            let features = face.tables().gsub.unwrap().features;
             assert!(
-                have.contains(&("JetBrainsMono NFM".to_string(), weight, false)),
-                "missing {FONT_MONO} {weight}; have {have:?}"
+                features
+                    .find(ttf_parser::Tag::from_bytes(b"calt"))
+                    .is_some(),
+                "{family} lacks calt"
             );
+            // Upstream uses calt for ligatures, as did the Nerd Font build.
+            // Disabling liga remains harmless when the font has no such tag.
         }
     }
 
     /// Every non-CJK character of the English and Chinese UI strings is drawn
-    /// by the bundled Nerd Font face, so code never mixes in a fallback Latin
+    /// by the bundled mono face, so code never mixes in a fallback Latin
     /// face.
     #[test]
     fn mono_face_covers_every_locale_character() {
         let faces = faces();
         let mono = faces
             .iter()
-            .find(|(f, w, i, _)| f == "JetBrainsMono NFM" && *w == 400 && !*i)
+            .find(|(f, w, i, _)| f == FONT_MONO && *w == 400 && !*i)
             .unwrap();
         let face = ttf_parser::Face::parse(&mono.3, 0).unwrap();
         let mut missing = BTreeSet::new();

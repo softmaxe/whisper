@@ -54,6 +54,9 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<ControlPanelWindow> {
     let (handle, panel) = gpui_kit::open_window(options, cx, |window, cx| {
         // Closing the panel drops it to the menu bar.
         window.on_window_should_close(cx, |_, cx| {
+            if !can_close_control_panel(cx) {
+                return false;
+            }
             prepare_control_panel_close(cx);
             crate::native::dock::set_control_panel_visible(false);
             true
@@ -68,6 +71,9 @@ fn open_control_panel(cx: &mut App) -> anyhow::Result<ControlPanelWindow> {
 /// also works from a key binding, while the window is still borrowed.
 pub fn close_control_panel(cx: &mut App) {
     cx.defer(|cx| {
+        if !can_close_control_panel(cx) {
+            return;
+        }
         prepare_control_panel_close(cx);
         for window in cx.windows() {
             if window.downcast::<gpui_kit::base::Root>().is_some() {
@@ -76,6 +82,16 @@ pub fn close_control_panel(cx: &mut App) {
         }
         crate::native::dock::set_control_panel_visible(false);
     });
+}
+
+fn can_close_control_panel(cx: &mut App) -> bool {
+    cx.try_global::<ControlPanelWindow>()
+        .map(|w| w.1.clone())
+        .is_none_or(|panel| {
+            panel
+                .update(cx, |panel, cx| panel.can_close(cx))
+                .unwrap_or(true)
+        })
 }
 
 fn prepare_control_panel_close(cx: &mut App) {
@@ -190,7 +206,17 @@ fn handle_hotkey(command: HotkeyCommand, cx: &mut App) {
                 cx,
             );
         }
-        HotkeyCommand::ListenerError { message } => log::warn!("hotkey listener error: {message}"),
+        HotkeyCommand::ListenerError { message } => {
+            log::warn!("hotkey listener error: {message}");
+            show_toast(
+                Toast::new(crate::i18n::t("app.toasts.hotkeyUnavailable.title"))
+                    .description(crate::i18n::t(
+                        "app.toasts.hotkeyUnavailable.listenerStopped",
+                    ))
+                    .variant(ToastVariant::Destructive),
+                cx,
+            );
+        }
     }
 }
 

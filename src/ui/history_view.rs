@@ -11,15 +11,16 @@ use gpui_kit::*;
 use crate::db::TranscriptionItem;
 use crate::i18n::{self, Language, t, t_with};
 
-use crate::app_state::{AppEvent, AppState};
+use crate::app_state::{AppEvent, AppState, HistoryLoadState};
 use crate::backend;
 
 use super::components::{
-    DismissMenu, KeyboardFocusable, MENU_CONTEXT, MenuTriggerBounds, empty_state, f32_tx, icon,
-    kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
+    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, empty_state, f32_tx,
+    icon, kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
     spinner, text_tooltip,
 };
 use super::control_panel::CloseOverlay;
+use super::menu::{MenuAppearance, MenuFocus, MenuPlacement, PopupMenu};
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, remove_toast, show_dialog, show_toast, show_tracked_toast,
 };
@@ -206,6 +207,7 @@ fn format_clock(time: DateTime<Local>) -> String {
 
 impl HistoryView {
     pub fn new(scroll: ScrollHandle, cx: &mut Context<Self>) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.open_menu = None);
         let state = AppState::global(cx);
         // Dictation phase changes drive the transcribing placeholder. Tracked
         // here rather than in render so it starts before the transcript is
@@ -218,6 +220,7 @@ impl HistoryView {
             let relevant = (
                 busy,
                 top,
+                s.history_load,
                 s.settings.data_retention_enabled,
                 s.settings.effective_dictation_key(),
                 i18n::language(),
@@ -237,7 +240,7 @@ impl HistoryView {
             }
         })
         .detach();
-        if !state.read(cx).history_loaded {
+        if state.read(cx).history_load.needs_load() {
             Self::reload(cx);
         }
         Self {
@@ -314,20 +317,7 @@ impl HistoryView {
 
     fn reload(cx: &mut App) {
         let load = AppState::global(cx).update(cx, |s, cx| s.load_history(cx));
-        cx.spawn(async move |cx| {
-            if load.await.is_err() {
-                cx.update(|cx| {
-                    show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.couldNotLoadTitle"),
-                            Some(t("controlPanel.history.couldNotLoadDescription").into()),
-                        ),
-                        cx,
-                    );
-                });
-            }
-        })
-        .detach();
+        load.detach();
     }
 
     /// Removes a transcript from view at once and deletes it when the Undo
@@ -359,6 +349,9 @@ impl HistoryView {
                 .action(t("common.undo"), move |_, cx| {
                     let _ = this.update(cx, |this, cx| {
                         if let Some(pending) = this.deleting.undo(operation_id, Instant::now()) {
+                            AppState::global(cx).update(cx, |s, cx| {
+                                s.set_history_delete_pending(pending.row_id, false, cx);
+                            });
                             remove_toast(pending.toast_id, cx);
                             cx.notify();
                         } else if this.deleting.is_current(operation_id) {
@@ -369,6 +362,7 @@ impl HistoryView {
             cx,
         );
         self.deleting.begin(id, deadline, toast_id);
+        AppState::global(cx).update(cx, |s, cx| s.set_history_delete_pending(id, true, cx));
         cx.notify();
     }
 
@@ -381,7 +375,11 @@ impl HistoryView {
         let id = pending.row_id;
         self.committing_deletes.insert(id);
         self.groups = None;
-        let delete = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
+        let delete = AppState::global(cx).update(cx, |s, cx| {
+            let delete = s.delete_transcription(id, cx);
+            s.set_history_delete_pending(id, false, cx);
+            delete
+        });
         cx.spawn(async move |this, cx| {
             let result = delete.await;
             let _ = this.update(cx, |this, cx| {
@@ -811,13 +809,11 @@ impl HistoryView {
                         .relative()
                         .child(menu_trigger.measure())
                         .aria_expanded(menu_open)
-                        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                            this.toggle_menu(id, event.is_keyboard(), window, cx)
-                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_menu(id, cx)))
                         .into_any_element()
                     })
                     .when(menu_open, |d| {
-                        d.child(self.render_menu(item, menu_trigger, cx))
+                        d.child(self.render_menu(item, menu_trigger, window, cx))
                     }),
             );
 
@@ -888,9 +884,9 @@ impl HistoryView {
             // Right-click opens the same menu as the row's more button.
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, _, window, cx| {
+                cx.listener(move |this, _, _, cx| {
                     if this.open_menu != Some(id) {
-                        this.toggle_menu(id, false, window, cx);
+                        this.toggle_menu(id, cx);
                     }
                 }),
             )
@@ -1025,44 +1021,24 @@ impl HistoryView {
         }
     }
 
-    /// Opens or closes a row's menu. Opened from the keyboard, it focuses
-    /// its first item so arrows, Return and Escape work at once.
-    fn toggle_menu(
-        &mut self,
-        id: i64,
-        keyboard: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Opens or closes a row's menu; the shared surface manages initial focus.
+    fn toggle_menu(&mut self, id: i64, cx: &mut Context<Self>) {
         self.open_menu = if self.open_menu == Some(id) {
             None
         } else {
             Some(id)
         };
-        if keyboard && self.open_menu.is_some() {
-            // Retry and Reveal need audio; Delete is always there.
-            let has_audio = AppState::global(cx)
-                .read(cx)
-                .history
-                .iter()
-                .any(|item| item.id == id && item.has_audio);
-            let first_action: usize = if has_audio { 0 } else { 2 };
-            let first = keyed_focus_handle(("history-menu-item", first_action).into(), cx);
-            window.on_next_frame(move |window, cx| window.focus(&first, cx));
-        }
         cx.notify();
     }
 
     fn close_menu(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
         self.open_menu = None;
-        // Hand focus back to the button that opened the menu.
-        let in_menu = (0..3usize).any(|action| {
-            keyed_focus_handle(("history-menu-item", action).into(), cx).is_focused(window)
-        });
-        if in_menu {
-            let more = keyed_focus_handle(("more-row", id as usize).into(), cx);
-            window.focus(&more, cx);
-        }
+        MenuFocus::new(
+            (0..3usize).map(|action| ("history-menu-item", action).into()),
+            ("more-row", id as usize).into(),
+            cx,
+        )
+        .restore(false, window, cx);
         cx.notify();
     }
 
@@ -1070,6 +1046,7 @@ impl HistoryView {
         &self,
         item: &TranscriptionItem,
         trigger: MenuTriggerBounds,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let p = cx.palette();
@@ -1092,64 +1069,28 @@ impl HistoryView {
             ));
         }
         entries.push(("trash2", t("controlPanel.history.deleteItem"), 2, true));
-        let handles: Vec<_> = entries
-            .iter()
-            .map(|(_, _, action, _)| {
-                keyed_focus_handle(("history-menu-item", *action as usize).into(), cx)
-            })
-            .collect();
-
-        let mut menu = div()
-            .id(("row-menu", id as usize))
-            .occlude()
-            .mt(px(4.))
-            .min_w(px(180.))
-            .p(px(4.))
-            .flex()
-            .flex_col()
-            .rounded(px(RADIUS_LG))
-            .border_1()
-            .border_color(if p.dark {
-                p.border_hover
-            } else {
-                p.border.opacity(0.7)
-            })
-            .bg(if p.dark { p.surface_3 } else { p.popover })
-            .shadow_lg()
-            .on_mouse_down_out(cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                if !trigger.contains(event.position) {
-                    this.open_menu = None;
-                    cx.notify();
-                }
-            }))
-            .key_context(MENU_CONTEXT)
-            .on_action(cx.listener(move |this, _: &DismissMenu, window, cx| {
-                this.close_menu(id, window, cx);
-            }))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
-                match e.keystroke.key.as_str() {
-                    "escape" => this.close_menu(id, window, cx),
-                    "down" | "up" => {
-                        let current = handles.iter().position(|h| h.is_focused(window));
-                        let next = match (e.keystroke.key.as_str(), current) {
-                            ("down", Some(index)) => (index + 1) % handles.len(),
-                            ("up", Some(index)) => (index + handles.len() - 1) % handles.len(),
-                            ("up", None) => handles.len() - 1,
-                            _ => 0,
-                        };
-                        window.focus(&handles[next], cx);
-                    }
-                    _ => return,
-                }
-                cx.stop_propagation();
-            }));
+        let popup = PopupMenu {
+            id: ("row-menu", id as usize).into(),
+            min_width: 180.,
+            appearance: MenuAppearance::History,
+            placement: MenuPlacement::TriggerRight,
+            trigger: Some(trigger),
+            focus: MenuFocus::new(
+                entries
+                    .iter()
+                    .map(|(_, _, action, _)| ("history-menu-item", *action as usize).into()),
+                ("more-row", id as usize).into(),
+                cx,
+            ),
+        };
+        let mut items = Vec::new();
         for (icon_name, label, action, destructive) in entries {
             let color = if destructive {
                 p.destructive
             } else {
                 p.foreground
             };
-            menu = menu.child(
+            items.push(
                 div()
                     .id(("row-menu-item", action as usize))
                     .keyboard_focusable(
@@ -1186,22 +1127,25 @@ impl HistoryView {
                             _ => this.delete(id, cx),
                         }
                         cx.notify();
-                    })),
+                    }))
+                    .into_any_element(),
             );
         }
-        deferred(
-            anchored()
-                .anchor(Anchor::TopRight)
-                .snap_to_window_with_margin(px(8.))
-                .child(menu),
+        popup.render(
+            items,
+            |this, _, cx| {
+                this.open_menu = None;
+                cx.notify();
+            },
+            window,
+            cx,
         )
-        .with_priority(1)
-        .into_any_element()
     }
 }
 
 impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let p = cx.palette();
         self.spotlight.take_if(|s| s.since.elapsed() >= SPOTLIGHT);
         self.advance_glide();
@@ -1256,13 +1200,48 @@ impl Render for HistoryView {
             self.groups = Some((key, Arc::new(groups)));
         }
         let groups = self.groups.as_ref().unwrap().1.clone();
-        if groups.is_empty() {
+        let load_state = state.read(cx).history_load;
+        if load_state != HistoryLoadState::Loaded {
+            let status = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(12.))
+                .py(px(32.));
+            content = content.child(match load_state {
+                HistoryLoadState::Failed => status
+                    .child(empty_state(
+                        "alert-circle",
+                        t("controlPanel.history.couldNotLoadTitle"),
+                        t("controlPanel.history.couldNotLoadDescription"),
+                        &p,
+                    ))
+                    .child(
+                        Button::new("history-load-retry")
+                            .label(t("common.retry"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(|_, _, cx| Self::reload(cx)),
+                    )
+                    .into_any_element(),
+                _ => status
+                    .child(spinner("history-loading", 18., p.muted_foreground))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.muted_foreground)
+                            .child(t("controlPanel.history.loading")),
+                    )
+                    .into_any_element(),
+            });
+        }
+        if groups.is_empty() && load_state == HistoryLoadState::Loaded {
             content = content.child(super::components::empty_state_placement(
                 window.viewport_size().height
                     - px(super::theme::WORKSPACE_TOP_BAR_HEIGHT + super::theme::PAGE_TOP + 48.),
                 render_empty_with_hotkey(&hotkey, retention, &p),
             ));
-        } else {
+        } else if !groups.is_empty() {
             let list_focus = keyed_focus_handle("history-list".into(), cx);
             let mut list = div()
                 .id("history-list")

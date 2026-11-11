@@ -86,12 +86,15 @@
         "pauseMediaDescription": "开始听写时自动暂停音乐",
         "title": "声音与媒体"
       },
-      "clipboard": {
-        "title": "剪贴板",
-        "autoPaste": "自动粘贴",
-        "autoPasteDescription": "听写结束后自动将转录文本粘贴到当前活动的应用中",
-        "keepInClipboard": "将转录内容保留在剪贴板",
-        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴"
+      "output": {
+        "title": "输出",
+        "mode": "输出方式",
+        "pasteAndRestore": "粘贴并还原剪贴板",
+        "pasteAndRestoreDescription": "粘贴到当前应用后，还原剪贴板原有内容。",
+        "pasteAndKeep": "粘贴并保留文本",
+        "pasteAndKeepDescription": "粘贴到当前应用，并将文本保留在剪贴板中。",
+        "copyOnly": "仅复制",
+        "copyOnlyDescription": "将文本复制到剪贴板，以便手动粘贴。"
       },
       "startup": {
         "launchAtLogin": "登录时启动",
@@ -251,7 +254,8 @@
   "controlPanel": {
     "history": {
       "couldNotLoadTitle": "无法加载历史记录",
-      "couldNotLoadDescription": "加载转录记录时出错，请尝试关闭并重新打开应用。",
+      "couldNotLoadDescription": "加载转录记录时出错，请重试。",
+      "loading": "正在加载历史记录…",
       "copiedTitle": "已复制！",
       "copiedDescription": "文本已复制到剪贴板",
       "couldNotDeleteTitle": "无法删除",
@@ -327,6 +331,14 @@
     "noAudio": {
       "title": "我们没听清",
       "description": "请检查麦克风后重试。"
+    },
+    "promptEcho": {
+      "title": "请确认这段转录",
+      "description": "结果看起来像词典提示词。如果这就是你说的内容，可以查看并复制文字，也可以重新发送录音。"
+    },
+    "clipboardWriteFailed": {
+      "title": "文本已保留在此处",
+      "description": "未能将转录文本复制到剪贴板。关闭此卡片前，请查看并复制文本。"
     },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "3 秒内无法连接转录服务器。请确认它已启动且可以访问。",
@@ -407,6 +419,12 @@
     },
     "defaultTestInput": "嗯请在周四不对周五之前把报告发给我",
     "dialogs": {
+      "unsaved": {
+        "title": "保存提示词更改？",
+        "description": "提示词还有未保存的更改。",
+        "keepEditing": "继续编辑",
+        "discard": "放弃更改"
+      },
       "reset": {
         "description": "你的自定义提示词将被替换，且无法撤销。",
         "title": "恢复为默认提示词？",
@@ -487,6 +505,8 @@
     "historyOff": "历史记录已关闭。转录结果只在此处显示，不会保存。",
     "openHistory": "打开历史记录",
     "copyText": "复制文本",
+    "savingToHistory": "正在保存到历史记录…",
+    "retryFailed": "重试失败项",
     "saveFailed": "未能保存到历史记录",
     "transcribeFiles": "转录 {{count}} 个文件",
     "removeFromQueue": "从队列中移除 {{name}}"
@@ -662,6 +682,7 @@
   "app": {
     "toasts": {
       "hotkeyUnavailable": {
+        "listenerStopped": "快捷键监听已停止。请检查辅助功能和输入监控权限，然后重启 Whisper。",
         "title": "快捷键不可用"
       },
       "hotkeyHint": {

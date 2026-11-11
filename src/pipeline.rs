@@ -61,8 +61,13 @@ pub struct Transcript {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PipelineOutcome {
-    /// The server heard nothing usable, or echoed the dictionary prompt.
+    /// The server heard nothing usable.
     NoAudio,
+    /// Text alone cannot distinguish a prompt echo from spoken hint words.
+    /// Keep the candidate for explicit recovery instead of delivering it.
+    PromptEcho {
+        text: String,
+    },
     Transcribed(Transcript),
     Failed {
         message: String,
@@ -224,7 +229,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
             .as_deref()
             .is_some_and(|p| matches_dictionary_prompt(&raw, p));
     if echo {
-        return PipelineOutcome::NoAudio;
+        return PipelineOutcome::PromptEcho { text: raw };
     }
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
@@ -453,7 +458,7 @@ mod tests {
     }
 
     #[test]
-    fn partial_snippets_do_not_exempt_multi_entry_prompt_echoes() {
+    fn partial_snippets_do_not_exempt_multi_entry_prompt_echoes_from_review() {
         let asr = asr("sig, Supabase, Tauri");
         let mut i = served(&asr, None);
         i.dictionary = vec!["Supabase".into(), "Tauri".into()];
@@ -463,7 +468,9 @@ mod tests {
         }];
         assert_eq!(
             run_test(run(i, CancellationToken::new())),
-            PipelineOutcome::NoAudio
+            PipelineOutcome::PromptEcho {
+                text: "sig, Supabase, Tauri".into()
+            }
         );
     }
 
@@ -486,14 +493,23 @@ mod tests {
     }
 
     #[test]
-    fn dictionary_echo_is_no_audio() {
-        let asr = asr("Supabase, Tauri");
-        let mut i = served(&asr, None);
-        i.dictionary = vec!["Supabase".into(), "Tauri".into()];
-        assert_eq!(
-            run_test(run(i, CancellationToken::new())),
-            PipelineOutcome::NoAudio
-        );
+    fn dictionary_echo_keeps_candidate_text_without_cleanup_or_delivery() {
+        for (spoken, dictionary) in [
+            ("Supabase", vec!["Supabase".into()]),
+            ("Supabase, Tauri", vec!["Supabase".into(), "Tauri".into()]),
+        ] {
+            let asr = asr(spoken);
+            let llm = llm(completion("rewritten"));
+            let mut i = served(&asr, Some(&llm));
+            i.dictionary = dictionary;
+            assert_eq!(
+                run_test(run(i, CancellationToken::new())),
+                PipelineOutcome::PromptEcho {
+                    text: spoken.into()
+                }
+            );
+            assert!(llm.requests().is_empty());
+        }
     }
 
     #[test]

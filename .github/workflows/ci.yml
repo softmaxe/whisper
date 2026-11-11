@@ -70,6 +70,7 @@ jobs:
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
+      WHISPER_REQUIRE_FFMPEG: "1"
     defaults:
       run:
         shell: bash
@@ -101,6 +102,10 @@ jobs:
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Validate architecture, toolchain and package version
         run: scripts/check-version.sh
+
+      # Use the checksum-verified static binary that the app resolves in development.
+      - name: Install pinned FFmpeg for conversion tests
+        run: scripts/download-ffmpeg.sh
 
       - name: Check Whisper
         run: scripts/check.sh

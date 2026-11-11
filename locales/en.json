@@ -86,12 +86,15 @@
         "pauseMediaDescription": "Automatically pause music when dictation starts",
         "title": "Sound & media"
       },
-      "clipboard": {
-        "title": "Clipboard",
-        "autoPaste": "Automatic pasting",
-        "autoPasteDescription": "Automatically paste transcribed text into the active app when dictation finishes",
-        "keepInClipboard": "Keep transcript in clipboard",
-        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed"
+      "output": {
+        "title": "Output",
+        "mode": "Output mode",
+        "pasteAndRestore": "Paste and restore",
+        "pasteAndRestoreDescription": "Paste into the active app, then restore your clipboard.",
+        "pasteAndKeep": "Paste and keep",
+        "pasteAndKeepDescription": "Paste into the active app and keep the text on your clipboard.",
+        "copyOnly": "Copy only",
+        "copyOnlyDescription": "Copy the text to your clipboard for manual pasting."
       },
       "startup": {
         "launchAtLogin": "Launch at login",
@@ -254,7 +257,8 @@
   "controlPanel": {
     "history": {
       "couldNotLoadTitle": "Couldn’t load your history",
-      "couldNotLoadDescription": "Something went wrong loading your transcripts. Try closing and reopening the app.",
+      "couldNotLoadDescription": "Something went wrong loading your transcripts. Try again.",
+      "loading": "Loading history…",
       "copiedTitle": "Copied",
       "copiedDescription": "Text copied to your clipboard",
       "couldNotDeleteTitle": "Couldn’t delete",
@@ -331,6 +335,14 @@
     "noAudio": {
       "title": "We didn’t catch that",
       "description": "Check your microphone and try again."
+    },
+    "promptEcho": {
+      "title": "Check this transcription",
+      "description": "The result looks like the dictionary prompt. View and copy the text if it’s what you said, or resend the recording."
+    },
+    "clipboardWriteFailed": {
+      "title": "Your text is kept here",
+      "description": "Couldn’t copy the transcription to your clipboard. View and copy the text before closing this card."
     },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "Couldn’t reach the transcription server within 3 seconds. Check that it’s running and reachable.",
@@ -411,6 +423,12 @@
     },
     "defaultTestInput": "um please send the report by thursday no wait friday",
     "dialogs": {
+      "unsaved": {
+        "title": "Save your prompt changes?",
+        "description": "Your prompt has unsaved changes.",
+        "keepEditing": "Keep Editing",
+        "discard": "Discard"
+      },
       "reset": {
         "description": "Your custom prompt will be replaced. This can’t be undone.",
         "title": "Reset to the default prompt?",
@@ -566,6 +584,8 @@
     "historyOff": "History is off. Transcripts show here but aren’t saved.",
     "openHistory": "Open History",
     "copyText": "Copy Text",
+    "savingToHistory": "Saving to History…",
+    "retryFailed": "Retry failed",
     "saveFailed": "Couldn’t save to History",
     "transcribeFiles_one": "Transcribe {{count}} File",
     "transcribeFiles_other": "Transcribe {{count}} Files",
@@ -683,6 +703,7 @@
   "app": {
     "toasts": {
       "hotkeyUnavailable": {
+        "listenerStopped": "The shortcut listener stopped. Check Accessibility and Input Monitoring permissions, then restart Whisper.",
         "title": "Hotkey unavailable"
       },
       "hotkeyHint": {
