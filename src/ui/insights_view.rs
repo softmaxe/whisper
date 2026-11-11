@@ -64,6 +64,14 @@ enum Range {
 }
 
 impl Range {
+    fn index(self) -> usize {
+        match self {
+            Self::Week => 0,
+            Self::Month => 1,
+            Self::AllTime => 2,
+        }
+    }
+
     /// Days in the period, `None` for all time.
     fn days(self) -> Option<i64> {
         match self {
@@ -87,8 +95,55 @@ impl Range {
     }
 }
 
+/// Prepared off the UI thread so pointer updates never rebuild daily aggregates.
+struct PreparedInsights {
+    trends: [Trend; 3],
+    highlights: [DayHighlights; 3],
+    active_dates: HashSet<NaiveDate>,
+    streak: Option<(NaiveDate, NaiveDate)>,
+    weekday_averages: [f64; 7],
+}
+
+impl PreparedInsights {
+    fn new(summary: &AnalyticsSummary, today: NaiveDate) -> Self {
+        let ranges = [Range::Week, Range::Month, Range::AllTime];
+        let first = first_use(summary).unwrap_or(today);
+        let active_dates = summary
+            .daily
+            .iter()
+            .filter(|day| day.words > 0 || day.dictations > 0)
+            .filter_map(|day| NaiveDate::parse_from_str(&day.date, "%Y-%m-%d").ok())
+            .collect();
+        Self {
+            trends: ranges.map(|range| {
+                let start = today - Days::new(range.chart_days() as u64 - 1);
+                let start = if range == Range::AllTime {
+                    start.min(first)
+                } else {
+                    start
+                };
+                build_trend(&summary.daily, start, today)
+            }),
+            highlights: ranges.map(|range| {
+                let start = range
+                    .days()
+                    .map_or(first, |days| today - Days::new(days as u64 - 1));
+                day_highlights(&summary.daily, start, today)
+            }),
+            streak: current_streak(&active_dates, today),
+            active_dates,
+            weekday_averages: weekday_averages(
+                &summary.daily,
+                first.max(today - Days::new(HABIT_WEEKS * 7 - 1)),
+                today,
+            ),
+        }
+    }
+}
+
 pub struct InsightsView {
     summary: Option<Arc<AnalyticsSummary>>,
+    prepared: Option<Arc<PreparedInsights>>,
     load_failed: bool,
     load_generation: u64,
     load_in_flight: bool,
@@ -400,6 +455,7 @@ impl InsightsView {
         .detach();
         let mut this = Self {
             summary: None,
+            prepared: None,
             load_failed: false,
             load_generation: 0,
             load_in_flight: false,
@@ -428,15 +484,22 @@ impl InsightsView {
                     return;
                 };
                 let result = cx
-                    .background_spawn(async move { db.get_analytics_summary() })
+                    .background_spawn(async move {
+                        db.get_analytics_summary().map(|summary| {
+                            let prepared =
+                                PreparedInsights::new(&summary, Local::now().date_naive());
+                            (summary, prepared)
+                        })
+                    })
                     .await;
                 let retry = this.update(cx, |this, cx| {
                     if generation != this.load_generation {
                         return true;
                     }
                     match result {
-                        Ok(summary) => {
+                        Ok((summary, prepared)) => {
                             this.summary = Some(Arc::new(summary));
+                            this.prepared = Some(Arc::new(prepared));
                             this.load_failed = false;
                         }
                         Err(err) => {
@@ -665,19 +728,14 @@ impl InsightsView {
 
     fn chart(
         &self,
-        summary: &AnalyticsSummary,
+        trend: &Trend,
         today: NaiveDate,
         p: &Palette,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut start = today - Days::new(self.range.chart_days() as u64 - 1);
-        if self.range == Range::AllTime
-            && let Some(first) = first_use(summary)
-        {
-            start = start.min(first);
-        }
-        let Trend { bucket_days, bars } = build_trend(&summary.daily, start, today);
+        let bucket_days = trend.bucket_days;
+        let bars = &trend.bars;
         let count = bars.len().max(1);
         let last = bars.len().saturating_sub(1);
         // Bars before this index belong to the comparison period.
@@ -741,7 +799,14 @@ impl InsightsView {
             tick += step;
         }
 
-        let inset = if count > 40 { 1.5 } else { 3. };
+        // Fixed padding must not force a multi-year chart wider than its viewport.
+        let inset = if count > 120 {
+            0.
+        } else if count > 40 {
+            1.5
+        } else {
+            3.
+        };
         let mut columns = layer().top(px(plot_top)).h(px(CHART_HEIGHT)).flex();
         for (index, bar) in bars.iter().enumerate() {
             let in_period = index >= period_from;
@@ -769,6 +834,7 @@ impl InsightsView {
                     .aria_size_of_set(bars.len())
                     .when(is_selected, |d| d.aria_active_descendant())
                     .flex_1()
+                    .min_w_0()
                     .h_full()
                     .flex()
                     .items_end()
@@ -799,7 +865,9 @@ impl InsightsView {
                         // different kind of mark from even the shortest bar.
                         div().w_full().flex().justify_center().child(
                             div()
-                                .size(px(5.))
+                                .w_full()
+                                .max_w(px(5.))
+                                .h(px(5.))
                                 .mb(px(1.))
                                 .rounded_full()
                                 .border_1()
@@ -818,9 +886,9 @@ impl InsightsView {
             .text_size(px(TEXT_CAPTION))
             .font_features(tabular_nums())
             .text_color(p.subtle_foreground);
-        for (index, label) in axis_labels(&bars, bucket_days).into_iter().enumerate() {
+        for (index, label) in axis_labels(bars, bucket_days).into_iter().enumerate() {
             let strong = selected == index;
-            let slot = div().flex_1().relative().flex().justify_center();
+            let slot = div().flex_1().min_w_0().relative().flex().justify_center();
             labels = labels.child(slot.children(label.map(|text| {
                 let text = div()
                     .flex_none()
@@ -1098,12 +1166,11 @@ impl InsightsView {
     /// Day-level figures for the selected period.
     fn highlights(
         &self,
-        summary: &AnalyticsSummary,
+        highlights: DayHighlights,
         today: NaiveDate,
         wide: bool,
         p: &Palette,
     ) -> Div {
-        let highlights = day_highlights(&summary.daily, self.period_start(summary, today), today);
         let per_active_day = highlights.words_per_active_day();
         let DayHighlights {
             days,
@@ -1225,14 +1292,14 @@ impl InsightsView {
     /// The current streak as a figure, with a calendar of the last weeks
     /// beside it: one column per week, Monday at the top so its rows line up
     /// with the weekly rhythm. The days of the current streak take the accent.
-    fn streak_card(summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
-        let active: HashSet<NaiveDate> = summary
-            .daily
-            .iter()
-            .filter(|b| b.words > 0 || b.dictations > 0)
-            .filter_map(|b| NaiveDate::parse_from_str(&b.date, "%Y-%m-%d").ok())
-            .collect();
-        let streak = current_streak(&active, today);
+    fn streak_card(
+        summary: &AnalyticsSummary,
+        prepared: &PreparedInsights,
+        today: NaiveDate,
+        p: &Palette,
+    ) -> Div {
+        let active = &prepared.active_dates;
+        let streak = prepared.streak;
         let in_streak = |day: NaiveDate| streak.is_some_and(|(from, to)| from <= day && day <= to);
         let first_monday = today
             - Days::new(u64::from(today.weekday().num_days_from_monday()) + (HABIT_WEEKS - 1) * 7);
@@ -1342,9 +1409,14 @@ impl InsightsView {
     /// Average words per weekday over the habits span, with the busiest
     /// weekday called out. The span is fixed so each weekday averages several
     /// days whatever range the trend above shows.
-    fn weekly_rhythm(&self, summary: &AnalyticsSummary, today: NaiveDate, p: &Palette) -> Div {
-        let (start, scope) = Self::habits_span(summary, today);
-        let averages = weekday_averages(&summary.daily, start, today);
+    fn weekly_rhythm(
+        &self,
+        summary: &AnalyticsSummary,
+        averages: [f64; 7],
+        today: NaiveDate,
+        p: &Palette,
+    ) -> Div {
+        let (_, scope) = Self::habits_span(summary, today);
         let max = averages.iter().copied().fold(0., f64::max);
         let busiest = averages
             .iter()
@@ -1490,6 +1562,9 @@ impl InsightsView {
         let content = (f32::from(window.viewport_size().width) - sidebar).min(PAGE_MAX_WIDTH)
             - 2. * PAGE_GUTTER;
         let wide = content > 720.;
+        let Some(prepared) = &self.prepared else {
+            return div();
+        };
         let today = Local::now().date_naive();
         let metrics = div()
             .flex()
@@ -1544,16 +1619,19 @@ impl InsightsView {
                     .child(self.range_picker(p, cx)),
             )
             .child(div().mt(px(20.)).child(metrics))
-            .child(
-                div()
-                    .mt(px(36.))
-                    .child(self.chart(summary, today, p, window, cx)),
-            )
-            .child(
-                div()
-                    .mt(px(28.))
-                    .child(self.highlights(summary, today, wide, p)),
-            );
+            .child(div().mt(px(36.)).child(self.chart(
+                &prepared.trends[self.range.index()],
+                today,
+                p,
+                window,
+                cx,
+            )))
+            .child(div().mt(px(28.)).child(self.highlights(
+                prepared.highlights[self.range.index()],
+                today,
+                wide,
+                p,
+            )));
         // The habits keep their own span whatever the range, so they sit in
         // a separate section that names it.
         let (_, span) = Self::habits_span(summary, today);
@@ -1581,8 +1659,8 @@ impl InsightsView {
                     ),
             )
             .child(div().mt(px(SECTION_HEAD_GAP)).child(pair(
-                Self::streak_card(summary, today, p),
-                self.weekly_rhythm(summary, today, p),
+                Self::streak_card(summary, prepared, today, p),
+                self.weekly_rhythm(summary, prepared.weekday_averages, today, p),
             )));
         div()
             .flex()

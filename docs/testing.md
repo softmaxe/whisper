@@ -112,6 +112,10 @@ For changes to macOS signing, also test an upgrade between two release builds si
 
 Do not reset TCC permissions, change system trust, or delete Keychain items during the upgrade test. Those actions would invalidate the test. Automated signature checks alone do not prove permission retention, and a source change does not update an already installed app. See [macOS signing](macos-signing.md) for identity setup.
 
+## Insights regression check
+
+- Using a temporary development database with at least 3,000 active days, select All time. Check that the date range starts at the earliest activity, active days include the full history, and chart totals, spoken time, and busiest day agree with the headline totals. Hover, keyboard navigation, and range switching should remain responsive; long charts should use weekly bars.
+
 ## Tokyo Night theme check
 
 - Select Tokyo Night in Settings > General. Reopen Settings and restart the app; the selection must persist. Switch macOS appearance while it is selected: it must remain Tokyo Night. Verify Auto still follows macOS, and Light and Dark remain available.
