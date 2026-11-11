@@ -792,7 +792,7 @@ pub fn settings_panel(rows: Vec<AnyElement>, p: &Palette) -> Div {
 /// A titled settings group: a `section_header` over a `settings_panel`.
 pub fn settings_section(title: impl Into<SharedString>, rows: Vec<AnyElement>, p: &Palette) -> Div {
     div()
-        .child(section_header(title, p).px(px(16.)))
+        .child(section_header(title, p).px(px(super::theme::SETTINGS_SECTION_INSET)))
         .child(settings_panel(rows, p))
 }
 
@@ -943,7 +943,7 @@ fn field_with_label(
 /// Which sidebar a [`nav_row`] sits on; the two follow different T3 Code row tokens.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum NavSurface {
-    /// The true-black app sidebar (`[data-app-sidebar]`).
+    /// The darkest app sidebar (`[data-app-sidebar]`).
     App,
     /// The settings navigation on the card-toned `settings_sidebar`.
     Settings,
@@ -1105,10 +1105,25 @@ pub fn retention_banner(
         )
 }
 
+/// Place a message's center at the shared optical center of its viewport.
+/// This wrapper adds no hit region, so actions inside keep their usual routing.
+pub fn empty_state_placement(available: Pixels, content: impl IntoElement) -> Div {
+    let available = available.max(px(0.));
+    div()
+        .h(available)
+        .flex_none()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .pb(available * (1. - 2. * super::theme::EMPTY_OPTICAL_CENTER))
+        .child(content)
+}
+
 /// The 36 px raised tile that holds an empty state's icon.
 pub fn empty_state_icon(name: &str, p: &Palette) -> Div {
     div()
-        .size(px(36.))
+        .size(px(super::theme::EMPTY_ICON_SIZE))
         .flex()
         .items_center()
         .justify_center()
@@ -1146,7 +1161,7 @@ pub fn empty_state(
         .child(
             div()
                 .mt(px(4.))
-                .max_w(px(340.))
+                .max_w(px(super::theme::EMPTY_BODY_MAX_WIDTH))
                 .text_size(px(TEXT_SMALL))
                 .line_height(px(LINE_SMALL))
                 .text_color(p.muted_foreground)

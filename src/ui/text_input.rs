@@ -167,7 +167,10 @@ fn field_frame(
         .border_color(border)
         .when(!shadow.is_empty(), |d| d.shadow(shadow))
         .text_color(p.foreground)
-        .when(mono, |d| d.font_family(FONT_MONO))
+        .when(mono, |d| {
+            d.font_family(FONT_MONO)
+                .font_features(crate::ui::theme::mono_features())
+        })
         .map(|d| match kind {
             FieldKind::Line => d
                 .h(px(ROW_CONTROL_HEIGHT))

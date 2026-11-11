@@ -500,7 +500,7 @@ impl UploadView {
 
     // ---- Rendering -------------------------------------------------------------------------
 
-    fn render_stage_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_stage_panel(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
         let ready = Self::provider_ready(cx);
         let stage = self.stage.clone();
@@ -508,7 +508,7 @@ impl UploadView {
         let browsable = ready && stage == Stage::Idle;
         let complete = matches!(stage, Stage::Complete { .. });
         let content = match stage.clone() {
-            Stage::Idle if !ready => self.render_no_provider(cx),
+            Stage::Idle if !ready => self.render_no_provider(window, cx),
             Stage::Idle => self.render_idle(cx),
             Stage::Selected => self.render_selected(cx),
             Stage::Transcribing => self.render_transcribing(cx),
@@ -533,7 +533,7 @@ impl UploadView {
             // A queue below takes over as the page's focus, so the target shrinks.
             .when(!complete, |d| {
                 d.min_h(px(if self.queue.is_empty() {
-                    STAGE_HEIGHT
+                    stage_height(window)
                 } else {
                     STAGE_COMPACT_HEIGHT
                 }))
@@ -631,25 +631,32 @@ impl UploadView {
             .into_any_element()
     }
 
-    fn render_no_provider(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_no_provider(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let p = cx.palette();
-        stage_body()
-            .child(empty_state(
-                "settings",
-                t("upload.noProviderTitle"),
-                t("upload.noProviderHint"),
-                &p,
-            ))
-            .child(
-                div().mt(px(20.)).flex().child(
-                    Button::new("upload-no-provider")
-                        .label(t("upload.noProviderAction"))
-                        .on_click(cx.listener(|_, _, _, cx| {
-                            cx.emit(UploadEvent::OpenSettings(SettingsSection::SpeechToText))
-                        })),
+        super::components::empty_state_placement(
+            px(stage_height(window)),
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .child(empty_state(
+                    "settings",
+                    t("upload.noProviderTitle"),
+                    t("upload.noProviderHint"),
+                    &p,
+                ))
+                .child(
+                    div().mt(px(20.)).flex().child(
+                        Button::new("upload-no-provider")
+                            .label(t("upload.noProviderAction"))
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(UploadEvent::OpenSettings(SettingsSection::SpeechToText))
+                            })),
+                    ),
                 ),
-            )
-            .into_any_element()
+        )
+        .px(px(32.))
+        .into_any_element()
     }
 
     fn render_selected(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -1294,19 +1301,29 @@ impl UploadView {
 
 impl Render for UploadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let stage = self.render_stage_panel(cx);
+        let stage = self.render_stage_panel(window, cx);
         // The destination line only answers "where does this go" before a
         // result or a queue answers it instead.
         let busy = !self.queue.is_empty() || matches!(self.stage, Stage::Complete { .. });
         let settings = self.render_settings(!busy, cx);
         let queue = (!self.queue.is_empty()).then(|| self.render_queue(window, cx));
         page_container()
+            .when(!busy, |d| {
+                d.min_h(window.viewport_size().height - px(super::theme::WORKSPACE_TOP_BAR_HEIGHT))
+            })
             .pb(px(32.))
             .flex()
             .flex_col()
             .gap(px(12.))
             .child(stage)
-            .child(settings)
+            // Once the target reaches its height cap, the information strip
+            // stays above the normal bottom inset instead of leaving a blank footer.
+            .child(
+                div()
+                    .flex_none()
+                    .when(!busy, |d| d.mt_auto())
+                    .child(settings),
+            )
             .children(queue)
     }
 }
@@ -1314,16 +1331,11 @@ impl Render for UploadView {
 /// Drag-over styles on the stage panel's children key off this group.
 const STAGE_GROUP: &str = "upload-stage";
 
-/// The stage panel's floor while no queue is listed: a target big enough
-/// to drop on that keeps the settings card in view at the window's minimum
-/// size, without swelling into a poster in a tall window.
-const STAGE_HEIGHT: f32 = 280.;
-
 /// The stage panel's floor while a queue is listed below it.
 const STAGE_COMPACT_HEIGHT: f32 = 220.;
 
 /// Width of the stage's centered text column.
-const GROUP_MAX_WIDTH: f32 = 380.;
+const GROUP_MAX_WIDTH: f32 = super::theme::UPLOAD_COPY_MAX_WIDTH;
 
 /// Side of the icon tile that heads each stage.
 const GLYPH_TILE: f32 = 44.;
@@ -1340,6 +1352,18 @@ const WAVE: [f32; 28] = [
 
 fn panel_border(p: &Palette) -> Hsla {
     p.border.opacity(if p.dark { 1. } else { 0.8 })
+}
+
+/// Let the target grow while keeping the information strip in view.
+fn stage_height(window: &Window) -> f32 {
+    f32::from(
+        window.viewport_size().height
+            - px(super::theme::WORKSPACE_TOP_BAR_HEIGHT + super::theme::PAGE_TOP + 32. + 12. + 90.),
+    )
+    .clamp(
+        super::theme::UPLOAD_STAGE_MIN_HEIGHT,
+        super::theme::UPLOAD_STAGE_MAX_HEIGHT,
+    )
 }
 
 /// The stage panel's body: one centered group of glyph, copy and actions.
@@ -1370,7 +1394,7 @@ fn stage_text(text: impl Into<SharedString>, p: &Palette) -> Div {
     div()
         .max_w(px(GROUP_MAX_WIDTH))
         .text_size(px(TEXT_BODY))
-        .line_height(px(20.))
+        .line_height(px(crate::ui::theme::LINE_BODY))
         .text_color(p.muted_foreground)
         .child(text.into())
 }

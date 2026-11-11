@@ -866,7 +866,7 @@ impl DictionaryView {
 
     pub(super) fn render_empty(p: &Palette, cx: &mut Context<Self>) -> Div {
         // The shared empty state, bare like History's, with the two ways in.
-        div().flex().justify_center().py(px(48.)).px(px(24.)).child(
+        div().flex().justify_center().px(px(24.)).child(
             empty_state(
                 "book-open",
                 t("dictionary.emptyTitle"),

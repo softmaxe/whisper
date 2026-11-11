@@ -10,27 +10,14 @@ impl SettingsModal {
 
         let theme_switch = {
             let mut track = segmented_track(&p).items_center().flex_wrap().gap(px(2.));
-            for (value, icon_name, key) in [
-                (
-                    ThemePreference::Light,
-                    "sun",
-                    "settings.general.appearance.light",
-                ),
-                (
-                    ThemePreference::Dark,
-                    "moon",
-                    "settings.general.appearance.dark",
-                ),
+            for (value, key) in [
+                (ThemePreference::Light, "settings.general.appearance.light"),
+                (ThemePreference::Dark, "settings.general.appearance.dark"),
                 (
                     ThemePreference::TokyoNight,
-                    "moon",
                     "settings.general.appearance.tokyoNight",
                 ),
-                (
-                    ThemePreference::Auto,
-                    "monitor",
-                    "settings.general.appearance.auto",
-                ),
+                (ThemePreference::Auto, "settings.general.appearance.auto"),
             ] {
                 let selected = s.theme == value;
                 track = track.child(
@@ -41,15 +28,7 @@ impl SettingsModal {
                         cx,
                     )
                     .gap(px(4.))
-                    .child(icon(
-                        icon_name,
-                        14.,
-                        if selected {
-                            p.foreground
-                        } else {
-                            p.muted_foreground
-                        },
-                    ))
+                    .child(theme_swatch(value, &p))
                     .child(t(key))
                     .on_click(move |_, _, cx| update_settings(cx, |s| s.theme = value)),
                 );
@@ -269,7 +248,14 @@ impl SettingsModal {
             .line_height(px(LINE_SMALL))
             .text_color(p.subtle_foreground)
             .child(div().w_full().child(t("settings.language.uiDescription")))
-            .child(link);
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(icon("mic", 12., p.subtle_foreground))
+                    .child(link),
+            );
         panel_row()
             .child(
                 div()
@@ -372,4 +358,47 @@ impl SettingsModal {
             ))
             .into_any_element()
     }
+}
+
+/// One dot per option in that theme's signature tone: white, near-black,
+/// Tokyo Night's slate blue, and a light/dark split for Auto.
+fn theme_swatch(preference: ThemePreference, chrome: &Palette) -> Div {
+    let base = match preference {
+        ThemePreference::Light | ThemePreference::Auto => Palette::light().card,
+        ThemePreference::Dark => Palette::dark().card,
+        ThemePreference::TokyoNight => Palette::tokyo_night().primary,
+    };
+    let second = (preference == ThemePreference::Auto).then(|| Palette::dark().card);
+    let edge = chrome.input_border;
+    div()
+        .size(px(crate::ui::theme::THEME_SWATCH_SIZE))
+        .flex_none()
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    let radius = bounds.size.width / 2.;
+                    window.paint_quad(fill(bounds, edge).corner_radii(radius));
+                    let inner = bounds.inset(px(1.));
+                    let radius = inner.size.width / 2.;
+                    window.paint_quad(fill(inner, base).corner_radii(radius));
+                    if let Some(second) = second {
+                        let mut half = PathBuilder::fill();
+                        half.move_to(point(inner.center().x, inner.top()));
+                        half.arc_to(
+                            point(radius, radius),
+                            px(0.),
+                            false,
+                            true,
+                            point(inner.center().x, inner.bottom()),
+                        );
+                        half.close();
+                        if let Ok(path) = half.build() {
+                            window.paint_path(path, second);
+                        }
+                    }
+                },
+            )
+            .size_full(),
+        )
 }

@@ -438,8 +438,8 @@ impl DictionaryView {
                             .px(px(6.))
                             .py(px(2.))
                             .text_size(px(TEXT_SMALL))
-                            .text_color(p.primary)
-                            .child(icon("mic", 10., p.primary))
+                            .text_color(p.foreground)
+                            .child(icon("mic", 10., p.muted_foreground))
                             .child(t(&format!("dictionary.snippets.examples.{key}Trigger"))),
                     )
                     .child(
@@ -461,59 +461,41 @@ impl DictionaryView {
                     ),
             );
         }
-        surface_card(p).child(
-            div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap_x(px(40.))
-                .gap_y(px(24.))
-                .px(px(28.))
-                .py(px(32.))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(220.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(4.))
-                                .text_size(px(TEXT_TITLE))
-                                .line_height(px(24.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(p.foreground)
-                                .child(t("dictionary.snippets.emptyTitle"))
-                                .child(
-                                    div()
-                                        .text_color(p.primary)
-                                        .child(t("dictionary.snippets.emptyTitleAccent")),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .mt(px(6.))
-                                .text_size(px(TEXT_BODY))
-                                .line_height(px(20.))
-                                .text_color(p.muted_foreground)
-                                .child(t("dictionary.snippets.emptyDescription")),
-                        )
-                        .when(self.panel != Panel::NewSnippet, |d| {
-                            d.child(
-                                div().mt(px(20.)).child(
-                                    Button::new("snippet-new")
-                                        .icon("plus", 12.)
-                                        .label(t("dictionary.snippets.new"))
-                                        .size(ButtonSize::Sm)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.open_panel(Panel::NewSnippet, window, cx)
-                                        })),
-                                ),
-                            )
-                        }),
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(24.))
+            .child(
+                empty_state(
+                    "scroll-text",
+                    format!(
+                        "{} {}",
+                        t("dictionary.snippets.emptyTitle"),
+                        t("dictionary.snippets.emptyTitleAccent")
+                    ),
+                    t("dictionary.snippets.emptyDescription"),
+                    p,
                 )
-                .child(examples),
-        )
+                .when(self.panel != Panel::NewSnippet, |d| {
+                    d.child(
+                        div().mt(px(20.)).child(
+                            Button::new("snippet-new")
+                                .icon("plus", 12.)
+                                .label(t("dictionary.snippets.new"))
+                                .size(ButtonSize::Sm)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.open_panel(Panel::NewSnippet, window, cx)
+                                })),
+                        ),
+                    )
+                }),
+            )
+            .child(
+                examples
+                    .flex_none()
+                    .max_w(px(super::super::theme::UPLOAD_COPY_MAX_WIDTH)),
+            )
     }
 }
 

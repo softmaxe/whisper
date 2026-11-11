@@ -369,17 +369,12 @@ fn axis_labels(bars: &[TrendBar], bucket_days: i64) -> Vec<Option<String>> {
     labels
 }
 
-/// A bar in the selected period, today included: the accent hue at a lower
-/// lightness and chroma that clears 3:1 against the canvas on its own
-/// (3.5:1 dark, 3.9:1 light), so the full accent stays free to mark the bar
-/// under the pointer or cursor. No edge: the fill alone carries the shape.
+/// The current period uses the theme's confident blue, clearing 3:1 alone.
 fn period_tone(p: &Palette) -> Hsla {
     p.chart_current
 }
 
-/// A comparison-period bar: a flat neutral that clears 3:1 against the
-/// canvas, so every bar's height reads, while the saturated
-/// period tone keeps the current period in the lead.
+/// The previous period stays visible but recedes behind the current blue.
 fn comparison_tone(p: &Palette) -> Hsla {
     p.chart_comparison
 }
@@ -1763,20 +1758,17 @@ impl Render for InsightsView {
             }
             None => Self::load_error(&p, cx),
         };
-        // Without data the message sits in the middle of the visible area
-        // rather than atop an empty canvas.
-        let visible = window.viewport_size().height - px(WORKSPACE_TOP_BAR_HEIGHT);
-        page.min_h(visible).child(
+        let available =
+            window.viewport_size().height - px(WORKSPACE_TOP_BAR_HEIGHT + PAGE_TOP + 32.);
+        page.child(super::components::empty_state_placement(
+            available,
             div()
-                .flex_1()
                 .flex()
                 .flex_col()
                 .items_center()
-                .justify_center()
-                .pb(px(PAGE_TOP))
                 .child(notice)
                 .child(privacy.mt(px(32.))),
-        )
+        ))
     }
 }
 

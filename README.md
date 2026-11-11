@@ -56,7 +56,9 @@ Data lives in `~/Library/Application Support/com.softmaxe.whisper`.
 
 ## Screenshots
 
-The screenshots use sample data.
+The screenshots show the light theme in v0.0.29 with fictional sample data.
+Light, dark, Tokyo Night and automatic appearance are available in
+Settings > General.
 
 | History | Insights |
 | --- | --- |
