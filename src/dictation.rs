@@ -166,6 +166,8 @@ pub struct Dictation {
     generation: u64,
     start_lock: bool,
     cancel: Option<CancellationToken>,
+    skip_cleanup: Option<CancellationToken>,
+    is_cleaning: bool,
     target_pid: Option<TargetPid>,
     started_at: Option<(Instant, DateTime<Utc>)>,
     effects_held: bool,
@@ -212,6 +214,8 @@ impl Dictation {
                 generation: 0,
                 start_lock: false,
                 cancel: None,
+                skip_cleanup: None,
+                is_cleaning: false,
                 target_pid: None,
                 started_at: None,
                 effects_held: false,
@@ -248,6 +252,10 @@ impl Dictation {
     fn set_phase(&mut self, phase: Phase, cx: &mut Context<Self>) {
         let previous = self.phase;
         self.phase = phase;
+        if phase != Phase::Processing {
+            self.is_cleaning = false;
+            self.skip_cleanup = None;
+        }
         self.status.set(phase);
         if phase != Phase::Preparing {
             backend::clear_hotkey_start_request();
@@ -262,6 +270,7 @@ impl Dictation {
         let snapshot = DictationSnapshot {
             is_recording: self.phase == Phase::Recording,
             is_processing: self.phase == Phase::Processing,
+            is_cleaning: self.phase == Phase::Processing && self.is_cleaning,
             is_preparing: self.phase == Phase::Preparing,
         };
         AppState::global(cx).update(cx, |s, cx| {
@@ -446,6 +455,42 @@ impl Dictation {
         true
     }
 
+    pub fn skip_cleanup(&mut self, cx: &mut Context<Self>) {
+        if self.phase == Phase::Processing && self.is_cleaning {
+            if let Some(skip) = self.skip_cleanup.take() {
+                skip.cancel();
+            }
+            self.is_cleaning = false;
+            self.publish(cx);
+        }
+    }
+
+    fn cleanup_control(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (CancellationToken, async_channel::Sender<bool>) {
+        let skip = CancellationToken::new();
+        self.skip_cleanup = Some(skip.clone());
+        let (tx, rx) = async_channel::unbounded();
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            while let Ok(running) = rx.recv().await {
+                let _ = this.update(cx, |this, cx| {
+                    if this.generation == generation && this.phase == Phase::Processing {
+                        this.is_cleaning = running
+                            && this
+                                .skip_cleanup
+                                .as_ref()
+                                .is_some_and(|skip| !skip.is_cancelled());
+                        this.publish(cx);
+                    }
+                });
+            }
+        })
+        .detach();
+        (skip, tx)
+    }
+
     pub fn cancel_processing(&mut self, cx: &mut Context<Self>) {
         if self.phase != Phase::Processing {
             return;
@@ -541,6 +586,7 @@ impl Dictation {
         let generation = self.generation;
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
+        let (skip, stage) = self.cleanup_control(cx);
         let stopped = Instant::now();
         let handle = crate::services::runtime::spawn(async move {
             let conversion_cancel = cancel.clone();
@@ -567,7 +613,8 @@ impl Dictation {
             }
             let mut input = input.await;
             input.audio = wav.clone();
-            let outcome = run_prepared_pipeline(input, cancel).await;
+            input.cleanup_stage = Some(stage);
+            let outcome = run_prepared_pipeline_controlled(input, cancel, skip).await;
             log::info!(
                 "[perf] operation={generation} stage=pipeline_complete elapsed_ms={:.3}",
                 stopped.elapsed().as_secs_f64() * 1000.0
@@ -622,8 +669,11 @@ impl Dictation {
         let input = Self::pipeline_input(wav.clone(), cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
+        let (skip, stage) = self.cleanup_control(cx);
         let handle = crate::services::runtime::spawn(async move {
-            run_prepared_pipeline(input.await, cancel).await
+            let mut input = input.await;
+            input.cleanup_stage = Some(stage);
+            run_prepared_pipeline_controlled(input, cancel, skip).await
         });
         cx.spawn(async move |this, cx| {
             let outcome = handle.await.unwrap_or(PipelineOutcome::Failed {
@@ -921,12 +971,18 @@ fn capture_pipeline_input(
         snippets: db.get_snippets().unwrap_or_default(),
         settings,
         cleanup_api_key: None,
+        cleanup_stage: None,
     })
 }
 
-async fn run_prepared_pipeline(
+async fn run_prepared_pipeline(input: PipelineInput, cancel: CancellationToken) -> PipelineOutcome {
+    run_prepared_pipeline_controlled(input, cancel, CancellationToken::new()).await
+}
+
+async fn run_prepared_pipeline_controlled(
     mut input: PipelineInput,
     cancel: CancellationToken,
+    skip_cleanup: CancellationToken,
 ) -> PipelineOutcome {
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
@@ -945,7 +1001,7 @@ async fn run_prepared_pipeline(
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    pipeline::run(input, cancel).await
+    pipeline::run(input, cancel, skip_cleanup).await
 }
 
 /// Re-transcribes a History row from its saved audio through the same
@@ -1042,6 +1098,8 @@ mod tests {
             generation: 7,
             start_lock: false,
             cancel: None,
+            skip_cleanup: None,
+            is_cleaning: false,
             target_pid: None,
             started_at: None,
             effects_held: false,
@@ -1181,6 +1239,7 @@ mod tests {
             spoken_text: "words worth keeping".into(),
             raw_text: "um words worth keeping".into(),
             cleanup_failure: None,
+            cleanup_skipped: false,
         };
         for retention_enabled in [false, true] {
             let saved = history
@@ -1248,6 +1307,8 @@ mod tests {
                 generation: 7,
                 start_lock: false,
                 cancel: Some(cancel.clone()),
+                skip_cleanup: None,
+                is_cleaning: false,
                 target_pid: None,
                 started_at: None,
                 effects_held: false,

@@ -339,8 +339,44 @@ impl PillView {
         // Transcribing names itself beside the dots, so the state reads
         // without hovering. It keeps the timed recording pill's width, so
         // the capsule does not jump sideways when recording ends.
-        let think_label = t("dictation.pill.transcribing");
-        let think_w = Self::processing_width(&think_label, timed_w, window);
+        let polishing = processing && snapshot.is_cleaning;
+        if !polishing {
+            self.skip_hovered = false;
+        }
+        let think_label = t(if polishing {
+            "dictation.pill.polishing"
+        } else {
+            "dictation.pill.transcribing"
+        });
+        let skip_label = t("dictation.pill.skip");
+        let skip_w = Self::label_width(&skip_label, window) + 8.;
+        let skip_t = f32_tx(
+            "skip-emerge",
+            if polishing { 1. } else { 0. },
+            if reduce {
+                0
+            } else if polishing {
+                DUR_BASE
+            } else {
+                DUR_FAST
+            },
+            ease_out,
+            window,
+            cx,
+        );
+        let think_w = f32_tx(
+            "pill-processing-width",
+            Self::processing_width(&think_label, timed_w, window)
+                + if polishing {
+                    THINK_LABEL_GAP + skip_w
+                } else {
+                    0.
+                },
+            if reduce { 0 } else { DUR_BASE },
+            ease_out,
+            window,
+            cx,
+        );
         let think_alpha = thinking * motion_fx.bars;
         let think = (think_alpha > 0.001).then(|| {
             let mut dots = div().flex().items_center().gap(px(THINK_GAP));
@@ -367,6 +403,43 @@ impl PillView {
                         .text_color(p.foreground.opacity(PILL_LABEL * think_alpha))
                         .child(think_label.clone()),
                 )
+                .when(polishing, |d| {
+                    let scale = if reduce { 1. } else { 0.8 + 0.2 * skip_t };
+                    d.child(
+                        div()
+                            .id("pill-skip-cleanup")
+                            .keyboard_focusable(
+                                "pill-skip-cleanup",
+                                Role::Button,
+                                t("dictation.pill.skipCleanup"),
+                                cx,
+                            )
+                            .w(px(skip_w))
+                            .h(px(24.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(RADIUS_MD))
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.muted_foreground)
+                            .hover(move |s| s.text_color(p.foreground))
+                            .opacity(skip_t)
+                            .text_size(px(TEXT_SMALL * scale))
+                            .cursor_pointer()
+                            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                                this.skip_hovered = *hovered;
+                                cx.notify();
+                            }))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.drag_origin = None;
+                                cx.stop_propagation();
+                                Dictation::global(cx).update(cx, |d, cx| d.skip_cleanup(cx));
+                            }))
+                            .child(skip_label.clone()),
+                    )
+                })
         });
 
         let check = motion_fx.check.map(|(scale, alpha)| {
@@ -582,6 +655,7 @@ impl PillView {
     pub(super) fn render_hint(
         snapshot: &DictationSnapshot,
         on_cancel: bool,
+        on_skip: bool,
         cx: &App,
     ) -> Option<Div> {
         let p = hud(cx);
@@ -605,6 +679,8 @@ impl PillView {
             if on_cancel && (snapshot.is_recording || snapshot.is_processing) {
                 row.child(caption(t("dictation.pill.cancelDictation"), p.foreground))
                     .children(esc)
+            } else if on_skip && snapshot.is_cleaning {
+                row.child(caption(t("dictation.pill.skipHint"), p.foreground))
             } else if snapshot.is_recording {
                 row.child(caption(t("dictation.pill.finish"), p.foreground))
                     .child(caption("·".into(), p.subtle_foreground))

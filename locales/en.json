@@ -370,7 +370,11 @@
       "cancel": "Cancel",
       "cancelDictation": "Cancel Dictation",
       "dismiss": "Close",
-      "closesIn": "Closes in {{seconds}} s; hover to keep open"
+      "closesIn": "Closes in {{seconds}} s; hover to keep open",
+      "polishing": "Polishing",
+      "skip": "Skip",
+      "skipHint": "Insert without cleanup",
+      "skipCleanup": "Skip cleanup"
     },
     "keptRecording": "Your {{time}} recording is kept until you close this card."
   },

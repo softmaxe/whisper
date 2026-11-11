@@ -193,6 +193,7 @@ pub struct PillView {
     /// Whether the pointer rests on the cancel control, so the hint above
     /// the pill speaks for it instead of for the pill.
     cancel_hovered: bool,
+    skip_hovered: bool,
 }
 
 impl PillView {
@@ -236,6 +237,7 @@ impl PillView {
             ready_at: None,
             recorded: Duration::ZERO,
             cancel_hovered: false,
+            skip_hovered: false,
         }
     }
 
@@ -747,7 +749,7 @@ impl Render for PillView {
             // The hint sits above the pill, aligned with it; toasts take
             // that spot when present.
             let hint = (self.hovered && active && self.toasts.is_empty())
-                .then(|| Self::render_hint(&snapshot, self.cancel_hovered, cx))
+                .then(|| Self::render_hint(&snapshot, self.cancel_hovered, self.skip_hovered, cx))
                 .flatten();
             if let Some(hint) = hint {
                 let hint =

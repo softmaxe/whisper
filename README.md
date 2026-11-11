@@ -28,6 +28,8 @@ typing in.
   recording (key combinations toggle with one press), or hold to talk. A
   floating recording pill shows a live waveform and the elapsed time, with a
   cancel button beside it; click the pill to finish or press Escape to cancel.
+  During polishing, Skip inserts the recognized text immediately with local
+  corrections and snippets still applied.
   If the server fails, the recording is kept so you can resend it.
 - **Self-hosted models.** Speech recognition goes to your own
   `/audio/transcriptions` endpoint; optional cleanup goes to a

@@ -55,9 +55,14 @@ fn performance_live_pipeline() {
                 known_corrections: Vec::new(),
                 snippets: Vec::new(),
                 cleanup_api_key: None,
+                cleanup_stage: None,
             };
             let pipeline_started = Instant::now();
-            let outcome = super::runtime::block_on(pipeline::run(input, CancellationToken::new()));
+            let outcome = super::runtime::block_on(pipeline::run(
+                input,
+                CancellationToken::new(),
+                CancellationToken::new(),
+            ));
             let pipeline_ms = pipeline_started.elapsed().as_secs_f64() * 1000.0;
             let total_ms = started.elapsed().as_secs_f64() * 1000.0;
             let PipelineOutcome::Transcribed(transcript) = outcome else {

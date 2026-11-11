@@ -366,7 +366,11 @@
       "cancel": "取消",
       "cancelDictation": "取消听写",
       "dismiss": "关闭",
-      "closesIn": "{{seconds}} 秒后关闭；悬停可保持打开"
+      "closesIn": "{{seconds}} 秒后关闭；悬停可保持打开",
+      "polishing": "润色中",
+      "skip": "跳过",
+      "skipHint": "不润色直接插入",
+      "skipCleanup": "跳过润色"
     },
     "keptRecording": "这段 {{time}} 的录音会一直保留，直到你关闭此卡片。"
   },

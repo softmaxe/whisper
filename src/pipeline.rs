@@ -36,6 +36,7 @@ pub struct PipelineInput {
     pub known_corrections: Vec<KnownCorrection>,
     pub snippets: Vec<Snippet>,
     pub cleanup_api_key: Option<String>,
+    pub cleanup_stage: Option<async_channel::Sender<bool>>,
 }
 
 /// Why cleanup did not run on a transcript that was still delivered raw.
@@ -57,6 +58,7 @@ pub struct Transcript {
     /// The server's transcript before cleanup.
     pub raw_text: String,
     pub cleanup_failure: Option<CleanupFailure>,
+    pub cleanup_skipped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -194,7 +196,11 @@ pub fn finalize_script(text: &str, settings: &Settings) -> String {
 /// Transcribes `input.audio`, filters dictionary echoes, cleans up, converts
 /// the Chinese script and expands Snippets. Cancelling `cancel` aborts only
 /// this run.
-pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOutcome {
+pub async fn run(
+    input: PipelineInput,
+    cancel: CancellationToken,
+    skip_cleanup: CancellationToken,
+) -> PipelineOutcome {
     let route = match transcription::resolve_transcription_route(&input.settings) {
         Ok(route) => route,
         Err(err) => return PipelineOutcome::failed_from(&TranscriptionError::Route(err)),
@@ -230,6 +236,7 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
             spoken_text: filtered.trim().to_string(),
             raw_text: raw,
             cleanup_failure: None,
+            cleanup_skipped: false,
         });
     }
     // Check the dictionary alone as well as the full prompt: a script bias
@@ -246,7 +253,25 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let (cleaned, cleanup_failure) = clean_up(&filtered, &input, &cancel).await;
+    let mut cleanup_skipped = false;
+    let (cleaned, cleanup_failure) = if cleanup_enabled(&input.settings) {
+        // A skip issued during ASR cannot arm a future cleanup stage.
+        let can_skip = !skip_cleanup.is_cancelled();
+        let stage = CleanupStage::new(input.cleanup_stage.as_ref());
+        let result = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return PipelineOutcome::Cancelled,
+            _ = skip_cleanup.cancelled(), if can_skip => {
+                cleanup_skipped = true;
+                (filtered.clone(), None)
+            }
+            result = clean_up(&filtered, &input, &cancel) => result,
+        };
+        drop(stage);
+        result
+    } else {
+        (filtered.clone(), None)
+    };
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
@@ -263,7 +288,27 @@ pub async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOut
         spoken_text,
         raw_text: raw,
         cleanup_failure,
+        cleanup_skipped,
     })
+}
+
+struct CleanupStage<'a>(Option<&'a async_channel::Sender<bool>>);
+
+impl<'a> CleanupStage<'a> {
+    fn new(sender: Option<&'a async_channel::Sender<bool>>) -> Self {
+        if let Some(sender) = sender {
+            let _ = sender.try_send(true);
+        }
+        Self(sender)
+    }
+}
+
+impl Drop for CleanupStage<'_> {
+    fn drop(&mut self) {
+        if let Some(sender) = self.0 {
+            let _ = sender.try_send(false);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -272,6 +317,10 @@ mod tests {
     use crate::services::test_server::{MockServer, Reply, run as run_test};
     use serde_json::json;
     use std::time::Duration;
+
+    async fn run(input: PipelineInput, cancel: CancellationToken) -> PipelineOutcome {
+        super::run(input, cancel, CancellationToken::new()).await
+    }
 
     fn input(dictionary: &[&str]) -> PipelineInput {
         PipelineInput {
@@ -282,6 +331,7 @@ mod tests {
             known_corrections: Vec::new(),
             snippets: Vec::new(),
             cleanup_api_key: None,
+            cleanup_stage: None,
         }
     }
 
@@ -590,6 +640,76 @@ mod tests {
         });
         assert_eq!(outcome, PipelineOutcome::Cancelled);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn skipping_cleanup_is_prompt_and_finishes_deterministic_steps_once() {
+        let asr = asr("Uh, 電腦 克劳德 sig");
+        let llm = llm(completion("late reply").delayed(Duration::from_secs(3)));
+        let mut input = served(&asr, Some(&llm));
+        input.settings.preferred_language = "zh-CN".into();
+        input.settings.chinese_script_preference =
+            crate::settings::ChineseScriptPreference::Simplified;
+        input.known_corrections = corrections();
+        input.snippets = vec![Snippet {
+            trigger: "sig".into(),
+            replacement: "uh saved text".into(),
+        }];
+        let (tx, rx) = async_channel::unbounded();
+        input.cleanup_stage = Some(tx);
+        let skip = CancellationToken::new();
+        let started = std::time::Instant::now();
+        let t = transcribed(run_test(async {
+            let run = super::run(input, CancellationToken::new(), skip.clone());
+            let skipping = async {
+                assert_eq!(rx.recv().await, Ok(true));
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                skip.cancel();
+            };
+            let (outcome, ()) = tokio::join!(run, skipping);
+            outcome
+        }));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(t.raw_text, "Uh, 電腦 克劳德 sig");
+        assert!(t.text.contains("电脑"), "{}", t.text);
+        assert!(t.text.contains("Claude"), "{}", t.text);
+        assert!(t.text.ends_with("uh saved text"), "{}", t.text);
+        assert!(t.cleanup_skipped);
+        assert_eq!(t.cleanup_failure, None);
+        assert_eq!(rx.try_recv(), Ok(false));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(llm.requests().len(), 1);
+    }
+
+    #[test]
+    fn early_and_late_cleanup_skips_are_harmless() {
+        for early in [true, false] {
+            let asr = asr("hello there");
+            let llm = llm(completion("Hello there."));
+            let mut input = served(&asr, Some(&llm));
+            let (tx, rx) = async_channel::unbounded();
+            input.cleanup_stage = Some(tx);
+            let skip = CancellationToken::new();
+            if early {
+                skip.cancel();
+            }
+            let t = transcribed(run_test(super::run(
+                input,
+                CancellationToken::new(),
+                skip.clone(),
+            )));
+            skip.cancel();
+            assert_eq!(t.text, "Hello there.");
+            assert!(!t.cleanup_skipped);
+            assert_eq!(rx.try_recv(), Ok(true));
+            assert_eq!(rx.try_recv(), Ok(false));
+        }
+        let asr = asr("hello there");
+        let mut input = served(&asr, None);
+        let (tx, rx) = async_channel::unbounded();
+        input.cleanup_stage = Some(tx);
+        let _ = run_test(run(input, CancellationToken::new()));
+        assert!(rx.try_recv().is_err());
     }
 
     /// Live check against real servers (see [`crate::services::live_tests`]):

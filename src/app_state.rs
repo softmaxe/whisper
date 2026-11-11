@@ -28,6 +28,7 @@ use crate::ui::theme;
 pub struct DictationSnapshot {
     pub is_recording: bool,
     pub is_processing: bool,
+    pub is_cleaning: bool,
     pub is_preparing: bool,
 }
 

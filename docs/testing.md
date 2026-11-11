@@ -134,3 +134,10 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 - Check Chinese hesitation runs and the exceptions 打呃 and 呃逆. Newlines, ordinary words, and the non-filler Chinese words 嗯, 啊, 额, 那个, 然后, and 就是 must remain.
 - Check filler-only input produces no-audio feedback, and a whole snippet still expands when preceded by a filler. Turn removal off and verify the transcript is unchanged. File uploads must continue returning raw server text.
 - Tab to the switch and activate it with the keyboard; verify its VoiceOver label in both interface languages and all three themes.
+
+## Skip cleanup regression check
+
+- Delay the cleanup server, dictate, and verify Transcribing becomes Polishing only after ASR completes. Skip must appear inside the capsule while Cancel remains beside it. Skip is unavailable during ASR.
+- Click Skip and verify immediate insertion of the recognized text with filler removal, Chinese script conversion, known corrections, and snippets. There must be no cleanup failure notice and no second paste when the delayed reply arrives. Cancel must still discard the whole operation.
+- Tab to Skip and activate it with Return or Space. Check VoiceOver's “Skip cleanup” label and the “Insert without cleanup” hover hint. Check smooth width changes and emergence, then repeat with Reduce motion for immediate changes.
+- Use `WHISPER_DEV_SCENE=pill:cleanup` with isolated data to inspect Light, Dark and Tokyo Night, and both interface languages.

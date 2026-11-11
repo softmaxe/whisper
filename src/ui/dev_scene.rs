@@ -4,7 +4,7 @@
 //! Values: `home`, `insights`, `upload`, `dictionary`, `search`,
 //! `settings[:general|language|hotkeys|speech|llms|privacy]`, and the pill states
 //! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
-//! `pill:error`, `pill:fallback`.
+//! `pill:cleanup`, `pill:cleanup-transition`, `pill:error`, `pill:fallback`.
 //! `WHISPER_DEV_SCROLL_FRACTION=0.5` or `1` captures the middle or bottom of Settings.
 
 use std::time::Duration;
@@ -45,6 +45,8 @@ pub fn scene() -> Option<Scene> {
             "preparing" => "preparing",
             "transition" => "transition",
             "processing" => "processing",
+            "cleanup" => "cleanup",
+            "cleanup-transition" => "cleanup-transition",
             "error" => "error",
             "fallback" => "fallback",
             _ => "recording",
@@ -68,6 +70,24 @@ pub fn apply_pill(cx: &mut App) {
         return;
     };
     match state {
+        "cleanup-transition" => {
+            AppState::global(cx).update(cx, |s, cx| {
+                s.dictation.is_processing = true;
+                cx.notify();
+            });
+            cx.spawn(async |cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                    cx.update(|cx| {
+                        AppState::global(cx).update(cx, |s, cx| {
+                            s.dictation.is_cleaning = !s.dictation.is_cleaning;
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+        }
         "preparing" | "transition" => {
             AppState::global(cx).update(cx, |s, cx| {
                 s.dictation.is_preparing = true;
@@ -105,10 +125,11 @@ pub fn apply_pill(cx: &mut App) {
                 .detach();
             }
         }
-        "recording" | "processing" => {
+        "recording" | "processing" | "cleanup" => {
             AppState::global(cx).update(cx, |s, cx| {
                 s.dictation.is_recording = state == "recording";
-                s.dictation.is_processing = state == "processing";
+                s.dictation.is_processing = state == "processing" || state == "cleanup";
+                s.dictation.is_cleaning = state == "cleanup";
                 cx.notify();
             });
         }

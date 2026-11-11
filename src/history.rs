@@ -217,6 +217,7 @@ mod tests {
             spoken_text: text.into(),
             raw_text: format!("um {text}"),
             cleanup_failure: None,
+            cleanup_skipped: false,
         }
     }
 
