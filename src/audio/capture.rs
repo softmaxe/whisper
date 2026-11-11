@@ -11,7 +11,7 @@
 //! `start()` adopts that pre-roll when it is at most [`PRE_ROLL_MAX_AGE`] old
 //! and resolves once the source has delivered its first frames.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
@@ -53,9 +53,23 @@ fn level_rms(samples: &[f32]) -> f32 {
 /// Events from a live capture, delivered on the capture thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureEvent {
-    /// The device errored or vanished mid-recording. The recording is
-    /// cancelled and "Microphone unavailable" is shown.
-    DeviceLost { message: String },
+    /// The device errored or vanished. Consumers must check the capture ID
+    /// before stopping a recording: this event may have waited in a queue.
+    DeviceLost {
+        capture_id: CaptureId,
+        message: String,
+    },
+}
+
+/// Identity of one stream, including an adopted prepared stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CaptureId(u64);
+
+impl CaptureId {
+    fn next() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
 pub type EventSink = Arc<dyn Fn(CaptureEvent) + Send + Sync>;
@@ -380,6 +394,7 @@ enum Command {
 
 /// One open microphone stream on its own thread.
 pub struct CaptureSession {
+    id: CaptureId,
     core: Arc<Core>,
     commands: mpsc::Sender<Command>,
     selector: Option<String>,
@@ -397,6 +412,7 @@ impl CaptureSession {
     /// on a new thread and returns immediately. Buffering starts as soon as
     /// the stream runs; open errors surface from [`Self::begin_recording`].
     pub fn open(selector: Option<&str>, events: Option<EventSink>) -> Result<Self, AudioError> {
+        let id = CaptureId::next();
         let selector = normalize_selector(selector);
         let core = Arc::new(Core::new(Instant::now()));
         let (tx, rx) = mpsc::channel();
@@ -404,9 +420,10 @@ impl CaptureSession {
         let thread_selector = selector.clone();
         std::thread::Builder::new()
             .name("whisper-mic".into())
-            .spawn(move || capture_thread(thread_selector, thread_core, rx, events))
+            .spawn(move || capture_thread(id, thread_selector, thread_core, rx, events))
             .map_err(|e| AudioError::Open(e.to_string()))?;
         Ok(Self {
+            id,
             core,
             commands: tx,
             selector,
@@ -468,6 +485,7 @@ impl Drop for CaptureSession {
 }
 
 fn capture_thread(
+    capture_id: CaptureId,
     selector: Option<String>,
     core: Arc<Core>,
     commands: mpsc::Receiver<Command>,
@@ -488,7 +506,10 @@ fn capture_thread(
         }
         let outcome = core.tick(Instant::now());
         if let (Some(message), Some(sink)) = (outcome.report, events.as_ref()) {
-            sink(CaptureEvent::DeviceLost { message });
+            sink(CaptureEvent::DeviceLost {
+                capture_id,
+                message,
+            });
         }
         if outcome.stop {
             log::debug!("prepared microphone capture expired");
@@ -714,6 +735,11 @@ impl Recorder {
         self.inner.lock().active.as_ref()?.session.level()
     }
 
+    /// The stream currently starting or recording, for rejecting queued events.
+    pub fn active_capture_id(&self) -> Option<CaptureId> {
+        self.inner.lock().active.as_ref().map(|a| a.session.id)
+    }
+
     /// Reads only the active session; prewarming is not a live recording.
     pub fn capture_status(&self) -> CaptureStatus {
         let inner = self.inner.lock();
@@ -754,6 +780,7 @@ impl Recorder {
         let (commands, _) = mpsc::channel();
         recorder.inner.lock().active = Some(ActiveCapture {
             session: CaptureSession {
+                id: CaptureId::next(),
                 core,
                 commands,
                 selector: None,
@@ -790,6 +817,7 @@ mod tests {
     fn fake_session(core: Arc<Core>) -> CaptureSession {
         let (commands, _) = mpsc::channel();
         CaptureSession {
+            id: CaptureId::next(),
             core,
             commands,
             selector: Some("requested device".into()),

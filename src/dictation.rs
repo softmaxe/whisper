@@ -16,7 +16,7 @@ use futures::future::Shared;
 use gpui_kit::*;
 use tokio_util::sync::CancellationToken;
 
-use crate::audio::capture::{CaptureEvent, CaptureStatus, RecordedAudio, Recorder};
+use crate::audio::capture::{CaptureEvent, CaptureId, CaptureStatus, RecordedAudio, Recorder};
 use crate::audio::cues;
 use crate::history::Recording;
 use crate::i18n::t;
@@ -185,10 +185,14 @@ impl Dictation {
             })));
             let device_events = cx.spawn(async move |this, cx| {
                 while let Ok(event) = rx.recv().await {
-                    let CaptureEvent::DeviceLost { message } = event;
-                    log::warn!("microphone lost: {message}");
+                    let CaptureEvent::DeviceLost {
+                        capture_id,
+                        message,
+                    } = event;
                     if this
-                        .update(cx, |this: &mut Dictation, cx| this.fail_microphone(cx))
+                        .update(cx, |this: &mut Dictation, cx| {
+                            this.fail_microphone(capture_id, &message, cx)
+                        })
                         .is_err()
                     {
                         break;
@@ -446,11 +450,12 @@ impl Dictation {
         self.set_phase(Phase::Idle, cx);
     }
 
-    fn fail_microphone(&mut self, cx: &mut Context<Self>) {
-        if !matches!(self.phase, Phase::Recording | Phase::Preparing) {
+    fn fail_microphone(&mut self, capture_id: CaptureId, message: &str, cx: &mut Context<Self>) {
+        if !self.accepts_device_loss(capture_id) {
             return;
         }
-        let audio = self.interrupt_capture();
+        log::warn!("microphone lost: {message}");
+        let audio = self.interrupt_capture(capture_id);
         let generation = self.generation;
         self.set_phase(Phase::Processing, cx);
         let conversion = crate::services::runtime::blocking(move || {
@@ -470,8 +475,19 @@ impl Dictation {
         .detach();
     }
 
+    fn accepts_device_loss(&self, capture_id: CaptureId) -> bool {
+        matches!(self.phase, Phase::Recording | Phase::Preparing)
+            && self.recorder.active_capture_id() == Some(capture_id)
+    }
+
     /// Device failure stops capture without applying the user's discard action.
-    fn interrupt_capture(&mut self) -> Option<(RecordedAudio, Duration, DateTime<Utc>)> {
+    fn interrupt_capture(
+        &mut self,
+        capture_id: CaptureId,
+    ) -> Option<(RecordedAudio, Duration, DateTime<Utc>)> {
+        if !self.accepts_device_loss(capture_id) {
+            return None;
+        }
         self.generation += 1;
         self.start_lock = false;
         self.recorder.cancel_prepared();
@@ -977,7 +993,9 @@ mod tests {
             dictation.recorder = Recorder::with_test_audio(vec![0.1; 16_000]);
             dictation.started_at = Some((std::time::Instant::now(), occurred_at));
             if interrupted {
-                let audio = dictation.interrupt_capture().unwrap();
+                let audio = dictation
+                    .interrupt_capture(dictation.recorder.active_capture_id().unwrap())
+                    .unwrap();
                 let kept = FailedRecording::from_interrupted_audio(audio).unwrap();
                 assert_eq!(kept.occurred_at, occurred_at);
                 assert!(kept.wav.starts_with(b"RIFF"));
@@ -998,12 +1016,36 @@ mod tests {
         use super::{FailedRecording, Phase, Recorder};
         let mut dictation = dictation(Phase::Recording);
         dictation.recorder = Recorder::with_test_audio(vec![0.1; 10]);
+        let capture_id = dictation.recorder.active_capture_id().unwrap();
         assert!(
             dictation
-                .interrupt_capture()
+                .interrupt_capture(capture_id)
                 .and_then(FailedRecording::from_interrupted_audio)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn queued_device_loss_cannot_stop_a_newer_recording() {
+        use super::{Phase, Recorder};
+        let mut dictation = dictation(Phase::Recording);
+        dictation.recorder = Recorder::with_test_audio(vec![0.1; 16_000]);
+        let old_id = dictation.recorder.active_capture_id().unwrap();
+        assert!(dictation.cancel_capture());
+        dictation.recorder = Recorder::with_test_audio(vec![0.2; 16_000]);
+        let current_id = dictation.recorder.active_capture_id().unwrap();
+        let generation = dictation.generation;
+        assert_ne!(old_id, current_id);
+        assert!(!dictation.accepts_device_loss(old_id));
+        assert!(dictation.interrupt_capture(old_id).is_none());
+        assert_eq!(dictation.generation, generation);
+        assert!(dictation.recorder.is_recording());
+        assert_eq!(dictation.phase, Phase::Recording);
+        assert!(dictation.accepts_device_loss(current_id));
+        let (audio, _, _) = dictation.interrupt_capture(current_id).unwrap();
+        assert_eq!(audio.samples, vec![0.2; 16_000]);
+        assert!(!dictation.recorder.is_capture_active());
+        assert!(!dictation.accepts_device_loss(current_id));
     }
 
     #[test]
