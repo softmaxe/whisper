@@ -329,6 +329,18 @@
       "title": "我们没听清",
       "description": "请检查麦克风后重试。"
     },
+    "promptEcho": {
+      "title": "请确认这段转录",
+      "description": "结果看起来像词典提示词。如果这就是你说的内容，可以查看并复制文字，也可以重新发送录音。"
+    },
+    "historySaveFailed": {
+      "title": "转录未完整保存",
+      "description": "无法将转录或录音保存到历史记录。文字已保留在这里，可以查看并复制，也可以重新发送录音。"
+    },
+    "noDestination": {
+      "title": "文字已保留在这里",
+      "description": "转录未保存、粘贴或复制。关闭此卡片前，请查看并复制文字。"
+    },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "3 秒内无法连接转录服务器。请确认它已启动且可以访问。",
       "transcriptionTimeout": "服务器在 30 秒内没有响应。",
