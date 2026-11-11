@@ -693,9 +693,9 @@ pub fn section_header(title: impl Into<SharedString>, p: &Palette) -> Div {
 
 actions!(menu, [DismissMenu]);
 
-/// The key context of a popup menu. Tab is bound to [`DismissMenu`] there:
-/// the window root's own Tab binding runs before any key listener, so a
-/// listener alone would let focus leave with the menu still open.
+/// The key context of an open popup menu. Tab and Escape are bound to
+/// [`DismissMenu`] there: the window's own bindings for those keys run before
+/// any key listener, so a listener alone never sees them.
 pub const MENU_CONTEXT: &str = "Menu";
 
 /// A tooltip on the popover surface; long text wraps.

@@ -288,6 +288,7 @@ pub fn run() {
             KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("tab", DismissMenu, Some(MENU_CONTEXT)),
             KeyBinding::new("shift-tab", DismissMenu, Some(MENU_CONTEXT)),
+            KeyBinding::new("escape", DismissMenu, Some(MENU_CONTEXT)),
         ]);
         cx.on_app_quit(|cx| {
             AppState::global(cx).update(cx, |state, _| state.invalidate_learning());

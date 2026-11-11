@@ -5,7 +5,9 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{MenuTriggerBounds, drop, f32_tx, focus_ring, icon, text_tooltip};
+use super::components::{
+    DismissMenu, MENU_CONTEXT, MenuTriggerBounds, drop, f32_tx, focus_ring, icon, text_tooltip,
+};
 use super::control_panel::CloseOverlay;
 use super::theme::{
     DUR_BASE, DUR_SNAP, FONT_MONO, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT,
@@ -526,6 +528,13 @@ impl Render for Select {
             .aria_expanded(open)
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(Self::on_close_overlay))
+            .when(open, |d| {
+                d.key_context(MENU_CONTEXT).on_action(cx.listener(
+                    |this, _: &DismissMenu, window, cx| {
+                        this.dismiss(window, cx);
+                    },
+                ))
+            })
             .relative()
             .rounded(radius)
             .map(|d| self.size_trigger(d))
