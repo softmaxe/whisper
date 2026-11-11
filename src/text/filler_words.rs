@@ -59,10 +59,11 @@ fn protected(text: &str, code: &[(usize, usize)], start: usize, end: usize) -> b
 /// A filler wrapped in quotes, brackets or emphasis is being talked about,
 /// not hesitated over: `He said "uh" today`, `(hmm)`, `*uh*`.
 fn mentioned(before: &str, after: &str) -> bool {
-    before.ends_with(['"', '\'', '“', '‘', '(', '[', '*'])
-        && after
-            .trim_start_matches(punctuation)
-            .starts_with(['"', '\'', '”', '’', ')', ']', '*'])
+    before.ends_with([
+        '"', '\'', '“', '‘', '(', '[', '*', '「', '『', '（', '《', '〈', '【',
+    ]) && after.trim_start_matches(punctuation).starts_with([
+        '"', '\'', '”', '’', ')', ']', '*', '」', '』', '）', '》', '〉', '】',
+    ])
 }
 
 /// Inline code spans: a run of backticks up to the next run of the same
@@ -126,10 +127,19 @@ fn append_kept(out: &mut String, kept: &str, capitalize: &mut bool) {
         }
         if c.is_alphabetic() {
             let rest = &kept[at + c.len_utf8()..];
-            let own_casing = rest
-                .chars()
-                .take_while(|c| word(*c))
-                .any(|c| c.is_uppercase() || c.is_numeric() || c == '_');
+            // Judge the whole unbroken span, so an address or path is seen
+            // as one literal (`john@example.com`), not as its first word.
+            let span = rest.split(char::is_whitespace).next().unwrap_or("");
+            let literal = span.contains(['@', '/', '\\', '=', '_'])
+                || span
+                    .split('.')
+                    .skip(1)
+                    .any(|part| part.starts_with(char::is_alphanumeric));
+            let own_casing = literal
+                || rest
+                    .chars()
+                    .take_while(|c| word(*c))
+                    .any(|c| c.is_uppercase() || c.is_numeric());
             if own_casing {
                 out.push(c);
             } else {
@@ -137,7 +147,8 @@ fn append_kept(out: &mut String, kept: &str, capitalize: &mut bool) {
             }
             *capitalize = false;
         } else {
-            *capitalize = c.is_whitespace() || matches!(c, '"' | '\'' | '“' | '‘' | '(');
+            *capitalize =
+                c.is_whitespace() || matches!(c, '"' | '\'' | '“' | '‘' | '’' | '(' | '[');
             out.push(c);
         }
     }
@@ -243,13 +254,13 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
             let mut rest = text[from..].chars();
             // A hyphen must stand apart to be a pause (`uh-oh` is a word). The
             // long dashes pause even when set tight (`Uh—we go`), but before
-            // a digit one may be a minus sign.
+            // a number (`–5`, `–.5`) one may be a minus sign.
             if let Some(dash) = rest.next().filter(|c| matches!(c, '-' | '–' | '—')) {
                 let after = rest.next();
                 let pause = if dash == '-' {
                     after.is_none_or(char::is_whitespace)
                 } else {
-                    !after.is_some_and(char::is_numeric)
+                    !after.is_some_and(|c| c.is_numeric() || c == '.')
                 };
                 if pause {
                     end = from + dash.len_utf8();
@@ -411,6 +422,12 @@ mod tests {
             ("- Uh, `myVariable` is it.", "- `myVariable` is it."),
             ("Uh, iPhone works.", "iPhone works."),
             ("Uh, my_var works.", "my_var works."),
+            ("Uh, john@example.com is mine.", "john@example.com is mine."),
+            ("Uh, example.com is mine.", "example.com is mine."),
+            ("Uh, [hello there].", "[Hello there]."),
+            ("Uh, ’tis a fine day.", "’Tis a fine day."),
+            ("Uh, well. It works.", "Well. It works."),
+            ("The value is uh –.5.", "The value is –.5."),
             ("Really? Uh, yes.", "Really? Yes."),
             ("foo uh, bar", "foo bar"),
             ("line one\nuh, line two", "line one\nline two"),
@@ -443,6 +460,9 @@ mod tests {
             "He said \"uh\" today",
             "He said \"uh,\" today",
             "(hmm) hello",
+            "請保留「呃」這個字。",
+            "请保留（呃）这个字。",
+            "他说『呃』然后走了",
             "*uh* hello",
         ] {
             assert_eq!(filtered(text, "en"), text);
