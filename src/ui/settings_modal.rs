@@ -360,6 +360,7 @@ fn endpoint_control(field: impl IntoElement, raw: &str, path: &str, p: &Palette)
                     .child(
                         div()
                             .font_family(FONT_MONO)
+                            .font_features(crate::ui::theme::mono_features())
                             .text_size(px(TEXT_MONO_SMALL))
                             .text_color(p.foreground.opacity(0.85))
                             .child(format!("POST {target}")),
@@ -957,10 +958,19 @@ impl Render for SettingsModal {
             .flex()
             .items_center()
             .gap(px(8.))
-            // The breadcrumb starts where the main top bar's title does
-            // (its padding, sidebar toggle and gap), so opening Settings
-            // never shifts the title sideways.
-            .pl(px(if frame.compact { 20. } else { 50. }))
+            // Include the centered page gutter and the section title inset.
+            .pl(px({
+                let nav_width = if frame.compact { 196. } else { SIDEBAR_WIDTH };
+                let body_width = f32::from(frame.bounds.size.width) - nav_width;
+                let gutter = if frame.compact {
+                    20.
+                } else {
+                    super::theme::PAGE_GUTTER
+                };
+                (body_width - super::theme::SETTINGS_MAX_WIDTH).max(0.) / 2.
+                    + gutter
+                    + super::theme::SETTINGS_SECTION_INSET
+            }))
             .pr(px(10.))
             // No rule under it, like the main top bar it stands in for.
             .text_size(px(TEXT_BODY))
@@ -1047,7 +1057,7 @@ impl Render for SettingsModal {
                     ))
                     .child(
                         page_container()
-                            .max_w(px(860.))
+                            .max_w(px(super::theme::SETTINGS_MAX_WIDTH))
                             .pt(px(if frame.compact { 20. } else { 32. }))
                             .when(frame.compact, |d| d.px(px(20.)))
                             .pb(px(48.))

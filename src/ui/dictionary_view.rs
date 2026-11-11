@@ -1063,6 +1063,26 @@ impl Render for DictionaryView {
             Tab::Words => self.render_words(window, cx),
             Tab::Snippets => self.render_snippets(window, cx),
         };
+        let is_empty = {
+            let state = AppState::global(cx).read(cx);
+            match self.tab {
+                Tab::Words => state.dictionary.is_empty(),
+                Tab::Snippets => state.snippets.is_empty(),
+            }
+        };
+        let body = if is_empty && self.panel == Panel::None {
+            super::components::empty_state_placement(
+                window.viewport_size().height
+                    - px(super::theme::WORKSPACE_TOP_BAR_HEIGHT
+                        + super::theme::PAGE_TOP
+                        + 40.
+                        + TAB_BAR
+                        + 16.),
+                body,
+            )
+        } else {
+            body
+        };
         let context_menu = self
             .menu
             .clone()

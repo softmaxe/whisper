@@ -230,6 +230,12 @@ impl SettingsModal {
                 self.prompt_preview
                     .update(cx, |state, cx| state.set_text(&text, cx));
                 let prompt_list = self.prompt_preview.read(cx).list_state().clone();
+                let fade_list = prompt_list.clone();
+                let preview_surface = p.card.blend(if p.dark {
+                    p.surface_raised.opacity(0.3)
+                } else {
+                    p.muted.opacity(0.3)
+                });
                 div()
                     .px(px(20.))
                     .py(px(16.))
@@ -287,7 +293,7 @@ impl SettingsModal {
                         div()
                             .id("prompt-view")
                             .relative()
-                            .h(px(320.))
+                            .h(px(crate::ui::theme::PROMPT_PREVIEW_HEIGHT))
                             .overflow_hidden()
                             // Bypass the List's frame-relative delta accumulation so
                             // a reversal after an edge takes effect on this event.
@@ -313,11 +319,7 @@ impl SettingsModal {
                             .rounded(px(RADIUS_LG))
                             .border_1()
                             .border_color(p.border.opacity(0.7))
-                            .bg(if p.dark {
-                                p.surface_raised.opacity(0.3)
-                            } else {
-                                p.muted.opacity(0.3)
-                            })
+                            .bg(preview_surface)
                             .text_size(px(TEXT_BODY))
                             .line_height(px(LINE_READING))
                             .text_color(p.foreground)
@@ -326,6 +328,44 @@ impl SettingsModal {
                                     .selectable(true)
                                     .scrollable(true)
                                     .size_full(),
+                            )
+                            .child(
+                                canvas(
+                                    |bounds, _, _| bounds,
+                                    move |_, bounds, window, _| {
+                                        let offset = fade_list.scroll_px_offset_for_scrollbar().y;
+                                        let max = fade_list.max_offset_for_scrollbar().y;
+                                        let height = px(crate::ui::theme::SCROLL_FADE_HEIGHT);
+                                        for (show, top) in [
+                                            (offset < -px(1.), true),
+                                            (-offset < max - px(1.), false),
+                                        ] {
+                                            if show {
+                                                let origin = if top {
+                                                    bounds.origin
+                                                } else {
+                                                    point(bounds.origin.x, bounds.bottom() - height)
+                                                };
+                                                window.paint_quad(fill(
+                                                    Bounds::new(
+                                                        origin,
+                                                        size(bounds.size.width, height),
+                                                    ),
+                                                    linear_gradient(
+                                                        if top { 180. } else { 0. },
+                                                        linear_color_stop(preview_surface, 0.),
+                                                        linear_color_stop(
+                                                            preview_surface.opacity(0.),
+                                                            1.,
+                                                        ),
+                                                    ),
+                                                ));
+                                            }
+                                        }
+                                    },
+                                )
+                                .absolute()
+                                .inset(px(16.)),
                             ),
                     )
                     .into_any_element()

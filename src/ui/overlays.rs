@@ -428,7 +428,7 @@ pub fn render_dialog(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                     d.child(
                         div()
                             .text_size(px(TEXT_BODY))
-                            .line_height(px(20.))
+                            .line_height(px(crate::ui::theme::LINE_BODY))
                             .text_color(p.muted_foreground)
                             .child(desc),
                     )
@@ -643,7 +643,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                         div()
                             .text_size(px(TEXT_BODY))
                             .font_weight(FontWeight::MEDIUM)
-                            .line_height(px(20.))
+                            .line_height(px(crate::ui::theme::LINE_BODY))
                             .text_color(p.foreground)
                             .child(message),
                     )
@@ -657,6 +657,7 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
                                     .rounded(px(RADIUS_SM))
                                     .bg(p.destructive.opacity(if p.dark { 0.12 } else { 0.06 }))
                                     .font_family(FONT_MONO)
+                                    .font_features(crate::ui::theme::mono_features())
                                     .text_size(px(TEXT_MONO_SMALL))
                                     .line_height(px(LINE_SMALL))
                                     .text_color(p.destructive)

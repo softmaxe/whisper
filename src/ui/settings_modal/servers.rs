@@ -681,6 +681,7 @@ impl SettingsModal {
                         div()
                             .truncate()
                             .font_family(FONT_MONO)
+                            .font_features(crate::ui::theme::mono_features())
                             .text_size(px(TEXT_MONO_BODY))
                             .text_color(p.muted_foreground)
                             .child(mask_key(&self.api_key)),

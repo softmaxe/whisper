@@ -335,7 +335,7 @@ impl ControlPanel {
                                     .relative()
                                     .left(px(sidebar_width - SIDEBAR_WIDTH))
                                     .text_size(px(TEXT_BODY))
-                                    .line_height(px(20.))
+                                    .line_height(px(crate::ui::theme::LINE_BODY))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(p.foreground)
                                     .child("Whisper"),
@@ -459,7 +459,7 @@ impl ControlPanel {
                         div()
                             .text_size(px(TEXT_BODY))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .line_height(px(20.))
+                            .line_height(px(crate::ui::theme::LINE_BODY))
                             .text_color(p.foreground)
                             .truncate()
                             .child(title),

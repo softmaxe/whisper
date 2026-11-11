@@ -56,7 +56,7 @@ pub struct Palette {
     pub surface_raised: Hsla,
     pub surface_window: Hsla,
     /// Settings navigation: T3 Code's root `--sidebar`. In dark mode it is the
-    /// card tone, a step above the true-black app sidebar on `surface_window`.
+    /// card tone, a step above the darkest app sidebar on `surface_window`.
     pub settings_sidebar: Hsla,
     pub border_subtle: Hsla,
     pub border_hover: Hsla,
@@ -82,9 +82,9 @@ impl Palette {
         Self {
             dark: false,
             voice: c(0xffffff),
-            chart_current: gpui_kit::hsla(c(0x1b4ed8).h, 0.55, 0.60, 1.),
-            chart_comparison: c(0x18181b).opacity(0.5),
-            chart_rhythm: c(0x18181b).opacity(0.22),
+            chart_current: c(0x1b4ed8),
+            chart_comparison: c(0xd4d4d8),
+            chart_rhythm: c(0x71717a),
             selection: c(0xffffff),
             nav_app: c(0xffffff),
             nav_settings: c(0xffffff),
@@ -101,7 +101,7 @@ impl Palette {
             primary_foreground: c(0xffffff),
             muted: c(0xf4f4f5),
             muted_foreground: c(0x52525b),
-            subtle_foreground: c(0x6b6b74),
+            subtle_foreground: c(0x64646d),
             destructive: c(0xdc2626),
             border: c(0xe4e4e7),
             input: c(0xffffff),
@@ -130,50 +130,49 @@ impl Palette {
         }
     }
 
-    /// T3 Code's dark theme: a true black sidebar and canvas split by a
-    /// hairline, raised surfaces a step above neutral-950, translucent white
-    /// borders and a brighter blue accent.
+    /// Neutral dark surfaces: an ink sidebar, a separate canvas and raised
+    /// cards, with translucent white borders and a brighter blue accent.
     pub fn dark() -> Self {
         Self {
             dark: true,
             voice: c(0xffffff),
-            chart_current: gpui_kit::hsla(c(0x346bf1).h, 0.55, 0.50, 1.),
-            chart_comparison: c(0xf5f5f5).opacity(0.42),
-            chart_rhythm: c(0xf5f5f5).opacity(0.28),
+            chart_current: c(0x346bf1),
+            chart_comparison: c(0xffffff).opacity(0.18),
+            chart_rhythm: c(0x99999f),
             selection: c(0xffffff).opacity(0.15),
             nav_app: c(0xffffff).opacity(0.1),
             nav_settings: c(0xffffff).opacity(0.08),
             list_highlight: c(0xf5f5f5).opacity(0.08),
-            field_background: c(0xffffff).opacity(0.035),
+            field_background: c(0x101011),
             field_hover_border: c(0xffffff).opacity(0.18),
             destructive_fill: c(0xdc2626),
             switch_on: c(0x346bf1),
             switch_off: c(0xffffff).opacity(0.22),
             switch_knob: c(0xffffff),
             switch_edge: c(0xffffff).opacity(0.32),
-            selection_foreground: c(0xf5f5f5),
+            selection_foreground: c(0xededee),
             primary: c(0x346bf1),
             primary_foreground: c(0xffffff),
-            muted: c(0x141414),
+            muted: c(0x1c1c1e),
             muted_foreground: c(0xa1a1a1),
-            subtle_foreground: c(0x8b8b8b),
+            subtle_foreground: c(0x9c9ca3),
             destructive: c(0xfb414a),
             border: c(0xffffff).opacity(0.08),
-            input: c(0x0a0a0a),
+            input: c(0x101011),
             input_border: c(0xffffff).opacity(0.3),
             control_border: c(0xffffff).opacity(0.14),
             ring: c(0x346bf1),
-            background: c(0x000000),
-            foreground: c(0xf5f5f5),
-            card: c(0x111111),
-            popover: c(0x111111),
+            background: c(0x0c0c0d),
+            foreground: c(0xededee),
+            card: c(0x151516),
+            popover: c(0x19191b),
             success: c(0x00d492),
             warning: c(0xffb900),
-            surface_1: c(0x0a0a0a),
-            surface_3: c(0x141414),
-            surface_raised: c(0x1e1e1e),
-            surface_window: c(0x000000),
-            settings_sidebar: c(0x111111),
+            surface_1: c(0x101011),
+            surface_3: c(0x1c1c1e),
+            surface_raised: c(0x232325),
+            surface_window: c(0x060607),
+            settings_sidebar: c(0x151516),
             border_subtle: c(0xffffff).opacity(0.06),
             border_hover: c(0xffffff).opacity(0.11),
             amber_border: c(0xfe9a00).opacity(0.3),
@@ -193,9 +192,9 @@ impl Palette {
         Self {
             dark: true,
             voice: c(0x8da9cf),
-            chart_current: c(0x647fae),
-            chart_comparison: c(0x757987),
-            chart_rhythm: c(0x687388),
+            chart_current: c(0x577fc9),
+            chart_comparison: c(0xffffff).opacity(0.18),
+            chart_rhythm: c(0x9395a3),
             selection: c(0x222430),
             nav_app: c(0x222430),
             nav_settings: c(0x222430),
@@ -214,7 +213,7 @@ impl Palette {
             muted_foreground: c(0x9a9cab),
             subtle_foreground: c(0x9395a3),
             destructive: c(0xd98294),
-            border: c(0x11121a),
+            border: c(0x272a3a),
             input: c(0x15161e),
             input_border: c(0x2c2e3b),
             control_border: c(0x292b37),
@@ -230,7 +229,7 @@ impl Palette {
             surface_raised: c(0x252734),
             surface_window: c(0x15161e),
             settings_sidebar: c(0x15161e),
-            border_subtle: c(0x12131b),
+            border_subtle: c(0x262838),
             border_hover: c(0x454957),
             amber_border: c(0xe0af68).opacity(0.4),
             amber_bg: c(0xe0af68).opacity(0.08),
@@ -377,6 +376,7 @@ pub const TEXT_MONO_BODY: f32 = 13.;
 
 /// Line heights paired with the scale.
 pub const LINE_SMALL: f32 = 18.;
+pub const LINE_BODY: f32 = 20.;
 pub const LINE_READING: f32 = 24.;
 pub const LINE_TITLE: f32 = 24.;
 
@@ -413,6 +413,25 @@ pub fn tabular_nums() -> FontFeatures {
     FontFeatures(Arc::new(vec![("tnum".into(), 1)]))
 }
 
+/// Literal code values must preserve punctuation spacing in JetBrains Mono.
+pub fn mono_features() -> FontFeatures {
+    FontFeatures(Arc::new(vec![("calt".into(), 0), ("liga".into(), 0)]))
+}
+
+/// Shared empty-state geometry and optical center within available space.
+pub const EMPTY_ICON_SIZE: f32 = 36.;
+pub const EMPTY_BODY_MAX_WIDTH: f32 = 340.;
+pub const EMPTY_OPTICAL_CENTER: f32 = 0.42;
+pub const HISTORY_ROW_PADDING: f32 = 8.;
+pub const SETTINGS_MAX_WIDTH: f32 = 860.;
+pub const SETTINGS_SECTION_INSET: f32 = 16.;
+pub const THEME_SWATCH_SIZE: f32 = 14.;
+pub const PROMPT_PREVIEW_HEIGHT: f32 = 320.;
+pub const SCROLL_FADE_HEIGHT: f32 = 24.;
+pub const UPLOAD_STAGE_MIN_HEIGHT: f32 = 280.;
+pub const UPLOAD_STAGE_MAX_HEIGHT: f32 = 720.;
+pub const UPLOAD_COPY_MAX_WIDTH: f32 = 520.;
+
 /// Every main-window page (Home, Insights, Upload, Dictionary) sits in one
 /// centered column of this width with the same side gutter and top inset,
 /// so content starts at the same x on every page.
@@ -422,7 +441,7 @@ pub const PAGE_TOP: f32 = 24.;
 
 /// A comfortable long-form reading measure. The canvas may be wider, but
 /// transcripts and their metadata stay in one scan-friendly column.
-pub const READING_MAX_WIDTH: f32 = 620.;
+pub const READING_MAX_WIDTH: f32 = 720.;
 
 /// Motion durations, in ms. Five steps replace one-off timings:
 ///
@@ -557,7 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn tokyo_night_reading_and_control_contrast() {
+    fn all_palettes_reading_and_control_contrast() {
         fn luminance(color: Hsla) -> f32 {
             let rgba = gpui_kit::Rgba::from(color);
             let linear = |v: f32| {
@@ -573,32 +592,59 @@ mod tests {
             let (a, b) = (luminance(a), luminance(b));
             (a.max(b) + 0.05) / (a.min(b) + 0.05)
         }
+        for p in [Palette::light(), Palette::dark(), Palette::tokyo_night()] {
+            for surface in [
+                p.background,
+                p.card,
+                p.popover,
+                p.input,
+                p.surface_raised,
+                p.settings_sidebar,
+                p.surface_window,
+                p.surface_1,
+                p.surface_3,
+                p.muted,
+                p.field_background,
+            ] {
+                for text in [p.foreground, p.muted_foreground, p.subtle_foreground] {
+                    assert!(
+                        contrast(text, surface) >= 4.5,
+                        "Reading contrast: {}",
+                        contrast(text, surface)
+                    );
+                }
+                assert!(contrast(p.ring, surface) >= 3.);
+            }
+            assert!(contrast(p.ring, p.field_background) >= 3.);
+            assert!(contrast(p.chart_current, p.background) >= 3.);
+            assert!(contrast(p.chart_rhythm, p.background) >= 3.);
+            // Alpha colors must be composited before measuring their contrast.
+            let comparison = p.background.blend(p.chart_comparison);
+            assert!(contrast(comparison, p.background) >= 1.2);
+            assert!(contrast(comparison, p.background) < contrast(p.chart_current, p.background));
+            assert!(contrast(p.white, p.destructive_fill) >= 4.5);
+            assert!(contrast(p.foreground, p.background.blend(p.list_highlight)) >= 4.5);
+            assert!(contrast(p.primary_foreground, p.primary) >= 4.5);
+            assert!(contrast(p.selection_foreground, p.background.blend(p.selection)) >= 4.5);
+        }
         let p = Palette::tokyo_night();
-        for surface in [
+        for surface in [p.card, p.background, p.surface_window] {
+            assert!(contrast(p.border, surface) >= 1.2);
+            assert!(luminance(p.border_subtle) > luminance(surface));
+        }
+        let p = Palette::dark();
+        let surfaces = [
+            p.surface_window,
             p.background,
+            p.input,
             p.card,
             p.popover,
-            p.input,
+            p.surface_3,
             p.surface_raised,
-            p.settings_sidebar,
-        ] {
-            for text in [p.foreground, p.muted_foreground, p.subtle_foreground] {
-                assert!(
-                    contrast(text, surface) >= 4.5,
-                    "Reading contrast: {}",
-                    contrast(text, surface)
-                );
-            }
-            assert!(contrast(p.ring, surface) >= 3.);
+        ];
+        for pair in surfaces.windows(2) {
+            assert!(luminance(pair[1]) > luminance(pair[0]));
         }
-        assert!(contrast(p.ring, p.field_background) >= 3.);
-        for bar in [p.chart_current, p.chart_comparison, p.chart_rhythm] {
-            assert!(contrast(bar, p.background) >= 3.);
-        }
-        assert!(contrast(p.white, p.destructive_fill) >= 4.5);
-        assert!(contrast(p.foreground, p.list_highlight) >= 4.5);
-        assert!(contrast(p.primary_foreground, p.primary) >= 4.5);
-        assert!(contrast(p.selection_foreground, p.selection) >= 4.5);
     }
 
     #[test]

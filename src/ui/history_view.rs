@@ -714,7 +714,7 @@ impl HistoryView {
                         .top(px(3. * (1. - raw_progress)))
                         .font_family(FONT_VOICE)
                         .text_size(px(TEXT_BODY))
-                        .line_height(px(20.))
+                        .line_height(px(crate::ui::theme::LINE_BODY))
                         .text_color(p.subtle_foreground)
                         .child(raw),
                 )
@@ -906,7 +906,7 @@ impl HistoryView {
             .gap(px(12.))
             .rounded(px(RADIUS_LG))
             .px(px(12.))
-            .py(px(10.))
+            .py(px(super::theme::HISTORY_ROW_PADDING))
             .hover(move |s| {
                 s.bg(if p.dark {
                     p.white.opacity(0.04)
@@ -919,7 +919,7 @@ impl HistoryView {
                     .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
-                    .text_right()
+                    .text_left()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
                     .text_color(p.subtle_foreground)
@@ -952,14 +952,14 @@ impl HistoryView {
             .gap(px(12.))
             .rounded(px(RADIUS_LG))
             .px(px(12.))
-            .py(px(10.))
+            .py(px(super::theme::HISTORY_ROW_PADDING))
             .overflow_hidden()
             .child(
                 div()
                     .w(px(TIME_COLUMN))
                     .flex_none()
                     .pt(px(4.))
-                    .text_right()
+                    .text_left()
                     .text_size(px(TEXT_SMALL))
                     .font_features(tabular_nums())
                     .text_color(p.subtle_foreground)
@@ -1257,7 +1257,11 @@ impl Render for HistoryView {
         }
         let groups = self.groups.as_ref().unwrap().1.clone();
         if groups.is_empty() {
-            content = content.child(render_empty_with_hotkey(&hotkey, retention, &p));
+            content = content.child(super::components::empty_state_placement(
+                window.viewport_size().height
+                    - px(super::theme::WORKSPACE_TOP_BAR_HEIGHT + super::theme::PAGE_TOP + 48.),
+                render_empty_with_hotkey(&hotkey, retention, &p),
+            ));
         } else {
             let list_focus = keyed_focus_handle("history-list".into(), cx);
             let mut list = div()
@@ -1397,9 +1401,7 @@ fn empty_card(keys: Div, retention: bool, p: &Palette) -> AnyElement {
         .flex()
         .flex_col()
         .items_center()
-        .min_h(px(256.))
         .px(px(40.))
-        .py(px(48.))
         .child(empty_state("mic", t("controlPanel.history.empty"), body, p))
         .child(
             div()

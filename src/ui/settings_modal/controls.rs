@@ -363,6 +363,7 @@ pub(super) fn connection_status(
                                 .rounded(px(RADIUS_MD))
                                 .bg(p.hover_wash(0.04))
                                 .font_family(FONT_MONO)
+                                .font_features(crate::ui::theme::mono_features())
                                 .text_size(px(TEXT_MONO_SMALL))
                                 .line_height(px(LINE_SMALL))
                                 .text_color(p.muted_foreground)
@@ -460,7 +461,10 @@ pub(super) fn suggestion_chip(
         })
         .when(matches, |d| d.bg(p.hover_wash(0.04)))
         .text_size(px(if mono { TEXT_MONO_SMALL } else { TEXT_SMALL }))
-        .when(mono, |d| d.font_family(FONT_MONO))
+        .when(mono, |d| {
+            d.font_family(FONT_MONO)
+                .font_features(crate::ui::theme::mono_features())
+        })
         .font_weight(FontWeight::MEDIUM)
         .text_color(if matches { fg } else { p.muted_foreground })
         .whitespace_nowrap()
@@ -568,6 +572,7 @@ pub(super) fn info_line(label: String, value: String, p: &Palette) -> Div {
         .child(
             div()
                 .font_family(FONT_MONO)
+                .font_features(crate::ui::theme::mono_features())
                 .text_size(px(TEXT_MONO_SMALL))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(p.foreground)

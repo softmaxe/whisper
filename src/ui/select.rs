@@ -468,6 +468,7 @@ impl Render for Select {
             .font_weight(FontWeight::MEDIUM)
             .when(self.custom_value, |d| {
                 d.font_family(FONT_MONO)
+                    .font_features(crate::ui::theme::mono_features())
                     .text_size(px(TEXT_MONO_SMALL))
                     .tooltip(text_tooltip(label.to_string()))
             })
@@ -611,6 +612,7 @@ impl Select {
                     .text_size(px(TEXT_SMALL))
                     .when(self.custom_value, |d| {
                         d.font_family(FONT_MONO)
+                            .font_features(crate::ui::theme::mono_features())
                             .text_size(px(TEXT_MONO_SMALL))
                             .tooltip(text_tooltip(option.value.to_string()))
                     })
