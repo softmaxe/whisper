@@ -141,6 +141,13 @@ impl MicrophoneTest {
             self.fail(&AudioError::FirstAudioUnavailable);
             return;
         }
+        // UI polling may stop capture late; every finalization path enforces
+        // the sample limit before measuring or retaining the clip.
+        let max_samples = audio.sample_rate as usize * RECORDING_LIMIT.as_secs() as usize;
+        if audio.samples.len() > max_samples {
+            audio.samples.truncate(max_samples);
+            audio.speech_gate = Default::default();
+        }
         // A short clip can finish before capture has measured its first gate.
         if audio.speech_gate.window_count == 0 {
             for window in audio.samples.chunks(ANALYSER_WINDOW) {
@@ -298,6 +305,47 @@ mod tests {
         test.begin(now);
         assert_eq!(test.state(), State::Recording);
         assert!(test.clip.is_none());
+    }
+
+    #[test]
+    fn delayed_ticks_and_manual_stops_retain_at_most_ten_seconds() {
+        let now = Instant::now();
+        for auto_stop in [false, true] {
+            let mut test = recording(now, 0.1);
+            test.recorder = Recorder::with_test_audio(vec![0.1; 25 * 16_000]);
+            if auto_stop {
+                test.tick(now + Duration::from_secs(90));
+            } else {
+                test.stop();
+            }
+            assert_eq!(test.state(), State::Ready);
+            let clip = test.clip.as_ref().unwrap();
+            assert_eq!(clip.samples.len(), 10 * 16_000);
+            assert_eq!(test.duration(), RECORDING_LIMIT);
+        }
+    }
+
+    #[test]
+    fn finalization_limits_native_rate_samples_and_measures_only_retained_audio() {
+        for rate in [16_000, 44_100, 48_000] {
+            let mut test = recording(Instant::now(), 0.1);
+            let mut samples = vec![0.; 10 * rate as usize];
+            samples.extend(vec![0.5; rate as usize]);
+            test.finish_audio(RecordedAudio {
+                samples,
+                sample_rate: rate,
+                received_audio_data: true,
+                speech_gate: SpeechGate {
+                    peak_rms: 0.5,
+                    window_count: 110,
+                },
+            });
+            let clip = test.clip.as_ref().unwrap();
+            assert_eq!(clip.samples.len(), 10 * rate as usize);
+            assert_eq!(clip.rate, rate);
+            assert_eq!(test.duration(), RECORDING_LIMIT);
+            assert!(test.silent());
+        }
     }
 
     #[test]
