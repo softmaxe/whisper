@@ -34,6 +34,7 @@ use super::theme::{
 
 pub enum UploadEvent {
     OpenHistory,
+    RevealHistory(i64),
     OpenSettings(SettingsSection),
 }
 
@@ -723,7 +724,7 @@ impl UploadView {
         let p = cx.palette();
         let file_name = self.file.as_ref().map(|f| f.name.clone());
         let copy_text = text.clone();
-        let saved = save_error.is_none() && transcription_id.is_some();
+        let saved = transcription_id.filter(|_| save_error.is_none());
         let status = match (&save_error, transcription_id) {
             (Some(err), _) => err.clone(),
             (None, Some(_)) => t("upload.savedToHistory"),
@@ -815,15 +816,15 @@ impl UploadView {
                             })
                             .child(status),
                     )
-                    .when(saved, |d| {
+                    .when_some(saved, |d, id| {
                         d.child(
                             Button::new("upload-view-history")
                                 .label(t("upload.viewInHistory"))
                                 .variant(ButtonVariant::Ghost)
                                 .size(ButtonSize::Sm)
-                                .on_click(
-                                    cx.listener(|_, _, _, cx| cx.emit(UploadEvent::OpenHistory)),
-                                ),
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    cx.emit(UploadEvent::RevealHistory(id))
+                                })),
                         )
                     })
                     .child(
@@ -1151,7 +1152,9 @@ impl UploadView {
             .text
             .clone()
             .filter(|_| item.transcription_id.is_none());
-        let in_history = item.status == ItemStatus::Done && item.transcription_id.is_some();
+        let in_history = item
+            .transcription_id
+            .filter(|_| item.status == ItemStatus::Done);
         // The line under the name: what went wrong, the user's own stop, or
         // how long the running file has taken.
         let note = match item.status {
@@ -1210,13 +1213,15 @@ impl UploadView {
                         )
                     }),
             )
-            .when(in_history, |d| {
+            .when_some(in_history, |d, id| {
                 d.child(
                     Button::new(("upload-batch-history", index))
                         .label(t("upload.viewInHistory"))
                         .variant(ButtonVariant::Ghost)
                         .size(ButtonSize::Sm)
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(UploadEvent::OpenHistory))),
+                        .on_click(
+                            cx.listener(move |_, _, _, cx| cx.emit(UploadEvent::RevealHistory(id))),
+                        ),
                 )
             })
             .when_some(copy, |d, text| {

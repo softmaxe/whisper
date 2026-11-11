@@ -110,6 +110,7 @@ impl ControlPanel {
             window,
             |this, _, event: &UploadEvent, window, cx| match event {
                 UploadEvent::OpenHistory => this.set_view(PanelView::Home, cx),
+                UploadEvent::RevealHistory(id) => this.reveal_history(*id, cx),
                 UploadEvent::OpenSettings(section) => {
                     this.open_settings(Some(*section), window, cx)
                 }
