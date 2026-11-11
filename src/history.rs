@@ -74,8 +74,10 @@ impl HistoryStore {
                 Some(recording.occurred_at),
             )?;
             if let Err(err) = self.store_audio(&item, recording, settings) {
-                // The transcript is still useful without its recording.
-                log::warn!("failed to save transcription audio: {err}");
+                // Keep the useful row, but let the caller retain the audio
+                // and surface the partial save through its recovery card.
+                log::error!("failed to save transcription audio: {err:#}");
+                return Err(err.context("failed to save transcription audio"));
             }
             Ok(Some(Recorded {
                 item: self.reread(item),
@@ -326,6 +328,27 @@ mod tests {
     fn retrying_a_missing_row_fails() {
         let f = fixture();
         assert!(f.store.apply_retry(42, &transcript("x")).result.is_err());
+    }
+
+    #[test]
+    fn audio_write_failure_is_reported_while_the_transcript_stays_saved() {
+        let f = fixture();
+        let audio_dir = f._dir.path().join("audio");
+        std::fs::remove_dir(&audio_dir).unwrap();
+        // A file at the directory path makes the write fail without changing
+        // permissions or touching the installed application's data.
+        std::fs::write(&audio_dir, b"blocked").unwrap();
+        let write = f.store.record_delivered(
+            &transcript("recoverable words"),
+            &recording(),
+            &Settings::default(),
+        );
+        assert!(write.result.is_err());
+        let items = f.db.get_transcriptions(10).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "recoverable words");
+        assert!(!items[0].has_audio);
+        assert!(f.audio.read_audio(items[0].id).is_none());
     }
 
     #[test]

@@ -336,6 +336,14 @@
       "title": "Check this transcription",
       "description": "The result looks like the dictionary prompt. View and copy the text if it’s what you said, or resend the recording."
     },
+    "historySaveFailed": {
+      "title": "Transcription not fully saved",
+      "description": "Couldn’t save the transcription or its recording to History. Your text is kept here. View and copy it, or resend the recording."
+    },
+    "noDestination": {
+      "title": "Your text is kept here",
+      "description": "The transcription wasn’t saved, pasted, or copied. View and copy the text before closing this card."
+    },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "Couldn’t reach the transcription server within 3 seconds. Check that it’s running and reachable.",
       "transcriptionTimeout": "The server didn’t answer within 30 seconds.",
