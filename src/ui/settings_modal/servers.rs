@@ -219,10 +219,21 @@ impl SettingsModal {
     }
 
     pub(super) fn save_api_key(&mut self, cx: &mut Context<Self>) {
+        if !self.api_key_editing {
+            return;
+        }
         let key = self.api_key_input.read(cx).value().trim().to_string();
         self.api_key = key.clone();
         self.api_key_editing = false;
         backend::set_cleanup_api_key(&key);
+        cx.notify();
+    }
+
+    pub(super) fn cancel_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_key_editing = false;
+        self.api_key_input.update(cx, |input, cx| {
+            input.set_value(self.api_key.clone(), window, cx);
+        });
         cx.notify();
     }
 
@@ -576,6 +587,8 @@ impl SettingsModal {
         let p = cx.palette();
         if self.api_key_editing && !disabled {
             return div()
+                .id("settings-api-key-editor")
+                .track_focus(&self.api_key_focus)
                 .relative()
                 // Room for the two buttons, so a long key never runs under them.
                 .child(text_field(&self.api_key_input, true, window, cx).pr(px(60.)))
@@ -604,10 +617,11 @@ impl SettingsModal {
                                 p.subtle_foreground,
                                 cx,
                             )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.api_key_editing = false;
-                                cx.notify();
-                            })),
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.cancel_api_key(window, cx);
+                                },
+                            )),
                         ),
                 )
                 .into_any_element();

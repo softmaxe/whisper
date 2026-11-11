@@ -162,6 +162,7 @@ pub struct SettingsModal {
     api_key: String,
     api_key_editing: bool,
     api_key_input: Entity<InputState>,
+    api_key_focus: FocusHandle,
     models: Vec<ModelOption>,
     models_loading: bool,
     models_error: Option<String>,
@@ -469,17 +470,17 @@ impl SettingsModal {
 
         let api_key_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("apiKeyInput.placeholder")));
-        subscriptions.push(
-            cx.subscribe(&api_key_input, |this, _, e: &InputEvent, cx| match e {
-                InputEvent::PressEnter { .. } => this.save_api_key(cx),
-                InputEvent::Blur
-                    // Commit on click-away rather than discarding a pasted key.
-                    if this.api_key_editing => {
-                        this.save_api_key(cx);
-                    }
-                _ => {}
-            }),
-        );
+        let api_key_focus = cx.focus_handle();
+        subscriptions.push(cx.on_focus_out(&api_key_focus, window, |this, _, _, cx| {
+            if this.api_key_editing {
+                this.save_api_key(cx);
+            }
+        }));
+        subscriptions.push(cx.subscribe(&api_key_input, |this, _, e: &InputEvent, cx| {
+            if matches!(e, InputEvent::PressEnter { .. }) {
+                this.save_api_key(cx);
+            }
+        }));
 
         let current_prompt = if s.custom_prompt_cleanup.is_empty() {
             default_cleanup_prompt(&s.ui_language).to_string()
@@ -703,6 +704,7 @@ impl SettingsModal {
             api_key: backend::cleanup_api_key(),
             api_key_editing: false,
             api_key_input,
+            api_key_focus,
             models: Vec::new(),
             models_loading: false,
             models_error: None,
@@ -783,8 +785,7 @@ impl SettingsModal {
             return;
         }
         if self.api_key_editing {
-            self.api_key_editing = false;
-            cx.notify();
+            self.cancel_api_key(window, cx);
             return;
         }
         self.close(window, cx);

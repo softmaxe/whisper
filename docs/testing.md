@@ -49,6 +49,10 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 - With a server exposing models only under `/v1`, enter its address without `/v1` and test both speech-to-text and cleanup. The visible and saved addresses should adopt `/v1`; cleanup models and connected status should remain available, and real dictation should use the discovered speech endpoint. Delay the response and type a different address before it arrives; the old result must not replace the new draft or saved address.
 - Repeat with both interface languages and themes. Confirm the existing language and microphone dropdown interactions still work.
 
+## API key editing regression check
+
+For the Settings API key editor, change a test credential and cancel with the mouse, Tab then Return, and Escape. Reopen the editor and verify the original credential remains. Tab between the input, Save, and Cancel without saving; moving focus outside the entire editor should save once. Verify Save and Enter still save, including an empty value to clear the key. Use only disposable test credentials and never record their values in screenshots or logs.
+
 ## Local data editing regression check
 
 - Add several Dictionary words in quick succession, including case variants and pasted lists. Rename a word, delete it, then add it again before starting another action. Verify duplicate feedback, row order, source, and keyboard focus remain consistent.
