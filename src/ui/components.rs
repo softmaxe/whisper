@@ -79,31 +79,35 @@ pub fn focus_ring_on_fill(p: &Palette) -> Vec<BoxShadow> {
     ]
 }
 
-/// Recent render passes keep handles stable while GPUI replaces its element
-/// tree. Older entries are weak: visible controls and saved focus-restoration
-/// targets keep their identity, while removed rows can be reclaimed.
+/// Focus handles of [`KeyboardFocusable`] elements, by key. Kept app-wide so
+/// render helpers that only hold an `App` can make elements focusable.
+///
+/// A handle requested within [`FOCUS_HANDLE_IDLE`] is held strongly, since
+/// GPUI drops the element tree after every frame and a handle with no owner
+/// loses its focus. Older entries are weak: saved focus-restoration targets
+/// keep their identity, while rows that are gone can be reclaimed.
 #[derive(Default)]
-struct FocusHandles {
-    render: u64,
-    entries: std::collections::HashMap<ElementId, CachedFocusHandle>,
-}
+struct FocusHandles(std::collections::HashMap<ElementId, CachedFocusHandle>);
 
 struct CachedFocusHandle {
     weak: WeakFocusHandle,
     recent: Option<FocusHandle>,
-    requested: u64,
+    requested: std::time::Instant,
 }
+
+/// How long a handle survives without being rendered. Measured in time, not
+/// renders: several views and windows prune, and an idle window does not
+/// render at all, so a render count would evict its focused control.
+const FOCUS_HANDLE_IDLE: std::time::Duration = std::time::Duration::from_secs(60);
 
 impl Global for FocusHandles {}
 
 /// Run at a view render boundary, including independently refreshed lists.
-/// Never evict a handle still owned by a rendered control or a focus callback.
+/// Never evicts a handle still owned by a focus callback.
 pub fn prune_focus_handles(cx: &mut App) {
-    let cache = cx.default_global::<FocusHandles>();
-    cache.render += 1;
-    let render = cache.render;
-    cache.entries.retain(|_, entry| {
-        if render.saturating_sub(entry.requested) > 2 {
+    let now = std::time::Instant::now();
+    cx.default_global::<FocusHandles>().0.retain(|_, entry| {
+        if now.duration_since(entry.requested) > FOCUS_HANDLE_IDLE {
             entry.recent = None;
         }
         entry.weak.upgrade().is_some()
@@ -112,22 +116,21 @@ pub fn prune_focus_handles(cx: &mut App) {
 
 /// The focus handle stored under `key`, created on first use.
 pub fn keyed_focus_handle(key: ElementId, cx: &mut App) -> FocusHandle {
-    let cache = cx.default_global::<FocusHandles>();
-    if let Some(entry) = cache.entries.get_mut(&key)
+    let now = std::time::Instant::now();
+    if let Some(entry) = cx.default_global::<FocusHandles>().0.get_mut(&key)
         && let Some(handle) = entry.weak.upgrade()
     {
-        entry.requested = cache.render;
+        entry.requested = now;
         entry.recent = Some(handle.clone());
         return handle;
     }
     let handle = cx.focus_handle();
-    let cache = cx.global_mut::<FocusHandles>();
-    cache.entries.insert(
+    cx.global_mut::<FocusHandles>().0.insert(
         key,
         CachedFocusHandle {
             weak: handle.downgrade(),
             recent: Some(handle.clone()),
-            requested: cache.render,
+            requested: now,
         },
     );
     handle
