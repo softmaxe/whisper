@@ -2,7 +2,53 @@
 
 use super::*;
 
+fn translated_default_draft(draft: &str, before: &str, after: &str) -> Option<&'static str> {
+    (draft == default_cleanup_prompt(before)).then(|| default_cleanup_prompt(after))
+}
+
 impl SettingsModal {
+    pub(super) fn sync_language(
+        &mut self,
+        before: &str,
+        after: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_editor.update(cx, |input, cx| {
+            if let Some(prompt) = translated_default_draft(input.value().as_ref(), before, after) {
+                input.set_value(prompt, window, cx);
+            }
+            input.set_placeholder(t("promptStudio.edit.placeholder"), window, cx);
+        });
+        self.test_input.update(cx, |input, cx| {
+            input.set_placeholder(t("promptStudio.test.inputPlaceholder"), window, cx);
+        });
+        self.api_key_input.update(cx, |input, cx| {
+            input.set_placeholder(t("apiKeyInput.placeholder"), window, cx);
+        });
+        for (select, key) in [
+            (&self.ui_language, "settings.language.uiLabel"),
+            (&self.stt_language, "settings.language.transcriptionLabel"),
+            (&self.chinese_script, "settings.language.chineseScriptLabel"),
+            (
+                &self.pill_position,
+                "settings.general.floatingIcon.startPosition",
+            ),
+            (&self.audio_retention, "settings.privacy.keepAudioFor"),
+            (
+                &self.transcript_retention,
+                "settings.privacy.transcriptRetention",
+            ),
+            (&self.microphone, "microphoneSettings.inputDevice"),
+            (&self.cleanup_model, "common.model"),
+        ] {
+            select.update(cx, |select, cx| select.refresh_labels(t(key), window, cx));
+        }
+        self.cleanup_model.update(cx, |select, _| {
+            select.set_placeholder(t("reasoning.custom.modelPlaceholder"));
+        });
+    }
+
     pub(super) fn default_prompt(cx: &App) -> String {
         default_cleanup_prompt(&settings(cx).ui_language).to_string()
     }
@@ -491,5 +537,28 @@ impl SettingsModal {
             .overflow_hidden()
             .child(tabs)
             .child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_cleanup_prompt, translated_default_draft};
+
+    #[test]
+    fn language_switch_translates_only_the_unchanged_default() {
+        let en = default_cleanup_prompt("en");
+        let zh = default_cleanup_prompt("zh-CN");
+        assert_ne!(en, zh);
+        assert_eq!(translated_default_draft(en, "en", "zh-CN"), Some(zh));
+        assert_eq!(translated_default_draft(zh, "zh-CN", "en"), Some(en));
+        assert_eq!(
+            translated_default_draft("My custom prompt", "en", "zh-CN"),
+            None
+        );
+        assert_eq!(
+            translated_default_draft(&format!("{en}\n"), "en", "zh-CN"),
+            None
+        );
+        assert_eq!(translated_default_draft("", "en", "zh-CN"), None);
     }
 }

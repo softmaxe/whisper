@@ -213,6 +213,26 @@ impl Select {
         self.placeholder = placeholder.into();
     }
 
+    pub fn refresh_labels(
+        &mut self,
+        label: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.label = label.into();
+        if let Some(search) = &self.search {
+            let key = if self.custom_value {
+                "reasoning.custom.modelSearchPlaceholder"
+            } else {
+                "languageSelector.searchPlaceholder"
+            };
+            search.update(cx, |input, cx| {
+                input.set_placeholder(crate::i18n::t(key), window, cx);
+            });
+        }
+        cx.notify();
+    }
+
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
         if self.disabled != disabled {
             self.disabled = disabled;

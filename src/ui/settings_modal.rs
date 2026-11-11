@@ -654,15 +654,25 @@ impl SettingsModal {
 
         let state = AppState::global(cx);
         let mut synced_settings = s.clone();
-        subscriptions.push(cx.observe(&state, move |this, state, cx| {
-            let current = &state.read(cx).settings;
-            if select_settings_changed(&synced_settings, current) {
-                synced_settings = current.clone();
-                this.sync_selects(cx);
-            }
-            // Other state changes still affect the sheet's rendered status.
-            cx.notify();
-        }));
+        subscriptions.push(
+            cx.observe_in(&state, window, move |this, state, window, cx| {
+                let current = state.read(cx).settings.clone();
+                if synced_settings.ui_language != current.ui_language {
+                    this.sync_language(
+                        &synced_settings.ui_language,
+                        &current.ui_language,
+                        window,
+                        cx,
+                    );
+                }
+                if select_settings_changed(&synced_settings, &current) {
+                    synced_settings = current.clone();
+                    this.sync_selects(cx);
+                }
+                // Other state changes still affect the sheet's rendered status.
+                cx.notify();
+            }),
+        );
 
         let (mic_refresh, mic_requests) = async_channel::bounded(1);
         // One serial worker handles both automatic and manual refreshes. The
@@ -842,6 +852,7 @@ impl SettingsModal {
             sel.set_selected(Some(s.ui_language.clone().into()), cx)
         });
         self.stt_language.update(cx, |sel, cx| {
+            sel.set_options(language_options(), cx);
             sel.set_selected(Some(s.preferred_language.clone().into()), cx)
         });
         self.sync_microphone_select(cx);
