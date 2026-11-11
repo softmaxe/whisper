@@ -14,8 +14,16 @@ fn horizontal(c: char) -> bool {
 }
 
 fn sentence_start(text: &str) -> bool {
-    let line = text.rsplit('\n').next().unwrap_or("").trim();
-    if matches!(line, "-" | "*" | "•") {
+    // A list marker opening the line starts a sentence too.
+    if let Some(lead) = text
+        .trim_end_matches(horizontal)
+        .strip_suffix(['-', '*', '•'])
+        && lead
+            .trim_end_matches(horizontal)
+            .chars()
+            .next_back()
+            .is_none_or(|c| c == '\n')
+    {
         return true;
     }
     text.trim_end_matches([' ', '\t', '"', '\'', '“', '‘', '('])
@@ -24,7 +32,7 @@ fn sentence_start(text: &str) -> bool {
         .is_none_or(|c| matches!(c, '.' | '!' | '?' | '\n' | '。' | '！' | '？'))
 }
 
-fn protected(text: &str, start: usize, end: usize) -> bool {
+fn protected(text: &str, code: &[(usize, usize)], start: usize, end: usize) -> bool {
     let before = &text[..start];
     let after = &text[end..];
     let span_start = before
@@ -36,7 +44,7 @@ fn protected(text: &str, start: usize, end: usize) -> bool {
     let span = &text[span_start..span_end];
     span.contains("://")
         || span.contains('@')
-        || inside_backticks(text, start, end)
+        || inside_code(code, start)
         || mentioned(before, after)
         || before.ends_with([
             '.', '/', '\\', ':', '_', '-', '=', '#', '$', '%', '&', '+', '~', '@',
@@ -57,12 +65,47 @@ fn mentioned(before: &str, after: &str) -> bool {
             .starts_with(['"', '\'', '”', '’', ')', ']', '*'])
 }
 
-/// Inline code on one line: an odd number of backticks before the token and
-/// a closing one after it, whatever punctuation or spaces surround them.
-fn inside_backticks(text: &str, start: usize, end: usize) -> bool {
-    let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = text[end..].find('\n').map_or(text.len(), |i| end + i);
-    text[line_start..start].matches('`').count() % 2 == 1 && text[end..line_end].contains('`')
+/// Inline code spans: a run of backticks up to the next run of the same
+/// length on that line, as Markdown pairs them. Found once per pass so the
+/// scan stays linear on long transcripts.
+fn code_spans(text: &str) -> Vec<(usize, usize)> {
+    let bytes = text.as_bytes();
+    let run_end = |mut at: usize| {
+        while at < bytes.len() && bytes[at] == b'`' {
+            at += 1;
+        }
+        at
+    };
+    let mut spans = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        let open = at;
+        at = run_end(at);
+        let mut scan = at;
+        while scan < bytes.len() && bytes[scan] != b'\n' {
+            if bytes[scan] != b'`' {
+                scan += 1;
+                continue;
+            }
+            let close = run_end(scan);
+            if close - scan == at - open {
+                spans.push((open, close));
+                at = close;
+                break;
+            }
+            scan = close;
+        }
+    }
+    spans
+}
+
+fn inside_code(code: &[(usize, usize)], at: usize) -> bool {
+    code.get(code.partition_point(|span| span.1 <= at))
+        .is_some_and(|span| span.0 <= at)
 }
 
 fn punctuation(c: char) -> bool {
@@ -72,14 +115,29 @@ fn punctuation(c: char) -> bool {
     )
 }
 
+/// Copies surviving text, capitalizing the sentence a removed filler used
+/// to open. Only a plain word is recased: code, numbers, and names with their
+/// own casing (`iPhone`, `my_var`) are left as written.
 fn append_kept(out: &mut String, kept: &str, capitalize: &mut bool) {
-    for c in kept.chars() {
-        if *capitalize && c.is_alphabetic() {
-            out.extend(c.to_uppercase());
+    for (at, c) in kept.char_indices() {
+        if !*capitalize {
+            out.push_str(&kept[at..]);
+            return;
+        }
+        if c.is_alphabetic() {
+            let rest = &kept[at + c.len_utf8()..];
+            let own_casing = rest
+                .chars()
+                .take_while(|c| word(*c))
+                .any(|c| c.is_uppercase() || c.is_numeric() || c == '_');
+            if own_casing {
+                out.push(c);
+            } else {
+                out.extend(c.to_uppercase());
+            }
             *capitalize = false;
         } else {
-            // A sentence that now opens with a number has nothing to recase.
-            *capitalize &= !c.is_numeric();
+            *capitalize = c.is_whitespace() || matches!(c, '"' | '\'' | '“' | '‘' | '(');
             out.push(c);
         }
     }
@@ -113,6 +171,7 @@ pub fn remove_filler_words(text: &str, language: &str) -> String {
 }
 
 fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
+    let code = code_spans(text);
     let mut ranges: Vec<(usize, usize, bool)> = Vec::new();
     let mut cursor = 0;
     while cursor < text.len() {
@@ -126,7 +185,7 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
             }
             if text[..start].ends_with('打')
                 || text[cursor..].starts_with('逆')
-                || protected(text, start, cursor)
+                || protected(text, &code, start, cursor)
             {
                 continue;
             }
@@ -149,10 +208,10 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
             let boundary = text[..start].chars().next_back().is_none_or(|c| !word(c))
                 && text[cursor..].chars().next().is_none_or(|c| !word(c));
             if boundary
-                && !protected(text, start, cursor)
                 && (UNIVERSAL.contains(&lower.as_str())
                     || specific.contains(&lower.as_str())
                     || (auto && hesitation && ENGLISH.contains(&lower.as_str())))
+                && !protected(text, &code, start, cursor)
             {
                 let capitalize = c.is_uppercase() && sentence_start(&text[..start]);
                 ranges.push((start, cursor, capitalize));
@@ -168,33 +227,36 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
     for (token_start, token_end, recase) in ranges {
         let mut end = token_end;
         let mut terminal = None;
-        let attached = punctuation_run(text, end);
-        if attached > end {
-            terminal = terminal_in(text, end, attached);
-            end = attached;
-        } else {
+        // Take every pause mark the filler brought with it, in any order
+        // (`uh, ... we go`, `uh—, hello`).
+        loop {
+            let from = skip_horizontal(text, end);
+            let run = punctuation_run(text, from);
+            let next = text[run..].chars().next();
             // Punctuation set off by a space is the filler's only when it
             // stands alone (`uh , hello`); `uh .env` keeps its dot.
-            let from = skip_horizontal(text, end);
-            let spaced = punctuation_run(text, from);
-            if spaced > from
-                && text[spaced..]
-                    .chars()
-                    .next()
-                    .is_none_or(char::is_whitespace)
-            {
-                terminal = terminal_in(text, from, spaced);
-                end = spaced;
+            if run > from && (from == end || next.is_none_or(char::is_whitespace)) {
+                terminal = terminal_in(text, from, run).or(terminal);
+                end = run;
+                continue;
             }
-        }
-        let from = skip_horizontal(text, end);
-        let mut rest = text[from..].chars();
-        // A hyphen must stand apart to be a pause (`uh-oh` is a word); the
-        // long dashes are pause marks even when set tight (`Uh—we go`).
-        if let Some(dash) = rest.next().filter(|c| matches!(c, '-' | '–' | '—'))
-            && (dash != '-' || rest.next().is_none_or(char::is_whitespace))
-        {
-            end = from + dash.len_utf8();
+            let mut rest = text[from..].chars();
+            // A hyphen must stand apart to be a pause (`uh-oh` is a word). The
+            // long dashes pause even when set tight (`Uh—we go`), but before
+            // a digit one may be a minus sign.
+            if let Some(dash) = rest.next().filter(|c| matches!(c, '-' | '–' | '—')) {
+                let after = rest.next();
+                let pause = if dash == '-' {
+                    after.is_none_or(char::is_whitespace)
+                } else {
+                    !after.is_some_and(char::is_numeric)
+                };
+                if pause {
+                    end = from + dash.len_utf8();
+                    continue;
+                }
+            }
+            break;
         }
         let start = text[..token_start].trim_end_matches(horizontal).len();
         let end = skip_horizontal(text, end);
@@ -221,7 +283,8 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
         // The whole group goes, punctuation included. What stays at the seam
         // is the strongest mark the surviving clause still needs: a terminal
         // spoken after the filler closes the clause before it, replacing that
-        // clause's comma; a comma was only ever the filler's own.
+        // clause's comma; a comma was only ever the filler's own. Punctuation
+        // already standing before the group is the text's and always stays.
         let terminal: String = group
             .terminal
             .map(|(start, end)| text[start..end].chars().filter(|c| terminal(*c)).collect())
@@ -230,10 +293,6 @@ fn remove_pass(text: &str, specific: &[&str], auto: bool) -> String {
             Some(c) if comma(c) && !terminal.is_empty() => {
                 out.pop();
                 out.push_str(&terminal);
-            }
-            // Nothing follows on this line for the comma to introduce.
-            Some(c) if comma(c) && right.is_none_or(|c| c == '\n') => {
-                out.pop();
             }
             Some(c) if word(c) || matches!(c, '"' | '\'' | '”' | '’' | ')' | ']') => {
                 out.push_str(&terminal);
@@ -343,7 +402,15 @@ mod tests {
             ("so uh... we go", "so... we go"),
             ("I was... uh... going", "I was... going"),
             ("I think so uh.", "I think so."),
-            ("Wait, uh", "Wait"),
+            ("Wait, uh", "Wait,"),
+            ("Dear John, uh\nThank you.", "Dear John,\nThank you."),
+            ("Dear John, uh\r\nThank you.", "Dear John,\r\nThank you."),
+            ("Uh, uh, ... we go", "We go"),
+            ("uh—, hello", "hello"),
+            ("It is uh –5 degrees.", "It is –5 degrees."),
+            ("- Uh, `myVariable` is it.", "- `myVariable` is it."),
+            ("Uh, iPhone works.", "iPhone works."),
+            ("Uh, my_var works.", "my_var works."),
             ("Really? Uh, yes.", "Really? Yes."),
             ("foo uh, bar", "foo bar"),
             ("line one\nuh, line two", "line one\nline two"),
@@ -366,6 +433,9 @@ mod tests {
             "(`uh`) hello",
             "`say uh now`",
             "run `hm` then `uh` ok",
+            "``uh``",
+            "```uh```",
+            "``a ` uh``",
         ] {
             assert_eq!(filtered(text, "en"), text);
         }
