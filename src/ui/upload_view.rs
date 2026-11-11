@@ -1,7 +1,7 @@
 //! Upload: transcribe audio and video files one at a time or as a batch.
 //!
-//! The view entity outlives navigation, so a running batch keeps draining
-//! while the user looks at other pages.
+//! An app-global entity owns jobs and results. Closing the control panel only
+//! detaches its presentation; running jobs still finish and save to History.
 
 use std::f32::consts::TAU;
 use std::path::PathBuf;
@@ -45,8 +45,9 @@ struct SelectedFile {
     size: String,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 enum Stage {
+    #[default]
     Idle,
     Selected,
     Transcribing,
@@ -58,7 +59,7 @@ enum Stage {
     Error(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ItemStatus {
     Queued,
     Transcribing,
@@ -81,7 +82,8 @@ struct QueueItem {
     started: Option<Instant>,
 }
 
-pub struct UploadView {
+#[derive(Default)]
+pub struct UploadStore {
     stage: Stage,
     file: Option<SelectedFile>,
     run_id: u64,
@@ -97,7 +99,10 @@ pub struct UploadView {
     ticking: bool,
 }
 
-impl EventEmitter<UploadEvent> for UploadView {}
+struct UploadStoreGlobal(Entity<UploadStore>);
+impl Global for UploadStoreGlobal {}
+
+impl EventEmitter<UploadEvent> for UploadStore {}
 
 fn format_file_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -166,21 +171,15 @@ fn run_transcription(
     }
 }
 
-impl UploadView {
-    pub fn new(_cx: &mut Context<Self>) -> Self {
-        Self {
-            stage: Stage::Idle,
-            file: None,
-            run_id: 0,
-            active_request: None,
-            skipped_notice: None,
-            queue: Vec::new(),
-            batch_processing: false,
-            batch_run: 0,
-            batch_request: None,
-            started: None,
-            ticking: false,
+impl UploadStore {
+    /// One strong app-level owner, independent of control panel windows.
+    pub fn global(cx: &mut App) -> Entity<Self> {
+        if let Some(store) = cx.try_global::<UploadStoreGlobal>() {
+            return store.0.clone();
         }
+        let store = cx.new(|_| Self::default());
+        cx.set_global(UploadStoreGlobal(store.clone()));
+        store
     }
 
     fn transcribing_now(&self) -> bool {
@@ -330,39 +329,54 @@ impl UploadView {
                 None => None,
             };
             let _ = this.update(cx, |this, cx| {
-                // Every new run or cancel bumps `run_id`, so a stale run no
-                // longer owns `active_request`.
-                if run != this.run_id {
-                    return;
-                }
-                this.active_request = None;
-                this.stage = match result {
-                    Ok(text) if !text.trim().is_empty() => match saved {
-                        Some(Ok(id)) => Stage::Complete {
-                            text,
-                            transcription_id: id,
-                            save_error: None,
-                        },
-                        _ => Stage::Complete {
-                            text,
-                            transcription_id: None,
-                            save_error: Some(t("upload.saveFailed")),
-                        },
-                    },
-                    Ok(_) => Stage::Error(t("upload.transcriptionFailed")),
-                    Err(err) => Stage::Error(error_text(&err)),
-                };
+                this.finish_single(run, result, saved);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    fn cancel_transcription(&mut self, cx: &mut Context<Self>) {
+    /// Ignore completions from requests cancelled or superseded by the user.
+    fn finish_single(
+        &mut self,
+        run: u64,
+        result: Result<String, UploadError>,
+        saved: Option<anyhow::Result<Option<i64>>>,
+    ) -> bool {
+        // Every new run or cancel bumps `run_id`, so a stale run no
+        // longer owns `active_request`.
+        if run != self.run_id {
+            return false;
+        }
+        self.active_request = None;
+        self.stage = match result {
+            Ok(text) if !text.trim().is_empty() => match saved {
+                Some(Ok(id)) => Stage::Complete {
+                    text,
+                    transcription_id: id,
+                    save_error: None,
+                },
+                _ => Stage::Complete {
+                    text,
+                    transcription_id: None,
+                    save_error: Some(t("upload.saveFailed")),
+                },
+            },
+            Ok(_) => Stage::Error(t("upload.transcriptionFailed")),
+            Err(err) => Stage::Error(error_text(&err)),
+        };
+        true
+    }
+
+    fn stop_single(&mut self) {
         if let Some(cancel) = self.active_request.take() {
             cancel.cancel();
         }
         self.run_id += 1;
+    }
+
+    fn cancel_transcription(&mut self, cx: &mut Context<Self>) {
+        self.stop_single();
         self.reset(cx);
     }
 
@@ -475,7 +489,7 @@ impl UploadView {
         .detach();
     }
 
-    fn cancel_batch(&mut self, cx: &mut Context<Self>) {
+    fn stop_batch(&mut self) {
         self.batch_run += 1;
         if let Some(cancel) = self.batch_request.take() {
             cancel.cancel();
@@ -488,6 +502,10 @@ impl UploadView {
                 item.status = ItemStatus::Cancelled;
             }
         }
+    }
+
+    fn cancel_batch(&mut self, cx: &mut Context<Self>) {
+        self.stop_batch();
         cx.notify();
     }
 
@@ -1257,7 +1275,7 @@ impl UploadView {
     }
 }
 
-impl UploadView {
+impl UploadStore {
     /// Where finished transcripts go, under the idle drop target, so the
     /// page answers "what happens next" before a file is chosen. It lines up
     /// with the settings strip's text, and its link is plain text so the line
@@ -1299,7 +1317,7 @@ impl UploadView {
     }
 }
 
-impl Render for UploadView {
+impl Render for UploadStore {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let stage = self.render_stage_panel(window, cx);
         // The destination line only answers "where does this go" before a
@@ -1492,5 +1510,56 @@ fn stage_key(stage: &Stage) -> &'static str {
         Stage::Transcribing => "transcribing",
         Stage::Complete { .. } => "complete",
         Stage::Error(_) => "error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn single_completion_retains_text_and_history_id() {
+        let mut store = UploadStore {
+            stage: Stage::Transcribing,
+            ..Default::default()
+        };
+        assert!(store.finish_single(0, Ok("finished".into()), Some(Ok(Some(42)))));
+        assert_eq!(
+            store.stage,
+            Stage::Complete {
+                text: "finished".into(),
+                transcription_id: Some(42),
+                save_error: None,
+            }
+        );
+    }
+
+    #[test]
+    fn cancellation_rejects_a_late_completion() {
+        let cancel = CancellationToken::new();
+        let mut store = UploadStore {
+            stage: Stage::Transcribing,
+            active_request: Some(cancel.clone()),
+            ..Default::default()
+        };
+        store.stop_single();
+        store.stage = Stage::Selected;
+        assert!(cancel.is_cancelled());
+        assert!(!store.finish_single(0, Ok("stale".into()), Some(Ok(Some(42)))));
+        assert_eq!(store.stage, Stage::Selected);
+    }
+
+    #[test]
+    fn batch_cancellation_stops_request_and_invalidates_run() {
+        let cancel = CancellationToken::new();
+        let mut store = UploadStore {
+            batch_processing: true,
+            batch_request: Some(cancel.clone()),
+            ..Default::default()
+        };
+        store.stop_batch();
+        assert!(cancel.is_cancelled());
+        assert!(!store.batch_processing);
+        assert_eq!(store.batch_run, 1);
     }
 }

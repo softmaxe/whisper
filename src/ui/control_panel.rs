@@ -24,7 +24,7 @@ use super::theme::{
     CONTROL_HEIGHT, DUR_BASE, DUR_FAST, DUR_SNAP, FONT_UI, PaletteExt, RADIUS_LG, RADIUS_MD,
     TEXT_BODY, WORKSPACE_TOP_BAR_HEIGHT, ease_css, ease_out, ease_snap, motion,
 };
-use super::upload_view::{UploadEvent, UploadView};
+use super::upload_view::{UploadEvent, UploadStore};
 
 actions!(control_panel, [OpenSearch, OpenSettings, CloseOverlay]);
 
@@ -76,7 +76,7 @@ pub struct ControlPanel {
     history: Entity<HistoryView>,
     insights: Option<Entity<InsightsView>>,
     dictionary: Option<Entity<DictionaryView>>,
-    upload: Entity<UploadView>,
+    upload: Entity<UploadStore>,
     settings: Option<Entity<SettingsModal>>,
     history_after_settings: Option<i64>,
     scroll: ScrollHandle,
@@ -105,7 +105,7 @@ impl ControlPanel {
             let scroll = scroll.clone();
             cx.new(|cx| HistoryView::new(scroll, cx))
         };
-        let upload = cx.new(UploadView::new);
+        let upload = UploadStore::global(cx);
         cx.subscribe_in(
             &upload,
             window,
