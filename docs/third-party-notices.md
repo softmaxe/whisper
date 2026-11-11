@@ -1,5 +1,15 @@
 # Third-party notices
 
+## JetBrains Mono 2.304
+
+Whisper bundles the unmodified Regular (400) and Medium (500) TTF files from
+the [official JetBrains Mono v2.304 release](https://github.com/JetBrains/JetBrainsMono/releases/tag/v2.304),
+downloaded from [JetBrainsMono-2.304.zip](https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip).
+The font is licensed under the SIL Open Font License 1.1; the complete license
+and copyright notice are in [assets/fonts/OFL.txt](../assets/fonts/OFL.txt).
+
+Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono).
+
 ## morphicons 1.7.1
 
 The sidebar icon adapts polar path interpolation and the snappy spring from [morphicons](https://github.com/guillermolg00/morphicons/tree/v1.7.1).
