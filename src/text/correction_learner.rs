@@ -94,6 +94,16 @@ fn is_context_free(misheard: &str, term: &str) -> bool {
     misheard.split_whitespace().count() >= 2 || misheard.chars().any(is_unspaced_script)
 }
 
+/// Where `text` already holds the term. A case-only rule ("github" ->
+/// "GitHub") matches its own mishearing, so only the exact spelling counts.
+fn spelled_right(text: &str, correction: &KnownCorrection) -> Vec<std::ops::Range<usize>> {
+    let mut found = find_term(text, &correction.term);
+    if correction.misheard.to_lowercase() == correction.term.to_lowercase() {
+        found.retain(|r| text[r.clone()] == *correction.term);
+    }
+    found
+}
+
 /// Rewrites the corrections safe to apply without context, longest first so a
 /// phrase wins over a word inside it. Text already spelled as the term is left
 /// alone.
@@ -106,7 +116,7 @@ pub fn apply_known_corrections(text: &str, corrections: &[KnownCorrection]) -> S
 
     let mut result = text.to_string();
     for correction in automatic {
-        let spelled_right = find_term(&result, &correction.term);
+        let spelled_right = spelled_right(&result, correction);
         let hits = find_term(&result, &correction.misheard);
         // One replacement can retain the existing allocation, particularly
         // for sparse rules in long documents.
@@ -961,6 +971,16 @@ mod tests {
     }
 
     #[test]
+    fn case_only_rules_fix_every_wrong_spelling() {
+        let rules = [known("github", "GitHub", 2)];
+        assert_eq!(
+            apply_known_corrections("github and Github, not GitHub", &rules),
+            "GitHub and GitHub, not GitHub"
+        );
+        assert_eq!(apply_known_corrections("用github写", &rules), "用GitHub写");
+    }
+
+    #[test]
     fn a_term_containing_its_mishearing_is_left_alone() {
         let text = apply_known_corrections("克劳德 和 克劳", &[known("克劳", "克劳德", 2)]);
         assert_eq!(text, "克劳德 和 克劳德");
@@ -974,7 +994,7 @@ mod tests {
         automatic.sort_by_key(|c| std::cmp::Reverse(utf16_len(&c.misheard)));
         let mut result = text.to_owned();
         for correction in automatic {
-            let spelled_right = find_term(&result, &correction.term);
+            let spelled_right = spelled_right(&result, correction);
             let hits: Vec<_> = find_term(&result, &correction.misheard)
                 .into_iter()
                 .filter(|hit| {
