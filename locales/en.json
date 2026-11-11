@@ -254,7 +254,8 @@
   "controlPanel": {
     "history": {
       "couldNotLoadTitle": "Couldn’t load your history",
-      "couldNotLoadDescription": "Something went wrong loading your transcripts. Try closing and reopening the app.",
+      "couldNotLoadDescription": "Something went wrong loading your transcripts. Try again.",
+      "loading": "Loading history…",
       "copiedTitle": "Copied",
       "copiedDescription": "Text copied to your clipboard",
       "couldNotDeleteTitle": "Couldn’t delete",

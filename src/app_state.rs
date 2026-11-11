@@ -48,6 +48,35 @@ pub enum AppEvent {
 /// How many History rows the Home view keeps loaded.
 pub const HISTORY_LIMIT: usize = 50;
 
+/// A failed read is retryable; an empty successful read is still Loaded.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HistoryLoadState {
+    #[default]
+    Unloaded,
+    Loading,
+    Loaded,
+    Failed,
+}
+
+impl HistoryLoadState {
+    pub fn needs_load(self) -> bool {
+        matches!(self, Self::Unloaded | Self::Failed)
+    }
+
+    /// A late read cannot replace a newer History mutation or its status.
+    fn finish(&mut self, requested: u64, current: u64, succeeded: bool) -> bool {
+        if requested != current {
+            return false;
+        }
+        *self = if succeeded {
+            Self::Loaded
+        } else {
+            Self::Failed
+        };
+        true
+    }
+}
+
 pub struct AppState {
     pub settings: Settings,
     pub dictation: DictationSnapshot,
@@ -55,7 +84,7 @@ pub struct AppState {
     pub audio: Arc<AudioStorage>,
     pub history_store: Arc<HistoryStore>,
     pub history: Arc<Vec<TranscriptionItem>>,
-    pub history_loaded: bool,
+    pub history_load: HistoryLoadState,
     history_revision: u64,
     dictionary_revision: Arc<AtomicU64>,
     dictionary_write_revision: u64,
@@ -90,7 +119,7 @@ impl AppState {
             db,
             audio,
             history: Arc::new(Vec::new()),
-            history_loaded: false,
+            history_load: HistoryLoadState::Unloaded,
             history_revision: 0,
             dictionary_revision: Arc::new(AtomicU64::new(0)),
             dictionary_write_revision: 0,
@@ -151,22 +180,43 @@ impl AppState {
 impl AppState {
     /// Loads the newest rows. Failed and discarded rows stay hidden.
     pub fn load_history(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
-        self.history_loaded = true;
+        self.history_load = HistoryLoadState::Loading;
+        cx.notify();
         self.history_revision += 1;
         let revision = self.history_revision;
         let db = self.db.clone();
         let job = crate::services::runtime::storage(move || db.get_transcriptions(HISTORY_LIMIT));
         cx.spawn(async move |this, cx| {
-            let rows = job.await?;
-            this.update(cx, |this, cx| {
-                if this.history_revision == revision {
-                    this.history = Arc::new(rows);
-                    cx.emit(AppEvent::HistoryChanged);
-                    cx.notify();
-                }
-            })?;
-            Ok(())
+            let rows = job.await;
+            let result = rows
+                .as_ref()
+                .map(|_| ())
+                .map_err(|err| anyhow::anyhow!(err.to_string()));
+            this.update(cx, |this, cx| this.apply_history_read(revision, rows, cx))?;
+            result
         })
+    }
+
+    fn apply_history_read(
+        &mut self,
+        revision: u64,
+        rows: anyhow::Result<Vec<TranscriptionItem>>,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .history_load
+            .finish(revision, self.history_revision, rows.is_ok())
+        {
+            return;
+        }
+        match rows {
+            Ok(rows) => {
+                self.history = Arc::new(rows);
+                cx.emit(AppEvent::HistoryChanged);
+            }
+            Err(err) => log::warn!("failed to load History: {err}"),
+        }
+        cx.notify();
     }
 
     /// Serializes a History write with deletion and retention. Accepted writes
@@ -201,13 +251,7 @@ impl AppState {
                 .and_then(|r| r.as_ref())
                 .map(|r| r.item.id);
             this.update(cx, |this, cx| {
-                if this.history_revision == revision
-                    && let Ok(rows) = rows
-                {
-                    this.history = Arc::new(rows);
-                    cx.emit(AppEvent::HistoryChanged);
-                    cx.notify();
-                }
+                this.apply_history_read(revision, rows, cx);
                 if this.dictionary_revision.load(Ordering::SeqCst) == dictionary_revision
                     && let Some(dictionary) = dictionary
                 {
@@ -289,7 +333,7 @@ impl AppState {
         cx: &mut Context<Self>,
     ) {
         if !report.deleted_transcription_ids.is_empty() || report.audio.deleted > 0 {
-            if self.history_loaded {
+            if self.history_load != HistoryLoadState::Unloaded {
                 self.load_history(cx).detach();
             }
             cx.emit(AppEvent::AnalyticsChanged);
@@ -497,5 +541,35 @@ impl AppState {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod history_load_tests {
+    use super::HistoryLoadState;
+
+    #[test]
+    fn failed_load_can_be_retried_and_an_empty_success_is_loaded() {
+        let mut state = HistoryLoadState::default();
+        assert!(state.needs_load());
+        state = HistoryLoadState::Loading;
+        assert!(!state.needs_load());
+        assert!(state.finish(1, 1, false));
+        assert_eq!(state, HistoryLoadState::Failed);
+        assert!(state.needs_load());
+        state = HistoryLoadState::Loading;
+        assert!(state.finish(2, 2, true));
+        assert_eq!(state, HistoryLoadState::Loaded);
+        assert!(!state.needs_load());
+    }
+
+    #[test]
+    fn stale_reads_do_not_replace_a_newer_load_or_write_status() {
+        let mut state = HistoryLoadState::Loading;
+        assert!(!state.finish(1, 2, true));
+        assert_eq!(state, HistoryLoadState::Loading);
+        assert!(state.finish(2, 2, true));
+        assert!(!state.finish(1, 2, false));
+        assert_eq!(state, HistoryLoadState::Loaded);
     }
 }

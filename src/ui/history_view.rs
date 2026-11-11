@@ -11,13 +11,13 @@ use gpui_kit::*;
 use crate::db::TranscriptionItem;
 use crate::i18n::{self, Language, t, t_with};
 
-use crate::app_state::{AppEvent, AppState};
+use crate::app_state::{AppEvent, AppState, HistoryLoadState};
 use crate::backend;
 
 use super::components::{
-    DismissMenu, KeyboardFocusable, MENU_CONTEXT, MenuTriggerBounds, empty_state, f32_tx, icon,
-    kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
-    spinner, text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
+    MenuTriggerBounds, empty_state, f32_tx, icon, kbd, keyed_focus_handle, page_container,
+    retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
 };
 use super::control_panel::CloseOverlay;
 use super::overlays::{
@@ -218,6 +218,7 @@ impl HistoryView {
             let relevant = (
                 busy,
                 top,
+                s.history_load,
                 s.settings.data_retention_enabled,
                 s.settings.effective_dictation_key(),
                 i18n::language(),
@@ -237,7 +238,7 @@ impl HistoryView {
             }
         })
         .detach();
-        if !state.read(cx).history_loaded {
+        if state.read(cx).history_load.needs_load() {
             Self::reload(cx);
         }
         Self {
@@ -314,20 +315,7 @@ impl HistoryView {
 
     fn reload(cx: &mut App) {
         let load = AppState::global(cx).update(cx, |s, cx| s.load_history(cx));
-        cx.spawn(async move |cx| {
-            if load.await.is_err() {
-                cx.update(|cx| {
-                    show_dialog(
-                        DialogRequest::alert(
-                            t("controlPanel.history.couldNotLoadTitle"),
-                            Some(t("controlPanel.history.couldNotLoadDescription").into()),
-                        ),
-                        cx,
-                    );
-                });
-            }
-        })
-        .detach();
+        load.detach();
     }
 
     /// Removes a transcript from view at once and deletes it when the Undo
@@ -1256,13 +1244,48 @@ impl Render for HistoryView {
             self.groups = Some((key, Arc::new(groups)));
         }
         let groups = self.groups.as_ref().unwrap().1.clone();
-        if groups.is_empty() {
+        let load_state = state.read(cx).history_load;
+        if load_state != HistoryLoadState::Loaded {
+            let status = div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(12.))
+                .py(px(32.));
+            content = content.child(match load_state {
+                HistoryLoadState::Failed => status
+                    .child(empty_state(
+                        "alert-circle",
+                        t("controlPanel.history.couldNotLoadTitle"),
+                        t("controlPanel.history.couldNotLoadDescription"),
+                        &p,
+                    ))
+                    .child(
+                        Button::new("history-load-retry")
+                            .label(t("common.retry"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(|_, _, cx| Self::reload(cx)),
+                    )
+                    .into_any_element(),
+                _ => status
+                    .child(spinner("history-loading", 18., p.muted_foreground))
+                    .child(
+                        div()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.muted_foreground)
+                            .child(t("controlPanel.history.loading")),
+                    )
+                    .into_any_element(),
+            });
+        }
+        if groups.is_empty() && load_state == HistoryLoadState::Loaded {
             content = content.child(super::components::empty_state_placement(
                 window.viewport_size().height
                     - px(super::theme::WORKSPACE_TOP_BAR_HEIGHT + super::theme::PAGE_TOP + 48.),
                 render_empty_with_hotkey(&hotkey, retention, &p),
             ));
-        } else {
+        } else if !groups.is_empty() {
             let list_focus = keyed_focus_handle("history-list".into(), cx);
             let mut list = div()
                 .id("history-list")

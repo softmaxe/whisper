@@ -251,7 +251,8 @@
   "controlPanel": {
     "history": {
       "couldNotLoadTitle": "无法加载历史记录",
-      "couldNotLoadDescription": "加载转录记录时出错，请尝试关闭并重新打开应用。",
+      "couldNotLoadDescription": "加载转录记录时出错，请重试。",
+      "loading": "正在加载历史记录…",
       "copiedTitle": "已复制！",
       "copiedDescription": "文本已复制到剪贴板",
       "couldNotDeleteTitle": "无法删除",
