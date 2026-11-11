@@ -221,15 +221,28 @@ pub async fn run(
         Err(err) => return PipelineOutcome::failed_from(&err),
     };
     let raw = response.text;
-    let filtered = filter_fillers(&raw, &input.settings);
-    if filtered.trim().is_empty() {
-        return PipelineOutcome::NoAudio;
-    }
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
     // A whole trigger is intentional input even when it equals the ASR hint.
     // Deliver saved text verbatim, without letting cleanup rewrite the trigger.
+    // Check raw input first so filler tokens in saved triggers keep working.
+    if let Some(text) = whole_snippet_replacement(&raw, &input.snippets) {
+        return PipelineOutcome::Transcribed(Transcript {
+            text,
+            spoken_text: raw.trim().to_string(),
+            raw_text: raw,
+            cleanup_failure: None,
+            cleanup_skipped: false,
+        });
+    }
+    let filtered = filter_fillers(&raw, &input.settings);
+    let fillers_removed = filtered != raw;
+    if filtered.trim().is_empty()
+        || (fillers_removed && !filtered.chars().any(char::is_alphanumeric))
+    {
+        return PipelineOutcome::NoAudio;
+    }
     if let Some(text) = whole_snippet_replacement(&filtered, &input.snippets) {
         return PipelineOutcome::Transcribed(Transcript {
             text,
@@ -276,8 +289,14 @@ pub async fn run(
         return PipelineOutcome::Cancelled;
     }
     // Mishearings were learned from delivered text, so they match it here.
+    let filtered_cleaned = filter_fillers(&cleaned, &input.settings);
+    if (fillers_removed || filtered_cleaned != cleaned)
+        && !filtered_cleaned.chars().any(char::is_alphanumeric)
+    {
+        return PipelineOutcome::NoAudio;
+    }
     let spoken_text = apply_known_corrections(
-        &finalize_script(&filter_fillers(&cleaned, &input.settings), &input.settings),
+        &finalize_script(&filtered_cleaned, &input.settings),
         &input.known_corrections,
     );
     if spoken_text.trim().is_empty() {
@@ -561,6 +580,56 @@ mod tests {
             run_test(run(served(&asr, None), CancellationToken::new())),
             PipelineOutcome::NoAudio
         );
+    }
+
+    #[test]
+    fn punctuation_only_is_no_audio_only_when_fillers_were_removed() {
+        for raw in ["uh!", "呃。", "Uh... ", "uh ; !"] {
+            let asr = asr(raw);
+            assert_eq!(
+                run_test(run(served(&asr, None), CancellationToken::new())),
+                PipelineOutcome::NoAudio,
+                "{raw:?}"
+            );
+        }
+        let asr = asr("; !");
+        let t = transcribed(run_test(run(served(&asr, None), CancellationToken::new())));
+        assert_eq!(t.text, "; !");
+        let asr = self::asr("uh!");
+        let mut input = served(&asr, None);
+        input.settings.remove_filler_words = false;
+        let t = transcribed(run_test(run(input, CancellationToken::new())));
+        assert_eq!(t.text, "uh!");
+        let asr = self::asr("hello");
+        let llm = llm(completion("uh ; !"));
+        assert_eq!(
+            run_test(run(served(&asr, Some(&llm)), CancellationToken::new())),
+            PipelineOutcome::NoAudio
+        );
+    }
+
+    #[test]
+    fn whole_snippets_match_raw_before_filtered_transcripts() {
+        for (raw, trigger, spoken) in [
+            ("uh oh", "uh oh", "uh oh"),
+            ("Um, my address", "my address", "My address"),
+            ("hmm", "hmm", "hmm"),
+        ] {
+            let asr = asr(raw);
+            let llm = llm(completion("must not run"));
+            let mut input = served(&asr, Some(&llm));
+            input.snippets = vec![Snippet::new(trigger, "Saved text")];
+            if raw == "uh oh" {
+                input
+                    .snippets
+                    .push(Snippet::new("oh", "Wrong filtered match"));
+            }
+            let t = transcribed(run_test(run(input, CancellationToken::new())));
+            assert_eq!(t.text, "Saved text");
+            assert_eq!(t.raw_text, raw);
+            assert_eq!(t.spoken_text, spoken);
+            assert!(llm.requests().is_empty());
+        }
     }
 
     #[test]

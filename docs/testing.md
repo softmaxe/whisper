@@ -132,7 +132,9 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 - In Settings > Speech to text, toggle Remove filler words, restart, and verify the preference persists. Existing settings enable it by default.
 - With cleanup off and English selected, dictate “Um, we should go”; delivery should read “We should go” while History's raw transcript retains the hesitation. With Auto selected, “um carro” must remain intact.
 - Check Chinese hesitation runs and the exceptions 打呃 and 呃逆. Newlines, ordinary words, and the non-filler Chinese words 嗯, 啊, 额, 那个, 然后, and 就是 must remain.
-- Check filler-only input produces no-audio feedback, and a whole snippet still expands when preceded by a filler. Turn removal off and verify the transcript is unchanged. File uploads must continue returning raw server text.
+- Check adjacent fillers leave one space between surviving English words, preserve newlines, and remove filler-owned punctuation including ellipses. `foo uh,uh,bar` should become `foo bar`, `hello. Um... we go` should become `hello. We go`, and `好的，呃。我们走` should become `好的。我们走`.
+- Check URLs, emails, backtick-wrapped tokens, member access, attached code punctuation and assignments remain intact (`https://uh.edu/a`, `user@hm.com`, `uh_count`, `uh-oh`, `let uh = 1;`). A spaced hesitation dash (`um - I think`) must still filter in Auto.
+- Check filler-only input, including `uh!` and `呃。`, produces no-audio feedback. Punctuation-only server text with no removed filler keeps its existing delivery behavior. Whole snippets must match the raw transcript first (`uh oh` and even the filler-only trigger `hmm`), then the filtered transcript (`Um, my address` for `my address`). Turn removal off and verify the transcript is unchanged. File uploads must continue returning raw server text.
 - Tab to the switch and activate it with the keyboard; verify its VoiceOver label in both interface languages and all three themes.
 
 ## Skip cleanup regression check
