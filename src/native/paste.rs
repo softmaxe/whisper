@@ -18,6 +18,8 @@ use objc2::runtime::ProtocolObject;
 use objc2_app_kit::{NSPasteboard, NSPasteboardItem, NSPasteboardTypeString, NSPasteboardWriting};
 use objc2_foundation::{NSArray, NSData, NSString};
 
+use crate::settings::OutputMode;
+
 use super::helper::{RunOutput, resolve_helper, run_with_timeout};
 use super::permissions::{SettingsPane, is_accessibility_trusted, open_settings};
 use super::text_monitor::TextEditMonitor;
@@ -204,6 +206,15 @@ pub struct PasteOptions {
     pub target_pid: Option<i32>,
     /// Put the previous clipboard back after pasting.
     pub restore_clipboard: bool,
+}
+
+impl PasteOptions {
+    pub fn new(target_pid: Option<i32>, mode: OutputMode) -> Self {
+        Self {
+            target_pid,
+            restore_clipboard: mode.restores_clipboard(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,10 +694,7 @@ mod tests {
     }
 
     fn opts(pid: Option<i32>) -> PasteOptions {
-        PasteOptions {
-            target_pid: pid,
-            restore_clipboard: true,
-        }
+        PasteOptions::new(pid, OutputMode::PasteAndRestore)
     }
 
     fn settle(f: &Fixture) {
@@ -880,15 +888,12 @@ mod tests {
     }
 
     #[test]
-    fn no_restore_when_not_requested() {
+    fn paste_and_keep_mode_leaves_the_transcript_on_the_clipboard() {
         let f = fixture(true, true);
         f.pasteboard.write_text("previous clipboard");
         f.paster.paste_text(
             "keep me",
-            PasteOptions {
-                restore_clipboard: false,
-                ..opts(Some(42))
-            },
+            PasteOptions::new(Some(42), OutputMode::PasteAndKeep),
         );
         settle(&f);
         assert_eq!(f.pasteboard.read_text().as_deref(), Some("keep me "));

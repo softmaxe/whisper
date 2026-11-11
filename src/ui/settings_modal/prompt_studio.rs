@@ -28,6 +28,7 @@ impl SettingsModal {
         });
         for (select, key) in [
             (&self.ui_language, "settings.language.uiLabel"),
+            (&self.output_mode, "settings.general.output.mode"),
             (&self.stt_language, "settings.language.transcriptionLabel"),
             (&self.chinese_script, "settings.language.chineseScriptLabel"),
             (

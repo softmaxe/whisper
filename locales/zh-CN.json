@@ -86,12 +86,15 @@
         "pauseMediaDescription": "开始听写时自动暂停音乐",
         "title": "声音与媒体"
       },
-      "clipboard": {
-        "title": "剪贴板",
-        "autoPaste": "自动粘贴",
-        "autoPasteDescription": "听写结束后自动将转录文本粘贴到当前活动的应用中",
-        "keepInClipboard": "将转录内容保留在剪贴板",
-        "keepInClipboardDescription": "将听写文本保留在剪贴板中，以便在需要时手动粘贴"
+      "output": {
+        "title": "输出",
+        "mode": "输出方式",
+        "pasteAndRestore": "粘贴并还原剪贴板",
+        "pasteAndRestoreDescription": "粘贴到当前应用后，还原剪贴板原有内容。",
+        "pasteAndKeep": "粘贴并保留文本",
+        "pasteAndKeepDescription": "粘贴到当前应用，并将文本保留在剪贴板中。",
+        "copyOnly": "仅复制",
+        "copyOnlyDescription": "将文本复制到剪贴板，以便手动粘贴。"
       },
       "startup": {
         "launchAtLogin": "登录时启动",
@@ -333,13 +336,9 @@
       "title": "请确认这段转录",
       "description": "结果看起来像词典提示词。如果这就是你说的内容，可以查看并复制文字，也可以重新发送录音。"
     },
-    "historySaveFailed": {
-      "title": "转录未完整保存",
-      "description": "无法将转录或录音保存到历史记录。文字已保留在这里，可以查看并复制，也可以重新发送录音。"
-    },
-    "noDestination": {
-      "title": "文字已保留在这里",
-      "description": "转录未保存、粘贴或复制。关闭此卡片前，请查看并复制文字。"
+    "clipboardWriteFailed": {
+      "title": "文本已保留在此处",
+      "description": "未能将转录文本复制到剪贴板。关闭此卡片前，请查看并复制文本。"
     },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "3 秒内无法连接转录服务器。请确认它已启动且可以访问。",

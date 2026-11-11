@@ -746,7 +746,7 @@ impl Dictation {
     ) {
         let generation = self.generation;
         let saved_transcript = transcript.clone();
-        let saved_wav = wav.clone();
+        let saved_wav = wav;
         let save = AppState::global(cx).update(cx, |state, cx| {
             state.record_history(cx, move |history, settings| {
                 history.record_delivered(
@@ -772,54 +772,11 @@ impl Dictation {
             );
             let _ = this.update(cx, |this, cx| {
                 if generation == this.generation && this.phase == Phase::Processing {
-                    let settings = AppState::settings(cx);
-                    let recovery = this.persistence_recovery(
-                        &saved,
-                        &settings,
-                        transcript.text.clone(),
-                        FailedRecording {
-                            wav,
-                            duration,
-                            occurred_at,
-                        },
-                    );
-                    if let Some(notice) = recovery {
-                        this.set_phase(Phase::Idle, cx);
-                        cx.emit(notice);
-                    } else {
-                        this.deliver(transcript, matches!(saved, Ok(Some(_))), cx);
-                    }
+                    this.deliver(transcript, matches!(saved, Ok(Some(_))), cx);
                 }
             });
         })
         .detach();
-    }
-
-    /// A failed or disabled save must not leave the words with no destination.
-    fn persistence_recovery(
-        &mut self,
-        saved: &anyhow::Result<Option<i64>>,
-        settings: &Settings,
-        text: String,
-        recording: FailedRecording,
-    ) -> Option<DictationNotice> {
-        // With paste or the clipboard on, deliver as usual: withholding the
-        // paste would punish the user for a History fault they cannot fix.
-        if settings.auto_paste_enabled || settings.keep_transcription_in_clipboard {
-            return None;
-        }
-        let message = match saved {
-            Err(_) => "dictation.historySaveFailed",
-            Ok(None) => "dictation.noDestination",
-            Ok(Some(_)) => return None,
-        };
-        Some(self.recover_transcript(
-            message,
-            text,
-            recording.wav,
-            recording.duration,
-            recording.occurred_at,
-        ))
     }
 
     fn deliver(&mut self, transcript: Transcript, history_saved: bool, cx: &mut Context<Self>) {
@@ -831,15 +788,14 @@ impl Dictation {
             ..
         } = transcript;
 
-        let restore_clipboard = !settings.keep_transcription_in_clipboard;
-        if self.push_force_stopped && settings.auto_paste_enabled {
+        if self.push_force_stopped && settings.output_mode.pastes_automatically() {
             let kept = backend::write_clipboard(&text);
             self.set_phase(Phase::Idle, cx);
             cx.emit(DictationNotice::PushForceStopped {
                 kept_in_clipboard: kept,
                 transcript: text,
             });
-        } else if settings.auto_paste_enabled {
+        } else if settings.output_mode.pastes_automatically() {
             let generation = self.generation;
             let target = self.target_pid.clone();
             cx.spawn(async move |this, cx| {
@@ -856,7 +812,8 @@ impl Dictation {
                     return;
                 }
                 let paste_started = Instant::now();
-                let pasted = backend::paste_text(text.clone(), target_pid, restore_clipboard).await;
+                let pasted =
+                    backend::paste_text(text.clone(), target_pid, settings.output_mode).await;
                 log::info!(
                     "[perf] operation={generation} stage=paste_complete elapsed_ms={:.3}",
                     paste_started.elapsed().as_secs_f64() * 1000.0
@@ -909,23 +866,22 @@ impl Dictation {
             })
             .detach();
         } else {
-            let copied =
-                settings.keep_transcription_in_clipboard && backend::write_clipboard(&text);
-            cx.emit(unpasted_delivery_notice(text, history_saved, copied));
+            let copied = backend::write_clipboard(&text);
+            cx.emit(clipboard_delivery_notice(text, history_saved, copied));
             self.set_phase(Phase::Idle, cx);
         }
     }
 }
 
-fn unpasted_delivery_notice(text: String, history_saved: bool, copied: bool) -> DictationNotice {
+fn clipboard_delivery_notice(text: String, history_saved: bool, copied: bool) -> DictationNotice {
     if history_saved || copied {
         DictationNotice::Delivered
     } else {
         // Clipboard-only delivery can fail too. The existing card keeps the
         // sole transcript copy until the user recovers it.
         DictationNotice::TranscriptRecovery {
-            title: t("dictation.noDestination.title"),
-            description: t("dictation.noDestination.description"),
+            title: t("dictation.clipboardWriteFailed.title"),
+            description: t("dictation.clipboardWriteFailed.description"),
             text,
             kept: None,
         }
@@ -1205,8 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_history_save_keeps_text_and_audio_instead_of_plain_success() {
-        use super::{DictationNotice, FailedRecording, Phase};
+    fn unretained_or_failed_history_still_allows_clipboard_delivery_or_recovery() {
         let db = Arc::new(Database::open_in_memory().unwrap());
         db.lock()
             .execute_batch(
@@ -1227,88 +1182,39 @@ mod tests {
             raw_text: "um words worth keeping".into(),
             cleanup_failure: None,
         };
-        let wav = bytes::Bytes::from_static(b"RIFF original audio");
-        let duration = std::time::Duration::from_secs(3);
-        let occurred_at = chrono::Utc::now();
-        for auto_paste_enabled in [false, true] {
-            for keep_transcription_in_clipboard in [false, true] {
-                let settings = Settings {
-                    auto_paste_enabled,
-                    keep_transcription_in_clipboard,
-                    ..Settings::default()
-                };
-                let saved = history
-                    .record_delivered(
-                        &transcript,
-                        &crate::history::Recording {
-                            wav: &wav,
-                            duration,
-                            occurred_at,
-                        },
-                        &settings,
-                    )
-                    .result
-                    .map(|recorded| recorded.map(|r| r.item.id));
-                assert!(saved.is_err());
-                let mut dictation = dictation(Phase::Processing);
-                let notice = dictation.persistence_recovery(
-                    &saved,
-                    &settings,
-                    transcript.text.clone(),
-                    FailedRecording {
-                        wav: wav.clone(),
-                        duration,
-                        occurred_at,
+        for retention_enabled in [false, true] {
+            let saved = history
+                .record_delivered(
+                    &transcript,
+                    &crate::history::Recording {
+                        wav: b"RIFF original audio",
+                        duration: std::time::Duration::from_secs(3),
+                        occurred_at: chrono::Utc::now(),
                     },
-                );
-                if auto_paste_enabled || keep_transcription_in_clipboard {
-                    // Paste or the clipboard still receives the text.
-                    assert!(notice.is_none());
-                    continue;
-                }
-                let notice = notice.unwrap();
-                let DictationNotice::TranscriptRecovery { text, kept, .. } = notice else {
-                    panic!("failed persistence must not report Delivered");
-                };
-                assert_eq!(text, transcript.text);
-                assert_eq!(kept, Some(duration));
-                assert_eq!(dictation.failed.as_ref().unwrap().wav, wav);
-            }
-        }
-    }
-
-    #[test]
-    fn disabled_retention_and_outputs_require_copyable_recovery() {
-        use super::{DictationNotice, FailedRecording, Phase};
-        for history_saved in [false, true] {
-            for auto_paste_enabled in [false, true] {
-                for keep_transcription_in_clipboard in [false, true] {
-                    let mut dictation = dictation(Phase::Processing);
-                    let settings = Settings {
-                        data_retention_enabled: false,
-                        auto_paste_enabled,
-                        keep_transcription_in_clipboard,
+                    &Settings {
+                        output_mode: crate::settings::OutputMode::CopyOnly,
+                        data_retention_enabled: retention_enabled,
                         ..Settings::default()
-                    };
-                    let notice = dictation.persistence_recovery(
-                        &Ok(history_saved.then_some(42)),
-                        &settings,
-                        "kept words".into(),
-                        FailedRecording {
-                            wav: bytes::Bytes::from_static(b"RIFF original audio"),
-                            duration: std::time::Duration::from_secs(3),
-                            occurred_at: chrono::Utc::now(),
-                        },
+                    },
+                )
+                .result;
+            if retention_enabled {
+                assert!(saved.is_err());
+            } else {
+                assert!(matches!(saved, Ok(None)));
+            }
+            for copied in [false, true] {
+                let notice = super::clipboard_delivery_notice(
+                    transcript.text.clone(),
+                    matches!(saved, Ok(Some(_))),
+                    copied,
+                );
+                if copied {
+                    assert!(matches!(notice, super::DictationNotice::Delivered));
+                } else {
+                    assert!(
+                        matches!(notice, super::DictationNotice::TranscriptRecovery { text, kept: None, .. } if text == transcript.text)
                     );
-                    if !history_saved && !auto_paste_enabled && !keep_transcription_in_clipboard {
-                        assert!(
-                            matches!(notice, Some(DictationNotice::TranscriptRecovery { text, .. }) if text == "kept words")
-                        );
-                        assert!(dictation.failed.is_some());
-                    } else {
-                        assert!(notice.is_none());
-                        assert!(dictation.failed.is_none());
-                    }
                 }
             }
         }
@@ -1316,10 +1222,10 @@ mod tests {
 
     #[test]
     fn clipboard_only_failure_needs_recovery_unless_history_saved_the_words() {
-        use super::{DictationNotice, unpasted_delivery_notice};
+        use super::{DictationNotice, clipboard_delivery_notice};
         for history_saved in [false, true] {
             for copied in [false, true] {
-                let notice = unpasted_delivery_notice("kept words".into(), history_saved, copied);
+                let notice = clipboard_delivery_notice("kept words".into(), history_saved, copied);
                 if history_saved || copied {
                     assert!(matches!(notice, DictationNotice::Delivered));
                 } else {

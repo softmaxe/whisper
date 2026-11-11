@@ -9,6 +9,42 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths;
 
+/// Every output mode selects a destination even when History is disabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum OutputMode {
+    #[default]
+    PasteAndRestore,
+    PasteAndKeep,
+    CopyOnly,
+}
+
+impl OutputMode {
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "paste-and-keep" => Self::PasteAndKeep,
+            "copy-only" => Self::CopyOnly,
+            _ => Self::PasteAndRestore,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PasteAndRestore => "paste-and-restore",
+            Self::PasteAndKeep => "paste-and-keep",
+            Self::CopyOnly => "copy-only",
+        }
+    }
+
+    pub fn pastes_automatically(self) -> bool {
+        self != Self::CopyOnly
+    }
+
+    pub fn restores_clipboard(self) -> bool {
+        self == Self::PasteAndRestore
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum MicrophoneSelectionMode {
@@ -121,8 +157,7 @@ pub struct Settings {
     pub start_minimized: bool,
     pub show_menu_bar_icon: bool,
     pub panel_start_position: PanelStartPosition,
-    pub auto_paste_enabled: bool,
-    pub keep_transcription_in_clipboard: bool,
+    pub output_mode: OutputMode,
     pub auto_learn_corrections: bool,
     pub sidebar_collapsed: bool,
 }
@@ -154,8 +189,7 @@ impl Default for Settings {
             start_minimized: false,
             show_menu_bar_icon: true,
             panel_start_position: PanelStartPosition::BottomRight,
-            auto_paste_enabled: true,
-            keep_transcription_in_clipboard: false,
+            output_mode: OutputMode::default(),
             auto_learn_corrections: true,
             sidebar_collapsed: false,
         }
@@ -173,7 +207,30 @@ impl Settings {
     pub fn load_from(path: &Path) -> Self {
         std::fs::read_to_string(path)
             .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .and_then(|raw| {
+                let mut value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+                // Missing legacy keys used these defaults. Prefer the new key
+                // when both formats are present; save only the new key.
+                if let Some(fields) = value.as_object_mut()
+                    && !fields.contains_key("outputMode")
+                {
+                    let paste = fields
+                        .get("autoPasteEnabled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(true);
+                    let keep = fields
+                        .get("keepTranscriptionInClipboard")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let mode = match (paste, keep) {
+                        (true, false) => OutputMode::PasteAndRestore,
+                        (true, true) => OutputMode::PasteAndKeep,
+                        (false, _) => OutputMode::CopyOnly,
+                    };
+                    fields.insert("outputMode".into(), serde_json::to_value(mode).ok()?);
+                }
+                serde_json::from_value(value).ok()
+            })
             .unwrap_or_default()
     }
 
@@ -204,6 +261,76 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_output_settings_migrate_on_load_and_save_only_one_key() {
+        for (paste, keep, expected) in [
+            (true, false, OutputMode::PasteAndRestore),
+            (true, true, OutputMode::PasteAndKeep),
+            (false, true, OutputMode::CopyOnly),
+            (false, false, OutputMode::CopyOnly),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({
+                    "autoPasteEnabled": paste,
+                    "keepTranscriptionInClipboard": keep,
+                    "theme": "dark",
+                    "remoteTranscriptionModel": "test-model",
+                    "unknownFutureSetting": true,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let settings = Settings::load_from(&path);
+            assert_eq!(settings.output_mode, expected);
+            assert_eq!(settings.theme, ThemePreference::Dark);
+            assert_eq!(settings.remote_transcription_model, "test-model");
+            settings.save_to(&path).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved["outputMode"], expected.as_str());
+            assert!(saved.get("autoPasteEnabled").is_none());
+            assert!(saved.get("keepTranscriptionInClipboard").is_none());
+            assert_eq!(Settings::load_from(&path), settings);
+        }
+    }
+
+    #[test]
+    fn output_migration_uses_legacy_defaults_and_prefers_the_new_key() {
+        for (raw, expected) in [
+            (r#"{}"#, OutputMode::PasteAndRestore),
+            (r#"{"autoPasteEnabled":false}"#, OutputMode::CopyOnly),
+            (
+                r#"{"keepTranscriptionInClipboard":true}"#,
+                OutputMode::PasteAndKeep,
+            ),
+            (
+                r#"{"outputMode":"paste-and-keep","autoPasteEnabled":false,"keepTranscriptionInClipboard":false}"#,
+                OutputMode::PasteAndKeep,
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            std::fs::write(&path, raw).unwrap();
+            assert_eq!(Settings::load_from(&path).output_mode, expected);
+        }
+    }
+
+    #[test]
+    fn output_modes_have_the_expected_delivery_behavior() {
+        for (mode, paste, restore) in [
+            (OutputMode::PasteAndRestore, true, true),
+            (OutputMode::PasteAndKeep, true, false),
+            (OutputMode::CopyOnly, false, false),
+        ] {
+            assert_eq!(mode.pastes_automatically(), paste);
+            assert_eq!(mode.restores_clipboard(), restore);
+            assert_eq!(OutputMode::parse(mode.as_str()), mode);
+        }
+    }
 
     #[test]
     fn tokyo_night_preference_round_trips() {

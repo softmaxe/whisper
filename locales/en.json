@@ -86,12 +86,15 @@
         "pauseMediaDescription": "Automatically pause music when dictation starts",
         "title": "Sound & media"
       },
-      "clipboard": {
-        "title": "Clipboard",
-        "autoPaste": "Automatic pasting",
-        "autoPasteDescription": "Automatically paste transcribed text into the active app when dictation finishes",
-        "keepInClipboard": "Keep transcript in clipboard",
-        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed"
+      "output": {
+        "title": "Output",
+        "mode": "Output mode",
+        "pasteAndRestore": "Paste and restore",
+        "pasteAndRestoreDescription": "Paste into the active app, then restore your clipboard.",
+        "pasteAndKeep": "Paste and keep",
+        "pasteAndKeepDescription": "Paste into the active app and keep the text on your clipboard.",
+        "copyOnly": "Copy only",
+        "copyOnlyDescription": "Copy the text to your clipboard for manual pasting."
       },
       "startup": {
         "launchAtLogin": "Launch at login",
@@ -337,13 +340,9 @@
       "title": "Check this transcription",
       "description": "The result looks like the dictionary prompt. View and copy the text if it’s what you said, or resend the recording."
     },
-    "historySaveFailed": {
-      "title": "Transcription not fully saved",
-      "description": "Couldn’t save the transcription or its recording to History. Your text is kept here. View and copy it, or resend the recording."
-    },
-    "noDestination": {
+    "clipboardWriteFailed": {
       "title": "Your text is kept here",
-      "description": "The transcription wasn’t saved, pasted, or copied. View and copy the text before closing this card."
+      "description": "Couldn’t copy the transcription to your clipboard. View and copy the text before closing this card."
     },
     "errorDescriptions": {
       "transcriptionConnectionFailed": "Couldn’t reach the transcription server within 3 seconds. Check that it’s running and reachable.",
