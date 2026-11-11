@@ -79,22 +79,57 @@ pub fn focus_ring_on_fill(p: &Palette) -> Vec<BoxShadow> {
     ]
 }
 
-/// Focus handles of [`KeyboardFocusable`] elements, by key. Kept app-wide so
-/// render helpers that only hold an `App` can make elements focusable.
+/// Recent render passes keep handles stable while GPUI replaces its element
+/// tree. Older entries are weak: visible controls and saved focus-restoration
+/// targets keep their identity, while removed rows can be reclaimed.
 #[derive(Default)]
-struct FocusHandles(std::collections::HashMap<ElementId, FocusHandle>);
+struct FocusHandles {
+    render: u64,
+    entries: std::collections::HashMap<ElementId, CachedFocusHandle>,
+}
+
+struct CachedFocusHandle {
+    weak: WeakFocusHandle,
+    recent: Option<FocusHandle>,
+    requested: u64,
+}
 
 impl Global for FocusHandles {}
 
+/// Run at a view render boundary, including independently refreshed lists.
+/// Never evict a handle still owned by a rendered control or a focus callback.
+pub fn prune_focus_handles(cx: &mut App) {
+    let cache = cx.default_global::<FocusHandles>();
+    cache.render += 1;
+    let render = cache.render;
+    cache.entries.retain(|_, entry| {
+        if render.saturating_sub(entry.requested) > 2 {
+            entry.recent = None;
+        }
+        entry.weak.upgrade().is_some()
+    });
+}
+
 /// The focus handle stored under `key`, created on first use.
 pub fn keyed_focus_handle(key: ElementId, cx: &mut App) -> FocusHandle {
-    if let Some(handle) = cx.default_global::<FocusHandles>().0.get(&key) {
-        return handle.clone();
+    let cache = cx.default_global::<FocusHandles>();
+    if let Some(entry) = cache.entries.get_mut(&key)
+        && let Some(handle) = entry.weak.upgrade()
+    {
+        entry.requested = cache.render;
+        entry.recent = Some(handle.clone());
+        return handle;
     }
     let handle = cx.focus_handle();
-    cx.global_mut::<FocusHandles>()
-        .0
-        .insert(key, handle.clone());
+    let cache = cx.global_mut::<FocusHandles>();
+    cache.entries.insert(
+        key,
+        CachedFocusHandle {
+            weak: handle.downgrade(),
+            recent: Some(handle.clone()),
+            requested: cache.render,
+        },
+    );
     handle
 }
 

@@ -1058,6 +1058,7 @@ impl DictionaryView {
 
 impl Render for DictionaryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let header = self.render_header(window, cx);
         let body = match self.tab {
             Tab::Words => self.render_words(window, cx),

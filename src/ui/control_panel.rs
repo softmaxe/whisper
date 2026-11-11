@@ -660,6 +660,7 @@ impl Focusable for ControlPanel {
 
 impl Render for ControlPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let p = cx.palette();
         let settings_modal = self.settings.clone();
         let custom = Overlays::global(cx).read(cx).custom();

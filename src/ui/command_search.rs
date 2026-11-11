@@ -196,6 +196,7 @@ impl CommandSearch {
 
 impl Render for CommandSearch {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let p = cx.palette();
         let query = self.input.read(cx).value().to_string();
         let results = self.results(cx);

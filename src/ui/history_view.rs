@@ -1190,6 +1190,7 @@ impl HistoryView {
 
 impl Render for HistoryView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        super::components::prune_focus_handles(cx);
         let p = cx.palette();
         self.spotlight.take_if(|s| s.since.elapsed() >= SPOTLIGHT);
         self.advance_glide();
