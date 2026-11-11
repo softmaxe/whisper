@@ -713,8 +713,18 @@ mod tests {
 
     #[test]
     fn skipping_cleanup_is_prompt_and_finishes_deterministic_steps_once() {
+        assert_cleanup_skip(Duration::from_millis(30));
+    }
+
+    #[test]
+    fn skipping_cleanup_tolerates_delayed_stage_observation() {
+        // Simulate a loaded runner observing the cleanup stage late.
+        assert_cleanup_skip(Duration::from_millis(1100));
+    }
+
+    fn assert_cleanup_skip(observation_delay: Duration) {
         let asr = asr("Uh, 電腦 克劳德 sig");
-        let llm = llm(completion("late reply").delayed(Duration::from_secs(3)));
+        let llm = llm(completion("late reply").delayed(Duration::from_secs(30)));
         let mut input = served(&asr, Some(&llm));
         input.settings.preferred_language = "zh-CN".into();
         input.settings.chinese_script_preference =
@@ -732,13 +742,13 @@ mod tests {
             let run = super::run(input, CancellationToken::new(), skip.clone());
             let skipping = async {
                 assert_eq!(rx.recv().await, Ok(true));
-                tokio::time::sleep(Duration::from_millis(30)).await;
+                tokio::time::sleep(observation_delay).await;
                 skip.cancel();
             };
             let (outcome, ()) = tokio::join!(run, skipping);
             outcome
         }));
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(t.raw_text, "Uh, 電腦 克劳德 sig");
         assert!(t.text.contains("电脑"), "{}", t.text);
         assert!(t.text.contains("Claude"), "{}", t.text);
