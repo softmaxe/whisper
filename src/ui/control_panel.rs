@@ -89,6 +89,7 @@ pub struct ControlPanel {
 
 impl ControlPanel {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.page_menu_open = false);
         let collapsed = AppState::settings(cx).sidebar_collapsed;
         let state = AppState::global(cx);
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
@@ -174,6 +175,7 @@ impl ControlPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        super::overlays::dismiss_menus(cx);
         if let Some(modal) = &self.settings {
             if let Some(section) = section {
                 modal.update(cx, |m, cx| m.set_section(section, cx));

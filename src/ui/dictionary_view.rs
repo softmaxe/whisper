@@ -458,6 +458,7 @@ fn update_dictionary(add: Vec<String>, remove: Vec<String>, cx: &mut App) {
 
 impl DictionaryView {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.menu = None);
         let notify_on_change = |cx: &mut Context<Self>, state: &Entity<InputState>| {
             cx.subscribe(state, |_, _, e: &InputEvent, cx| {
                 if matches!(e, InputEvent::Change) {

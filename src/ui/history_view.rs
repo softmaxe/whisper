@@ -207,6 +207,7 @@ fn format_clock(time: DateTime<Local>) -> String {
 
 impl HistoryView {
     pub fn new(scroll: ScrollHandle, cx: &mut Context<Self>) -> Self {
+        super::menu::dismiss_on_overlay(cx, |this: &mut Self| this.open_menu = None);
         let state = AppState::global(cx);
         // Dictation phase changes drive the transcribing placeholder. Tracked
         // here rather than in render so it starts before the transcript is

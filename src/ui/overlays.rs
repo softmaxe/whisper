@@ -11,8 +11,8 @@ use gpui_kit::*;
 use gpui_kit::base::FocusTrapElement;
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, backdrop, dialog_shadow, focus_ring,
-    icon, keyed_focus_handle, text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, backdrop, dialog_shadow,
+    focus_ring, icon, keyed_focus_handle, text_tooltip,
 };
 use super::theme::{
     DUR_BASE, DUR_SHEET, DUR_SNAP, FONT_MONO, LINE_SMALL, LINE_TITLE, PaletteExt, RADIUS_2XL,
@@ -178,6 +178,8 @@ pub struct Overlays {
     next_id: u64,
 }
 
+impl EventEmitter<DismissMenu> for Overlays {}
+
 struct OverlaysGlobal(Entity<Overlays>);
 impl Global for OverlaysGlobal {}
 
@@ -261,6 +263,7 @@ impl Overlays {
 
 pub fn show_dialog(request: DialogRequest, cx: &mut App) {
     Overlays::global(cx).update(cx, |o, cx| {
+        cx.emit(DismissMenu);
         o.dialog = Some(request);
         o.dialog_needs_focus = true;
         cx.notify();
@@ -269,9 +272,14 @@ pub fn show_dialog(request: DialogRequest, cx: &mut App) {
 
 pub fn show_custom(view: AnyView, cx: &mut App) {
     Overlays::global(cx).update(cx, |o, cx| {
+        cx.emit(DismissMenu);
         o.custom = Some(view);
         cx.notify();
     });
+}
+
+pub fn dismiss_menus(cx: &mut App) {
+    Overlays::global(cx).update(cx, |_, cx| cx.emit(DismissMenu));
 }
 
 pub fn close_custom(cx: &mut App) {

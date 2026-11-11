@@ -6,7 +6,20 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
 use super::components::{DismissMenu, MENU_CONTEXT, MenuTriggerBounds, keyed_focus_handle};
+use super::overlays::Overlays;
 use super::theme::{DUR_SNAP, PaletteExt, RADIUS_LG, ease_snap, motion};
+
+/// Clear popup state even when an overlay replaces its rendered focus tree.
+pub fn dismiss_on_overlay<V: 'static>(cx: &mut Context<V>, dismiss: impl Fn(&mut V) + 'static) {
+    cx.subscribe(
+        &Overlays::global(cx),
+        move |this, _, _: &DismissMenu, cx| {
+            dismiss(this);
+            cx.notify();
+        },
+    )
+    .detach();
+}
 
 #[derive(Clone)]
 pub struct MenuFocus {
@@ -91,6 +104,17 @@ pub struct PopupMenu {
     pub focus: MenuFocus,
 }
 
+struct MenuSession {
+    surface: FocusHandle,
+    _blur: Subscription,
+}
+
+fn dismiss_on_focus_change(menu_focused: bool, trigger_focused: bool) -> bool {
+    // Keep trigger press/release toggling intact; an overlay or another control
+    // taking focus ends the popup without returning focus to its trigger.
+    !menu_focused && !trigger_focused
+}
+
 impl PopupMenu {
     pub fn render<V: 'static>(
         self,
@@ -99,11 +123,26 @@ impl PopupMenu {
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> AnyElement {
+        let dismiss = Rc::new(on_dismiss);
+        let blur_dismiss = dismiss.clone();
+        let blur_focus = self.focus.clone();
+        let on_blur = cx.listener(move |this, _: &FocusOutEvent, window, cx| {
+            if dismiss_on_focus_change(
+                blur_focus.items.iter().any(|item| item.is_focused(window)),
+                blur_focus.trigger.is_focused(window),
+            ) {
+                blur_dismiss(this, window, cx);
+            }
+        });
         // Initialize once per opening, after the menu enters the focus tree.
         // Pointer and keyboard opens must both route keys through the menu.
         let initial_focus = self.focus.clone();
         let opening_focus = window.focused(cx);
-        window.use_keyed_state(self.id.clone(), cx, |window, _| {
+        let session = window.use_keyed_state(self.id.clone(), cx, |window, cx| {
+            let surface = cx.focus_handle();
+            let blur = window.on_focus_out(&surface, cx, move |event, window, cx| {
+                on_blur(&event, window, cx);
+            });
             window.on_next_frame(move |window, cx| {
                 if window.focused(cx) == opening_focus
                     && let Some(first) = initial_focus.items.first()
@@ -111,10 +150,13 @@ impl PopupMenu {
                     window.focus(first, cx);
                 }
             });
+            MenuSession {
+                surface,
+                _blur: blur,
+            }
         });
         let p = cx.palette();
         let dictionary = self.appearance == MenuAppearance::Dictionary;
-        let dismiss = Rc::new(on_dismiss);
         let outside = dismiss.clone();
         let keyboard = dismiss.clone();
         let action_focus = self.focus.clone();
@@ -122,6 +164,7 @@ impl PopupMenu {
         let trigger = self.trigger;
         let menu = div()
             .id(self.id)
+            .track_focus(&session.read(cx).surface)
             .role(Role::Menu)
             .occlude()
             .min_w(px(self.min_width))
@@ -219,7 +262,14 @@ impl PopupMenu {
 
 #[cfg(test)]
 mod tests {
-    use super::next_item;
+    use super::{dismiss_on_focus_change, next_item};
+
+    #[test]
+    fn leaving_for_an_overlay_dismisses_without_breaking_trigger_toggling() {
+        assert!(dismiss_on_focus_change(false, false));
+        assert!(!dismiss_on_focus_change(false, true));
+        assert!(!dismiss_on_focus_change(true, false));
+    }
 
     #[test]
     fn arrow_navigation_wraps_and_preserves_initial_focus_rules() {
