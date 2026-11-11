@@ -97,6 +97,7 @@ impl Range {
 
 /// Prepared off the UI thread so pointer updates never rebuild daily aggregates.
 struct PreparedInsights {
+    today: NaiveDate,
     trends: [Trend; 3],
     highlights: [DayHighlights; 3],
     active_dates: HashSet<NaiveDate>,
@@ -115,6 +116,7 @@ impl PreparedInsights {
             .filter_map(|day| NaiveDate::parse_from_str(&day.date, "%Y-%m-%d").ok())
             .collect();
         Self {
+            today,
             trends: ranges.map(|range| {
                 let start = today - Days::new(range.chart_days() as u64 - 1);
                 let start = if range == Range::AllTime {
@@ -147,6 +149,8 @@ pub struct InsightsView {
     load_failed: bool,
     load_generation: u64,
     load_in_flight: bool,
+    requested_for: Option<NaiveDate>,
+    activation_subscription: Option<Subscription>,
     range: Range,
     /// The bar under the pointer.
     hovered: Option<usize>,
@@ -459,6 +463,8 @@ impl InsightsView {
             load_failed: false,
             load_generation: 0,
             load_in_flight: false,
+            requested_for: None,
+            activation_subscription: None,
             range: Range::Week,
             hovered: None,
             cursor: None,
@@ -468,6 +474,7 @@ impl InsightsView {
     }
 
     pub fn load(&mut self, cx: &mut Context<Self>) {
+        self.requested_for = Some(Local::now().date_naive());
         self.load_generation = self.load_generation.wrapping_add(1);
         if self.load_in_flight {
             return;
@@ -475,10 +482,13 @@ impl InsightsView {
         self.load_in_flight = true;
         cx.spawn(async move |this, cx| {
             loop {
-                let Ok((db, generation)) = this.update(cx, |this, cx| {
+                let Ok((db, generation, today)) = this.update(cx, |this, cx| {
+                    let today = Local::now().date_naive();
+                    this.requested_for = Some(today);
                     (
                         AppState::global(cx).read(cx).db.clone(),
                         this.load_generation,
+                        today,
                     )
                 }) else {
                     return;
@@ -486,14 +496,13 @@ impl InsightsView {
                 let result = cx
                     .background_spawn(async move {
                         db.get_analytics_summary().map(|summary| {
-                            let prepared =
-                                PreparedInsights::new(&summary, Local::now().date_naive());
+                            let prepared = PreparedInsights::new(&summary, today);
                             (summary, prepared)
                         })
                     })
                     .await;
                 let retry = this.update(cx, |this, cx| {
-                    if generation != this.load_generation {
+                    if generation != this.load_generation || today != Local::now().date_naive() {
                         return true;
                     }
                     match result {
@@ -517,6 +526,13 @@ impl InsightsView {
             }
         })
         .detach();
+    }
+
+    pub(super) fn refresh_for_date(&mut self, cx: &mut Context<Self>) {
+        let loaded_for = self.prepared.as_ref().map(|prepared| prepared.today);
+        if needs_date_refresh(loaded_for, self.requested_for, Local::now().date_naive()) {
+            self.load(cx);
+        }
     }
 
     fn set_range(&mut self, range: Range, cx: &mut Context<Self>) {
@@ -1565,7 +1581,7 @@ impl InsightsView {
         let Some(prepared) = &self.prepared else {
             return div();
         };
-        let today = Local::now().date_naive();
+        let today = prepared.today;
         let metrics = div()
             .flex()
             .gap(px(16.))
@@ -1670,6 +1686,15 @@ impl InsightsView {
     }
 }
 
+fn needs_date_refresh(
+    loaded: Option<NaiveDate>,
+    requested: Option<NaiveDate>,
+    today: NaiveDate,
+) -> bool {
+    // Do not retry a failed load on every render; the Retry button remains available.
+    loaded != Some(today) && requested != Some(today)
+}
+
 /// The first and last day of the current streak: the run of active days that
 /// ends today, or yesterday while today is still open.
 fn current_streak(active: &HashSet<NaiveDate>, today: NaiveDate) -> Option<(NaiveDate, NaiveDate)> {
@@ -1694,6 +1719,15 @@ fn first_use(summary: &AnalyticsSummary) -> Option<NaiveDate> {
 
 impl Render for InsightsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.activation_subscription.is_none() {
+            self.activation_subscription =
+                Some(cx.observe_window_activation(window, |this, window, cx| {
+                    if window.is_window_active() {
+                        this.refresh_for_date(cx);
+                    }
+                }));
+        }
+        self.refresh_for_date(cx);
         let p = cx.palette();
         let retention = AppState::settings(cx).data_retention_enabled;
 
@@ -1753,8 +1787,42 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        TrendBar, absolute_change, axis_labels, current_streak, grid_step, relative_change,
+        TrendBar, absolute_change, axis_labels, current_streak, grid_step, needs_date_refresh,
+        relative_change,
     };
+
+    #[test]
+    fn date_refresh_coalesces_requests_and_detects_clock_changes() {
+        let yesterday = NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let today = NaiveDate::from_ymd_opt(2026, 11, 11).unwrap();
+        assert!(needs_date_refresh(Some(yesterday), Some(yesterday), today));
+        assert!(!needs_date_refresh(Some(yesterday), Some(today), today));
+        assert!(!needs_date_refresh(Some(today), Some(today), today));
+        assert!(!needs_date_refresh(None, Some(today), today));
+        assert!(needs_date_refresh(Some(today), Some(today), yesterday));
+    }
+
+    #[test]
+    fn prepared_calendar_and_summary_share_the_loaded_date() {
+        use crate::analytics::{AnalyticsDailyBucket, summarize_analytics_days};
+
+        let last_active = NaiveDate::from_ymd_opt(2026, 11, 10).unwrap();
+        let daily = vec![AnalyticsDailyBucket {
+            date: last_active.to_string(),
+            words: 100,
+            dictations: 1,
+            spoken_duration_ms: 60_000,
+            covered_words: 100,
+        }];
+        for (days_later, expected) in [(1, 1), (2, 0)] {
+            let today = last_active + chrono::Days::new(days_later);
+            let summary = summarize_analytics_days(daily.clone(), &today.to_string());
+            let prepared = super::PreparedInsights::new(&summary, today);
+            assert_eq!(prepared.today, today);
+            assert_eq!(summary.current_streak_days, expected);
+            assert_eq!(prepared.streak.is_some(), expected > 0);
+        }
+    }
 
     #[test]
     fn changes_read_as_multiples_from_double_up() {

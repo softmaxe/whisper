@@ -115,6 +115,7 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 ## Insights regression check
 
 - Using a temporary development database with at least 3,000 active days, select All time. Check that the date range starts at the earliest activity, active days include the full history, and chart totals, spoken time, and busiest day agree with the headline totals. Hover, keyboard navigation, and range switching should remain responsive; long charts should use weekly bars.
+- Leave the app open across local midnight without new dictation. Revisit Insights from another page and reactivate the window from another app. The streak number, calendar, range dates, and chart should refresh together. Repeat with a streak whose last activity was yesterday before midnight, so it expires afterward. A failed refresh should show Retry without repeatedly loading on every render.
 
 ## Tokyo Night theme check
 

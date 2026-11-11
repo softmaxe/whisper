@@ -239,6 +239,11 @@ impl ControlPanel {
 
     pub fn set_view(&mut self, view: PanelView, cx: &mut Context<Self>) {
         self.active = view;
+        if view == PanelView::Insights
+            && let Some(insights) = &self.insights
+        {
+            insights.update(cx, |insights, cx| insights.refresh_for_date(cx));
+        }
         cx.notify();
     }
 
