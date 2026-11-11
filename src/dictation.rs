@@ -400,19 +400,26 @@ impl Dictation {
     }
 
     pub fn cancel_recording(&mut self, cx: &mut Context<Self>) {
+        if self.cancel_capture() {
+            self.set_phase(Phase::Idle, cx);
+        }
+    }
+
+    fn cancel_capture(&mut self) -> bool {
+        // A stale recovery Escape must not invalidate a processing result.
+        if !matches!(self.phase, Phase::Preparing | Phase::Recording) {
+            return false;
+        }
         self.generation += 1;
         self.start_lock = false;
         self.recorder.cancel_prepared();
         if self.phase == Phase::Recording {
             self.started_at = None;
             self.recorder.stop();
-            self.set_phase(Phase::Idle, cx);
         } else {
             self.recorder.cancel();
-            if self.phase == Phase::Preparing {
-                self.set_phase(Phase::Idle, cx);
-            }
         }
+        true
     }
 
     pub fn cancel_processing(&mut self, cx: &mut Context<Self>) {
@@ -668,7 +675,6 @@ impl Dictation {
         let settings = AppState::settings(cx);
         let Transcript {
             text,
-            raw_text,
             cleanup_failure,
             ..
         } = transcript;
@@ -679,7 +685,7 @@ impl Dictation {
             self.set_phase(Phase::Idle, cx);
             cx.emit(DictationNotice::PushForceStopped {
                 kept_in_clipboard: kept,
-                transcript: raw_text,
+                transcript: text,
             });
         } else if settings.auto_paste_enabled {
             let generation = self.generation;
@@ -891,6 +897,33 @@ mod tests {
     use crate::settings::Settings;
     use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
+
+    #[test]
+    fn recording_cancel_does_not_invalidate_processing_or_idle() {
+        use super::{Dictation, Phase, Recorder, StatusMirror};
+        for phase in [Phase::Idle, Phase::Processing] {
+            let cancel = CancellationToken::new();
+            let mut dictation = Dictation {
+                phase,
+                recorder: Recorder::new(None),
+                generation: 7,
+                start_lock: false,
+                cancel: Some(cancel.clone()),
+                target_pid: None,
+                started_at: None,
+                effects_held: false,
+                media_paused: false,
+                push_force_stopped: false,
+                failed: None,
+                status: StatusMirror::default(),
+                _device_events: gpui_kit::Task::ready(()),
+            };
+            assert!(!dictation.cancel_capture());
+            assert_eq!(dictation.generation, 7);
+            assert_eq!(dictation.phase, phase);
+            assert!(!cancel.is_cancelled());
+        }
+    }
 
     fn actions(code: Option<&str>) -> (bool, bool) {
         let a = ErrorActions::for_transcription_failure(code);

@@ -79,7 +79,7 @@ impl SettingsModal {
             t("settings.general.startup.launchAtLogin"),
             Some(t("settings.general.startup.launchAtLoginDescription")),
             auto_start.enabled,
-            self.auto_start_loading,
+            false,
             {
                 let this = cx.entity().downgrade();
                 move |enabled, _, cx| {

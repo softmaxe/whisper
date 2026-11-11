@@ -2,6 +2,15 @@
 
 use super::*;
 
+fn server_request_is_current(
+    saved: &str,
+    draft: &str,
+    current_saved: &str,
+    current_draft: &str,
+) -> bool {
+    saved == current_saved && draft == current_draft
+}
+
 impl SettingsModal {
     pub(super) fn cleanup_draft(&self, cx: &App) -> String {
         self.cleanup_url.read(cx).value().trim().to_string()
@@ -13,9 +22,6 @@ impl SettingsModal {
         cx: &mut Context<Self>,
     ) {
         let draft = self.cleanup_draft(cx);
-        if draft.is_empty() {
-            return;
-        }
         if draft != settings(cx).cleanup_remote_url.trim() {
             self.apply_cleanup_base(window, cx);
         }
@@ -68,7 +74,7 @@ impl SettingsModal {
         let saved = normalized.clone();
         update_settings(cx, |s| s.cleanup_remote_url = saved);
         self.last_loaded_base = None;
-        self.load_models(Some(normalized), true, cx);
+        self.load_models(Some(normalized), true, window, cx);
     }
 
     pub(super) fn refresh_models(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -80,18 +86,21 @@ impl SettingsModal {
         if draft.is_empty() {
             return;
         }
-        self.load_models(None, true, cx);
+        self.load_models(None, true, window, cx);
     }
 
     pub(super) fn load_models(
         &mut self,
         base_override: Option<String>,
         force: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let raw = base_override.unwrap_or_else(|| settings(cx).cleanup_remote_url.clone());
         let normalized = normalize_base_url(&raw);
         if normalized.is_empty() {
+            // A pending request must not publish the previous server's models.
+            self.models_request = None;
             self.models.clear();
             self.models_error = None;
             self.models_loading = false;
@@ -107,16 +116,32 @@ impl SettingsModal {
         self.models_error_details = false;
         cx.notify();
         let api_key = self.api_key.trim().to_string();
+        let draft = self.cleanup_url.read(cx).value().to_string();
         let request = backend::list_models(normalized.clone(), api_key.clone());
-        self.models_request = Some(cx.spawn(async move |this, cx| {
+        self.models_request = Some(cx.spawn_in(window, async move |this, cx| {
             let result = request.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
                 this.models_loading = false;
+                if !server_request_is_current(
+                    &raw,
+                    &draft,
+                    &settings(cx).cleanup_remote_url,
+                    this.cleanup_url.read(cx).value().as_ref(),
+                ) || this.api_key.trim() != api_key
+                {
+                    cx.notify();
+                    return;
+                }
                 match result {
                     Ok((resolved, models)) => {
-                        if resolved != normalized {
+                        if resolved != raw {
                             let saved = resolved.clone();
                             update_settings(cx, |s| s.cleanup_remote_url = saved);
+                        }
+                        if resolved != draft {
+                            this.cleanup_url.update(cx, |input, cx| {
+                                input.set_value(resolved.clone(), window, cx);
+                            });
                         }
                         this.models = models;
                         this.last_loaded_base = Some(resolved);
@@ -147,24 +172,44 @@ impl SettingsModal {
 
     /// Asks the server for its model list: a cheap request every
     /// OpenAI-compatible server answers, which proves the address works.
-    pub(super) fn test_stt_connection(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn test_stt_connection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let s = settings(cx);
         let base = normalize_base_url(&s.remote_transcription_url);
         if base.is_empty() {
             return;
         }
-        let model = s.remote_transcription_model.trim().to_string();
         self.stt_check = ConnectionCheck::Checking;
         self.stt_error_details = false;
         cx.notify();
         let request = backend::list_models(base.clone(), String::new());
-        self.stt_request = Some(cx.spawn(async move |this, cx| {
+        let draft = self.stt_url.read(cx).value().to_string();
+        self.stt_request = Some(cx.spawn_in(window, async move |this, cx| {
             let result = request.await;
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update_in(cx, |this, window, cx| {
+                if !server_request_is_current(
+                    &s.remote_transcription_url,
+                    &draft,
+                    &settings(cx).remote_transcription_url,
+                    this.stt_url.read(cx).value().as_ref(),
+                ) {
+                    this.reset_stt_check();
+                    cx.notify();
+                    return;
+                }
                 this.stt_check = match result {
-                    Ok((_, models)) => {
+                    Ok((resolved, models)) => {
+                        if resolved != s.remote_transcription_url {
+                            update_settings(cx, |s| s.remote_transcription_url = resolved.clone());
+                        }
+                        if resolved != draft {
+                            this.stt_url.update(cx, |input, cx| {
+                                input.set_value(resolved, window, cx);
+                            });
+                        }
                         this.stt_models = models;
-                        ConnectionCheck::connected(&this.stt_models, &model)
+                        // The model field may have changed while checking.
+                        let model = settings(cx).remote_transcription_model;
+                        ConnectionCheck::connected(&this.stt_models, model.trim())
                     }
                     Err(error) => ConnectionCheck::Failed(error),
                 };
@@ -174,10 +219,21 @@ impl SettingsModal {
     }
 
     pub(super) fn save_api_key(&mut self, cx: &mut Context<Self>) {
+        if !self.api_key_editing {
+            return;
+        }
         let key = self.api_key_input.read(cx).value().trim().to_string();
         self.api_key = key.clone();
         self.api_key_editing = false;
         backend::set_cleanup_api_key(&key);
+        cx.notify();
+    }
+
+    pub(super) fn cancel_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_key_editing = false;
+        self.api_key_input.update(cx, |input, cx| {
+            input.set_value(self.api_key.clone(), window, cx);
+        });
         cx.notify();
     }
 
@@ -335,7 +391,7 @@ impl SettingsModal {
             "settings-stt-test",
             status,
             !base.is_empty() && self.stt_check != ConnectionCheck::Checking,
-            cx.listener(|this, _, _, cx| this.test_stt_connection(cx)),
+            cx.listener(|this, _, window, cx| this.test_stt_connection(window, cx)),
             cx,
         )
     }
@@ -531,6 +587,8 @@ impl SettingsModal {
         let p = cx.palette();
         if self.api_key_editing && !disabled {
             return div()
+                .id("settings-api-key-editor")
+                .track_focus(&self.api_key_focus)
                 .relative()
                 // Room for the two buttons, so a long key never runs under them.
                 .child(text_field(&self.api_key_input, true, window, cx).pr(px(60.)))
@@ -559,10 +617,11 @@ impl SettingsModal {
                                 p.subtle_foreground,
                                 cx,
                             )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.api_key_editing = false;
-                                cx.notify();
-                            })),
+                            .on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.cancel_api_key(window, cx);
+                                },
+                            )),
                         ),
                 )
                 .into_any_element();
@@ -658,5 +717,27 @@ impl SettingsModal {
                     }),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_request_is_current;
+
+    #[test]
+    fn resolved_address_requires_unchanged_setting_and_draft() {
+        let base = "http://localhost:8000";
+        let newer = "http://localhost:9000";
+        assert!(server_request_is_current(base, base, base, base));
+        assert!(!server_request_is_current(base, base, newer, base));
+        assert!(!server_request_is_current(base, base, base, newer));
+        assert!(!server_request_is_current(base, base, newer, newer));
+        assert!(!server_request_is_current(base, base, base, ""));
+        assert!(!server_request_is_current(
+            base,
+            base,
+            base,
+            &format!("{base}/v1")
+        ));
     }
 }

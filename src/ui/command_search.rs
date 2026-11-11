@@ -228,12 +228,10 @@ impl Render for CommandSearch {
                     .justify_center()
                     .text_size(px(TEXT_SMALL))
                     .text_color(p.muted_foreground)
-                    .child(if !query.trim().is_empty() {
-                        t("commandSearch.noResults")
-                    } else if AppState::global(cx).read(cx).history.is_empty() {
+                    .child(if query.trim().is_empty() {
                         t("controlPanel.history.empty")
                     } else {
-                        t("commandSearch.emptyState")
+                        t("commandSearch.noResults")
                     }),
             );
         } else {
@@ -375,7 +373,14 @@ impl Render for CommandSearch {
                                 .hover(move |s| s.bg(p.foreground.opacity(0.06)))
                                 .child(icon("x", 14., p.muted_foreground))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.input.update(cx, |i, cx| i.set_value("", window, cx));
+                                    // `set_value` emits no change event.
+                                    this.input.update(cx, |i, cx| {
+                                        i.set_value("", window, cx);
+                                        i.focus(window, cx);
+                                    });
+                                    this.selected = 0;
+                                    this.scroll.scroll_to_item(0);
+                                    cx.notify();
                                 })),
                         )
                     }),

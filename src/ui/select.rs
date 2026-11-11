@@ -5,7 +5,9 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use super::components::{MenuTriggerBounds, drop, f32_tx, focus_ring, icon, text_tooltip};
+use super::components::{
+    DismissMenu, MENU_CONTEXT, MenuTriggerBounds, drop, f32_tx, focus_ring, icon, text_tooltip,
+};
 use super::control_panel::CloseOverlay;
 use super::theme::{
     DUR_BASE, DUR_SNAP, FONT_MONO, PaletteExt, RADIUS_LG, RADIUS_SM, ROW_CONTROL_HEIGHT,
@@ -85,6 +87,7 @@ pub struct Select {
     search: Option<Entity<InputState>>,
     query: String,
     highlighted: usize,
+    scroll: ScrollHandle,
     focus: FocusHandle,
     /// The trigger's painted bounds, used for menu sizing and dismissal.
     trigger_bounds: MenuTriggerBounds,
@@ -122,6 +125,7 @@ impl Select {
             search,
             query: String::new(),
             highlighted: 0,
+            scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             trigger_bounds: MenuTriggerBounds::default(),
         }
@@ -172,8 +176,14 @@ impl Select {
             window,
             |this: &mut Self, input, event: &InputEvent, window, cx| match event {
                 InputEvent::Change => {
-                    this.query = input.read(cx).value().to_string();
+                    let query = input.read(cx).value().to_string();
+                    if this.query == query {
+                        return;
+                    }
+                    this.query = query;
                     this.highlighted = 0;
+                    this.scroll.set_offset(point(px(0.), px(0.)));
+                    this.scroll.scroll_to_item(0);
                     cx.notify();
                 }
                 InputEvent::PressEnter { .. } => this.choose_highlighted(window, cx),
@@ -203,6 +213,26 @@ impl Select {
 
     pub fn set_placeholder(&mut self, placeholder: impl Into<SharedString>) {
         self.placeholder = placeholder.into();
+    }
+
+    pub fn refresh_labels(
+        &mut self,
+        label: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.label = label.into();
+        if let Some(search) = &self.search {
+            let key = if self.custom_value {
+                "reasoning.custom.modelSearchPlaceholder"
+            } else {
+                "languageSelector.searchPlaceholder"
+            };
+            search.update(cx, |input, cx| {
+                input.set_placeholder(crate::i18n::t(key), window, cx);
+            });
+        }
+        cx.notify();
     }
 
     pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
@@ -263,6 +293,7 @@ impl Select {
                 .iter()
                 .position(|o| Some(&o.value) == self.selected.as_ref())
                 .unwrap_or(0);
+            self.scroll.scroll_to_item(self.highlighted);
             if let Some(search) = &self.search {
                 search.update(cx, |s, cx| s.set_value("", window, cx));
                 let handle = search.read(cx).focus_handle(cx);
@@ -346,6 +377,7 @@ impl Select {
         } else {
             (self.highlighted + count - 1) % count
         };
+        self.scroll.scroll_to_item(self.highlighted);
         cx.notify();
     }
 
@@ -496,6 +528,13 @@ impl Render for Select {
             .aria_expanded(open)
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(Self::on_close_overlay))
+            .when(open, |d| {
+                d.key_context(MENU_CONTEXT).on_action(cx.listener(
+                    |this, _: &DismissMenu, window, cx| {
+                        this.dismiss(window, cx);
+                    },
+                ))
+            })
             .relative()
             .rounded(radius)
             .map(|d| self.size_trigger(d))
@@ -531,7 +570,10 @@ impl Select {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .p(px(4.));
+            .p(px(4.))
+            .max_h(px(192.))
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll);
         if filtered.is_empty() {
             list = list.child(
                 div()
@@ -563,6 +605,7 @@ impl Select {
                     .justify_between()
                     .gap(px(8.))
                     .h(px(28.))
+                    .flex_shrink_0()
                     .px(px(8.))
                     .rounded(px(RADIUS_SM))
                     .text_size(px(TEXT_SMALL))
@@ -647,13 +690,7 @@ impl Select {
                 }
             }))
             .when_some(search, |d, s| d.child(s))
-            .child(
-                div()
-                    .id("select-list")
-                    .max_h(px(192.))
-                    .overflow_y_scroll()
-                    .child(list),
-            )
+            .child(list)
             .with_animation(
                 "select-menu-in",
                 motion(DUR_SNAP, cx).with_easing(ease_snap),

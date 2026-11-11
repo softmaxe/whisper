@@ -15,10 +15,14 @@ use crate::app_state::{AppEvent, AppState};
 use crate::backend;
 
 use super::components::{
-    KeyboardFocusable, MenuTriggerBounds, empty_state, f32_tx, icon, kbd, keyed_focus_handle,
-    page_container, retention_banner, shimmer_text, skeleton_line, spinner, text_tooltip,
+    DismissMenu, KeyboardFocusable, MENU_CONTEXT, MenuTriggerBounds, empty_state, f32_tx, icon,
+    kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
+    spinner, text_tooltip,
 };
-use super::overlays::{DialogRequest, Toast, ToastVariant, show_dialog, show_toast};
+use super::control_panel::CloseOverlay;
+use super::overlays::{
+    DialogRequest, Toast, ToastVariant, remove_toast, show_dialog, show_toast, show_tracked_toast,
+};
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SHEET, DUR_SNAP, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
     PaletteExt, RADIUS_LG, RADIUS_MD, READING_MAX_WIDTH, TEXT_BODY, TEXT_CAPTION, TEXT_READING,
@@ -116,7 +120,7 @@ pub struct HistoryView {
     arrived: Option<(i64, Instant)>,
     /// A transcript removed from view whose deletion waits out the Undo
     /// window; the database keeps it until then.
-    deleting: Option<i64>,
+    deleting: PendingDeletion,
     /// The row the arrow keys point at while the list has keyboard focus.
     cursor: Option<i64>,
     /// A row to scroll into view once it is laid out.
@@ -125,6 +129,51 @@ pub struct HistoryView {
 
 /// How long a deleted transcript can be brought back.
 const UNDO_WINDOW: Duration = Duration::from_millis(6000);
+
+struct DeleteOperation {
+    operation_id: u64,
+    row_id: i64,
+    deadline: Instant,
+    toast_id: u64,
+}
+
+#[derive(Default)]
+struct PendingDeletion {
+    next_operation: u64,
+    current: Option<DeleteOperation>,
+}
+
+impl PendingDeletion {
+    fn begin(&mut self, row_id: i64, deadline: Instant, toast_id: u64) -> u64 {
+        self.next_operation += 1;
+        self.current = Some(DeleteOperation {
+            operation_id: self.next_operation,
+            row_id,
+            deadline,
+            toast_id,
+        });
+        self.next_operation
+    }
+
+    fn is_current(&self, operation_id: u64) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|pending| pending.operation_id == operation_id)
+    }
+
+    fn undo(&mut self, operation_id: u64, now: Instant) -> Option<DeleteOperation> {
+        if self.is_current(operation_id) && self.current.as_ref().is_some_and(|p| now < p.deadline)
+        {
+            self.current.take()
+        } else {
+            None
+        }
+    }
+
+    fn row_id(&self) -> Option<i64> {
+        self.current.as_ref().map(|p| p.row_id)
+    }
+}
 
 pub fn copy_with_toast(text: String, cx: &mut App) {
     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -204,7 +253,7 @@ impl HistoryView {
             hovered_row: None,
             pending: None,
             arrived: None,
-            deleting: None,
+            deleting: PendingDeletion::default(),
             cursor: None,
             reveal_pending: None,
         }
@@ -286,41 +335,50 @@ impl HistoryView {
     /// which cannot be undone, still asks first.
     fn delete(&mut self, id: i64, cx: &mut Context<Self>) {
         self.commit_delete(cx);
-        self.deleting = Some(id);
+        let deadline = Instant::now() + UNDO_WINDOW;
+        let operation_id = self.deleting.next_operation + 1;
         if self.cursor == Some(id) {
             self.cursor = None;
         }
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(UNDO_WINDOW).await;
+            cx.background_executor()
+                .timer(deadline.saturating_duration_since(Instant::now()))
+                .await;
             let _ = this.update(cx, |this, cx| {
-                if this.deleting == Some(id) {
+                if this.deleting.is_current(operation_id) {
                     this.commit_delete(cx);
                 }
             });
         })
         .detach();
         let this = cx.weak_entity();
-        show_toast(
+        let toast_id = show_tracked_toast(
             Toast::new(t("controlPanel.history.deletedTitle"))
                 .duration(UNDO_WINDOW)
+                .deadline(deadline)
                 .action(t("common.undo"), move |_, cx| {
                     let _ = this.update(cx, |this, cx| {
-                        if this.deleting == Some(id) {
-                            this.deleting = None;
+                        if let Some(pending) = this.deleting.undo(operation_id, Instant::now()) {
+                            remove_toast(pending.toast_id, cx);
                             cx.notify();
+                        } else if this.deleting.is_current(operation_id) {
+                            this.commit_delete(cx);
                         }
                     });
                 }),
             cx,
         );
+        self.deleting.begin(id, deadline, toast_id);
         cx.notify();
     }
 
     /// Deletes the transcript waiting out its Undo window, if any.
-    fn commit_delete(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = self.deleting.take() else {
+    pub(super) fn commit_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.deleting.current.take() else {
             return;
         };
+        remove_toast(pending.toast_id, cx);
+        let id = pending.row_id;
         self.committing_deletes.insert(id);
         self.groups = None;
         let delete = AppState::global(cx).update(cx, |s, cx| s.delete_transcription(id, cx));
@@ -359,7 +417,9 @@ impl HistoryView {
             .history
             .iter()
             .map(|item| item.id)
-            .filter(|id| Some(*id) != self.deleting && !self.committing_deletes.contains(id))
+            .filter(|id| {
+                Some(*id) != self.deleting.row_id() && !self.committing_deletes.contains(id)
+            })
             .collect();
         if ids.is_empty() {
             return;
@@ -367,10 +427,11 @@ impl HistoryView {
         let at = self.cursor.and_then(|c| ids.iter().position(|id| *id == c));
         let key = e.keystroke.key.as_str();
         let cmd = e.keystroke.modifiers.platform;
+        let list = keyed_focus_handle("history-list".into(), cx);
+        let list_focused = list.is_focused(window);
         match key {
-            "down" | "up" if !keyed_focus_handle("history-list".into(), cx).is_focused(window) => {
+            "down" | "up" if !list_focused => {
                 // Arrows from a row's button hand focus back to the list.
-                let list = keyed_focus_handle("history-list".into(), cx);
                 window.focus(&list, cx);
                 self.cursor = self.cursor.or(ids.first().copied());
                 self.reveal_pending = self.cursor;
@@ -385,6 +446,9 @@ impl HistoryView {
                 self.cursor = Some(ids[prev]);
                 self.reveal_pending = self.cursor;
             }
+            // A focused row button handles its own keys; the cursor may sit
+            // on another row.
+            "enter" | "space" | "backspace" | "delete" if !list_focused => return,
             "enter" => {
                 let Some(id) = self.cursor else { return };
                 let text = AppState::global(cx)
@@ -414,7 +478,6 @@ impl HistoryView {
                 self.delete(id, cx);
                 self.cursor = next;
             }
-            "escape" if self.cursor.is_some() => self.cursor = None,
             _ => return,
         }
         cx.stop_propagation();
@@ -1029,6 +1092,12 @@ impl HistoryView {
             ));
         }
         entries.push(("trash2", t("controlPanel.history.deleteItem"), 2, true));
+        let handles: Vec<_> = entries
+            .iter()
+            .map(|(_, _, action, _)| {
+                keyed_focus_handle(("history-menu-item", *action as usize).into(), cx)
+            })
+            .collect();
 
         let mut menu = div()
             .id(("row-menu", id as usize))
@@ -1053,17 +1122,23 @@ impl HistoryView {
                     cx.notify();
                 }
             }))
+            .key_context(MENU_CONTEXT)
+            .on_action(cx.listener(move |this, _: &DismissMenu, window, cx| {
+                this.close_menu(id, window, cx);
+            }))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 match e.keystroke.key.as_str() {
                     "escape" => this.close_menu(id, window, cx),
-                    // Tab leaves the menu: close it so it never floats over
-                    // the page while focus is elsewhere.
-                    "tab" => {
-                        this.close_menu(id, window, cx);
-                        return;
+                    "down" | "up" => {
+                        let current = handles.iter().position(|h| h.is_focused(window));
+                        let next = match (e.keystroke.key.as_str(), current) {
+                            ("down", Some(index)) => (index + 1) % handles.len(),
+                            ("up", Some(index)) => (index + handles.len() - 1) % handles.len(),
+                            ("up", None) => handles.len() - 1,
+                            _ => 0,
+                        };
+                        window.focus(&handles[next], cx);
                     }
-                    "down" => window.focus_next(cx),
-                    "up" => window.focus_prev(cx),
                     _ => return,
                 }
                 cx.stop_propagation();
@@ -1163,7 +1238,7 @@ impl Render for HistoryView {
 
         let now = Local::now();
         let mut hidden: Vec<i64> = self.committing_deletes.iter().copied().collect();
-        hidden.extend(self.deleting);
+        hidden.extend(self.deleting.row_id());
         hidden.sort_unstable();
         let key = HistoryGroupsKey {
             language: i18n::language(),
@@ -1190,7 +1265,16 @@ impl Render for HistoryView {
                 .track_focus(&list_focus.tab_stop(true))
                 .role(Role::List)
                 .aria_label(t("sidebar.home"))
-                .on_key_down(cx.listener(Self::on_list_key));
+                .on_key_down(cx.listener(Self::on_list_key))
+                // Escape reaches the window as its overlay action before any
+                // key listener, so the cursor is cleared from the action.
+                .on_action(cx.listener(|this, _: &CloseOverlay, _, cx| {
+                    if this.cursor.take().is_some() {
+                        cx.notify();
+                    } else {
+                        cx.propagate();
+                    }
+                }));
             for (index, (label, items)) in groups.iter().enumerate() {
                 // Day label with its count beside it, then a hairline to the edge.
                 let count = items.len();
@@ -1340,7 +1424,46 @@ fn empty_card(keys: Div, retention: bool, p: &Palette) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
-    use super::{Duration, SPOTLIGHT, spotlight_level};
+    use super::{Duration, Instant, PendingDeletion, SPOTLIGHT, UNDO_WINDOW, spotlight_level};
+
+    #[test]
+    fn stale_delete_timer_and_undo_cannot_affect_a_second_delete_of_the_same_row() {
+        let mut deleting = PendingDeletion::default();
+        let now = Instant::now();
+        let first = deleting.begin(7, now + UNDO_WINDOW, 10);
+        assert!(deleting.undo(first, now).is_some());
+        let second = deleting.begin(7, now + UNDO_WINDOW + Duration::from_secs(1), 11);
+        assert_ne!(first, second);
+        assert!(!deleting.is_current(first));
+        assert!(deleting.undo(first, now).is_none());
+        assert!(deleting.is_current(second));
+        assert_eq!(deleting.row_id(), Some(7));
+    }
+
+    #[test]
+    fn undo_deadline_is_exclusive_and_expired_deletion_stays_pending_for_commit() {
+        let mut deleting = PendingDeletion::default();
+        let deadline = Instant::now() + UNDO_WINDOW;
+        let operation = deleting.begin(7, deadline, 10);
+        assert!(deleting.undo(operation, deadline).is_none());
+        let committed = deleting.current.take().unwrap();
+        assert_eq!((committed.row_id, committed.toast_id), (7, 10));
+        assert!(!deleting.is_current(operation));
+        assert!(deleting.current.take().is_none());
+    }
+
+    #[test]
+    fn committing_one_row_preserves_the_next_rows_undo_window() {
+        let mut deleting = PendingDeletion::default();
+        let now = Instant::now();
+        let first = deleting.begin(7, now + UNDO_WINDOW, 10);
+        assert_eq!(deleting.current.take().unwrap().toast_id, 10);
+        let second = deleting.begin(8, now + UNDO_WINDOW, 11);
+        assert!(!deleting.is_current(first));
+        let restored = deleting.undo(second, now + UNDO_WINDOW - Duration::from_nanos(1));
+        assert_eq!(restored.unwrap().row_id, 8);
+        assert_eq!(deleting.row_id(), None);
+    }
 
     #[test]
     fn spotlight_fades_in_holds_and_fades_out() {

@@ -11,8 +11,6 @@
       "chineseScriptAsTranscribed": "Keep as transcribed",
       "chineseScriptSimplified": "Simplified (简体)",
       "chineseScriptTraditional": "Traditional (繁體)",
-      "transcriptionSectionDescription": "The language you speak, and how Chinese is written",
-      "uiSectionDescription": "The language of Whisper’s own interface",
       "autoDetect": "Auto-detect",
       "uiDescriptionLink": "Speech to text ›"
     },
@@ -45,14 +43,12 @@
     "dictionary": {
       "autoLearnTitle": "Auto-learn from corrections",
       "autoLearnDescription": "When you fix a transcript in another app, Whisper learns how the word was misheard and corrects it next time",
-      "title": "Dictionary",
-      "description": "How the dictionary grows as you dictate"
+      "title": "Dictionary"
     },
     "general": {
       "appearance": {
         "auto": "Auto",
         "dark": "Dark",
-        "description": "Control how Whisper looks",
         "tokyoNight": "Tokyo Night",
         "light": "Light",
         "theme": "Theme",
@@ -67,24 +63,20 @@
         "bottomRight": "Bottom right",
         "center": "Bottom center",
         "bottomLeft": "Bottom left",
-        "title": "Recording pill",
-        "description": "The floating pill that shows dictation in progress"
+        "title": "Recording pill"
       },
       "hotkey": {
         "activationMode": "Activation mode",
         "activationModeHoldDescription": "Hold {{hotkey}} while you speak and release it to finish",
         "activationModeTapDescription": "Double-tap a single key such as Globe for hands-free dictation and press it once to finish; key combinations start and stop with one press",
-        "description": "The keys that start and stop dictation",
         "resetToDefault": "Reset to {{hotkey}}",
         "title": "Dictation hotkey",
-        "activationModeDescription": "How the hotkey starts and stops dictation",
         "toggle": "Toggle",
         "theHotkey": "the hotkey",
         "activationModeDoubleTapDescription": "Double-tap {{hotkey}} to start hands-free dictation, then press it once to finish",
         "activationModeToggleDescription": "Press {{hotkey}} once to start and again to finish"
       },
       "microphone": {
-        "description": "Select which input device to use for dictation",
         "title": "Microphone"
       },
       "soundEffects": {
@@ -92,22 +84,19 @@
         "dictationSoundsDescription": "Play a tone when recording starts and stops",
         "pauseMedia": "Pause media",
         "pauseMediaDescription": "Automatically pause music when dictation starts",
-        "title": "Sound & media",
-        "description": "What happens to sound while you dictate"
+        "title": "Sound & media"
       },
       "clipboard": {
         "title": "Clipboard",
         "autoPaste": "Automatic pasting",
         "autoPasteDescription": "Automatically paste transcribed text into the active app when dictation finishes",
         "keepInClipboard": "Keep transcript in clipboard",
-        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed",
-        "description": "Where finished transcripts go"
+        "keepInClipboardDescription": "Keep dictated text in your clipboard so you can paste it manually if needed"
       },
       "startup": {
         "launchAtLogin": "Launch at login",
         "launchAtLoginDescription": "Start Whisper in the background when you log in",
         "title": "Startup",
-        "description": "Control how Whisper behaves when it launches",
         "startMinimized": "Start minimized",
         "startMinimizedDescription": "Launch without showing the control panel window",
         "needsApproval": {
@@ -120,7 +109,6 @@
     "permissions": {
       "accessibilityDescription": "Required for auto-paste to work after transcription",
       "accessibilityTitle": "Accessibility",
-      "description": "Whisper needs these to hear you and paste for you",
       "microphoneDescription": "Captures your voice for dictation and transcription",
       "microphoneTitle": "Microphone",
       "resetAccessibility": {
@@ -138,12 +126,10 @@
       "grantAccess": "Grant Access",
       "granted": "Granted",
       "title": "Permissions",
-      "troubleshootingTitle": "Troubleshooting",
-      "troubleshootingDescription": "Fixes for permission problems"
+      "troubleshootingTitle": "Troubleshooting"
     },
     "privacy": {
       "audioRetention": "Audio recordings",
-      "audioRetentionDescription": "Keep the audio of saved dictations on this Mac so you can transcribe them again",
       "audioRetentionDisabled": "Don’t keep",
       "retentionDays_one": "{{count}} day",
       "retentionDays_other": "{{count}} days",
@@ -166,16 +152,13 @@
       "audioStorageFiles_one": "{{count}} file, {{size}}",
       "audioStorageFiles_other": "{{count}} files, {{size}}",
       "needsHistory": "Turn on Save history to use this",
-      "historyDescription": "Which transcripts Whisper keeps, and for how long",
       "keepAudioForDescription": "Lets you transcribe a dictation again, for example with another model",
       "audioStorageOff": "No audio stored. Choose how long to keep audio to start saving it."
     },
     "prompts": {
-      "title": "Prompt Studio",
-      "description": "The instructions the cleanup model follows"
+      "title": "Prompt Studio"
     },
     "speechToText": {
-      "sharedDescription": "The server that transcribes dictation and uploaded files",
       "serverUrlHelp": "Paste the server’s base address, usually ending in /v1. Full endpoint URLs work too.",
       "serverTitle": "Server",
       "modelHelp": "The model your server should run. Test Connection lists the ones it offers.",
@@ -185,17 +168,14 @@
     "llms": {
       "server": {
         "title": "Server",
-        "description": "The server that cleans up dictated text",
         "fillIn": "Fill in {{server}}’s default address",
         "protocolTag": "OpenAI-compatible · optional key"
       },
       "cleanup": {
-        "title": "Cleanup",
-        "description": "Polish what you dictate before it’s pasted"
+        "title": "Cleanup"
       },
       "output": {
-        "title": "Output",
-        "description": "How the model answers"
+        "title": "Output"
       }
     },
     "selfHosted": {
@@ -547,6 +527,7 @@
     "perWeekValue": "{{count}} words/week"
   },
   "upload": {
+    "transcriptionTimeout": "File transcription timed out. Try again or check the server.",
     "chooseFiles": "Choose Files",
     "unsupportedFiles": "Skipped {{names}}: not a supported audio or video format.",
     "transcribe": "Transcribe",
@@ -611,7 +592,7 @@
     "wordCount_other": "{{count}} words",
     "wordCountFiltered": "{{shown}} of {{total}} words",
     "filterEmpty": "No words from this source yet",
-    "promptLimitNotice": "Your dictionary is {{chars}} characters. Whisper models read only the last few hundred characters of it, so your manually added and recently used words go last. Rarely used words may be left out. Other models get the full list.",
+    "promptLimitNotice": "Your dictionary is {{chars}} characters. Whisper models read only the last few hundred characters of it, so your manually added and recently used words go last. Rarely used words may be left out.",
     "exportFailed": "Export failed",
     "noMatches": "No words match “{{word}}”",
     "tabSnippets": "Snippets",
@@ -624,6 +605,7 @@
       "replacementPlaceholder": "Text to insert when you say the trigger…",
       "create": "Create Snippet",
       "duplicate": "A snippet with this trigger already exists",
+      "tooLong": "Keep the trigger to {{max}} characters or fewer",
       "emptyTitle": "The stuff you shouldn’t have to say",
       "emptyTitleAccent": "twice",
       "emptyDescription": "Speak a trigger word and Whisper replaces it with whatever you saved — URLs, intros, sign-offs, prompts.",
@@ -730,7 +712,6 @@
       "recent": "Recent"
     },
     "noResults": "No results",
-    "emptyState": "Start typing to search",
     "footer": {
       "navigate": "Navigate",
       "open": "Open",

@@ -312,8 +312,9 @@ pub async fn process_text_with(
         config.disable_thinking,
         DEFAULT_MAX_TOKENS,
     );
+    // The endpoint stays out of the log: its query may carry credentials.
     log::debug!(
-        "cleanup request: endpoint={endpoint} model={model} has_api_key={}",
+        "cleanup request: model={model} has_api_key={}",
         api_key.is_some()
     );
 
@@ -428,7 +429,7 @@ async fn post_json(
     let response = request
         .send()
         .await
-        .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.to_string()))?;
+        .map_err(|e| CleanupError::new(CleanupErrorKind::Network, e.without_url().to_string()))?;
     let status = response.status();
     let body = read_cleanup_body(response).await?;
     Ok(HttpReply {

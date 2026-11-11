@@ -46,7 +46,12 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 - Enter an unlisted model ID, including a mixed-case name with a source prefix and tag. Choose the Use action, then verify the saved ID preserves case and trims surrounding whitespace. Repeat before any server models have loaded and after a connection failure.
 - Reopen the picker and verify the search resets. Close it using Escape, Tab, a second trigger click, and an outside click; none should change the model. Check long IDs in a narrow window and verify the full value is available in a tooltip.
 - Change the server URL and verify choices from the previous server disappear while editing. Test Connection should load the new server's models without replacing a manually selected ID. Disable cleanup and verify the picker is unavailable.
+- With a server exposing models only under `/v1`, enter its address without `/v1` and test both speech-to-text and cleanup. The visible and saved addresses should adopt `/v1`; cleanup models and connected status should remain available, and real dictation should use the discovered speech endpoint. Delay the response and type a different address before it arrives; the old result must not replace the new draft or saved address.
 - Repeat with both interface languages and themes. Confirm the existing language and microphone dropdown interactions still work.
+
+## API key editing regression check
+
+For the Settings API key editor, change a test credential and cancel with the mouse, Tab then Return, and Escape. Reopen the editor and verify the original credential remains. Tab between the input, Save, and Cancel without saving; moving focus outside the entire editor should save once. Verify Save and Enter still save, including an empty value to clear the key. Use only disposable test credentials and never record their values in screenshots or logs.
 
 ## Local data editing regression check
 
@@ -58,6 +63,13 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 
 Storage failure and callback-order regressions use temporary databases in automated tests. Pipeline regressions also verify that failed edits never become transcription hints or replacements, and that edits after a request starts do not change its captured rules. Do not damage the installed application's database to simulate a write failure.
 
+## History deletion regression check
+
+- Delete a History row, then close the panel within six seconds using the native close button. Reopen it and restart the app; the row must stay deleted. Repeat with the panel's keyboard close command.
+- Delete a row, Undo, then delete the same row again before its first six-second deadline. It must remain undoable until the second deletion's deadline.
+- Hover the Undo toast, or focus its action, for more than six seconds. The toast must disappear at the original deadline and the deletion must commit. Ordinary notification toasts should still pause on hover.
+- Delete A, then B while A is undoable. A must commit and its toast must disappear immediately; B must have its own full undo window. Undo B and verify only B returns.
+
 ## Settings scrolling regression check
 
 - With MOS enabled, reverse the wheel immediately after reaching either end of Settings and the prompt preview. The first reverse event should move content immediately, without repaying overscroll. Repeat with MOS disabled and with several small, fractional pixel events between frames.
@@ -67,9 +79,15 @@ Storage failure and callback-order regressions use temporary databases in automa
 - With the pointer outside the prompt, scrolling should move only Settings, even as the prompt viewport passes the top of the page. The prompt's internal scroll position should remain unchanged. Repeat in both directions with a large wheel delta, a short prompt, and a resized window.
 - In View, repeat with hundreds of Markdown paragraphs and list items, rapidly scrolling in both directions. The preview should keep a fixed height and render only visible blocks; controls should remain responsive. Check a short prompt as well, and verify text selection and Copy still work after scrolling and resizing.
 - Save a custom prompt containing headings, bold text, lists, inline code, and a fenced code block. View should render Markdown with wrapped prose; Customize and Copy should preserve the Markdown source. Verify the preview updates after saving or resetting and with both interface languages and themes.
+- With the default prompt, switch the interface language in both directions and compare View, Customize, and Test. Saving the translated default should keep the prompt in default mode. Repeat with an unsaved edited draft and a saved custom prompt; neither should be overwritten. Check the speech-language Auto-detect label, search placeholders, and cleanup model search after switching language.
 - Close Settings and verify the History scroll position is preserved. Repeat from Insights, Upload and Dictionary.
+- Focus Dictionary search, open Settings with the keyboard, then close it with Escape, the close button, and the outside backdrop. After the exit animation, typing should return to Dictionary search. Repeat at narrow and wide window sizes.
 - Repeat in a narrow window where Settings covers the workspace and a wide window where it floats above it. Check opening and closing animations, Escape, keyboard focus, and window resizing with Settings open.
 - When profiling the full-window sheet after its opening animation, the covered workspace must not participate in layout or paint. The floating sheet and closing animation still render the visible workspace.
+
+## Permission refresh regression check
+
+For Settings permission rows, use a test Mac or test account with undetermined microphone access. Accept or deny the first prompt and verify the row updates without switching sections. Change microphone or Accessibility access in System Settings, return to Whisper, and verify both rows refresh. Close Settings while the first prompt is pending and verify no late result affects a reopened sheet. Do not reset permissions on the installed release for this check.
 
 ## Release smoke check
 
@@ -93,6 +111,11 @@ For changes to macOS signing, also test an upgrade between two release builds si
 4. Quit version A and upgrade to version B through the Homebrew cask, preserving the installation path. Launch it, dictate, verify automatic paste, and access the saved credential. Record whether microphone, Accessibility, or Keychain authorization appears again and the macOS version used.
 
 Do not reset TCC permissions, change system trust, or delete Keychain items during the upgrade test. Those actions would invalidate the test. Automated signature checks alone do not prove permission retention, and a source change does not update an already installed app. See [macOS signing](macos-signing.md) for identity setup.
+
+## Insights regression check
+
+- Using a temporary development database with at least 3,000 active days, select All time. Check that the date range starts at the earliest activity, active days include the full history, and chart totals, spoken time, and busiest day agree with the headline totals. Hover, keyboard navigation, and range switching should remain responsive; long charts should use weekly bars.
+- Leave the app open across local midnight without new dictation. Revisit Insights from another page and reactivate the window from another app. The streak number, calendar, range dates, and chart should refresh together. Repeat with a streak whose last activity was yesterday before midnight, so it expires afterward. A failed refresh should show Retry without repeatedly loading on every render.
 
 ## Tokyo Night theme check
 

@@ -2,18 +2,70 @@
 
 use super::*;
 
+fn translated_default_draft(draft: &str, before: &str, after: &str) -> Option<&'static str> {
+    (draft == default_cleanup_prompt(before)).then(|| default_cleanup_prompt(after))
+}
+
 impl SettingsModal {
+    pub(super) fn sync_language(
+        &mut self,
+        before: &str,
+        after: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prompt_editor.update(cx, |input, cx| {
+            if let Some(prompt) = translated_default_draft(input.value().as_ref(), before, after) {
+                input.set_value(prompt, window, cx);
+            }
+            input.set_placeholder(t("promptStudio.edit.placeholder"), window, cx);
+        });
+        self.test_input.update(cx, |input, cx| {
+            input.set_placeholder(t("promptStudio.test.inputPlaceholder"), window, cx);
+        });
+        self.api_key_input.update(cx, |input, cx| {
+            input.set_placeholder(t("apiKeyInput.placeholder"), window, cx);
+        });
+        for (select, key) in [
+            (&self.ui_language, "settings.language.uiLabel"),
+            (&self.stt_language, "settings.language.transcriptionLabel"),
+            (&self.chinese_script, "settings.language.chineseScriptLabel"),
+            (
+                &self.pill_position,
+                "settings.general.floatingIcon.startPosition",
+            ),
+            (&self.audio_retention, "settings.privacy.keepAudioFor"),
+            (
+                &self.transcript_retention,
+                "settings.privacy.transcriptRetention",
+            ),
+            (&self.microphone, "microphoneSettings.inputDevice"),
+            (&self.cleanup_model, "common.model"),
+        ] {
+            select.update(cx, |select, cx| select.refresh_labels(t(key), window, cx));
+        }
+        self.cleanup_model.update(cx, |select, _| {
+            select.set_placeholder(t("reasoning.custom.modelPlaceholder"));
+        });
+    }
+
     pub(super) fn default_prompt(cx: &App) -> String {
         default_cleanup_prompt(&settings(cx).ui_language).to_string()
     }
 
     /// Saving is routine, so it confirms with a toast rather than a dialog
     /// to dismiss.
-    pub(super) fn save_prompt(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn save_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let edited = self.prompt_editor.read(cx).value().to_string();
         let default = Self::default_prompt(cx);
         // Keep the shipped default eligible for future prompt updates.
         let custom = if edited == default {
+            String::new()
+        } else if edited.trim().is_empty() {
+            // A blank prompt means the default: show it, so the editor
+            // matches what dictation uses and follows the language.
+            self.prompt_editor
+                .update(cx, |input, cx| input.set_value(default, window, cx));
             String::new()
         } else {
             edited
@@ -320,7 +372,9 @@ impl SettingsModal {
                                 .label(t("promptStudio.common.save"))
                                 .size(ButtonSize::Sm)
                                 .full_width()
-                                .on_click(cx.listener(|this, _, _, cx| this.save_prompt(cx))),
+                                .on_click(
+                                    cx.listener(|this, _, window, cx| this.save_prompt(window, cx)),
+                                ),
                         )
                         .child(
                             Button::new("reset-prompt")
@@ -491,5 +545,28 @@ impl SettingsModal {
             .overflow_hidden()
             .child(tabs)
             .child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_cleanup_prompt, translated_default_draft};
+
+    #[test]
+    fn language_switch_translates_only_the_unchanged_default() {
+        let en = default_cleanup_prompt("en");
+        let zh = default_cleanup_prompt("zh-CN");
+        assert_ne!(en, zh);
+        assert_eq!(translated_default_draft(en, "en", "zh-CN"), Some(zh));
+        assert_eq!(translated_default_draft(zh, "zh-CN", "en"), Some(en));
+        assert_eq!(
+            translated_default_draft("My custom prompt", "en", "zh-CN"),
+            None
+        );
+        assert_eq!(
+            translated_default_draft(&format!("{en}\n"), "en", "zh-CN"),
+            None
+        );
+        assert_eq!(translated_default_draft("", "en", "zh-CN"), None);
     }
 }

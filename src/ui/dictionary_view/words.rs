@@ -691,9 +691,11 @@ impl DictionaryView {
                 .gap(px(8.))
                 .child(
                     div()
-                        .flex_shrink_0()
+                        .id(SharedString::from(format!("dict-word-text:{word}")))
+                        .min_w_0()
                         .max_w(px(280.))
                         .truncate()
+                        .tooltip(text_tooltip(word.clone()))
                         .text_size(px(TEXT_BODY))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(p.foreground)

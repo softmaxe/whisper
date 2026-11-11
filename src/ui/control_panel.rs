@@ -10,8 +10,9 @@ use crate::app_state::AppState;
 
 use super::command_search::{CommandSearch, CommandSearchEvent};
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, NavSurface, drop,
-    f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row, scroll_thumb, text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
+    MenuTriggerBounds, NavSurface, drop, f32_tx, icon, inset, kbd, keyed_focus_handle, nav_row,
+    scroll_thumb, text_tooltip,
 };
 use super::dictionary_view::DictionaryView;
 use super::history_view::HistoryView;
@@ -77,6 +78,7 @@ pub struct ControlPanel {
     dictionary: Option<Entity<DictionaryView>>,
     upload: Entity<UploadView>,
     settings: Option<Entity<SettingsModal>>,
+    history_after_settings: Option<i64>,
     scroll: ScrollHandle,
     /// Whether the History page's ⋯ menu in the top bar is open.
     page_menu_open: bool,
@@ -109,6 +111,7 @@ impl ControlPanel {
             window,
             |this, _, event: &UploadEvent, window, cx| match event {
                 UploadEvent::OpenHistory => this.set_view(PanelView::Home, cx),
+                UploadEvent::RevealHistory(id) => this.reveal_history(*id, cx),
                 UploadEvent::OpenSettings(section) => {
                     this.open_settings(Some(*section), window, cx)
                 }
@@ -126,6 +129,7 @@ impl ControlPanel {
             dictionary: None,
             upload,
             settings: None,
+            history_after_settings: None,
             scroll,
             page_menu_open: false,
             measured_view: None,
@@ -152,6 +156,10 @@ impl ControlPanel {
         self.settings.is_some()
     }
 
+    pub fn prepare_close(&mut self, cx: &mut Context<Self>) {
+        self.history.update(cx, |h, cx| h.commit_delete(cx));
+    }
+
     pub fn open_settings(
         &mut self,
         section: Option<SettingsSection>,
@@ -166,11 +174,18 @@ impl ControlPanel {
         }
         let modal = cx
             .new(|cx| SettingsModal::new(section.unwrap_or(SettingsSection::General), window, cx));
-        cx.subscribe(
+        cx.subscribe_in(
             &modal,
-            |this, _, event: &SettingsModalEvent, cx| match event {
-                SettingsModalEvent::Close => {
+            window,
+            |this, _, event: &SettingsModalEvent, window, cx| match event {
+                SettingsModalEvent::Close(restore_focus) => {
                     this.settings = None;
+                    if let Some(id) = this.history_after_settings.take() {
+                        this.history.update(cx, |h, cx| h.highlight(id, cx));
+                    } else if let Some(handle) = restore_focus.clone() {
+                        // Restore after the sheet's focus trap leaves the rendered tree.
+                        window.on_next_frame(move |window, cx| window.focus(&handle, cx));
+                    }
                     cx.notify();
                 }
             },
@@ -189,9 +204,7 @@ impl ControlPanel {
                 // is delivered would drop this listener with it.
                 CommandSearchEvent::Selected(id) => {
                     super::overlays::close_custom(cx);
-                    this.set_view(PanelView::Home, cx);
-                    let id = *id;
-                    this.history.update(cx, |h, cx| h.highlight(id, cx));
+                    this.reveal_history(*id, cx);
                 }
             },
         )
@@ -201,6 +214,17 @@ impl ControlPanel {
 
     fn on_open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
         self.open_settings(None, window, cx);
+    }
+
+    fn reveal_history(&mut self, id: i64, cx: &mut Context<Self>) {
+        self.set_view(PanelView::Home, cx);
+        if let Some(modal) = &self.settings {
+            // Start the spotlight only after the sheet's close transition ends.
+            self.history_after_settings = Some(id);
+            modal.update(cx, |m, cx| m.request_close(cx));
+        } else {
+            self.history.update(cx, |h, cx| h.highlight(id, cx));
+        }
     }
 
     fn on_close_overlay(&mut self, _: &CloseOverlay, _window: &mut Window, cx: &mut Context<Self>) {
@@ -216,6 +240,11 @@ impl ControlPanel {
 
     pub fn set_view(&mut self, view: PanelView, cx: &mut Context<Self>) {
         self.active = view;
+        if view == PanelView::Insights
+            && let Some(insights) = &self.insights
+        {
+            insights.update(cx, |insights, cx| insights.refresh_for_date(cx));
+        }
         cx.notify();
     }
 
@@ -567,8 +596,12 @@ impl ControlPanel {
                     cx.notify();
                 }
             }))
+            .key_context(MENU_CONTEXT)
+            .on_action(cx.listener(|this, _: &DismissMenu, window, cx| {
+                this.close_page_menu(window, cx);
+            }))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                if matches!(e.keystroke.key.as_str(), "escape" | "tab") {
+                if e.keystroke.key == "escape" {
                     this.close_page_menu(window, cx);
                     cx.stop_propagation();
                 }

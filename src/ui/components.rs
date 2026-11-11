@@ -691,13 +691,21 @@ pub fn section_header(title: impl Into<SharedString>, p: &Palette) -> Div {
     )
 }
 
-/// A one-line tooltip on the popover surface.
+actions!(menu, [DismissMenu]);
+
+/// The key context of an open popup menu. Tab and Escape are bound to
+/// [`DismissMenu`] there: the window's own bindings for those keys run before
+/// any key listener, so a listener alone never sees them.
+pub const MENU_CONTEXT: &str = "Menu";
+
+/// A tooltip on the popover surface; long text wraps.
 struct Tip(SharedString);
 
 impl Render for Tip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = cx.palette();
         div()
+            .max_w(px(320.))
             .px(px(8.))
             .py(px(4.))
             .rounded(px(RADIUS_MD))

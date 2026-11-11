@@ -122,7 +122,7 @@ pub struct AnalyticsSummary {
     pub longest_streak_days: i64,
     /// Share of words the WPM figure is based on ("based on X% of words").
     pub wpm_coverage_percent: i64,
-    /// Ascending, at most the last 366 active days.
+    /// All recorded local dates, in ascending order.
     pub daily: Vec<AnalyticsDailyBucket>,
 }
 
@@ -404,8 +404,6 @@ pub fn summarize_analytics_days(
     };
     let dates: Vec<&str> = days.iter().map(|d| d.date.as_str()).collect();
     let streaks = calculate_streaks(&dates, today);
-    let skip = days.len().saturating_sub(366);
-    let daily = days.into_iter().skip(skip).collect();
 
     AnalyticsSummary {
         total_words,
@@ -415,7 +413,7 @@ pub fn summarize_analytics_days(
         current_streak_days: streaks.current_streak_days,
         longest_streak_days: streaks.longest_streak_days,
         wpm_coverage_percent,
-        daily,
+        daily: days,
     }
 }
 
@@ -564,6 +562,48 @@ mod tests {
         assert_eq!(summary.longest_streak_days, 3);
         let dates: Vec<&str> = summary.daily.iter().map(|b| b.date.as_str()).collect();
         assert_eq!(dates, ["2026-08-28", "2026-08-29", "2026-08-30"]);
+    }
+
+    #[test]
+    fn all_time_keeps_multi_year_days_and_totals_consistent() {
+        let start = date("2018-01-01");
+        let today = start + Days::new(2999);
+        let days = (0..3000)
+            .rev()
+            .map(|offset| {
+                let words = if offset == 0 { 1000 } else { 10 };
+                day(
+                    &date_key(start + Days::new(offset)),
+                    words,
+                    1,
+                    60_000,
+                    words,
+                )
+            })
+            .collect();
+        let summary = summarize_analytics_days(days, &date_key(today));
+        assert_eq!(summary.daily.len(), 3000);
+        assert_eq!(summary.daily.first().unwrap().date, date_key(start));
+        assert_eq!(summary.daily.last().unwrap().date, date_key(today));
+        let highlights = day_highlights(&summary.daily, start, today);
+        assert_eq!(highlights.active_days, 3000);
+        assert_eq!(highlights.words, summary.total_words);
+        assert_eq!(
+            highlights.spoken_duration_ms,
+            summary.total_spoken_duration_ms
+        );
+        assert_eq!(highlights.busiest, Some((start, 1000)));
+        let trend = build_trend(&summary.daily, start, today);
+        assert_eq!(trend.bucket_days, 7);
+        assert_eq!(trend.bars.len(), 429);
+        assert_eq!(
+            trend.bars.iter().map(|bar| bar.words).sum::<i64>(),
+            summary.total_words
+        );
+        assert_eq!(
+            trend.bars.iter().map(|bar| bar.dictations).sum::<i64>(),
+            summary.total_dictations
+        );
     }
 
     #[test]

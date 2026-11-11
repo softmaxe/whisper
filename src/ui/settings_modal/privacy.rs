@@ -3,6 +3,26 @@
 use super::*;
 
 impl SettingsModal {
+    pub(super) fn refresh_permissions(&mut self, cx: &mut Context<Self>) {
+        self.mic_permission = backend::microphone_permission_granted();
+        self.accessibility_permission = backend::accessibility_granted();
+        cx.notify();
+    }
+
+    fn request_microphone_permission(&mut self, cx: &mut Context<Self>) {
+        if self.permission_request.is_some() {
+            return;
+        }
+        self.permission_request = Some(cx.spawn(async move |this, cx| {
+            cx.background_spawn(async { backend::request_microphone_permission() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.permission_request = None;
+                this.refresh_permissions(cx);
+            });
+        }));
+    }
+
     /// Coalesces scans and never publishes a result made stale by deletion.
     pub(super) fn load_storage_usage(&mut self, cx: &mut Context<Self>) {
         self.storage_usage_generation = self.storage_usage_generation.wrapping_add(1);
@@ -134,9 +154,7 @@ impl SettingsModal {
                         t("settings.permissions.microphoneDescription"),
                         self.mic_permission,
                         cx.listener(|this, _, _, cx| {
-                            backend::request_microphone_permission();
-                            this.mic_permission = backend::microphone_permission_granted();
-                            cx.notify();
+                            this.request_microphone_permission(cx);
                         }),
                         &p,
                     ),

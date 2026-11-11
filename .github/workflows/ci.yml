@@ -37,6 +37,10 @@ jobs:
             printf 'code=true\npackage=false\n' >>"$GITHUB_OUTPUT"
             exit 0
           fi
+          # Fetched first: a failure inside process substitution would go
+          # unnoticed and report that nothing changed.
+          files="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)')"
           code=false
           package=false
           while IFS= read -r file; do
@@ -52,8 +56,7 @@ jobs:
                 package=true
                 ;;
             esac
-          done < <(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-            --jq '.[] | .filename, (.previous_filename // empty)')
+          done <<<"$files"
           printf 'code=%s\npackage=%s\n' "$code" "$package" | tee -a "$GITHUB_OUTPUT"
 
   checks:

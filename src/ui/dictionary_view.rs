@@ -12,7 +12,7 @@ use gpui_kit::component::input::{InputEvent, InputState, TextareaState};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::db::{DictionaryEntry, DictionarySource, Snippet};
+use crate::db::{DictionaryEntry, DictionarySource, MAX_SNIPPET_TRIGGER_LENGTH, Snippet};
 use crate::i18n::{self, Language, t, t_with};
 use crate::text::correction_learner::KnownCorrection;
 use crate::text::dictionary_import::{format_dictionary_export, parse_dictionary_import_text};
@@ -22,9 +22,9 @@ use crate::text::snippets::get_dictionary_hint_words;
 use crate::app_state::{AppEvent, AppState};
 
 use super::components::{
-    Button, ButtonSize, ButtonVariant, KeyboardFocusable, MenuTriggerBounds, drop, empty_state,
-    icon, kbd, keyed_focus_handle, page_container, segment, segmented_track, surface_card,
-    text_tooltip,
+    Button, ButtonSize, ButtonVariant, DismissMenu, KeyboardFocusable, MENU_CONTEXT,
+    MenuTriggerBounds, drop, empty_state, icon, kbd, keyed_focus_handle, page_container, segment,
+    segmented_track, surface_card, text_tooltip,
 };
 use super::control_panel::{OpenSettings, SIDEBAR_WIDTH};
 use super::format::day_label;

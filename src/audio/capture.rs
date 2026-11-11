@@ -417,6 +417,10 @@ impl CaptureSession {
         self.selector.as_deref()
     }
 
+    fn matches_selector(&self, selector: Option<&str>) -> bool {
+        !self.is_expired() && self.selector() == selector
+    }
+
     /// Starts recording. With `adopt_pre_roll`, audio buffered since `open`
     /// becomes the recording's opening when it is at most
     /// [`PRE_ROLL_MAX_AGE`] old. Resolves once the source has delivered
@@ -603,7 +607,7 @@ impl Recorder {
         if inner
             .prepared
             .as_ref()
-            .is_some_and(|p| !p.is_expired() && p.selector() == selector.as_deref())
+            .is_some_and(|p| p.matches_selector(selector.as_deref()))
         {
             return true;
         }
@@ -639,7 +643,7 @@ impl Recorder {
             let prepared = inner
                 .prepared
                 .take()
-                .filter(|p| !p.is_expired() && p.selector() == selector.as_deref());
+                .filter(|p| p.matches_selector(selector.as_deref()));
             let (session, adopt) = match prepared {
                 Some(session) => (session, true),
                 None => match CaptureSession::open(selector.as_deref(), self.events.clone()) {
@@ -768,6 +772,20 @@ mod tests {
             commands,
             selector: Some("requested device".into()),
         }
+    }
+
+    #[test]
+    fn prepared_capture_matches_ids_instead_of_display_names() {
+        let core = Arc::new(Core::new(Instant::now()));
+        core.state.lock().opened_device = Some("USB Audio".into());
+        let mut session = fake_session(core);
+        session.selector = Some("usb-second".into());
+        assert!(session.matches_selector(Some("usb-second")));
+        assert!(!session.matches_selector(Some("usb-first")));
+        assert!(!session.matches_selector(Some("USB Audio")));
+        assert!(!session.matches_selector(None));
+        session.selector = None;
+        assert!(session.matches_selector(None));
     }
 
     #[test]

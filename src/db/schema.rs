@@ -57,7 +57,7 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
           word TEXT PRIMARY KEY COLLATE NOCASE
         );
 
-        -- Per-app auto-learn outcomes, keyed by bundle identifier: no text.
+        -- Retained for compatibility; auto-learn no longer writes statistics.
         CREATE TABLE IF NOT EXISTS auto_learn_stats (
           app TEXT PRIMARY KEY,
           sessions INTEGER NOT NULL DEFAULT 0,

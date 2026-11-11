@@ -107,7 +107,7 @@ const SECTIONS: [SettingsSection; 5] = [
 ];
 
 pub enum SettingsModalEvent {
-    Close,
+    Close(Option<FocusHandle>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -162,6 +162,7 @@ pub struct SettingsModal {
     api_key: String,
     api_key_editing: bool,
     api_key_input: Entity<InputState>,
+    api_key_focus: FocusHandle,
     models: Vec<ModelOption>,
     models_loading: bool,
     models_error: Option<String>,
@@ -194,7 +195,6 @@ pub struct SettingsModal {
     stt_request: Option<Task<()>>,
 
     auto_start: AutoStartState,
-    auto_start_loading: bool,
     mic_snapshot: MicSnapshot,
     mic_capture_status: CaptureStatus,
     mic_refresh: async_channel::Sender<()>,
@@ -206,6 +206,7 @@ pub struct SettingsModal {
     clearing_audio: bool,
     mic_permission: bool,
     accessibility_permission: bool,
+    permission_request: Option<Task<()>>,
 
     scroll: ScrollHandle,
     /// The section whose scroll extent has been measured for the bottom fade.
@@ -399,8 +400,14 @@ impl SettingsModal {
     }
 
     pub fn new(section: SettingsSection, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let restore_focus = window.focused(cx);
         let s = settings(cx);
         let mut subscriptions = Vec::new();
+        subscriptions.push(cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.refresh_permissions(cx);
+            }
+        }));
 
         let stt_url = cx.new(|cx| {
             InputState::new(window, cx)
@@ -463,17 +470,17 @@ impl SettingsModal {
 
         let api_key_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("apiKeyInput.placeholder")));
-        subscriptions.push(
-            cx.subscribe(&api_key_input, |this, _, e: &InputEvent, cx| match e {
-                InputEvent::PressEnter { .. } => this.save_api_key(cx),
-                InputEvent::Blur
-                    // Commit on click-away rather than discarding a pasted key.
-                    if this.api_key_editing => {
-                        this.save_api_key(cx);
-                    }
-                _ => {}
-            }),
-        );
+        let api_key_focus = cx.focus_handle();
+        subscriptions.push(cx.on_focus_out(&api_key_focus, window, |this, _, _, cx| {
+            if this.api_key_editing {
+                this.save_api_key(cx);
+            }
+        }));
+        subscriptions.push(cx.subscribe(&api_key_input, |this, _, e: &InputEvent, cx| {
+            if matches!(e, InputEvent::PressEnter { .. }) {
+                this.save_api_key(cx);
+            }
+        }));
 
         let current_prompt = if s.custom_prompt_cleanup.is_empty() {
             default_cleanup_prompt(&s.ui_language).to_string()
@@ -647,15 +654,25 @@ impl SettingsModal {
 
         let state = AppState::global(cx);
         let mut synced_settings = s.clone();
-        subscriptions.push(cx.observe(&state, move |this, state, cx| {
-            let current = &state.read(cx).settings;
-            if select_settings_changed(&synced_settings, current) {
-                synced_settings = current.clone();
-                this.sync_selects(cx);
-            }
-            // Other state changes still affect the sheet's rendered status.
-            cx.notify();
-        }));
+        subscriptions.push(
+            cx.observe_in(&state, window, move |this, state, window, cx| {
+                let current = state.read(cx).settings.clone();
+                if synced_settings.ui_language != current.ui_language {
+                    this.sync_language(
+                        &synced_settings.ui_language,
+                        &current.ui_language,
+                        window,
+                        cx,
+                    );
+                }
+                if select_settings_changed(&synced_settings, &current) {
+                    synced_settings = current.clone();
+                    this.sync_selects(cx);
+                }
+                // Other state changes still affect the sheet's rendered status.
+                cx.notify();
+            }),
+        );
 
         let (mic_refresh, mic_requests) = async_channel::bounded(1);
         // One serial worker handles both automatic and manual refreshes. The
@@ -697,6 +714,7 @@ impl SettingsModal {
             api_key: backend::cleanup_api_key(),
             api_key_editing: false,
             api_key_input,
+            api_key_focus,
             models: Vec::new(),
             models_loading: false,
             models_error: None,
@@ -723,7 +741,6 @@ impl SettingsModal {
             stt_models: Vec::new(),
             stt_request: None,
             auto_start: backend::auto_start_state(),
-            auto_start_loading: false,
             mic_snapshot: MicSnapshot::default(),
             mic_capture_status: CaptureStatus::Idle,
             mic_refresh,
@@ -735,10 +752,11 @@ impl SettingsModal {
             clearing_audio: false,
             mic_permission: backend::microphone_permission_granted(),
             accessibility_permission: backend::accessibility_granted(),
+            permission_request: None,
             scroll: ScrollHandle::new(),
             measured_section: None,
             focus,
-            restore_focus: window.focused(cx),
+            restore_focus,
             _subscriptions: subscriptions,
         };
         if section == SettingsSection::PrivacyData {
@@ -746,7 +764,7 @@ impl SettingsModal {
         }
         this.sync_selects(cx);
         if !s.cleanup_remote_url.trim().is_empty() {
-            this.load_models(None, false, cx);
+            this.load_models(None, false, window, cx);
         }
         this
     }
@@ -757,18 +775,14 @@ impl SettingsModal {
             self.scroll.set_offset(point(px(0.), px(0.)));
             if section == SettingsSection::PrivacyData {
                 self.load_storage_usage(cx);
-                self.mic_permission = backend::microphone_permission_granted();
-                self.accessibility_permission = backend::accessibility_granted();
+                self.refresh_permissions(cx);
             }
             cx.notify();
         }
     }
 
     /// Closes the sheet and returns keyboard focus to where it was before.
-    fn close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(handle) = self.restore_focus.take() {
-            window.focus(&handle, cx);
-        }
+    fn close(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.request_close(cx);
     }
 
@@ -781,8 +795,7 @@ impl SettingsModal {
             return;
         }
         if self.api_key_editing {
-            self.api_key_editing = false;
-            cx.notify();
+            self.cancel_api_key(window, cx);
             return;
         }
         self.close(window, cx);
@@ -798,7 +811,9 @@ impl SettingsModal {
             cx.background_executor()
                 .timer(Duration::from_millis(DUR_SNAP))
                 .await;
-            let _ = this.update(cx, |_, cx| cx.emit(SettingsModalEvent::Close));
+            let _ = this.update(cx, |this, cx| {
+                cx.emit(SettingsModalEvent::Close(this.restore_focus.take()));
+            });
         })
         .detach();
     }
@@ -837,6 +852,7 @@ impl SettingsModal {
             sel.set_selected(Some(s.ui_language.clone().into()), cx)
         });
         self.stt_language.update(cx, |sel, cx| {
+            sel.set_options(language_options(), cx);
             sel.set_selected(Some(s.preferred_language.clone().into()), cx)
         });
         self.sync_microphone_select(cx);

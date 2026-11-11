@@ -78,6 +78,7 @@ pub struct Toast {
     pub duration: Option<Duration>,
     /// One inline action, such as Undo. Running it also closes the toast.
     pub action: Option<(SharedString, Callback)>,
+    deadline: Option<Instant>,
 }
 
 impl Toast {
@@ -88,6 +89,7 @@ impl Toast {
             variant: ToastVariant::Default,
             duration: None,
             action: None,
+            deadline: None,
         }
     }
 
@@ -114,6 +116,11 @@ impl Toast {
         self.duration = Some(duration);
         self
     }
+
+    pub fn deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
 }
 
 struct ActiveToast {
@@ -133,10 +140,18 @@ struct ActiveToast {
 
 impl ActiveToast {
     fn elapsed(&self) -> Duration {
+        if let Some(deadline) = self.toast.deadline {
+            return self
+                .duration
+                .saturating_sub(deadline.saturating_duration_since(Instant::now()));
+        }
         self.banked + self.running_since.map_or(Duration::ZERO, |t| t.elapsed())
     }
 
     fn set_paused(&mut self, paused: bool) {
+        if self.toast.deadline.is_some() {
+            return;
+        }
         match (paused, self.running_since) {
             (true, Some(since)) => {
                 self.banked += since.elapsed();
@@ -190,6 +205,14 @@ impl Overlays {
         self.custom.clone()
     }
 
+    pub fn clear_panel(&mut self, cx: &mut Context<Self>) {
+        self.dialog = None;
+        self.dialog_needs_focus = false;
+        self.custom = None;
+        self.toasts.clear();
+        cx.notify();
+    }
+
     pub fn close_custom(&mut self, cx: &mut Context<Self>) {
         if self.custom.take().is_some() {
             cx.notify();
@@ -203,6 +226,15 @@ impl Overlays {
     }
 
     fn dismiss_toast(&mut self, id: u64, cx: &mut Context<Self>) {
+        if self
+            .toasts
+            .iter()
+            .any(|t| t.id == id && t.toast.deadline.is_some())
+        {
+            self.toasts.retain(|t| t.id != id);
+            cx.notify();
+            return;
+        }
         if let Some(toast) = self.toasts.iter_mut().find(|t| t.id == id) {
             if toast.closing {
                 return;
@@ -290,6 +322,17 @@ pub fn modal_frame(
 }
 
 pub fn show_toast(toast: Toast, cx: &mut App) {
+    show_tracked_toast(toast, cx);
+}
+
+pub fn remove_toast(id: u64, cx: &mut App) {
+    Overlays::global(cx).update(cx, |o, cx| {
+        o.toasts.retain(|t| t.id != id);
+        cx.notify();
+    });
+}
+
+pub fn show_tracked_toast(toast: Toast, cx: &mut App) -> u64 {
     let duration = toast.duration.unwrap_or(Duration::from_millis(
         if toast.variant == ToastVariant::Destructive {
             6000
@@ -314,7 +357,8 @@ pub fn show_toast(toast: Toast, cx: &mut App) {
             o.toasts.remove(0);
         }
         cx.notify();
-    });
+        id
+    })
 }
 
 /// Renders the dialog backdrop and card, or nothing.
@@ -476,7 +520,7 @@ fn close_button(id: &'static str, p: &super::theme::Palette, cx: &mut App) -> St
 /// with a colored type icon, a hover close button and a 1 px countdown.
 pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let overlays = Overlays::global(cx);
-    // Expired toasts leave from here; the countdown pauses while hovered.
+    // Ordinary toasts pause on hover; undo toasts keep their operation's deadline.
     let expired: Vec<u64> = overlays
         .read(cx)
         .toasts
@@ -701,4 +745,46 @@ pub fn render_toasts(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     }
     window.request_animation_frame();
     Some(stack.into_any_element())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ActiveToast, Duration, Instant, Toast};
+
+    #[test]
+    fn deadline_toasts_do_not_pause_for_hover_or_focus() {
+        let now = Instant::now();
+        let mut active = ActiveToast {
+            id: 1,
+            toast: Toast::new("Undo").deadline(now),
+            duration: Duration::from_secs(6),
+            banked: Duration::ZERO,
+            running_since: Some(now),
+            held_by_focus: false,
+            closing: false,
+        };
+        active.set_paused(true);
+        assert_eq!(active.running_since, Some(now));
+        assert_eq!(active.elapsed(), active.duration);
+        active.set_paused(false);
+        assert_eq!(active.running_since, Some(now));
+    }
+
+    #[test]
+    fn ordinary_toasts_still_pause_and_resume() {
+        let mut active = ActiveToast {
+            id: 1,
+            toast: Toast::new("Copied"),
+            duration: Duration::from_secs(4),
+            banked: Duration::ZERO,
+            running_since: Some(Instant::now()),
+            held_by_focus: false,
+            closing: false,
+        };
+        active.set_paused(true);
+        assert!(active.running_since.is_none());
+        assert_eq!(active.elapsed(), active.banked);
+        active.set_paused(false);
+        assert!(active.running_since.is_some());
+    }
 }
