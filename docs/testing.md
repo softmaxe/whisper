@@ -141,3 +141,13 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 - Click Skip and verify immediate insertion of the recognized text with filler removal, Chinese script conversion, known corrections, and snippets. There must be no cleanup failure notice and no second paste when the delayed reply arrives. Cancel must still discard the whole operation.
 - Tab to Skip and activate it with Return or Space. Check VoiceOver's “Skip cleanup” label and the “Insert without cleanup” hover hint. Check smooth width changes and emergence, then repeat with Reduce motion for immediate changes.
 - Use `WHISPER_DEV_SCENE=pill:cleanup` with isolated data to inspect Light, Dark and Tokyo Night, and both interface languages.
+
+## Microphone loopback regression check
+
+- In Settings > Dictation, check the microphone control order: Test, Refresh, device picker. Test must use the same resolved device as the next dictation, including Auto, lid changes, unavailable saved devices, and the system-default fallback.
+- Test records for at most ten seconds with a live level meter, countdown, and Stop. Stop early, play, stop playback, replay, and Record again. The progress bar and duration should reflect the memory clip. A silent clip remains playable and shows a warning.
+- Deny microphone permission, disconnect the selected device, and test a device delivering no frames. Check the named error and Try again. Disconnect output during playback and check its error as well.
+- Start dictation with the hotkey during recording and playback. The test must close and yield audio before dictation begins. While dictation records, prepares, or processes, Test is disabled with an explanation. No test may play dictation cues or pause media.
+- Close Settings, change section, change device, and drop/reopen the sheet during microphone startup, recording and playback. Each must release the streams and clip, and no old result may reopen the strip. No test audio may appear in History, recovery, storage or requests.
+- Check Tab, Return/Space, VoiceOver names, Light/Dark/Tokyo Night, both languages, and Reduce motion. Use `settings:mic-recording`, `settings:mic-ready` and `settings:mic-error` dev scenes with isolated data for visual checks.
+- `cargo test -- --ignored live_microphone_loopback` checks real capture and output with microphone authorization; ordinary lifecycle tests use an injected clock and hardware-free audio.

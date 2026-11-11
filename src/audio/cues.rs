@@ -11,9 +11,6 @@
 use std::f64::consts::PI;
 use std::time::Duration;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{FromSample, SampleFormat, SizedSample};
-
 use super::AudioError;
 
 pub const START_NOTES: [f64; 2] = [523.25, 659.25];
@@ -116,60 +113,12 @@ pub fn play(cue: Cue) {
 
 /// Plays a cue and returns once it has finished.
 pub fn play_blocking(cue: Cue) -> Result<(), AudioError> {
-    let host = cpal::default_host();
-    let device = host
-        .default_output_device()
-        .ok_or_else(|| AudioError::Output("no output device".into()))?;
-    let supported = device
-        .default_output_config()
-        .map_err(|e| AudioError::Output(e.to_string()))?;
-    let config = supported.config();
-    let samples = render_cue(cue.notes(), config.sample_rate);
-    let stream = match supported.sample_format() {
-        SampleFormat::F32 => build::<f32>(&device, config, samples),
-        SampleFormat::F64 => build::<f64>(&device, config, samples),
-        SampleFormat::I16 => build::<i16>(&device, config, samples),
-        SampleFormat::I32 => build::<i32>(&device, config, samples),
-        SampleFormat::U16 => build::<u16>(&device, config, samples),
-        SampleFormat::U8 => build::<u8>(&device, config, samples),
-        other => Err(AudioError::Output(format!(
-            "unsupported sample format {other:?}"
-        ))),
-    }?;
-    stream
-        .play()
-        .map_err(|e| AudioError::Output(e.to_string()))?;
-    std::thread::sleep(cue_duration(cue.notes()) + Duration::from_millis(80));
-    drop(stream);
-    Ok(())
-}
-
-fn build<T>(
-    device: &cpal::Device,
-    config: cpal::StreamConfig,
-    samples: Vec<f32>,
-) -> Result<cpal::Stream, AudioError>
-where
-    T: SizedSample + FromSample<f32>,
-{
-    let channels = usize::from(config.channels.max(1));
-    let mut position = 0usize;
-    device
-        .build_output_stream::<T, _, _>(
-            config,
-            move |out: &mut [T], _| {
-                for frame in out.chunks_mut(channels) {
-                    let value = samples.get(position).copied().unwrap_or(0.0);
-                    position += 1;
-                    for slot in frame {
-                        *slot = <T as FromSample<f32>>::from_sample_(value);
-                    }
-                }
-            },
-            |err| log::debug!("cue output error: {err}"),
-            None,
-        )
-        .map_err(|e| AudioError::Output(e.to_string()))
+    super::playback::Playback::start(
+        std::sync::Arc::new(render_cue(cue.notes(), 48_000)),
+        48_000,
+        false,
+    )?
+    .wait()
 }
 
 #[cfg(test)]

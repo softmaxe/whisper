@@ -57,6 +57,21 @@ fn live_target(rms: f32, index: usize, now_ms: f32, reduce: bool) -> f32 {
     speech + (1. - level) * BREATH * ENVELOPE[index] * swell
 }
 
+pub(crate) fn microphone_level_meter(rms: f32, reduce: bool, palette: &Palette) -> Div {
+    div()
+        .h(px(24.))
+        .flex()
+        .items_center()
+        .gap(px(BAR_GAP))
+        .children((0..BARS).map(|i| {
+            div()
+                .w(px(BAR_W))
+                .h(px(BAR_MIN + live_target(rms, i, 0., reduce) * 12.))
+                .rounded_full()
+                .bg(palette.voice)
+        }))
+}
+
 /// A zero-velocity handoff at both ends keeps the dots and bars continuous.
 fn prepare_ease(t: f32) -> f32 {
     let t = t.clamp(0., 1.);

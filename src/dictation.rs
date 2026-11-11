@@ -166,6 +166,7 @@ pub struct Dictation {
     generation: u64,
     start_lock: bool,
     cancel: Option<CancellationToken>,
+    mic_test: std::sync::Weak<parking_lot::Mutex<crate::audio::microphone_test::MicrophoneTest>>,
     skip_cleanup: Option<CancellationToken>,
     is_cleaning: bool,
     target_pid: Option<TargetPid>,
@@ -214,6 +215,7 @@ impl Dictation {
                 generation: 0,
                 start_lock: false,
                 cancel: None,
+                mic_test: Default::default(),
                 skip_cleanup: None,
                 is_cleaning: false,
                 target_pid: None,
@@ -232,6 +234,14 @@ impl Dictation {
 
     pub fn global(cx: &App) -> Entity<Dictation> {
         cx.global::<DictationGlobal>().0.clone()
+    }
+
+    pub fn attach_microphone_test(
+        &mut self,
+        test: &Arc<parking_lot::Mutex<crate::audio::microphone_test::MicrophoneTest>>,
+    ) {
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
+        self.mic_test = Arc::downgrade(test);
     }
 
     pub fn status(&self) -> StatusMirror {
@@ -318,6 +328,7 @@ impl Dictation {
         if self.start_lock || self.phase != Phase::Idle {
             return;
         }
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
         // A new Dictation replaces the one that failed.
         self.failed = None;
         let device = backend::preferred_input_device(&AppState::settings(cx));
@@ -358,6 +369,7 @@ impl Dictation {
         if self.start_lock || matches!(self.phase, Phase::Recording | Phase::Processing) {
             return;
         }
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
         self.start_lock = true;
         self.push_force_stopped = false;
         self.failed = None;
@@ -1098,6 +1110,7 @@ mod tests {
             generation: 7,
             start_lock: false,
             cancel: None,
+            mic_test: Default::default(),
             skip_cleanup: None,
             is_cleaning: false,
             target_pid: None,
@@ -1307,6 +1320,7 @@ mod tests {
                 generation: 7,
                 start_lock: false,
                 cancel: Some(cancel.clone()),
+                mic_test: Default::default(),
                 skip_cleanup: None,
                 is_cleaning: false,
                 target_pid: None,

@@ -37,6 +37,9 @@ pub const PRE_ROLL_MAX_AGE: Duration = Duration::from_millis(2_000);
 pub const FIRST_AUDIO_TIMEOUT: Duration = Duration::from_millis(10_000);
 /// No frames for this long during a recording means the device is gone.
 pub const STALL_TIMEOUT: Duration = Duration::from_millis(1_500);
+// The lease includes stream teardown, so a test can yield capture to dictation
+// without overlapping inputs or feeding its playback into a new recording.
+pub(crate) static AUDIO_INPUT_LEASE: Mutex<()> = Mutex::new(());
 const TICK: Duration = Duration::from_millis(50);
 const LEVEL_WINDOW: usize = ANALYSER_WINDOW;
 
@@ -491,6 +494,10 @@ fn capture_thread(
     commands: mpsc::Receiver<Command>,
     events: Option<EventSink>,
 ) {
+    let _lease = AUDIO_INPUT_LEASE.lock();
+    if core.state.lock().phase == Phase::Finished {
+        return;
+    }
     let stream = match open_stream(selector.as_deref(), &core) {
         Ok(stream) => stream,
         Err(err) => {

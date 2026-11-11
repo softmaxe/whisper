@@ -49,6 +49,8 @@ typing in.
   sets the period beside the one before it; highlights such as active days,
   busiest day and time spoken; and a Habits section with your streak calendar
   and weekly rhythm. Everything is computed on device.
+- **Test your microphone.** Record up to ten seconds and play it back from
+  Settings > Dictation. The clip stays in memory and is never saved or sent.
 - **Fits into macOS.** Menu bar icon, standard app menu, start at login
   (macOS 13+), optional media pause while recording, English and Simplified
   Chinese UI, and light, dark, Tokyo Night or automatic themes.

@@ -20,6 +20,8 @@ mod waveform;
 use state::*;
 use waveform::*;
 
+pub(crate) use waveform::microphone_level_meter;
+
 use std::cell::RefCell;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;

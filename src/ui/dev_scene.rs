@@ -35,7 +35,9 @@ pub fn scene() -> Option<Scene> {
         "dictionary" => Scene::View(PanelView::Dictionary),
         "search" => Scene::Search,
         "settings" => Scene::Settings(match arg {
-            "hotkeys" => SettingsSection::Hotkeys,
+            "hotkeys" | "mic-recording" | "mic-ready" | "mic-error" | "mic-transition" => {
+                SettingsSection::Hotkeys
+            }
             "speech" => SettingsSection::SpeechToText,
             "llms" => SettingsSection::Llms,
             "privacy" => SettingsSection::PrivacyData,

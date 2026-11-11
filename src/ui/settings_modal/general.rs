@@ -298,6 +298,9 @@ impl SettingsModal {
     ) -> AnyElement {
         let p = cx.palette();
         let mut microphone_rows = vec![self.render_microphone(window, cx)];
+        if self.mic_test.lock().state() != crate::audio::microphone_test::State::Closed {
+            microphone_rows.push(self.render_mic_test(cx));
+        }
         let capture = Dictation::global(cx).read(cx).capture_status();
         let (label, device) = microphone_status_info(&self.mic_snapshot, &settings(cx), &capture);
         let healthy = matches!(capture, CaptureStatus::Recording(_) | CaptureStatus::Idle);

@@ -763,5 +763,20 @@
       "copy": "Copy Text",
       "copiedHint": "Copied. Press ⌘V to paste."
     }
+  },
+  "microphoneTest": {
+    "test": "Test",
+    "stop": "Stop",
+    "play": "Play",
+    "recordAgain": "Record again",
+    "close": "Close microphone test",
+    "tryAgain": "Try again",
+    "privacy": "Stays on this Mac. Never transcribed or saved.",
+    "silent": "No sound was picked up. Check the selected microphone.",
+    "permission": "Microphone permission is missing.",
+    "device": "The microphone is unavailable or disconnected.",
+    "noSignal": "The microphone did not deliver an input signal.",
+    "output": "Audio output is unavailable.",
+    "busy": "Finish or cancel dictation before testing the microphone."
   }
 }
