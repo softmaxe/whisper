@@ -19,6 +19,7 @@ use super::components::{
     kbd, keyed_focus_handle, page_container, retention_banner, shimmer_text, skeleton_line,
     spinner, text_tooltip,
 };
+use super::control_panel::CloseOverlay;
 use super::overlays::{
     DialogRequest, Toast, ToastVariant, remove_toast, show_dialog, show_toast, show_tracked_toast,
 };
@@ -477,7 +478,6 @@ impl HistoryView {
                 self.delete(id, cx);
                 self.cursor = next;
             }
-            "escape" if self.cursor.is_some() => self.cursor = None,
             _ => return,
         }
         cx.stop_propagation();
@@ -1265,7 +1265,16 @@ impl Render for HistoryView {
                 .track_focus(&list_focus.tab_stop(true))
                 .role(Role::List)
                 .aria_label(t("sidebar.home"))
-                .on_key_down(cx.listener(Self::on_list_key));
+                .on_key_down(cx.listener(Self::on_list_key))
+                // Escape reaches the window as its overlay action before any
+                // key listener, so the cursor is cleared from the action.
+                .on_action(cx.listener(|this, _: &CloseOverlay, _, cx| {
+                    if this.cursor.take().is_some() {
+                        cx.notify();
+                    } else {
+                        cx.propagate();
+                    }
+                }));
             for (index, (label, items)) in groups.iter().enumerate() {
                 // Day label with its count beside it, then a hairline to the edge.
                 let count = items.len();
