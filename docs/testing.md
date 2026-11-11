@@ -58,6 +58,13 @@ The Release workflow builds and publishes a signed package for a `v<version>` ta
 
 Storage failure and callback-order regressions use temporary databases in automated tests. Pipeline regressions also verify that failed edits never become transcription hints or replacements, and that edits after a request starts do not change its captured rules. Do not damage the installed application's database to simulate a write failure.
 
+## History deletion regression check
+
+- Delete a History row, then close the panel within six seconds using the native close button. Reopen it and restart the app; the row must stay deleted. Repeat with the panel's keyboard close command.
+- Delete a row, Undo, then delete the same row again before its first six-second deadline. It must remain undoable until the second deletion's deadline.
+- Hover the Undo toast, or focus its action, for more than six seconds. The toast must disappear at the original deadline and the deletion must commit. Ordinary notification toasts should still pause on hover.
+- Delete A, then B while A is undoable. A must commit and its toast must disappear immediately; B must have its own full undo window. Undo B and verify only B returns.
+
 ## Settings scrolling regression check
 
 - With MOS enabled, reverse the wheel immediately after reaching either end of Settings and the prompt preview. The first reverse event should move content immediately, without repaying overscroll. Repeat with MOS disabled and with several small, fractional pixel events between frames.

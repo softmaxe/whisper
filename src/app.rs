@@ -78,6 +78,9 @@ pub fn close_control_panel(cx: &mut App) {
 }
 
 fn prepare_control_panel_close(cx: &mut App) {
+    if let Some(panel) = cx.try_global::<ControlPanelWindow>().map(|w| w.1.clone()) {
+        let _ = panel.update(cx, |panel, cx| panel.prepare_close(cx));
+    }
     Overlays::global(cx).update(cx, |o, cx| o.clear_panel(cx));
 }
 

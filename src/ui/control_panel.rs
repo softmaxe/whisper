@@ -155,6 +155,10 @@ impl ControlPanel {
         self.settings.is_some()
     }
 
+    pub fn prepare_close(&mut self, cx: &mut Context<Self>) {
+        self.history.update(cx, |h, cx| h.commit_delete(cx));
+    }
+
     pub fn open_settings(
         &mut self,
         section: Option<SettingsSection>,
