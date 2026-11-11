@@ -668,7 +668,6 @@ impl Dictation {
         let settings = AppState::settings(cx);
         let Transcript {
             text,
-            raw_text,
             cleanup_failure,
             ..
         } = transcript;
@@ -679,7 +678,7 @@ impl Dictation {
             self.set_phase(Phase::Idle, cx);
             cx.emit(DictationNotice::PushForceStopped {
                 kept_in_clipboard: kept,
-                transcript: raw_text,
+                transcript: text,
             });
         } else if settings.auto_paste_enabled {
             let generation = self.generation;
