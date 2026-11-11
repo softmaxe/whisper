@@ -283,24 +283,28 @@ impl SettingsModal {
                 .into_any_element(),
             );
         }
-        language_rows.push(toggle_row(
-            "silence-filtering",
-            t("settings.speechToText.skipSilence"),
-            Some(t("settings.speechToText.skipSilenceDescription")),
-            settings(cx).silence_filtering,
-            false,
-            |v, _, cx| update_settings(cx, |s| s.silence_filtering = v),
-            &p,
-        ));
-        language_rows.push(toggle_row(
-            "remove-filler-words",
-            t("settings.speechToText.removeFillerWords"),
-            Some(t("settings.speechToText.removeFillerWordsDescription")),
-            settings(cx).remove_filler_words,
-            false,
-            |v, _, cx| update_settings(cx, |s| s.remove_filler_words = v),
-            &p,
-        ));
+        // What happens to a recording around the server call is not a
+        // language choice, so these switches get a section of their own.
+        let option_rows = vec![
+            toggle_row(
+                "silence-filtering",
+                t("settings.speechToText.skipSilence"),
+                Some(t("settings.speechToText.skipSilenceDescription")),
+                settings(cx).silence_filtering,
+                false,
+                |v, _, cx| update_settings(cx, |s| s.silence_filtering = v),
+                &p,
+            ),
+            toggle_row(
+                "remove-filler-words",
+                t("settings.speechToText.removeFillerWords"),
+                Some(t("settings.speechToText.removeFillerWordsDescription")),
+                settings(cx).remove_filler_words,
+                false,
+                |v, _, cx| update_settings(cx, |s| s.remove_filler_words = v),
+                &p,
+            ),
+        ];
         let server = settings_section(
             t("settings.speechToText.serverTitle"),
             vec![
@@ -343,6 +347,11 @@ impl SettingsModal {
             .child(settings_section(
                 t("settings.language.sectionTitle"),
                 language_rows,
+                &p,
+            ))
+            .child(settings_section(
+                t("settings.speechToText.optionsTitle"),
+                option_rows,
                 &p,
             ))
             .into_any_element()

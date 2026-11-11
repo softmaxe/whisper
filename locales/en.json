@@ -169,6 +169,7 @@
       "protocolTag": "OpenAI-compatible · no auth",
       "removeFillerWords": "Remove filler words",
       "removeFillerWordsDescription": "Drops hesitation sounds such as “um” and “uh” from transcripts. Works without text cleanup.",
+      "optionsTitle": "Transcription options",
       "skipSilence": "Skip silence",
       "skipSilenceDescription": "Removes pauses and non-speech sound before the recording is sent, keeping a short buffer so words are not cut off. Runs on this Mac."
     },

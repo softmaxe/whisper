@@ -277,9 +277,12 @@ impl SettingsModal {
                                 cx.notify();
                             })),
                     )
+                    // The track takes the free width, which also parks Close at
+                    // the strip's trailing edge, under the device picker.
                     .child(
                         div()
-                            .w(px(80.))
+                            .flex_1()
+                            .min_w(px(48.))
                             .h(px(2.))
                             .rounded_full()
                             .bg(p.border)
