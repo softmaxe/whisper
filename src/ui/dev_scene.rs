@@ -4,7 +4,7 @@
 //! Values: `home`, `insights`, `upload`, `dictionary`, `search`,
 //! `settings[:general|language|hotkeys|speech|llms|privacy]`, and the pill states
 //! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
-//! `pill:cleanup`, `pill:cleanup-transition`, `pill:error`, `pill:fallback`.
+//! `pill:cleanup`, `pill:cleanup-transition`, `pill:flow`, `pill:error`, `pill:fallback`.
 //! `WHISPER_DEV_SCROLL_FRACTION=0.5` or `1` captures the middle or bottom of Settings.
 
 use std::time::Duration;
@@ -49,6 +49,7 @@ pub fn scene() -> Option<Scene> {
             "processing" => "processing",
             "cleanup" => "cleanup",
             "cleanup-transition" => "cleanup-transition",
+            "flow" => "flow",
             "error" => "error",
             "no-speech" => "no-speech",
             "fallback" => "fallback",
@@ -73,6 +74,43 @@ pub fn apply_pill(cx: &mut App) {
         return;
     };
     match state {
+        "flow" => {
+            // One whole Dictation on a loop: record, transcribe, polish,
+            // skip, deliver. For recording the pill's motion end to end.
+            let set = |cx: &mut gpui_kit::AsyncApp, recording, processing, cleaning| {
+                cx.update(|cx| {
+                    AppState::global(cx).update(cx, |s, cx| {
+                        s.dictation.is_preparing = false;
+                        s.dictation.is_recording = recording;
+                        s.dictation.is_processing = processing;
+                        s.dictation.is_cleaning = cleaning;
+                        cx.notify();
+                    })
+                });
+            };
+            cx.spawn(async move |cx| {
+                loop {
+                    let executor = cx.background_executor().clone();
+                    let wait = |ms| executor.timer(Duration::from_millis(ms));
+                    wait(1200).await;
+                    set(cx, true, false, false);
+                    wait(2200).await;
+                    set(cx, false, true, false);
+                    wait(1600).await;
+                    set(cx, false, true, true);
+                    wait(2400).await;
+                    set(cx, false, true, false);
+                    wait(250).await;
+                    set(cx, false, false, false);
+                    cx.update(|cx| {
+                        Dictation::global(cx)
+                            .update(cx, |_, cx| cx.emit(DictationNotice::Delivered))
+                    });
+                    wait(1200).await;
+                }
+            })
+            .detach();
+        }
         "cleanup-transition" => {
             AppState::global(cx).update(cx, |s, cx| {
                 s.dictation.is_processing = true;
