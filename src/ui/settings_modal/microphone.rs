@@ -130,7 +130,7 @@ impl SettingsModal {
                                     .child(note),
                             ),
                     )
-                    // Refresh sits beside the list it reloads.
+                    // Refresh follows the device picker at the row's trailing edge.
                     .child(
                         div()
                             .flex_none()
@@ -157,6 +157,7 @@ impl SettingsModal {
                                             })),
                                     ),
                             )
+                            .child(self.microphone.clone())
                             .child(
                                 Button::new("settings-refresh-mics")
                                     .icon("refresh-cw", 14.)
@@ -167,8 +168,7 @@ impl SettingsModal {
                                     .on_click(
                                         cx.listener(|this, _, _, cx| this.reload_microphones(cx)),
                                     ),
-                            )
-                            .child(self.microphone.clone()),
+                            ),
                     ),
             )
             .into_any_element()
