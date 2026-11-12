@@ -38,7 +38,7 @@ use crate::backend;
 use crate::dictation::{Dictation, DictationNotice, ErrorActions};
 use crate::macos;
 
-use super::components::{KeyboardFocusable, f32_tx, icon, kbd};
+use super::components::{KeyboardFocusable, color_tx, f32_tx, icon, kbd};
 use super::format::format_elapsed;
 use super::theme::{
     DUR_BASE, DUR_FAST, DUR_SLOW, DUR_SNAP, FONT_UI, FONT_VOICE, LINE_READING, LINE_SMALL, Palette,
@@ -196,6 +196,12 @@ pub struct PillView {
     /// the pill speaks for it instead of for the pill.
     cancel_hovered: bool,
     skip_hovered: bool,
+    /// The processing silhouette and its "Polishing" label, held through
+    /// the finish so neither changes back as the pill leaves.
+    think_latched: bool,
+    polish_latched: bool,
+    /// What the hint last said, which it keeps saying while it fades out.
+    hint_last: Option<(DictationSnapshot, bool, bool)>,
 }
 
 impl PillView {
@@ -240,6 +246,9 @@ impl PillView {
             recorded: Duration::ZERO,
             cancel_hovered: false,
             skip_hovered: false,
+            think_latched: false,
+            polish_latched: false,
+            hint_last: None,
         }
     }
 
@@ -751,18 +760,33 @@ impl Render for PillView {
 
             // The hint sits above the pill, aligned with it; toasts take
             // that spot when present.
-            let hint = (self.hovered && active && self.toasts.is_empty())
-                .then(|| Self::render_hint(&snapshot, self.cancel_hovered, self.skip_hovered, cx))
-                .flatten();
+            let hint_now = (self.hovered && active && self.toasts.is_empty())
+                .then_some((snapshot.clone(), self.cancel_hovered, self.skip_hovered))
+                .filter(|(s, cancel, skip)| Self::render_hint(s, *cancel, *skip, cx).is_some());
+            let hint_alpha = f32_tx(
+                "pill-hint",
+                if hint_now.is_some() { 1. } else { 0. },
+                DUR_SNAP,
+                ease_out,
+                window,
+                cx,
+            );
+            if hint_now.is_some() {
+                self.hint_last = hint_now;
+            }
+            // It keeps its last words while it fades, and settles the last
+            // few points onto its place as it arrives.
+            let hint = (hint_alpha > 0.001)
+                .then_some(self.hint_last.as_ref())
+                .flatten()
+                .and_then(|(s, cancel, skip)| Self::render_hint(s, *cancel, *skip, cx));
             if let Some(hint) = hint {
-                let hint =
-                    hint.with_animation("pill-hint", motion(DUR_SNAP, cx), |d, t| d.opacity(t));
                 root = root.child(
                     div()
                         .absolute()
                         .left_0()
                         .right_0()
-                        .bottom(px(DOCK_INSET + PILL_H + 8.))
+                        .bottom(px(DOCK_INSET + PILL_H + 8. - 3. * (1. - hint_alpha)))
                         .px(px(DOCK_INSET))
                         .flex()
                         .map(|d| match dock {
@@ -770,7 +794,7 @@ impl Render for PillView {
                             PanelStartPosition::Center => d.justify_center(),
                             PanelStartPosition::BottomRight => d.justify_end(),
                         })
-                        .child(hint),
+                        .child(hint.opacity(hint_alpha)),
                 );
             }
         }
