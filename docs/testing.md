@@ -143,6 +143,7 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 - Click Skip and verify immediate insertion of the recognized text with filler removal, Chinese script conversion, known corrections, and snippets. There must be no cleanup failure notice and no second paste when the delayed reply arrives. Cancel must still discard the whole operation.
 - Tab to Skip and activate it with Return or Space. Check VoiceOver's “Skip cleanup” label and the “Insert without cleanup” hover hint. Check smooth width changes and emergence, then repeat with Reduce motion for immediate changes.
 - Use `WHISPER_DEV_SCENE=pill:cleanup` with isolated data to inspect Light, Dark and Tokyo Night, and both interface languages.
+- The pill renames itself "Polishing" after 400 ms of cleanup and offers Skip after 1.5 s. A Dictation the server finishes faster must go from "Transcribing" to the check with neither flashing past. Replay measured timings with `WHISPER_DEV_FLOW_MS=<transcribe>,<polish>` (for example `130,170`).
 - Use `WHISPER_DEV_SCENE=pill:flow` to watch one whole Dictation on a loop: recording, transcribing, polishing, Skip leaving, and the delivered check. The meter and the label must never overlap, and the pill must not read "Transcribing" again after it has read "Polishing".
 
 ## Microphone loopback regression check

@@ -304,7 +304,12 @@ impl PillView {
             self.think_latched = snapshot.is_processing;
             self.polish_latched &= snapshot.is_processing;
         }
-        self.polish_latched |= polishing;
+        let (named, skippable) = polish_stage(
+            self.polishing_since
+                .filter(|_| polishing)
+                .map(|since| since.elapsed()),
+        );
+        self.polish_latched |= named;
         let processing = self.think_latched;
         if waveform_needs_animation_frame(snapshot, reduce) {
             window.request_animation_frame();
@@ -419,7 +424,7 @@ impl PillView {
         // Transcribing names itself beside the dots, so the state reads
         // without hovering. It keeps the timed recording pill's width, so
         // the capsule does not jump sideways when recording ends.
-        if !polishing {
+        if !skippable {
             self.skip_hovered = false;
         }
         let labels = [
@@ -442,9 +447,9 @@ impl PillView {
         );
         let skip_t = f32_tx(
             "skip-emerge",
-            if polishing { 1. } else { 0. },
-            if polishing { DUR_BASE } else { DUR_SNAP },
-            if polishing { ease_out } else { ease_snap },
+            if skippable { 1. } else { 0. },
+            if skippable { DUR_BASE } else { DUR_SNAP },
+            if skippable { ease_out } else { ease_snap },
             window,
             cx,
         );
@@ -490,7 +495,7 @@ impl PillView {
                         .when(out > 0.001, |d| d.child(label(&labels[0], out)))
                         .when(arrive > 0.001, |d| d.child(label(&labels[1], arrive))),
                 );
-            // The chip stays for its exit but only acts while polishing.
+            // The chip stays for its exit but only acts while it is offered.
             let chip = (skip_t > 0.001).then(|| {
                 let alpha = swap(skip_t).1 * think_alpha;
                 let wash = color_tx(
@@ -517,7 +522,7 @@ impl PillView {
                     .line_height(px(LINE_SMALL))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(p.foreground.opacity(0.92 * alpha))
-                    .when(polishing, |d| {
+                    .when(skippable, |d| {
                         d.keyboard_focusable(
                             "pill-skip-cleanup",
                             Role::Button,
@@ -821,6 +826,18 @@ mod tests {
 
     fn db(level: f32) -> f32 {
         10f32.powf(level / 20.)
+    }
+
+    #[test]
+    fn fast_cleanup_never_shows_its_label_or_skip() {
+        use super::{POLISH_LABEL_AFTER, SKIP_AFTER, polish_stage};
+        assert_eq!(polish_stage(None), (false, false));
+        // Measured against a healthy server: 170 ms to 1 s of cleanup.
+        assert_eq!(polish_stage(at(170)), (false, false));
+        assert_eq!(polish_stage(at(350)), (false, false));
+        assert_eq!(polish_stage(at(1000)), (true, false));
+        assert_eq!(polish_stage(Some(POLISH_LABEL_AFTER)), (true, false));
+        assert_eq!(polish_stage(Some(SKIP_AFTER)), (true, true));
     }
 
     #[test]

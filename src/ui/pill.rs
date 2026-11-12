@@ -77,6 +77,20 @@ const FINISH: Duration = Duration::from_millis(DUR_BASE);
 /// How long the pill stays for the delivered check: pop, hold, then exit.
 const RESOLVE: Duration = Duration::from_millis(RESOLVE_EXIT_AT + DUR_SNAP);
 const RESOLVE_EXIT_AT: u64 = 620;
+/// Cleanup on a healthy server ends within a second. The pill only renames
+/// itself "Polishing" once cleanup outlasts a glance, and only offers Skip
+/// once waiting is long enough to act on, so a fast Dictation goes from
+/// the meter to the check without a control flashing past.
+const POLISH_LABEL_AFTER: Duration = Duration::from_millis(400);
+const SKIP_AFTER: Duration = Duration::from_millis(1500);
+
+/// Whether cleanup has run long enough to be named, and to offer Skip.
+fn polish_stage(running: Option<Duration>) -> (bool, bool) {
+    (
+        running.is_some_and(|d| d >= POLISH_LABEL_AFTER),
+        running.is_some_and(|d| d >= SKIP_AFTER),
+    )
+}
 
 /// The floating HUD remains dark over any wallpaper, while honoring named themes.
 fn hud(cx: &App) -> Palette {
@@ -200,6 +214,8 @@ pub struct PillView {
     /// the finish so neither changes back as the pill leaves.
     think_latched: bool,
     polish_latched: bool,
+    /// When cleanup began, which paces the label and Skip.
+    polishing_since: Option<Instant>,
     /// What the hint last said, which it keeps saying while it fades out.
     hint_last: Option<(DictationSnapshot, bool, bool)>,
 }
@@ -248,6 +264,7 @@ impl PillView {
             skip_hovered: false,
             think_latched: false,
             polish_latched: false,
+            polishing_since: None,
             hint_last: None,
         }
     }
@@ -313,6 +330,22 @@ impl PillView {
             self.dipped_at = Some(Instant::now());
         }
         self.was_processing = active && processing;
+        if processing && snapshot.is_cleaning {
+            if self.polishing_since.is_none() {
+                self.polishing_since = Some(Instant::now());
+                // The dots stand still under reduced motion, so nothing
+                // else would redraw the pill when each stage comes due.
+                for due in [POLISH_LABEL_AFTER, SKIP_AFTER] {
+                    cx.spawn_in(window, async move |this, cx| {
+                        cx.background_executor().timer(due).await;
+                        let _ = this.update(cx, |_, cx| cx.notify());
+                    })
+                    .detach();
+                }
+            }
+        } else {
+            self.polishing_since = None;
+        }
         if !active && self.was_active {
             // Keep the window for the finish fade, or for the delivered check.
             let hold = if self.resolved_at.is_some() {
