@@ -88,6 +88,14 @@ pub fn apply_pill(cx: &mut App) {
                     })
                 });
             };
+            // `WHISPER_DEV_FLOW_MS=transcribe,polish` replays measured
+            // server timings instead of the slow defaults.
+            let stages: Vec<u64> = std::env::var("WHISPER_DEV_FLOW_MS")
+                .ok()
+                .map(|v| v.split(',').filter_map(|n| n.trim().parse().ok()).collect())
+                .unwrap_or_default();
+            let transcribe = stages.first().copied().unwrap_or(1600);
+            let polish = stages.get(1).copied().unwrap_or(2400);
             cx.spawn(async move |cx| {
                 loop {
                     let executor = cx.background_executor().clone();
@@ -96,11 +104,11 @@ pub fn apply_pill(cx: &mut App) {
                     set(cx, true, false, false);
                     wait(2200).await;
                     set(cx, false, true, false);
-                    wait(1600).await;
+                    wait(transcribe).await;
                     set(cx, false, true, true);
-                    wait(2400).await;
+                    wait(polish).await;
                     set(cx, false, true, false);
-                    wait(250).await;
+                    wait(if stages.is_empty() { 250 } else { 20 }).await;
                     set(cx, false, false, false);
                     cx.update(|cx| {
                         Dictation::global(cx)
