@@ -1,6 +1,7 @@
 //! Microphone behavior and presentation for SettingsModal.
 
 use super::*;
+use crate::audio::microphone_test::{Problem, State};
 
 impl SettingsModal {
     pub(super) fn reload_microphones(&mut self, cx: &mut Context<Self>) {
@@ -98,6 +99,7 @@ impl SettingsModal {
         } else {
             t("microphoneSettings.helpText")
         };
+        let busy = AppState::global(cx).read(cx).dictation.is_active();
         panel_row()
             .child(
                 div()
@@ -136,6 +138,26 @@ impl SettingsModal {
                             .items_center()
                             .gap(px(6.))
                             .child(
+                                div()
+                                    .id("settings-test-mic-tooltip")
+                                    .when(busy, |d| {
+                                        d.tooltip(crate::ui::components::text_tooltip(t(
+                                            "microphoneTest.busy",
+                                        )))
+                                    })
+                                    .child(
+                                        Button::new("settings-test-mic")
+                                            .icon("mic", 14.)
+                                            .label(t("microphoneTest.test"))
+                                            .variant(ButtonVariant::Outline)
+                                            .size(ButtonSize::Sm)
+                                            .disabled(busy)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.start_mic_test(cx)
+                                            })),
+                                    ),
+                            )
+                            .child(
                                 Button::new("settings-refresh-mics")
                                     .icon("refresh-cw", 14.)
                                     .icon_rotation(rotation)
@@ -149,6 +171,201 @@ impl SettingsModal {
                             .child(self.microphone.clone()),
                     ),
             )
+            .into_any_element()
+    }
+
+    pub(super) fn cancel_mic_test(&mut self) {
+        self.mic_test_request = None;
+        self.mic_test.lock().close();
+    }
+
+    fn start_mic_test(&mut self, cx: &mut Context<Self>) {
+        if self.closing || AppState::global(cx).read(cx).dictation.is_active() {
+            return;
+        }
+        let device = backend::preferred_input_device(&settings(cx));
+        let (generation, start) = self
+            .mic_test
+            .lock()
+            .start(device.as_deref(), Instant::now());
+        self.mic_test_request = Some(cx.spawn(async move |this, cx| {
+            let result = start.await;
+            let _ = this.update(cx, |this, cx| {
+                this.mic_test
+                    .lock()
+                    .capture_started(generation, result, Instant::now());
+                cx.notify();
+            });
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                let keep = this
+                    .update(cx, |this, cx| {
+                        let mut test = this.mic_test.lock();
+                        if test.generation() != generation || test.state() == State::Closed {
+                            return false;
+                        }
+                        let active = matches!(test.state(), State::Recording | State::Playing);
+                        test.tick(Instant::now());
+                        if active {
+                            cx.notify();
+                        }
+                        true
+                    })
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        }));
+        cx.notify();
+    }
+
+    pub(super) fn render_mic_test(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let p = cx.palette();
+        let test = self.mic_test.lock();
+        let state = test.state();
+        let silent = test.silent();
+        let duration = test.duration();
+        let remaining = test.remaining(Instant::now()).as_secs_f64().ceil() as u64;
+        let level = test.level();
+        let playback = test.progress();
+        drop(test);
+        let mut controls = div().flex().items_center().gap(px(10.));
+        match state {
+            State::Recording => {
+                controls = controls
+                    .child(crate::ui::pill::microphone_level_meter(
+                        level,
+                        cx.reduce_motion(),
+                        &p,
+                    ))
+                    .child(
+                        div()
+                            .font_family(FONT_MONO)
+                            .font_features(super::super::theme::mono_features())
+                            .text_size(px(TEXT_MONO_SMALL))
+                            .child(format!("0:{remaining:02}")),
+                    )
+                    .child(
+                        Button::new("mic-test-stop")
+                            .label(t("microphoneTest.stop"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mic_test.lock().stop();
+                                cx.notify();
+                            })),
+                    );
+            }
+            State::Ready | State::Playing => {
+                let playing = state == State::Playing;
+                controls = controls
+                    .child(
+                        Button::new("mic-test-play")
+                            .icon(if playing { "square" } else { "play" }, 12.)
+                            .label(t(if playing {
+                                "microphoneTest.stop"
+                            } else {
+                                "microphoneTest.play"
+                            }))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.mic_test.lock().toggle_playback();
+                                cx.notify();
+                            })),
+                    )
+                    // The track takes the free width, which also parks Close at
+                    // the strip's trailing edge, under the device picker.
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(48.))
+                            .h(px(2.))
+                            .rounded_full()
+                            .bg(p.border)
+                            .child(div().w(relative(playback)).h_full().bg(p.muted_foreground)),
+                    )
+                    .child(
+                        div()
+                            .font_family(FONT_MONO)
+                            .text_size(px(TEXT_MONO_SMALL))
+                            .child(format!("0:{:02}", duration.as_secs_f64().ceil() as u64)),
+                    )
+                    .child(
+                        Button::new("mic-test-again")
+                            .label(t("microphoneTest.recordAgain"))
+                            .variant(ButtonVariant::Ghost)
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, _, cx| this.start_mic_test(cx))),
+                    )
+                    .child(
+                        Button::new("mic-test-close")
+                            .icon("x", 12.)
+                            .aria_label(t("microphoneTest.close"))
+                            .variant(ButtonVariant::Ghost)
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.cancel_mic_test();
+                                cx.notify();
+                            })),
+                    );
+            }
+            State::Error(problem) => {
+                controls = controls
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(TEXT_SMALL))
+                            .text_color(p.warning)
+                            .child(t(match problem {
+                                Problem::Permission => "microphoneTest.permission",
+                                Problem::Device => "microphoneTest.device",
+                                Problem::NoSignal => "microphoneTest.noSignal",
+                                Problem::Output => "microphoneTest.output",
+                            })),
+                    )
+                    .child(
+                        Button::new("mic-test-retry")
+                            .label(t("microphoneTest.tryAgain"))
+                            .variant(ButtonVariant::Outline)
+                            .size(ButtonSize::Sm)
+                            .on_click(cx.listener(|this, _, _, cx| this.start_mic_test(cx))),
+                    );
+            }
+            State::Closed => {}
+        }
+        panel_row()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(controls)
+                    .when(
+                        silent && matches!(state, State::Ready | State::Playing),
+                        |d| {
+                            d.child(
+                                div()
+                                    .text_size(px(TEXT_SMALL))
+                                    .text_color(p.warning)
+                                    .child(t("microphoneTest.silent")),
+                            )
+                        },
+                    )
+                    .child(
+                        div()
+                            .text_size(px(TEXT_CAPTION))
+                            .line_height(px(LINE_SMALL))
+                            .text_color(p.subtle_foreground)
+                            .child(t("microphoneTest.privacy")),
+                    ),
+            )
+            .with_animation("mic-test-expand", motion(DUR_BASE, cx), |d, t| {
+                d.opacity(t).max_h(px(140. * ease_out(t))).overflow_hidden()
+            })
             .into_any_element()
     }
 }

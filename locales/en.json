@@ -166,7 +166,12 @@
       "serverTitle": "Server",
       "modelHelp": "The model your server should run. Test Connection lists the ones it offers.",
       "serverModels": "Models on this server",
-      "protocolTag": "OpenAI-compatible · no auth"
+      "protocolTag": "OpenAI-compatible · no auth",
+      "removeFillerWords": "Remove filler words",
+      "removeFillerWordsDescription": "Drops hesitation sounds such as “um” and “uh” from transcripts. Works without text cleanup.",
+      "optionsTitle": "Transcription options",
+      "skipSilence": "Skip silence",
+      "skipSilenceDescription": "Removes pauses and non-speech sound before the recording is sent, keeping a short buffer so words are not cut off. Runs on this Mac."
     },
     "llms": {
       "server": {
@@ -330,7 +335,8 @@
       "viewTranscript": "View Transcript",
       "recordNew": "Record New",
       "resend": "Resend Recording",
-      "openSettings": "Settings…"
+      "openSettings": "Settings…",
+      "sendAnyway": "Send anyway"
     },
     "noAudio": {
       "title": "We didn’t catch that",
@@ -368,7 +374,11 @@
       "cancel": "Cancel",
       "cancelDictation": "Cancel Dictation",
       "dismiss": "Close",
-      "closesIn": "Closes in {{seconds}} s; hover to keep open"
+      "closesIn": "Closes in {{seconds}} s; hover to keep open",
+      "polishing": "Polishing",
+      "skip": "Skip",
+      "skipHint": "Insert without cleanup",
+      "skipCleanup": "Skip cleanup"
     },
     "keptRecording": "Your {{time}} recording is kept until you close this card."
   },
@@ -757,5 +767,20 @@
       "copy": "Copy Text",
       "copiedHint": "Copied. Press ⌘V to paste."
     }
+  },
+  "microphoneTest": {
+    "test": "Test",
+    "stop": "Stop",
+    "play": "Play",
+    "recordAgain": "Record again",
+    "close": "Close microphone test",
+    "tryAgain": "Try again",
+    "privacy": "Stays on this Mac. Never transcribed or saved.",
+    "silent": "No sound was picked up. Check the selected microphone.",
+    "permission": "Microphone permission is missing.",
+    "device": "The microphone is unavailable or disconnected.",
+    "noSignal": "The microphone did not deliver an input signal.",
+    "output": "Audio output is unavailable.",
+    "busy": "Finish or cancel dictation before testing the microphone."
   }
 }

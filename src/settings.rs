@@ -133,6 +133,8 @@ pub struct Settings {
     pub remote_transcription_url: String,
     pub remote_transcription_model: String,
 
+    pub silence_filtering: bool,
+    pub remove_filler_words: bool,
     pub use_cleanup_model: bool,
     pub cleanup_model: String,
     pub cleanup_remote_url: String,
@@ -170,6 +172,8 @@ impl Default for Settings {
             chinese_script_preference: ChineseScriptPreference::AsTranscribed,
             remote_transcription_url: String::new(),
             remote_transcription_model: String::new(),
+            silence_filtering: true,
+            remove_filler_words: true,
             use_cleanup_model: true,
             cleanup_model: String::new(),
             cleanup_remote_url: String::new(),
@@ -359,5 +363,24 @@ mod tests {
         let s: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(s.theme, ThemePreference::Dark);
         assert_eq!(s.audio_retention_days, 30);
+        assert!(s.remove_filler_words);
+        assert!(s.silence_filtering);
+    }
+
+    #[test]
+    fn local_filter_preferences_persist_both_enabled_and_disabled() {
+        for enabled in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("settings.json");
+            let settings = Settings {
+                remove_filler_words: enabled,
+                silence_filtering: enabled,
+                ..Settings::default()
+            };
+            settings.save_to(&path).unwrap();
+            let loaded = Settings::load_from(&path);
+            assert_eq!(loaded.remove_filler_words, enabled);
+            assert_eq!(loaded.silence_filtering, enabled);
+        }
     }
 }

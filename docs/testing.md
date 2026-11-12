@@ -126,3 +126,48 @@ Do not reset TCC permissions, change system trust, or delete Keychain items duri
 - Tab through theme choices, buttons, switches, inputs, and dropdowns. Check focus, hover, selected, disabled, and destructive states. The filled action must retain a clearly contrasting label; switches must remain distinguishable by both thumb position and track color.
 - With `WHISPER_USER_DATA_DIR` pointing to a temporary directory, use `WHISPER_DEV_SCENE` in a debug build to inspect `pill:recording`, `pill:processing`, `pill:preparing`, `pill:error`, and `pill:fallback`. Tokyo Night uses the same indigo surface family as the workspace, muted blue voice activity, and distinct error/recovery colors. Light and Dark retain their dark floating HUD.
 - Automated tests cover preference serialization, system-appearance resolution, reading contrast, focus indicators, and selected/action text. They complement visual review; they do not prove native interaction or rendering quality.
+
+## Filler-word removal regression check
+
+- In Settings > Speech to text, toggle Remove filler words, restart, and verify the preference persists. Existing settings enable it by default.
+- With cleanup off and English selected, dictate “Um, we should go”; delivery should read “We should go” while History's raw transcript retains the hesitation. With Auto selected, “um carro” must remain intact.
+- Check Chinese hesitation runs and the exceptions 打呃 and 呃逆. Newlines, ordinary words, and the non-filler Chinese words 嗯, 啊, 额, 那个, 然后, and 就是 must remain.
+- Check adjacent fillers leave one space between surviving English words, preserve newlines, and remove filler-owned punctuation including ellipses. `foo uh,uh,bar` should become `foo bar`, `hello. Um... we go` should become `hello. We go`, and `好的，呃。我们走` should become `好的。我们走`.
+- Check URLs, emails, backtick-wrapped tokens, member access, attached code punctuation and assignments remain intact (`https://uh.edu/a`, `user@hm.com`, `uh_count`, `uh-oh`, `let uh = 1;`). A spaced hesitation dash (`um - I think`) must still filter in Auto.
+- Check filler-only input, including `uh!` and `呃。`, produces no-audio feedback. Punctuation-only server text with no removed filler keeps its existing delivery behavior. Whole snippets must match the raw transcript first (`uh oh` and even the filler-only trigger `hmm`), then the filtered transcript (`Um, my address` for `my address`). Turn removal off and verify the transcript is unchanged. File uploads must continue returning raw server text.
+- Tab to the switch and activate it with the keyboard; verify its VoiceOver label in both interface languages and all three themes.
+
+## Skip cleanup regression check
+
+- Delay the cleanup server, dictate, and verify Transcribing becomes Polishing only after ASR completes. Skip must appear inside the capsule while Cancel remains beside it. Skip is unavailable during ASR.
+- Click Skip and verify immediate insertion of the recognized text with filler removal, Chinese script conversion, known corrections, and snippets. There must be no cleanup failure notice and no second paste when the delayed reply arrives. Cancel must still discard the whole operation.
+- Tab to Skip and activate it with Return or Space. Check VoiceOver's “Skip cleanup” label and the “Insert without cleanup” hover hint. Check smooth width changes and emergence, then repeat with Reduce motion for immediate changes.
+- Use `WHISPER_DEV_SCENE=pill:cleanup` with isolated data to inspect Light, Dark and Tokyo Night, and both interface languages.
+- The pill renames itself "Polishing" after 400 ms of cleanup and offers Skip after 1.5 s. A Dictation the server finishes faster must go from "Transcribing" to the check with neither flashing past. Replay measured timings with `WHISPER_DEV_FLOW_MS=<transcribe>,<polish>` (for example `130,170`).
+- Use `WHISPER_DEV_SCENE=pill:flow` to watch one whole Dictation on a loop: recording, transcribing, polishing, Skip leaving, and the delivered check. The meter and the label must never overlap, and the pill must not read "Transcribing" again after it has read "Polishing".
+
+## Microphone loopback regression check
+
+- In Settings > Dictation, check the microphone control order: Test, Refresh, device picker. Test must use the same resolved device as the next dictation, including Auto, lid changes, unavailable saved devices, and the system-default fallback.
+- Test retains at most ten seconds with a live level meter, countdown, and Stop. Even if UI polling is delayed beyond the deadline, manual stop and auto stop must truncate the retained samples to ten seconds at the capture sample rate. Stop early, play, stop playback, replay, and Record again. The progress bar, duration and silence warning should reflect only the retained memory clip. A silent clip remains playable and shows a warning.
+- Deny microphone permission, disconnect the selected device, and test a device delivering no frames. Check the named error and Try again. Disconnect output during playback and check its error as well.
+- Start dictation with the hotkey during recording and playback. The test must close and yield audio before dictation begins. While dictation records, prepares, or processes, Test is disabled with an explanation. No test may play dictation cues or pause media.
+- Close Settings, change section, change device, and drop/reopen the sheet during microphone startup, recording and playback. Each must release the streams and clip, and no old result may reopen the strip. No test audio may appear in History, recovery, storage or requests.
+- Check Tab, Return/Space, VoiceOver names, Light/Dark/Tokyo Night, both languages, and Reduce motion. Use `settings:mic-recording`, `settings:mic-ready` and `settings:mic-error` dev scenes with isolated data for visual checks.
+- `cargo test -- --ignored live_microphone_loopback` checks real capture and output with microphone authorization; ordinary lifecycle tests use an injected clock and hardware-free audio.
+
+## Local silence filtering regression check
+
+- In Settings > Speech to text, verify Skip silence defaults on, persists, and is named for VoiceOver. Check both languages, all themes, and keyboard activation.
+- Record speech with pauses and background noise. Only the uploaded copy should be trimmed, preserving a 480 ms lookback and tail. Confirm adopted pre-roll is filtered too. History, recovery, recording duration and Insights words per minute must use the original recording.
+- Try silence and broadband noise: VAD should avoid a server request and show the existing no-audio wording with a kept recording. Send anyway must send the original once, while Cancel and Record New still discard it. Turn filtering off and verify upload bytes remain untrimmed. File uploads remain outside this path.
+- Retry History audio and verify filtering applies with current settings while the stored audio and duration remain unchanged. When speech is detected, send the trimmed copy; when no speech is detected, send the original stored WAV because retry explicitly requests that recording. Live dictation must still avoid a request and offer Send anyway. Check model/inference failures fail open and a short recording is sent intact.
+- Automated tests exercise production frame retention with scripted probabilities, detector failures, partial final frames, a real speech fixture in silence and broadband noise, and independent ONNX Runtime reference probabilities. `cargo test --release sixty_second_recording_timing -- --nocapture` logs the 60-second latency without a brittle CI timing limit.
+
+### VAD model spike and fixture provenance
+
+`tract-onnx` 0.23.10 was checked against its current crate API and tested before integration. The general v6.2.2 op15 model fails static typing at a decoder `If` (branch ranks differ), while the official fixed-shape 16 kHz OpenVINO ONNX export loads directly. Both official exports give identical reference probabilities on the fixture. Anonymous in-memory node names are made unique before tract optimization so debug validation and release inference use the same graph; weights and connections remain unchanged. Tract identifies 83 of its 90 frames as speech at >0.3; three seconds of silence and seeded broadband noise identify zero speech frames. A separately evaluated `silero-vad-pure` 0.1.1 produced incorrect low speech probabilities and is not a dependency.
+
+The small `tests/fixtures/vad-speech.wav` was generated locally with macOS `say -v Samantha` saying “Please send the design review to Thursday afternoon.” and converted with `afconvert -f WAVE -d LEI16@16000 -c 1`. It is 16 kHz mono PCM16, 93 KB, and contains no user recording. `vad-probabilities.json` records the official model's CPU ONNX Runtime probabilities for consecutive 512-sample frames, using zero initial `[2,1,128]` state, 64 samples of left context, and zero padding on the final frame. The production tract test compares every probability within 0.00002.
+
+On the implementation machine (Apple M2 Pro, macOS 27.2.1), the isolated release timing test processed 60 seconds in **116.397 ms**, including first model initialization. The release executable grew from **44,016,400 bytes** before VAD to **67,235,808 bytes** with VAD (+23,219,408 bytes, about 22.14 MiB). These are executable sizes, not app bundles. `cargo build --release --locked --offline` passed; `otool -L` listed only Apple/system dependencies, with no ONNX Runtime or other new distributed dylib. No release packaging or signing was run.

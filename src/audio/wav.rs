@@ -202,7 +202,6 @@ fn resampled_len(input_len: usize, from_rate: u32, to_rate: u32) -> usize {
 
 /// Windowed-sinc (Kaiser) resampler. Downsampling low-passes below the
 /// target Nyquist so nothing aliases into the speech band.
-#[cfg(test)]
 pub fn resample(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() || from_rate == 0 || to_rate == 0 {
         return input.to_vec();

@@ -4,7 +4,7 @@
 //! Values: `home`, `insights`, `upload`, `dictionary`, `search`,
 //! `settings[:general|language|hotkeys|speech|llms|privacy]`, and the pill states
 //! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
-//! `pill:error`, `pill:fallback`.
+//! `pill:cleanup`, `pill:cleanup-transition`, `pill:flow`, `pill:error`, `pill:fallback`.
 //! `WHISPER_DEV_SCROLL_FRACTION=0.5` or `1` captures the middle or bottom of Settings.
 
 use std::time::Duration;
@@ -35,7 +35,9 @@ pub fn scene() -> Option<Scene> {
         "dictionary" => Scene::View(PanelView::Dictionary),
         "search" => Scene::Search,
         "settings" => Scene::Settings(match arg {
-            "hotkeys" => SettingsSection::Hotkeys,
+            "hotkeys" | "mic-recording" | "mic-ready" | "mic-error" | "mic-transition" => {
+                SettingsSection::Hotkeys
+            }
             "speech" => SettingsSection::SpeechToText,
             "llms" => SettingsSection::Llms,
             "privacy" => SettingsSection::PrivacyData,
@@ -45,7 +47,11 @@ pub fn scene() -> Option<Scene> {
             "preparing" => "preparing",
             "transition" => "transition",
             "processing" => "processing",
+            "cleanup" => "cleanup",
+            "cleanup-transition" => "cleanup-transition",
+            "flow" => "flow",
             "error" => "error",
+            "no-speech" => "no-speech",
             "fallback" => "fallback",
             _ => "recording",
         }),
@@ -68,6 +74,69 @@ pub fn apply_pill(cx: &mut App) {
         return;
     };
     match state {
+        "flow" => {
+            // One whole Dictation on a loop: record, transcribe, polish,
+            // skip, deliver. For recording the pill's motion end to end.
+            let set = |cx: &mut gpui_kit::AsyncApp, recording, processing, cleaning| {
+                cx.update(|cx| {
+                    AppState::global(cx).update(cx, |s, cx| {
+                        s.dictation.is_preparing = false;
+                        s.dictation.is_recording = recording;
+                        s.dictation.is_processing = processing;
+                        s.dictation.is_cleaning = cleaning;
+                        cx.notify();
+                    })
+                });
+            };
+            // `WHISPER_DEV_FLOW_MS=transcribe,polish` replays measured
+            // server timings instead of the slow defaults.
+            let stages: Vec<u64> = std::env::var("WHISPER_DEV_FLOW_MS")
+                .ok()
+                .map(|v| v.split(',').filter_map(|n| n.trim().parse().ok()).collect())
+                .unwrap_or_default();
+            let transcribe = stages.first().copied().unwrap_or(1600);
+            let polish = stages.get(1).copied().unwrap_or(2400);
+            cx.spawn(async move |cx| {
+                loop {
+                    let executor = cx.background_executor().clone();
+                    let wait = |ms| executor.timer(Duration::from_millis(ms));
+                    wait(1200).await;
+                    set(cx, true, false, false);
+                    wait(2200).await;
+                    set(cx, false, true, false);
+                    wait(transcribe).await;
+                    set(cx, false, true, true);
+                    wait(polish).await;
+                    set(cx, false, true, false);
+                    wait(if stages.is_empty() { 250 } else { 20 }).await;
+                    set(cx, false, false, false);
+                    cx.update(|cx| {
+                        Dictation::global(cx)
+                            .update(cx, |_, cx| cx.emit(DictationNotice::Delivered))
+                    });
+                    wait(1200).await;
+                }
+            })
+            .detach();
+        }
+        "cleanup-transition" => {
+            AppState::global(cx).update(cx, |s, cx| {
+                s.dictation.is_processing = true;
+                cx.notify();
+            });
+            cx.spawn(async |cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                    cx.update(|cx| {
+                        AppState::global(cx).update(cx, |s, cx| {
+                            s.dictation.is_cleaning = !s.dictation.is_cleaning;
+                            cx.notify();
+                        });
+                    });
+                }
+            })
+            .detach();
+        }
         "preparing" | "transition" => {
             AppState::global(cx).update(cx, |s, cx| {
                 s.dictation.is_preparing = true;
@@ -105,13 +174,24 @@ pub fn apply_pill(cx: &mut App) {
                 .detach();
             }
         }
-        "recording" | "processing" => {
+        "recording" | "processing" | "cleanup" => {
             AppState::global(cx).update(cx, |s, cx| {
                 s.dictation.is_recording = state == "recording";
-                s.dictation.is_processing = state == "processing";
+                s.dictation.is_processing = state == "processing" || state == "cleanup";
+                s.dictation.is_cleaning = state == "cleanup";
                 cx.notify();
             });
         }
+        "no-speech" => Dictation::global(cx).update(cx, |_, cx| {
+            cx.emit(DictationNotice::Error {
+                title: t("dictation.noAudio.title"),
+                description: t("dictation.noAudio.description"),
+                actions: ErrorActions::for_transcription_failure(Some(
+                    crate::audio::vad::NO_SPEECH_CODE,
+                )),
+                kept: Some(Duration::from_secs(10)),
+            });
+        }),
         "error" => Dictation::global(cx).update(cx, |_, cx| {
             cx.emit(DictationNotice::Error {
                 title: t("dictation.errorTitles.transcriptionTimeout"),

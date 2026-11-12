@@ -259,7 +259,11 @@ impl PillView {
         // costs the user nothing, so it leads, named so it cannot be
         // mistaken for Record New.
         let retry = actions.retry.then(|| {
-            let label = t("dictation.errorActions.resend");
+            let label = t(if actions.send_anyway {
+                "dictation.errorActions.sendAnyway"
+            } else {
+                "dictation.errorActions.resend"
+            });
             Self::panel_action("pill-error-retry", "rotate-ccw", label, true, cx).on_click(
                 cx.listener(|this, _, _, cx| {
                     this.error = None;

@@ -186,6 +186,8 @@ pub struct SettingsModal {
     audio_retention: Entity<Select>,
     transcript_retention: Entity<Select>,
     microphone: Entity<Select>,
+    mic_test: std::sync::Arc<parking_lot::Mutex<crate::audio::microphone_test::MicrophoneTest>>,
+    mic_test_request: Option<Task<()>>,
 
     hotkeys: Entity<HotkeyListInput>,
 
@@ -217,6 +219,12 @@ pub struct SettingsModal {
     /// close, like a macOS sheet.
     restore_focus: Option<FocusHandle>,
     _subscriptions: Vec<Subscription>,
+}
+
+impl Drop for SettingsModal {
+    fn drop(&mut self) {
+        self.mic_test.lock().close();
+    }
 }
 
 impl EventEmitter<SettingsModalEvent> for SettingsModal {}
@@ -657,6 +665,7 @@ impl SettingsModal {
         });
         subscriptions.push(cx.subscribe(&microphone, |this, _, e: &SelectEvent, cx| {
             let SelectEvent::Change(value) = e;
+            this.cancel_mic_test();
             if value.as_ref() == "__auto__" {
                 update_settings(cx, |s| {
                     s.microphone_selection_mode = MicrophoneSelectionMode::Auto
@@ -697,6 +706,11 @@ impl SettingsModal {
                         cx,
                     );
                 }
+                if synced_settings.microphone_selection_mode != current.microphone_selection_mode
+                    || synced_settings.selected_mic_device_id != current.selected_mic_device_id
+                {
+                    this.cancel_mic_test();
+                }
                 if select_settings_changed(&synced_settings, &current) {
                     synced_settings = current.clone();
                     this.sync_selects(cx);
@@ -736,6 +750,17 @@ impl SettingsModal {
             .await;
         });
 
+        let mic_test = std::sync::Arc::new(parking_lot::Mutex::new(
+            crate::audio::microphone_test::MicrophoneTest::default(),
+        ));
+        Dictation::global(cx).update(cx, |d, _| d.attach_microphone_test(&mic_test));
+        #[cfg(debug_assertions)]
+        if let Ok(scene) = std::env::var("WHISPER_DEV_SCENE")
+            && let Some(scene) = scene.strip_prefix("settings:mic-")
+            && scene != "transition"
+        {
+            mic_test.lock().dev_scene(scene);
+        }
         let mut this = Self {
             section,
             closing: false,
@@ -768,6 +793,8 @@ impl SettingsModal {
             audio_retention,
             transcript_retention,
             microphone,
+            mic_test,
+            mic_test_request: None,
             hotkeys,
             stt_check: ConnectionCheck::Idle,
             stt_error_details: false,
@@ -792,6 +819,28 @@ impl SettingsModal {
             restore_focus,
             _subscriptions: subscriptions,
         };
+        #[cfg(debug_assertions)]
+        if std::env::var("WHISPER_DEV_SCENE").as_deref() == Ok("settings:mic-transition") {
+            this.mic_test_request = Some(cx.spawn(async |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_secs(2)).await;
+                    if this
+                        .update(cx, |this, cx| {
+                            let mut test = this.mic_test.lock();
+                            if test.state() == crate::audio::microphone_test::State::Closed {
+                                test.dev_scene("recording");
+                            } else {
+                                test.close();
+                            }
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }));
+        }
         if section == SettingsSection::PrivacyData {
             this.load_storage_usage(cx);
         }
@@ -804,6 +853,7 @@ impl SettingsModal {
 
     pub fn set_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
         if self.section != section {
+            self.cancel_mic_test();
             self.section = section;
             self.scroll.set_offset(point(px(0.), px(0.)));
             if section == SettingsSection::PrivacyData {
@@ -851,6 +901,7 @@ impl SettingsModal {
     }
 
     fn begin_close(&mut self, cx: &mut Context<Self>) {
+        self.cancel_mic_test();
         self.closing = true;
         cx.notify();
         cx.spawn(async move |this, cx| {

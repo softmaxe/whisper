@@ -18,7 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::audio::capture::{CaptureEvent, CaptureId, CaptureStatus, RecordedAudio, Recorder};
 use crate::audio::cues;
-use crate::history::Recording;
+use crate::history::{HistoryStore, Recording};
 use crate::i18n::t;
 use crate::pipeline::{self, PipelineInput, PipelineOutcome, Transcript};
 use crate::services::transcription;
@@ -44,6 +44,7 @@ enum Phase {
 pub struct ErrorActions {
     /// The recording is kept, so it can be sent again without speaking again.
     pub retry: bool,
+    pub send_anyway: bool,
     /// The cause lives in Settings → Speech to text.
     pub open_settings: bool,
 }
@@ -55,18 +56,26 @@ impl ErrorActions {
     /// time; an invalid endpoint fails the same way until it is fixed.
     pub fn for_transcription_failure(code: Option<&str>) -> Self {
         match code {
+            Some(crate::audio::vad::NO_SPEECH_CODE) => Self {
+                retry: true,
+                send_anyway: true,
+                open_settings: false,
+            },
             Some(transcription::CONNECTION_FAILED_CODE | transcription::REQUEST_TIMEOUT_CODE) => {
                 Self {
                     retry: true,
+                    send_anyway: false,
                     open_settings: true,
                 }
             }
             Some(transcription::CUSTOM_ENDPOINT_INVALID_CODE) => Self {
                 retry: false,
+                send_anyway: false,
                 open_settings: true,
             },
             _ => Self {
                 retry: true,
+                send_anyway: false,
                 open_settings: false,
             },
         }
@@ -78,6 +87,7 @@ impl ErrorActions {
 /// resend, or the panel closing drops it.
 struct FailedRecording {
     wav: bytes::Bytes,
+    bypass_vad: bool,
     duration: Duration,
     occurred_at: DateTime<Utc>,
 }
@@ -89,6 +99,7 @@ impl FailedRecording {
         let wav = audio.to_wav_16k();
         audio.is_usable(wav.len()).then(|| Self {
             wav: wav.into(),
+            bypass_vad: false,
             duration,
             occurred_at,
         })
@@ -166,6 +177,9 @@ pub struct Dictation {
     generation: u64,
     start_lock: bool,
     cancel: Option<CancellationToken>,
+    mic_test: std::sync::Weak<parking_lot::Mutex<crate::audio::microphone_test::MicrophoneTest>>,
+    skip_cleanup: Option<CancellationToken>,
+    is_cleaning: bool,
     target_pid: Option<TargetPid>,
     started_at: Option<(Instant, DateTime<Utc>)>,
     effects_held: bool,
@@ -212,6 +226,9 @@ impl Dictation {
                 generation: 0,
                 start_lock: false,
                 cancel: None,
+                mic_test: Default::default(),
+                skip_cleanup: None,
+                is_cleaning: false,
                 target_pid: None,
                 started_at: None,
                 effects_held: false,
@@ -228,6 +245,14 @@ impl Dictation {
 
     pub fn global(cx: &App) -> Entity<Dictation> {
         cx.global::<DictationGlobal>().0.clone()
+    }
+
+    pub fn attach_microphone_test(
+        &mut self,
+        test: &Arc<parking_lot::Mutex<crate::audio::microphone_test::MicrophoneTest>>,
+    ) {
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
+        self.mic_test = Arc::downgrade(test);
     }
 
     pub fn status(&self) -> StatusMirror {
@@ -248,6 +273,10 @@ impl Dictation {
     fn set_phase(&mut self, phase: Phase, cx: &mut Context<Self>) {
         let previous = self.phase;
         self.phase = phase;
+        if phase != Phase::Processing {
+            self.is_cleaning = false;
+            self.skip_cleanup = None;
+        }
         self.status.set(phase);
         if phase != Phase::Preparing {
             backend::clear_hotkey_start_request();
@@ -262,6 +291,7 @@ impl Dictation {
         let snapshot = DictationSnapshot {
             is_recording: self.phase == Phase::Recording,
             is_processing: self.phase == Phase::Processing,
+            is_cleaning: self.phase == Phase::Processing && self.is_cleaning,
             is_preparing: self.phase == Phase::Preparing,
         };
         AppState::global(cx).update(cx, |s, cx| {
@@ -309,6 +339,7 @@ impl Dictation {
         if self.start_lock || self.phase != Phase::Idle {
             return;
         }
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
         // A new Dictation replaces the one that failed.
         self.failed = None;
         let device = backend::preferred_input_device(&AppState::settings(cx));
@@ -349,6 +380,7 @@ impl Dictation {
         if self.start_lock || matches!(self.phase, Phase::Recording | Phase::Processing) {
             return;
         }
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
         self.start_lock = true;
         self.push_force_stopped = false;
         self.failed = None;
@@ -446,6 +478,42 @@ impl Dictation {
         true
     }
 
+    pub fn skip_cleanup(&mut self, cx: &mut Context<Self>) {
+        if self.phase == Phase::Processing && self.is_cleaning {
+            if let Some(skip) = self.skip_cleanup.take() {
+                skip.cancel();
+            }
+            self.is_cleaning = false;
+            self.publish(cx);
+        }
+    }
+
+    fn cleanup_control(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> (CancellationToken, async_channel::Sender<bool>) {
+        let skip = CancellationToken::new();
+        self.skip_cleanup = Some(skip.clone());
+        let (tx, rx) = async_channel::unbounded();
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            while let Ok(running) = rx.recv().await {
+                let _ = this.update(cx, |this, cx| {
+                    if this.generation == generation && this.phase == Phase::Processing {
+                        this.is_cleaning = running
+                            && this
+                                .skip_cleanup
+                                .as_ref()
+                                .is_some_and(|skip| !skip.is_cancelled());
+                        this.publish(cx);
+                    }
+                });
+            }
+        })
+        .detach();
+        (skip, tx)
+    }
+
     pub fn cancel_processing(&mut self, cx: &mut Context<Self>) {
         if self.phase != Phase::Processing {
             return;
@@ -515,6 +583,7 @@ impl Dictation {
             description: t("dictation.errorDescriptions.microphoneUnavailable"),
             actions: ErrorActions {
                 retry: self.failed.is_some(),
+                send_anyway: false,
                 open_settings: false,
             },
             kept: self.failed.as_ref().map(|failed| failed.duration),
@@ -541,18 +610,19 @@ impl Dictation {
         let generation = self.generation;
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
+        let (skip, stage) = self.cleanup_control(cx);
         let stopped = Instant::now();
+        let silence_filtering = AppState::settings(cx).silence_filtering;
         let handle = crate::services::runtime::spawn(async move {
             let conversion_cancel = cancel.clone();
             let wav = crate::services::runtime::blocking(move || {
-                if conversion_cancel.is_cancelled() || audio.speech_gate.is_silence() {
+                if conversion_cancel.is_cancelled() {
                     return None;
                 }
-                let wav = audio.to_wav_16k();
-                audio.is_usable(wav.len()).then(|| bytes::Bytes::from(wav))
+                prepare_recording_for_upload(audio, silence_filtering)
             })
             .await;
-            let wav = match wav {
+            let (wav, upload) = match wav {
                 Ok(Some(wav)) => wav,
                 Ok(None) => return (PipelineOutcome::NoAudio, bytes::Bytes::new()),
                 Err(_) => return (pipeline_task_failed(), bytes::Bytes::new()),
@@ -566,8 +636,12 @@ impl Dictation {
                 return (PipelineOutcome::Cancelled, wav);
             }
             let mut input = input.await;
-            input.audio = wav.clone();
-            let outcome = run_prepared_pipeline(input, cancel).await;
+            let Some(upload) = upload else {
+                return (no_speech_outcome(), wav);
+            };
+            input.audio = upload;
+            input.cleanup_stage = Some(stage);
+            let outcome = run_pipeline_with_key(input, cancel, skip).await;
             log::info!(
                 "[perf] operation={generation} stage=pipeline_complete elapsed_ms={:.3}",
                 stopped.elapsed().as_secs_f64() * 1000.0
@@ -598,12 +672,19 @@ impl Dictation {
         let Some(failed) = self.failed.take() else {
             return;
         };
+        crate::audio::microphone_test::cancel_for_dictation(&self.mic_test);
         self.push_force_stopped = false;
         self.generation += 1;
         self.capture_target(cx);
         self.set_phase(Phase::Processing, cx);
         cx.emit(DictationNotice::DismissError);
-        self.transcribe(failed.wav, failed.duration, failed.occurred_at, cx);
+        self.transcribe(
+            failed.wav,
+            failed.duration,
+            failed.occurred_at,
+            failed.bypass_vad,
+            cx,
+        );
     }
 
     /// Forgets the failed recording once its error panel closes.
@@ -616,14 +697,23 @@ impl Dictation {
         wav: bytes::Bytes,
         duration: Duration,
         occurred_at: DateTime<Utc>,
+        bypass_vad: bool,
         cx: &mut Context<Self>,
     ) {
         let generation = self.generation;
         let input = Self::pipeline_input(wav.clone(), cx);
         let cancel = CancellationToken::new();
         self.cancel = Some(cancel.clone());
+        let (skip, stage) = self.cleanup_control(cx);
         let handle = crate::services::runtime::spawn(async move {
-            run_prepared_pipeline(input.await, cancel).await
+            let mut input = input.await;
+            input.cleanup_stage = Some(stage);
+            let mode = if bypass_vad {
+                VadMode::Bypass
+            } else {
+                VadMode::Live
+            };
+            run_prepared_pipeline_controlled(input, cancel, skip, mode).await
         });
         cx.spawn(async move |this, cx| {
             let outcome = handle.await.unwrap_or(PipelineOutcome::Failed {
@@ -676,6 +766,7 @@ impl Dictation {
             } => {
                 self.set_phase(Phase::Idle, cx);
                 let title = match code.as_deref() {
+                    Some(crate::audio::vad::NO_SPEECH_CODE) => t("dictation.noAudio.title"),
                     Some(transcription::CONNECTION_FAILED_CODE) => {
                         t("dictation.errorTitles.transcriptionConnectionFailed")
                     }
@@ -699,6 +790,7 @@ impl Dictation {
                 let kept = actions.retry.then_some(duration);
                 self.failed = actions.retry.then_some(FailedRecording {
                     wav,
+                    bypass_vad: actions.send_anyway,
                     duration,
                     occurred_at,
                 });
@@ -725,6 +817,7 @@ impl Dictation {
     ) -> DictationNotice {
         self.failed = (!wav.is_empty()).then_some(FailedRecording {
             wav,
+            bypass_vad: false,
             duration,
             occurred_at,
         });
@@ -896,6 +989,27 @@ fn pipeline_task_failed() -> PipelineOutcome {
     }
 }
 
+// Keep original audio for recovery and History; only the upload copy is filtered.
+fn prepare_recording_for_upload(
+    audio: RecordedAudio,
+    silence_filtering: bool,
+) -> Option<(bytes::Bytes, Option<bytes::Bytes>)> {
+    if audio.speech_gate.is_silence() {
+        return None;
+    }
+    let wav = audio.to_wav_16k();
+    if !audio.is_usable(wav.len()) {
+        return None;
+    }
+    let original = bytes::Bytes::from(wav);
+    let upload = if silence_filtering {
+        crate::audio::vad::upload_samples(&audio.samples, audio.sample_rate).map(bytes::Bytes::from)
+    } else {
+        Some(original.clone())
+    };
+    Some((original, upload))
+}
+
 /// Enqueue at the UI action, before conversion or audio loading can yield.
 /// Earlier edits have settled before this read, and later edits cannot change
 /// this request's rules. Never send optimistic UI projections to the pipeline.
@@ -921,12 +1035,65 @@ fn capture_pipeline_input(
         snippets: db.get_snippets().unwrap_or_default(),
         settings,
         cleanup_api_key: None,
+        cleanup_stage: None,
     })
 }
 
-async fn run_prepared_pipeline(
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VadMode {
+    Live,
+    HistoryRetry,
+    Bypass,
+}
+
+#[cfg(test)]
+async fn run_prepared_pipeline(input: PipelineInput, cancel: CancellationToken) -> PipelineOutcome {
+    run_prepared_pipeline_controlled(input, cancel, CancellationToken::new(), VadMode::Live).await
+}
+
+async fn run_prepared_pipeline_controlled(
     mut input: PipelineInput,
     cancel: CancellationToken,
+    skip_cleanup: CancellationToken,
+    mode: VadMode,
+) -> PipelineOutcome {
+    if cancel.is_cancelled() {
+        return PipelineOutcome::Cancelled;
+    }
+    if input.settings.silence_filtering && mode != VadMode::Bypass {
+        let original = input.audio.clone();
+        let filtered =
+            crate::services::runtime::blocking(move || crate::audio::vad::upload_wav(original))
+                .await;
+        if cancel.is_cancelled() {
+            return PipelineOutcome::Cancelled;
+        }
+        match filtered {
+            Ok(Some(audio)) => input.audio = audio,
+            Ok(None) if mode == VadMode::HistoryRetry => {
+                // History retry explicitly requests this stored recording.
+                // Send it intact if VAD rejects it; live dictation instead
+                // keeps the recording and offers Send anyway for confirmation.
+            }
+            Ok(None) => return no_speech_outcome(),
+            Err(error) => log::warn!("VAD worker failed; sending original audio: {error}"),
+        }
+    }
+    run_pipeline_with_key(input, cancel, skip_cleanup).await
+}
+
+fn no_speech_outcome() -> PipelineOutcome {
+    PipelineOutcome::Failed {
+        message: "No speech detected locally".into(),
+        code: Some(crate::audio::vad::NO_SPEECH_CODE.into()),
+        message_key: Some("dictation.noAudio.description".into()),
+    }
+}
+
+async fn run_pipeline_with_key(
+    mut input: PipelineInput,
+    cancel: CancellationToken,
+    skip_cleanup: CancellationToken,
 ) -> PipelineOutcome {
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
@@ -945,7 +1112,7 @@ async fn run_prepared_pipeline(
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    pipeline::run(input, cancel).await
+    pipeline::run(input, cancel, skip_cleanup).await
 }
 
 /// Re-transcribes a History row from its saved audio through the same
@@ -954,16 +1121,10 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
     let history = AppState::global(cx).read(cx).history_store.clone();
     let input = Dictation::pipeline_input(bytes::Bytes::new(), cx);
     cx.spawn(async move |cx| {
-        let audio = crate::services::runtime::storage(move || history.retry_audio(id)).await;
-        let Some(audio) = audio else {
-            return Err(t("controlPanel.history.audioNotFound"));
-        };
-        let mut input = input.await;
-        input.audio = audio.into();
-        let outcome =
-            crate::services::runtime::spawn(run_prepared_pipeline(input, CancellationToken::new()))
-                .await
-                .map_err(|e| e.to_string())?;
+        let input = input.await;
+        let outcome = crate::services::runtime::spawn(transcribe_history_audio(history, id, input))
+            .await
+            .map_err(|e| e.to_string())??;
         match outcome {
             PipelineOutcome::Transcribed(transcript) => {
                 let failure = transcript.cleanup_failure.clone();
@@ -1018,6 +1179,25 @@ pub fn retry_transcription(id: i64, cx: &mut App) -> Task<Result<(), String>> {
     })
 }
 
+async fn transcribe_history_audio(
+    history: Arc<HistoryStore>,
+    id: i64,
+    mut input: PipelineInput,
+) -> Result<PipelineOutcome, String> {
+    let audio = crate::services::runtime::storage(move || history.retry_audio(id)).await;
+    let Some(audio) = audio else {
+        return Err(t("controlPanel.history.audioNotFound"));
+    };
+    input.audio = audio.into();
+    Ok(run_prepared_pipeline_controlled(
+        input,
+        CancellationToken::new(),
+        CancellationToken::new(),
+        VadMode::HistoryRetry,
+    )
+    .await)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ErrorActions, capture_pipeline_input, run_prepared_pipeline};
@@ -1042,6 +1222,9 @@ mod tests {
             generation: 7,
             start_lock: false,
             cancel: None,
+            mic_test: Default::default(),
+            skip_cleanup: None,
+            is_cleaning: false,
             target_pid: None,
             started_at: None,
             effects_held: false,
@@ -1181,6 +1364,7 @@ mod tests {
             spoken_text: "words worth keeping".into(),
             raw_text: "um words worth keeping".into(),
             cleanup_failure: None,
+            cleanup_skipped: false,
         };
         for retention_enabled in [false, true] {
             let saved = history
@@ -1248,6 +1432,9 @@ mod tests {
                 generation: 7,
                 start_lock: false,
                 cancel: Some(cancel.clone()),
+                mic_test: Default::default(),
+                skip_cleanup: None,
+                is_cleaning: false,
                 target_pid: None,
                 started_at: None,
                 effects_held: false,
@@ -1405,5 +1592,200 @@ mod tests {
             assert_eq!(disabled.dictionary, input.dictionary);
             assert_eq!(disabled.snippets, input.snippets);
         });
+    }
+
+    fn vad_input(server: &MockServer, audio: bytes::Bytes) -> crate::pipeline::PipelineInput {
+        crate::pipeline::PipelineInput {
+            audio,
+            settings: Settings {
+                remote_transcription_url: server.url("/v1"),
+                use_cleanup_model: false,
+                ..Settings::default()
+            },
+            dictionary: Vec::new(),
+            dictionary_priority: Vec::new(),
+            known_corrections: Vec::new(),
+            snippets: Vec::new(),
+            cleanup_api_key: None,
+            cleanup_stage: None,
+        }
+    }
+
+    fn uploaded_wav(server: &MockServer) -> Vec<u8> {
+        let requests = server.requests();
+        let body = &requests.iter().find(|r| r.method == "POST").unwrap().body;
+        let start = body.windows(4).position(|w| w == b"RIFF").unwrap();
+        let length =
+            u32::from_le_bytes(body[start + 4..start + 8].try_into().unwrap()) as usize + 8;
+        body[start..start + length].to_vec()
+    }
+
+    fn retry_stored_audio(samples: &[f32], expected_upload: &[u8]) {
+        let original = crate::audio::wav::encode_wav_pcm16(samples, 16_000);
+        let dir = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let audio = Arc::new(crate::audio_storage::AudioStorage::new(
+            dir.path().join("audio"),
+        ));
+        let history = Arc::new(crate::history::HistoryStore::new(db.clone(), audio));
+        let duration = std::time::Duration::from_secs_f64(samples.len() as f64 / 16_000.);
+        let transcript = crate::pipeline::Transcript {
+            text: "previous transcript".into(),
+            spoken_text: "previous transcript".into(),
+            raw_text: "previous transcript".into(),
+            cleanup_failure: None,
+            cleanup_skipped: false,
+        };
+        let row = history
+            .record_delivered(
+                &transcript,
+                &crate::history::Recording {
+                    wav: &original,
+                    duration,
+                    occurred_at: chrono::Utc::now(),
+                },
+                &Settings::default(),
+            )
+            .result
+            .unwrap()
+            .unwrap()
+            .item;
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"retried words"}"#));
+        let input = vad_input(&server, bytes::Bytes::new());
+        let outcome = run(super::transcribe_history_audio(
+            history.clone(),
+            row.id,
+            input,
+        ))
+        .unwrap();
+        let PipelineOutcome::Transcribed(transcript) = outcome else {
+            panic!("History retry must reach the server: {outcome:?}");
+        };
+        assert_eq!(uploaded_wav(&server), expected_upload);
+        let retried = history
+            .apply_retry(row.id, &transcript)
+            .result
+            .unwrap()
+            .unwrap()
+            .item;
+        assert_eq!(retried.text, "retried words");
+        assert_eq!(retried.audio_duration_ms, row.audio_duration_ms);
+        assert_eq!(history.retry_audio(row.id).unwrap(), original);
+    }
+
+    #[test]
+    fn history_retry_sends_original_audio_when_vad_finds_no_speech() {
+        let samples = vec![0.; 32_000];
+        let original = crate::audio::wav::encode_wav_pcm16(&samples, 16_000);
+        assert!(crate::audio::vad::upload_wav(original.clone().into()).is_none());
+        retry_stored_audio(&samples, &original);
+    }
+
+    #[test]
+    fn history_retry_still_sends_trimmed_audio_when_vad_finds_speech() {
+        let (_, speech) =
+            crate::audio::wav::read_wav_mono(include_bytes!("../tests/fixtures/vad-speech.wav"));
+        let mut samples = vec![0.; 16_000];
+        samples.extend(speech);
+        samples.extend(vec![0.; 16_000]);
+        let original = crate::audio::wav::encode_wav_pcm16(&samples, 16_000);
+        let trimmed = crate::audio::vad::upload_wav(original.clone().into()).unwrap();
+        assert!(trimmed.len() < original.len());
+        retry_stored_audio(&samples, &trimmed);
+    }
+
+    #[test]
+    fn vad_rejects_silence_without_a_request_and_send_anyway_bypasses_once() {
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"explicitly sent"}"#));
+        let original: bytes::Bytes =
+            crate::audio::wav::encode_wav_pcm16(&vec![0.; 32_000], 16_000).into();
+        let input = vad_input(&server, original.clone());
+        let outcome = run(super::run_prepared_pipeline_controlled(
+            input.clone(),
+            CancellationToken::new(),
+            CancellationToken::new(),
+            super::VadMode::Live,
+        ));
+        assert!(
+            matches!(outcome, PipelineOutcome::Failed { code: Some(ref code), .. } if code == crate::audio::vad::NO_SPEECH_CODE)
+        );
+        assert!(server.requests().is_empty());
+        let actions =
+            ErrorActions::for_transcription_failure(Some(crate::audio::vad::NO_SPEECH_CODE));
+        assert!(actions.retry && actions.send_anyway);
+        assert!(matches!(
+            run(super::run_prepared_pipeline_controlled(
+                input.clone(),
+                CancellationToken::new(),
+                CancellationToken::new(),
+                super::VadMode::Bypass
+            )),
+            PipelineOutcome::Transcribed(_)
+        ));
+        assert_eq!(uploaded_wav(&server), original.as_ref());
+        let _ = run(run_prepared_pipeline(input, CancellationToken::new()));
+        assert_eq!(
+            server
+                .requests()
+                .iter()
+                .filter(|r| r.method == "POST")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn vad_keeps_original_capture_and_history_retry_filters_only_uploads() {
+        let (_, speech) =
+            crate::audio::wav::read_wav_mono(include_bytes!("../tests/fixtures/vad-speech.wav"));
+        let mut samples = vec![0.; 16_000];
+        samples.extend(speech);
+        samples.extend(vec![0.; 16_000]);
+        let audio = crate::audio::capture::RecordedAudio {
+            samples,
+            sample_rate: 16_000,
+            received_audio_data: true,
+            speech_gate: Default::default(),
+        };
+        let original = audio.to_wav_16k();
+        let (kept, upload) = super::prepare_recording_for_upload(audio.clone(), true).unwrap();
+        assert_eq!(kept.as_ref(), original);
+        assert!(upload.unwrap().len() < kept.len());
+        let server = MockServer::start(|_| Reply::json(200, r#"{"text":"words from history"}"#));
+        let input = vad_input(&server, kept.clone());
+        assert!(matches!(
+            run(run_prepared_pipeline(input, CancellationToken::new())),
+            PipelineOutcome::Transcribed(_)
+        ));
+        assert!(uploaded_wav(&server).len() < original.len());
+        assert_eq!(kept.as_ref(), original);
+        let (kept, upload) = super::prepare_recording_for_upload(audio, false).unwrap();
+        assert_eq!(upload.unwrap(), kept);
+        let mut input = vad_input(&server, kept.clone());
+        input.settings.silence_filtering = false;
+        let _ = run(run_prepared_pipeline(input, CancellationToken::new()));
+        let requests = server.requests();
+        assert!(
+            requests
+                .last()
+                .unwrap()
+                .body
+                .windows(kept.len())
+                .any(|bytes| bytes == kept.as_ref())
+        );
+    }
+
+    #[test]
+    fn adopted_preroll_is_filtered_even_without_rms_windows() {
+        let audio = crate::audio::capture::RecordedAudio {
+            samples: vec![0.; 16_000],
+            sample_rate: 16_000,
+            received_audio_data: true,
+            speech_gate: Default::default(),
+        };
+        assert!(!audio.speech_gate.is_silence());
+        let (original, upload) = super::prepare_recording_for_upload(audio, true).unwrap();
+        assert!(!original.is_empty());
+        assert!(upload.is_none());
     }
 }

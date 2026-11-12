@@ -28,11 +28,18 @@ typing in.
   recording (key combinations toggle with one press), or hold to talk. A
   floating recording pill shows a live waveform and the elapsed time, with a
   cancel button beside it; click the pill to finish or press Escape to cancel.
+  During polishing, Skip inserts the recognized text immediately with local
+  corrections and snippets still applied.
   If the server fails, the recording is kept so you can resend it.
 - **Self-hosted models.** Speech recognition goes to your own
   `/audio/transcriptions` endpoint; optional cleanup goes to a
   `/chat/completions` endpoint, with an editable prompt and a Prompt Studio to
   test it. Test Connection checks each server and lists its models.
+- **Skip silence locally.** Embedded Silero VAD trims pauses and non-speech
+  sound from dictation uploads, with buffers around speech. History and recovery
+  retain the original recording; Send anyway can bypass a no-speech result once.
+- **Fewer hesitation sounds.** Optional local filler-word removal works even
+  with text cleanup off, while preserving the raw transcript in History.
 - **Gets better with use.** A dictionary supplies spelling hints, corrections
   you make right after a paste are learned, and Snippets expand short phrases
   into longer text. Removing a word or snippet can be undone.
@@ -45,6 +52,8 @@ typing in.
   sets the period beside the one before it; highlights such as active days,
   busiest day and time spoken; and a Habits section with your streak calendar
   and weekly rhythm. Everything is computed on device.
+- **Test your microphone.** Record up to ten seconds and play it back from
+  Settings > Dictation. The clip stays in memory and is never saved or sent.
 - **Fits into macOS.** Menu bar icon, standard app menu, start at login
   (macOS 13+), optional media pause while recording, English and Simplified
   Chinese UI, and light, dark, Tokyo Night or automatic themes.

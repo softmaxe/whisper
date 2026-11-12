@@ -30,6 +30,61 @@ const THINK_GAP: f32 = 5.;
 const PREPARE_W: f32 = 104.;
 const PREPARE_DOT: f32 = 6.;
 const PREPARE_MORPH_MS: u64 = 680;
+/// The Skip chip nested in the polishing pill: a capsule concentric with
+/// the pill's trailing end, so it reads as a control and not as a label.
+const SKIP_H: f32 = 22.;
+const SKIP_PAD: f32 = 10.;
+const SKIP_INSET: f32 = 4.;
+/// Leading padding of the polishing pill, which balances the chip's inset.
+const SKIP_LEAD: f32 = 12.;
+const THINK_DOTS_W: f32 = THINK_DOTS as f32 * THINK_DOT + (THINK_DOTS - 1) as f32 * THINK_GAP;
+
+/// Opacities of the outgoing and incoming layer of a swap at progress `t`.
+/// The first leaves before the second arrives, so two labels or two
+/// silhouettes never sit on top of each other.
+pub(super) fn swap(t: f32) -> (f32, f32) {
+    (
+        1. - (t / 0.5).clamp(0., 1.),
+        ((t - 0.35) / 0.65).clamp(0., 1.),
+    )
+}
+
+/// Where the processing pill's parts sit, measured from its outer edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ThinkLayout {
+    width: f32,
+    /// Left edge of the dots; the label follows them.
+    group_x: f32,
+    /// Left edge of the Skip chip.
+    skip_x: f32,
+}
+
+/// Lays out the dots, the label and the Skip chip. `polish` moves the label
+/// from "Transcribing" to "Polishing" and `skip` brings the chip in; both
+/// are eased by the caller, so every part moves on the same curve as the
+/// capsule's width. Without the chip the group is centered in a pill no
+/// narrower than the timed recording pill.
+fn think_layout(
+    timed_w: f32,
+    transcribing_w: f32,
+    polishing_w: f32,
+    skip_w: f32,
+    polish: f32,
+    skip: f32,
+) -> ThinkLayout {
+    let label_w = transcribing_w + (polishing_w - transcribing_w) * polish;
+    let lead = PILL_PAD + (SKIP_LEAD - PILL_PAD) * skip;
+    let trail = PILL_PAD + (SKIP_INSET - PILL_PAD) * skip;
+    let content = THINK_DOTS_W + THINK_LABEL_GAP + label_w + skip * (THINK_LABEL_GAP + skip_w);
+    let width = (lead + content + trail).max(timed_w);
+    let slack = width - (lead + content + trail);
+    ThinkLayout {
+        width,
+        group_x: lead + slack / 2.,
+        // The chip rides the trailing edge and settles the last few points.
+        skip_x: width - trail - skip_w + (1. - skip) * 6.,
+    }
+}
 
 /// Maps an RMS level to 0..1 linearly in decibels between
 /// [`LEVEL_FLOOR_DB`] and [`LEVEL_CEIL_DB`].
@@ -55,6 +110,21 @@ fn live_target(rms: f32, index: usize, now_ms: f32, reduce: bool) -> f32 {
         0.6 + 0.4 * (0.5 + 0.5 * ((now_ms / 2400.) * TAU).sin())
     };
     speech + (1. - level) * BREATH * ENVELOPE[index] * swell
+}
+
+pub(crate) fn microphone_level_meter(rms: f32, reduce: bool, palette: &Palette) -> Div {
+    div()
+        .h(px(24.))
+        .flex()
+        .items_center()
+        .gap(px(BAR_GAP))
+        .children((0..BARS).map(|i| {
+            div()
+                .w(px(BAR_W))
+                .h(px(BAR_MIN + live_target(rms, i, 0., reduce) * 12.))
+                .rounded_full()
+                .bg(palette.voice)
+        }))
 }
 
 /// A zero-velocity handoff at both ends keeps the dots and bars continuous.
@@ -226,7 +296,21 @@ impl PillView {
         let reduce = cx.reduce_motion();
         let finishing = !snapshot.is_active();
         let recording = snapshot.is_recording;
-        let processing = snapshot.is_processing;
+        let polishing = snapshot.is_processing && snapshot.is_cleaning;
+        // The finish keeps the silhouette it ended on: the meter must not
+        // flash back under the delivered check, and a pill that has started
+        // polishing never reads "Transcribing" again.
+        if !finishing {
+            self.think_latched = snapshot.is_processing;
+            self.polish_latched &= snapshot.is_processing;
+        }
+        let (named, skippable) = polish_stage(
+            self.polishing_since
+                .filter(|_| polishing)
+                .map(|since| since.elapsed()),
+        );
+        self.polish_latched |= named;
+        let processing = self.think_latched;
         if waveform_needs_animation_frame(snapshot, reduce) {
             window.request_animation_frame();
         }
@@ -245,7 +329,8 @@ impl PillView {
             window,
             cx,
         );
-        let bars_alpha = (1. - thinking) * motion_fx.bars;
+        let (meter_alpha, think_alpha) = swap(thinking);
+        let bars_alpha = meter_alpha * motion_fx.bars;
         let scale = motion_fx.scale;
 
         let timed_w = Self::timed_width(window);
@@ -339,11 +424,39 @@ impl PillView {
         // Transcribing names itself beside the dots, so the state reads
         // without hovering. It keeps the timed recording pill's width, so
         // the capsule does not jump sideways when recording ends.
-        let think_label = t("dictation.pill.transcribing");
-        let think_w = Self::processing_width(&think_label, timed_w, window);
-        let think_alpha = thinking * motion_fx.bars;
+        if !skippable {
+            self.skip_hovered = false;
+        }
+        let labels = [
+            t("dictation.pill.transcribing"),
+            t("dictation.pill.polishing"),
+        ];
+        let label_w = [
+            Self::label_width(&labels[0], window),
+            Self::label_width(&labels[1], window),
+        ];
+        let skip_label = t("dictation.pill.skip");
+        let skip_w = Self::label_width(&skip_label, window) + 2. * SKIP_PAD;
+        let polish = f32_tx(
+            "pill-polish",
+            if self.polish_latched { 1. } else { 0. },
+            DUR_BASE,
+            ease_out,
+            window,
+            cx,
+        );
+        let skip_t = f32_tx(
+            "skip-emerge",
+            if skippable { 1. } else { 0. },
+            if skippable { DUR_BASE } else { DUR_SNAP },
+            if skippable { ease_out } else { ease_snap },
+            window,
+            cx,
+        );
+        let layout = think_layout(timed_w, label_w[0], label_w[1], skip_w, polish, skip_t);
+        let think_alpha = think_alpha * motion_fx.bars;
         let think = (think_alpha > 0.001).then(|| {
-            let mut dots = div().flex().items_center().gap(px(THINK_GAP));
+            let mut dots = div().flex_none().flex().items_center().gap(px(THINK_GAP));
             for i in 0..THINK_DOTS {
                 dots = dots.child(
                     div().size(px(THINK_DOT)).rounded_full().bg(p
@@ -351,23 +464,106 @@ impl PillView {
                         .opacity(think_opacity(i, now_ms, reduce) * think_alpha)),
                 );
             }
+            let (out, arrive) = swap(polish);
+            let label = |text: &String, alpha: f32| {
+                div()
+                    .absolute()
+                    .left_0()
+                    .top_0()
+                    .whitespace_nowrap()
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.foreground.opacity(PILL_LABEL * think_alpha * alpha))
+                    .child(text.clone())
+            };
+            let group = div()
+                .absolute()
+                .left(px(layout.group_x - 1.))
+                .top_0()
+                .bottom_0()
+                .flex()
+                .items_center()
+                .gap(px(THINK_LABEL_GAP))
+                .child(dots)
+                .child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .w(px(label_w[0].max(label_w[1])))
+                        .h(px(LINE_SMALL))
+                        .when(out > 0.001, |d| d.child(label(&labels[0], out)))
+                        .when(arrive > 0.001, |d| d.child(label(&labels[1], arrive))),
+                );
+            // The chip stays for its exit but only acts while it is offered.
+            let chip = (skip_t > 0.001).then(|| {
+                let alpha = swap(skip_t).1 * think_alpha;
+                let wash = color_tx(
+                    "pill-skip-wash",
+                    p.white.opacity(if self.skip_hovered { 0.2 } else { 0.11 }),
+                    DUR_SNAP,
+                    window,
+                    cx,
+                );
+                div()
+                    .id("pill-skip-cleanup")
+                    .absolute()
+                    .left(px(layout.skip_x - 1.))
+                    .top(px((PILL_H - 2. - SKIP_H) / 2.))
+                    .w(px(skip_w))
+                    .h(px(SKIP_H))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(wash.opacity(alpha))
+                    .whitespace_nowrap()
+                    .text_size(px(TEXT_SMALL))
+                    .line_height(px(LINE_SMALL))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(p.foreground.opacity(0.92 * alpha))
+                    .when(skippable, |d| {
+                        d.keyboard_focusable(
+                            "pill-skip-cleanup",
+                            Role::Button,
+                            t("dictation.pill.skipCleanup"),
+                            cx,
+                        )
+                        .cursor_pointer()
+                        .active(move |s| s.bg(p.white.opacity(0.26)))
+                        .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                            this.skip_hovered = *hovered;
+                            cx.notify();
+                        }))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.drag_origin = None;
+                            cx.stop_propagation();
+                            Dictation::global(cx).update(cx, |d, cx| d.skip_cleanup(cx));
+                        }))
+                    })
+                    .child(skip_label.clone())
+            });
+            // A fixed-size stage centered in the pill, so the parts keep
+            // their places while the capsule pops or dips around them.
             div()
                 .absolute()
                 .inset_0()
                 .flex()
                 .items_center()
                 .justify_center()
-                .gap(px(THINK_LABEL_GAP))
-                .child(dots)
                 .child(
                     div()
-                        .whitespace_nowrap()
-                        .text_size(px(TEXT_SMALL))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(p.foreground.opacity(PILL_LABEL * think_alpha))
-                        .child(think_label.clone()),
+                        .relative()
+                        .flex_none()
+                        .w(px(layout.width - 2.))
+                        .h(px(PILL_H - 2.))
+                        .child(group)
+                        .children(chip),
                 )
         });
+        let think_label = labels[usize::from(self.polish_latched)].clone();
+        let think_w = layout.width;
 
         let check = motion_fx.check.map(|(scale, alpha)| {
             div()
@@ -487,14 +683,6 @@ impl PillView {
         PILL_W + TIMER_GAP + Self::label_width(TIMER_WIDEST, window)
     }
 
-    /// The processing pill's width: the timed recording pill's, unless its
-    /// dots and label need more inside the side padding.
-    fn processing_width(label: &str, timed_w: f32, window: &Window) -> f32 {
-        let dots = THINK_DOTS as f32 * THINK_DOT + (THINK_DOTS - 1) as f32 * THINK_GAP;
-        let content = dots + THINK_LABEL_GAP + Self::label_width(label, window);
-        (content + 2. * PILL_PAD).max(timed_w)
-    }
-
     /// The cancel control and how far it has emerged: it pops in from .8
     /// over 200 ms and leaves in 60 ms. At rest its glyph sits just below
     /// full strength; pointing at it brings it to full.
@@ -582,6 +770,7 @@ impl PillView {
     pub(super) fn render_hint(
         snapshot: &DictationSnapshot,
         on_cancel: bool,
+        on_skip: bool,
         cx: &App,
     ) -> Option<Div> {
         let p = hud(cx);
@@ -605,6 +794,8 @@ impl PillView {
             if on_cancel && (snapshot.is_recording || snapshot.is_processing) {
                 row.child(caption(t("dictation.pill.cancelDictation"), p.foreground))
                     .children(esc)
+            } else if on_skip && snapshot.is_cleaning {
+                row.child(caption(t("dictation.pill.skipHint"), p.foreground))
             } else if snapshot.is_recording {
                 row.child(caption(t("dictation.pill.finish"), p.foreground))
                     .child(caption("·".into(), p.subtle_foreground))
@@ -635,6 +826,58 @@ mod tests {
 
     fn db(level: f32) -> f32 {
         10f32.powf(level / 20.)
+    }
+
+    #[test]
+    fn fast_cleanup_never_shows_its_label_or_skip() {
+        use super::{POLISH_LABEL_AFTER, SKIP_AFTER, polish_stage};
+        assert_eq!(polish_stage(None), (false, false));
+        // Measured against a healthy server: 170 ms to 1 s of cleanup.
+        assert_eq!(polish_stage(at(170)), (false, false));
+        assert_eq!(polish_stage(at(350)), (false, false));
+        assert_eq!(polish_stage(at(1000)), (true, false));
+        assert_eq!(polish_stage(Some(POLISH_LABEL_AFTER)), (true, false));
+        assert_eq!(polish_stage(Some(SKIP_AFTER)), (true, true));
+    }
+
+    #[test]
+    fn swapped_layers_never_overlap_at_full_strength() {
+        assert_eq!(super::swap(0.), (1., 0.));
+        assert_eq!(super::swap(1.), (0., 1.));
+        for step in 0..=100 {
+            let (out, arrive) = super::swap(step as f32 / 100.);
+            assert!(out + arrive <= 1., "{out} + {arrive} at {step}");
+        }
+    }
+
+    #[test]
+    fn processing_layout_centers_the_label_and_docks_the_skip_chip() {
+        use super::{PILL_PAD, SKIP_INSET, SKIP_LEAD, THINK_DOTS_W, THINK_LABEL_GAP, think_layout};
+        let (timed, transcribing, polishing, skip) = (134., 70., 55., 43.);
+        // Transcribing: the timed pill's width, with the group centered.
+        let rest = think_layout(timed, transcribing, polishing, skip, 0., 0.);
+        let group = THINK_DOTS_W + THINK_LABEL_GAP + transcribing;
+        assert_eq!(rest.width, timed);
+        assert!((rest.group_x - (timed - group) / 2.).abs() < 1e-4);
+        // Polishing: the chip sits at its inset from the trailing edge.
+        let full = think_layout(timed, transcribing, polishing, skip, 1., 1.);
+        assert!((full.skip_x + skip + SKIP_INSET - full.width).abs() < 1e-4);
+        assert!((full.group_x - SKIP_LEAD).abs() < 1e-4);
+        let label_end = full.group_x + THINK_DOTS_W + THINK_LABEL_GAP + polishing;
+        assert!(full.skip_x - label_end >= THINK_LABEL_GAP - 1e-4);
+        // A long label widens the pill instead of crowding its padding.
+        let long = think_layout(timed, 160., polishing, skip, 0., 0.);
+        assert!(
+            (long.width - (2. * PILL_PAD + THINK_DOTS_W + THINK_LABEL_GAP + 160.)).abs() < 1e-4
+        );
+        // The width changes monotonically while the chip arrives and leaves.
+        let mut previous = think_layout(timed, transcribing, polishing, skip, 1., 0.).width;
+        for step in 1..=20 {
+            let width =
+                think_layout(timed, transcribing, polishing, skip, 1., step as f32 / 20.).width;
+            assert!(width >= previous - 1e-4);
+            previous = width;
+        }
     }
 
     #[test]
