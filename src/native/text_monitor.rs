@@ -4,31 +4,26 @@
 //!   focus at a hotkey press (the Target app), before the overlay steals focus.
 //! - [`TextEditMonitor::activate_pid`] / [`TextEditMonitor::can_paste_at_target`]
 //!   gate automatic paste.
-//! - [`TextEditMonitor::start_monitoring_after_paste`] watches the focused field after an
-//!   automatic paste. The session ends when the field empties (the message was
-//!   sent), focus leaves it, another paste starts or [`MONITOR_TIMEOUT`] runs
-//!   out, and reports the field's last text as one [`SessionReport`] for the
-//!   correction learner, so half-typed fixes are never learned.
+//! - [`TextEditMonitor::prepare_paste`] anchors a field before Command-V.
+//! - [`TextEditMonitor::subscribe`] streams completed edits and read health
+//!   while each field remains eligible for five minutes after delivery.
 //!
 //! Monitoring is strictly read-only: never write AX attributes such as
 //! AXEnhancedUserInterface on the target app (it blurs Chromium editors).
 //! All methods block (helper spawns, short sleeps); call them off the main
 //! thread.
 
-use std::collections::{HashSet, VecDeque};
+use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
-
-use base64::Engine;
 
 use super::helper::{probe_first_line, resolve_helper};
 use super::supervised_child::{
     ChildOptions, Control, Down, HelperSpawner, ProcessSpawner, Protocol, Recovery, RestartPolicy,
     SupervisedChild,
 };
-use super::timer::{RealTimers, TimerId, Timers, lock};
+use super::timer::{RealTimers, Timers, lock};
 
 const ACTIVATE_CONFIRM_RETRIES: u32 = 6;
 const ACTIVATE_CONFIRM_DELAY: Duration = Duration::from_millis(25);
@@ -37,33 +32,27 @@ const TARGET_PROBE_TIMEOUT: Duration = Duration::from_millis(700);
 /// hundred ms; reuse the result across that burst only.
 const TARGET_CAPTURE_FRESHNESS: Duration = Duration::from_millis(250);
 /// Long enough to read a dictation back and fix it.
-pub const MONITOR_TIMEOUT: Duration = Duration::from_secs(90);
-/// Wait for the paste to settle in the target app before monitoring.
-pub const MONITOR_START_DELAY: Duration = Duration::from_secs(1);
-/// Dictating several times in a row and then fixing an earlier part is normal,
-/// so a session accepts edits to the app's recent pastes.
-const RECENT_PASTES: usize = 5;
-const RECENT_PASTE_WINDOW: Duration = Duration::from_secs(5 * 60);
-
+pub const MONITOR_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 pub const MONITOR_BINARY: &str = "macos-text-monitor";
-/// The helper caps a reported value at 10240 characters.
-const MAX_LINE_BYTES: usize = 64 * 1024;
-/// Enough for the helper's diagnostics, which only feed
-/// [`is_persistent_ax_no_value_failure`].
-const MAX_STDERR_BYTES: usize = 16 * 1024;
-
-/// The field right after the paste and its last text before the session ended.
+/// The original dictated field text and its latest completed revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextEdit {
     pub baseline: String,
     pub edited: String,
-    /// The transcripts this session may have corrected, oldest first.
-    pub pasted: Vec<String>,
+    /// Exact delivered UTF-8 byte ranges in the cumulative original baseline.
+    pub pasted_ranges: Vec<Range<usize>>,
 }
 
-/// How one monitored paste went.
+/// A completed field revision or a change in observation availability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionReport {
+    pub outcome: ObservationOutcome,
+    pub diagnostic: Option<String>,
+    pub field: Option<String>,
+    /// Stable across repeated dictation in one eligible field lifecycle.
+    pub session_id: String,
+    /// Increases only for completed edits; an empty diff revokes prior learning.
+    pub revision: u64,
     /// Bundle identifier of the target app.
     pub app: Option<String>,
     /// Whether the field's text could be read at all.
@@ -122,102 +111,12 @@ struct Capture {
     last_capture_at: Option<Instant>,
 }
 
-struct RecentPaste {
-    pid: Option<i32>,
-    text: String,
-    at: Instant,
-}
-
-/// One monitored paste.
-struct Session {
-    app: Option<String>,
-    pasted: Vec<String>,
-    baseline: Option<String>,
-    /// The last non-empty text after the baseline: pressing Send clears the
-    /// field right after a fix, and the fix must survive that.
-    latest: Option<String>,
-    report: async_channel::Sender<SessionReport>,
-}
-
-impl Session {
-    fn finish(self) {
-        let readable = self.baseline.is_some();
-        let edit = match (self.baseline, self.latest) {
-            (Some(baseline), Some(edited)) if baseline != edited => Some(TextEdit {
-                baseline,
-                edited,
-                pasted: self.pasted,
-            }),
-            _ => None,
-        };
-        let _ = self.report.try_send(SessionReport {
-            app: self.app,
-            readable,
-            edit,
-        });
-    }
-
-    fn on_baseline(&mut self, value: String) {
-        self.baseline.get_or_insert(value);
-    }
-
-    /// A slow app takes the paste only after the baseline was read; its text
-    /// then becomes the baseline. Returns false when the field was emptied.
-    fn on_changed(&mut self, value: String) -> bool {
-        let Some(baseline) = &self.baseline else {
-            return true;
-        };
-        if value.trim().is_empty() {
-            return baseline.trim().is_empty();
-        }
-        let paste_landed = self
-            .pasted
-            .last()
-            .is_some_and(|text| !baseline.contains(text.as_str()) && value.contains(text.as_str()));
-        if paste_landed {
-            self.baseline = Some(value);
-            self.latest = None;
-        } else {
-            self.latest = Some(value);
-        }
-        true
-    }
-}
-
-#[derive(Default)]
-struct Monitoring {
-    session: Option<Session>,
-    run: Option<SupervisedChild<EditWatch>>,
-    timeout: Option<TimerId>,
-    recent: VecDeque<RecentPaste>,
-}
-
-impl Monitoring {
-    /// Records a paste and returns the app's recent ones, oldest first.
-    fn remember_paste(&mut self, pid: Option<i32>, text: &str) -> Vec<String> {
-        self.recent
-            .retain(|paste| paste.pid == pid && paste.at.elapsed() < RECENT_PASTE_WINDOW);
-        if self.recent.len() == RECENT_PASTES {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(RecentPaste {
-            pid,
-            text: text.to_string(),
-            at: Instant::now(),
-        });
-        self.recent.iter().map(|p| p.text.clone()).collect()
-    }
-}
-
 struct Inner {
+    lifecycle: Mutex<()>,
+    observations: Mutex<Observations>,
     hooks: MonitorHooks,
     timers: Arc<dyn Timers>,
     capture: Mutex<Capture>,
-    monitoring: Mutex<Monitoring>,
-    // Bumped by every start/stop; a run whose generation is stale gives up.
-    generation: AtomicU64,
-    // PIDs whose AX tree never yields a focused element this session.
-    unsupported_pids: Mutex<HashSet<i32>>,
     this: Weak<Inner>,
 }
 
@@ -242,12 +141,11 @@ impl TextEditMonitor {
     fn build(hooks: MonitorHooks, timers: Arc<dyn Timers>) -> Self {
         Self {
             inner: Arc::new_cyclic(|this| Inner {
+                lifecycle: Mutex::new(()),
+                observations: Mutex::new(Observations::default()),
                 hooks,
                 timers,
                 capture: Mutex::new(Capture::default()),
-                monitoring: Mutex::new(Monitoring::default()),
-                generation: AtomicU64::new(0),
-                unsupported_pids: Mutex::new(HashSet::new()),
                 this: this.clone(),
             }),
         }
@@ -347,110 +245,39 @@ impl TextEditMonitor {
         }
     }
 
-    /// Waits [`MONITOR_START_DELAY`] (on a background thread) and then
-    /// monitors, as automatic paste does after a successful paste. The
-    /// receiver gets one report when the session ends.
-    pub fn start_monitoring_after_paste(
-        &self,
-        original_text: &str,
-        target_pid: Option<i32>,
-    ) -> async_channel::Receiver<SessionReport> {
-        let (report, receiver) = async_channel::bounded(1);
-        let generation = self.prepare_start();
-        let monitor = self.clone();
-        let text = original_text.to_string();
-        self.inner.timers.schedule(
-            MONITOR_START_DELAY,
-            Box::new(move || {
-                // Helper resolution and AppKit lookups must not block the timer thread.
-                std::thread::spawn(move || {
-                    monitor.start_reserved(generation, &text, MONITOR_TIMEOUT, target_pid, report);
-                });
-            }),
-        );
-        receiver
-    }
-
-    /// Watches the focused field of `target_pid` for `timeout`. Ends any
-    /// previous session first. Returns immediately; `report` always receives
-    /// the outcome.
+    /// Discards all observation state and stops helpers when learning is disabled.
     #[cfg(test)]
-    pub fn start_monitoring(
-        &self,
-        original_text: &str,
-        timeout: Duration,
-        target_pid: Option<i32>,
-        report: async_channel::Sender<SessionReport>,
-    ) {
-        let generation = self.prepare_start();
-        self.start_reserved(generation, original_text, timeout, target_pid, report);
-    }
-
-    fn prepare_start(&self) -> u64 {
-        self.inner
-            .stop(None)
-            .expect("unconditional stop reserves a generation")
-    }
-
-    fn start_reserved(
-        &self,
-        generation: u64,
-        original_text: &str,
-        timeout: Duration,
-        target_pid: Option<i32>,
-        report: async_channel::Sender<SessionReport>,
-    ) {
-        let inner = &self.inner;
-        let app = target_pid.and_then(appkit::bundle_identifier);
-        {
-            let mut monitoring = lock(&inner.monitoring);
-            if inner.generation.load(Ordering::SeqCst) != generation {
-                return;
-            }
-            let pasted = monitoring.remember_paste(target_pid, original_text);
-            monitoring.session = Some(Session {
-                app,
-                pasted,
-                baseline: None,
-                latest: None,
-                report,
-            });
-        }
-
-        let Some(pid) = target_pid.filter(|p| *p > 0) else {
-            log::debug!("[text-monitor] no target pid");
-            inner.stop(Some(generation));
-            return;
-        };
-        let Some(helper) = (inner.hooks.resolve_helper)() else {
-            log::debug!("[text-monitor] helper unavailable");
-            inner.stop(Some(generation));
-            return;
-        };
-        if lock(&inner.unsupported_pids).contains(&pid) {
-            log::debug!("[text-monitor] AX reads unsupported for {pid} this session");
-            inner.stop(Some(generation));
-            return;
-        }
-
-        let weak = inner.this.clone();
-        inner.arm_timeout(generation, timeout);
-        std::thread::spawn(move || {
-            let Some(inner) = weak.upgrade() else { return };
-            inner.run_native(generation, pid, helper, timeout);
-        });
-    }
-
-    /// Ends the session, reporting what it saw. A paste ends the previous
-    /// session before it lands, so the new text is not read as an edit.
     pub fn stop_monitoring(&self) {
-        self.inner.stop(None);
+        let _lifecycle = lock(&self.inner.lifecycle);
+        self.stop_observers();
     }
 
-    /// True while a monitoring run is in progress.
-    #[cfg(test)]
-    pub fn is_monitoring(&self) -> bool {
-        lock(&self.inner.monitoring).session.is_some()
+    /// Gates all future preparations and invalidates tickets already in flight.
+    pub fn set_enabled(&self, enabled: bool) {
+        let _lifecycle = lock(&self.inner.lifecycle);
+        let changed = {
+            let mut observations = lock(&self.inner.observations);
+            let changed = observations.enabled != enabled;
+            observations.enabled = enabled;
+            changed
+        };
+        if changed || !enabled {
+            self.stop_observers();
+        }
+    }
+
+    fn stop_observers(&self) {
+        let runs = {
+            let mut observations = lock(&self.inner.observations);
+            observations.epoch += 1;
+            observations.fields.clear();
+            observations.pending.clear();
+            observations.failures.clear();
+            std::mem::take(&mut observations.runs)
+        };
+        for (_, run) in runs {
+            run.stop();
+        }
     }
 }
 
@@ -472,233 +299,989 @@ impl Inner {
         }
         (self.hooks.frontmost_pid)()
     }
+}
 
-    fn is_current(&self, generation: u64) -> bool {
-        self.generation.load(Ordering::SeqCst) == generation
-            && lock(&self.monitoring).session.is_some()
-    }
+/// The observation result is independent from whether an edit was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ObservationOutcome {
+    #[default]
+    Readable,
+    Unreadable,
+    Recovered,
+    CompletedEdit,
+}
 
-    /// Stops monitoring; with `Some(generation)` only if that run is current.
-    fn stop(&self, generation: Option<u64>) -> Option<u64> {
-        let (session, next_generation) = {
-            let mut monitoring = lock(&self.monitoring);
-            if let Some(generation) = generation
-                && self.generation.load(Ordering::SeqCst) != generation
-            {
-                return None;
-            }
-            let next_generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some(timer) = monitoring.timeout.take() {
-                self.timers.cancel(timer);
-            }
-            if let Some(run) = monitoring.run.take() {
-                run.stop();
-            }
-            (monitoring.session.take(), next_generation)
-        };
-        if let Some(session) = session {
-            session.finish();
+struct Observations {
+    enabled: bool,
+    epoch: u64,
+    runs: std::collections::HashMap<i32, SupervisedChild<ObservationProtocol>>,
+    fields: std::collections::HashMap<(i32, String), ObservedField>,
+    pending: std::collections::HashMap<u64, async_channel::Sender<NativeObservation>>,
+    subscribers: Vec<async_channel::Sender<SessionReport>>,
+    next_ticket: u64,
+    failures: std::collections::HashSet<(i32, String)>,
+}
+
+impl Default for Observations {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            epoch: 0,
+            runs: Default::default(),
+            fields: Default::default(),
+            pending: Default::default(),
+            subscribers: Vec::new(),
+            next_ticket: 0,
+            failures: Default::default(),
         }
-        Some(next_generation)
     }
+}
 
-    fn arm_timeout(&self, generation: u64, timeout: Duration) {
-        let weak = self.this.clone();
-        let timer = self.timers.schedule(
-            timeout,
-            Box::new(move || {
-                if let Some(inner) = weak.upgrade() {
-                    inner.stop(Some(generation));
-                }
+struct ObservedField {
+    app: Option<String>,
+    session_id: String,
+    revision: u64,
+    baseline: String,
+    latest: String,
+    reported: String,
+    pasted_ranges: Vec<Range<usize>>,
+    composing: bool,
+    health_only: bool,
+    alignment_blocked: bool,
+    empty: bool,
+    unreadable: bool,
+    change: u64,
+    last_change_at: u64,
+    expiry: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct NativeObservation {
+    kind: String,
+    #[serde(default)]
+    ticket: u64,
+    #[serde(default)]
+    field: String,
+    value: Option<String>,
+    #[serde(default)]
+    start: usize,
+    #[serde(default)]
+    length: usize,
+    #[serde(default)]
+    composing: bool,
+    reason: Option<String>,
+}
+
+/// A target field anchored before Command-V. Dropping an uncommitted ticket
+/// cancels it. A failed preparation never prevents the ordinary paste.
+pub struct PreparedPaste {
+    monitor: TextEditMonitor,
+    pid: i32,
+    ticket: u64,
+    epoch: u64,
+    prepared: NativeObservation,
+    text: String,
+    finished: bool,
+}
+
+impl PreparedPaste {
+    pub fn commit(mut self, pasted: bool) {
+        let committed = pasted
+            && self.monitor.inner.commit_observation(
+                self.pid,
+                self.ticket,
+                self.epoch,
+                &self.prepared,
+                &self.text,
+            );
+        self.monitor.inner.observation_command(
+            self.pid,
+            serde_json::json!({
+                "command": if committed { "commit" } else { "cancel" }, "ticket": self.ticket
             }),
         );
-        let mut monitoring = lock(&self.monitoring);
-        if self.generation.load(Ordering::SeqCst) == generation {
-            monitoring.timeout = Some(timer);
-        } else {
-            self.timers.cancel(timer);
+        self.finished = true;
+    }
+}
+
+impl Drop for PreparedPaste {
+    fn drop(&mut self) {
+        if !self.finished {
+            self.monitor.inner.observation_command(
+                self.pid,
+                serde_json::json!({
+                    "command": "cancel", "ticket": self.ticket
+                }),
+            );
         }
     }
+}
 
-    fn update_session(&self, generation: u64, update: impl FnOnce(&mut Session) -> bool) {
-        let keep_going = {
-            let mut monitoring = lock(&self.monitoring);
-            if self.generation.load(Ordering::SeqCst) != generation {
-                return;
+impl TextEditMonitor {
+    /// Each subscriber receives all reports; receivers do not steal each
+    /// other's messages. Install the application subscriber before pasting.
+    pub fn subscribe(&self) -> async_channel::Receiver<SessionReport> {
+        let (sender, receiver) = async_channel::unbounded();
+        lock(&self.inner.observations).subscribers.push(sender);
+        receiver
+    }
+
+    /// Binds the intended AX element and selection before the paste event.
+    /// This bounded operation belongs inside the serialized paste queue.
+    pub fn prepare_paste(&self, text: &str, pid: Option<i32>) -> Option<PreparedPaste> {
+        let pid = pid.filter(|pid| *pid > 0)?;
+        let epoch = {
+            let observations = lock(&self.inner.observations);
+            if !observations.enabled {
+                return None;
             }
-            monitoring.session.as_mut().is_none_or(update)
+            observations.epoch
         };
-        if !keep_going {
-            log::debug!("[text-monitor] field emptied");
-            self.stop(Some(generation));
+        if self.inner.ensure_observer(pid, epoch).is_none() {
+            self.inner
+                .observation_failure(pid, None, "helper_unavailable");
+            return None;
         }
-    }
-
-    fn handle_line(&self, generation: u64, line: &str) {
-        if let Some(value) = payload(line, "CHANGED") {
-            self.update_session(generation, |session| session.on_changed(value));
-        } else if let Some(value) = payload(line, "BASELINE") {
-            self.update_session(generation, |session| {
-                session.on_baseline(value);
-                true
-            });
-        } else if line == "NO_ELEMENT" || line == "NO_VALUE" {
-            // The helper exits right after; its end stops monitoring.
-            log::debug!("[text-monitor] no target element ({line})");
+        let (sender, receiver) = async_channel::bounded(1);
+        let ticket = {
+            let mut observations = lock(&self.inner.observations);
+            observations.next_ticket += 1;
+            let ticket = observations.next_ticket;
+            observations.pending.insert(ticket, sender);
+            ticket
+        };
+        if !self.inner.observation_command(
+            pid,
+            serde_json::json!({"command":"prepare", "ticket":ticket}),
+        ) {
+            lock(&self.inner.observations).pending.remove(&ticket);
+            self.inner
+                .observation_failure(pid, None, "helper_command_unavailable");
+            return None;
         }
-    }
-
-    fn on_watch_event(&self, generation: u64, pid: i32, event: WatchEvent) {
-        match event {
-            WatchEvent::Line(line) => self.handle_line(generation, &line),
-            WatchEvent::Ended { ax_unsupported } => {
-                // NO_ELEMENT after a uniform -25212 run is terminal for this app.
-                if ax_unsupported {
-                    lock(&self.unsupported_pids).insert(pid);
+        // recv_blocking has no deadline; use a condition-independent bounded
+        // wait so an unresponsive AX server cannot hold the paste queue.
+        let deadline = Instant::now() + TARGET_PROBE_TIMEOUT;
+        let prepared = loop {
+            match receiver.try_recv() {
+                Ok(prepared) => break Some(prepared),
+                Err(async_channel::TryRecvError::Closed) => break None,
+                Err(async_channel::TryRecvError::Empty) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
                 }
-                self.stop(Some(generation));
+                Err(_) => break None,
+            }
+        };
+        lock(&self.inner.observations).pending.remove(&ticket);
+        {
+            let observations = lock(&self.inner.observations);
+            if !observations.enabled || observations.epoch != epoch {
+                return None;
             }
         }
+        let Some(prepared) = prepared else {
+            self.inner.observation_command(
+                pid,
+                serde_json::json!({"command":"cancel", "ticket":ticket}),
+            );
+            self.inner
+                .observation_failure(pid, None, "ax_prepare_timeout");
+            return None;
+        };
+        if prepared.value.is_none() {
+            self.inner.observation_failure(
+                pid,
+                (!prepared.field.is_empty()).then_some(prepared.field.clone()),
+                prepared.reason.as_deref().unwrap_or("ax_text_unavailable"),
+            );
+            self.inner.observation_command(
+                pid,
+                serde_json::json!({"command":"health", "ticket":ticket}),
+            );
+            return None;
+        }
+        Some(PreparedPaste {
+            monitor: self.clone(),
+            pid,
+            ticket,
+            epoch,
+            prepared,
+            text: text.into(),
+            finished: false,
+        })
     }
 
-    /// Event-based monitoring through the helper's AXObserver.
-    fn run_native(&self, generation: u64, pid: i32, helper: HelperCommand, timeout: Duration) {
-        let program = helper.program;
+    /// Synchronizes helper output before the next dictation reads learned
+    /// data. This does not turn unfinished composition into a correction.
+    pub fn flush_completed_edits(&self) {
+        let runs: Vec<_> = lock(&self.inner.observations)
+            .runs
+            .keys()
+            .copied()
+            .collect();
+        for pid in runs {
+            let (sender, receiver) = async_channel::bounded(1);
+            let ticket = {
+                let mut observations = lock(&self.inner.observations);
+                observations.next_ticket += 1;
+                let ticket = observations.next_ticket;
+                observations.pending.insert(ticket, sender);
+                ticket
+            };
+            self.inner.observation_command(
+                pid,
+                serde_json::json!({"command":"snapshot", "ticket":ticket}),
+            );
+            let deadline = Instant::now() + Duration::from_millis(250);
+            while receiver.try_recv().is_err() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            lock(&self.inner.observations).pending.remove(&ticket);
+        }
+    }
+}
+
+impl Inner {
+    fn observation_failure(&self, pid: i32, field: Option<String>, reason: &str) {
+        if !lock(&self.observations).enabled {
+            return;
+        }
+        let key = (pid, field.clone().unwrap_or_default());
+        let notify = {
+            let mut observations = lock(&self.observations);
+            if field.is_some() && !observations.fields.contains_key(&key) {
+                observations.fields.insert(
+                    key.clone(),
+                    ObservedField {
+                        app: appkit::bundle_identifier(pid),
+                        session_id: uuid::Uuid::new_v4().to_string(),
+                        revision: 0,
+                        baseline: String::new(),
+                        latest: String::new(),
+                        reported: String::new(),
+                        pasted_ranges: Vec::new(),
+                        composing: false,
+                        health_only: true,
+                        alignment_blocked: false,
+                        empty: false,
+                        unreadable: true,
+                        change: 0,
+                        last_change_at: self.timers.now_ms(),
+                        expiry: 0,
+                    },
+                );
+            }
+            if let Some(observed) = observations.fields.get_mut(&key) {
+                observed.unreadable = true;
+            }
+            observations.failures.insert(key.clone())
+        };
+        if !notify {
+            return;
+        }
+        if field.is_none() {
+            let epoch = lock(&self.observations).epoch;
+            self.retry_observation_health(
+                pid,
+                epoch,
+                self.timers
+                    .now_ms()
+                    .saturating_add(MONITOR_TIMEOUT.as_millis() as u64),
+            );
+        }
+        let report = self
+            .field_report(
+                &key,
+                ObservationOutcome::Unreadable,
+                Some(reason.into()),
+                false,
+            )
+            .unwrap_or(SessionReport {
+                app: appkit::bundle_identifier(pid),
+                readable: false,
+                edit: None,
+                outcome: ObservationOutcome::Unreadable,
+                diagnostic: Some(reason.into()),
+                field,
+                session_id: String::new(),
+                revision: 0,
+            });
+        self.publish_observation(report);
+    }
+
+    fn retry_observation_health(&self, pid: i32, epoch: u64, deadline: u64) {
+        let weak = self.this.clone();
+        self.timers.schedule(
+            Duration::from_secs(1),
+            Box::new(move || {
+                let Some(inner) = weak.upgrade() else { return };
+                {
+                    let observations = lock(&inner.observations);
+                    if !observations.enabled
+                        || observations.epoch != epoch
+                        || !observations.failures.contains(&(pid, String::new()))
+                        || inner.timers.now_ms() >= deadline
+                    {
+                        return;
+                    }
+                }
+                if inner.ensure_observer(pid, epoch).is_some()
+                    && inner.observation_command(
+                        pid,
+                        serde_json::json!({"command":"health", "ticket":0}),
+                    )
+                {
+                    return;
+                }
+                inner.retry_observation_health(pid, epoch, deadline);
+            }),
+        );
+    }
+
+    fn publish_observation(&self, report: SessionReport) {
+        lock(&self.observations)
+            .subscribers
+            .retain(|sender| sender.try_send(report.clone()).is_ok());
+    }
+
+    fn observation_command(&self, pid: i32, command: serde_json::Value) -> bool {
+        let run = lock(&self.observations).runs.get(&pid).cloned();
+        run.is_some_and(|run| run.update(|_, cx| cx.write_line(&command.to_string())))
+    }
+
+    fn ensure_observer(&self, pid: i32, epoch: u64) -> Option<()> {
+        let _lifecycle = lock(&self.lifecycle);
+        {
+            let observations = lock(&self.observations);
+            if !observations.enabled || observations.epoch != epoch {
+                return None;
+            }
+        }
+        if lock(&self.observations).runs.contains_key(&pid) {
+            return Some(());
+        }
+        let helper = (self.hooks.resolve_helper)()?;
         let mut args = helper.args;
-        args.push(pid.to_string());
-        args.push(timeout.as_secs().to_string());
+        args.extend(["--observe".into(), pid.to_string()]);
         let weak = self.this.clone();
         let run = SupervisedChild::new(
             ChildOptions {
-                label: "Text monitor",
-                resolve_binary: Arc::new(move || Some(program.clone())),
-                spawner: Arc::clone(&self.hooks.spawner),
-                timers: Arc::clone(&self.timers),
+                label: "Field observer",
+                resolve_binary: Arc::new(move || Some(helper.program.clone())),
+                spawner: self.hooks.spawner.clone(),
+                timers: self.timers.clone(),
                 restart: RestartPolicy::Never,
                 heartbeat: None,
-                max_line: MAX_LINE_BYTES,
+                max_line: 8 * 1024 * 1024,
             },
-            EditWatch {
-                args,
-                stderr: String::new(),
-                no_element: false,
-            },
+            ObservationProtocol { args },
             Arc::new(move |event| {
                 if let Some(inner) = weak.upgrade() {
-                    inner.on_watch_event(generation, pid, event);
+                    let current = {
+                        let observations = lock(&inner.observations);
+                        observations.enabled && observations.epoch == epoch
+                    };
+                    if current {
+                        inner.observe_native(pid, event);
+                    }
                 }
             }),
         );
+        lock(&self.observations).runs.insert(pid, run.clone());
+        run.start();
+        Some(())
+    }
+
+    fn commit_observation(
+        &self,
+        pid: i32,
+        ticket: u64,
+        epoch: u64,
+        prepared: &NativeObservation,
+        text: &str,
+    ) -> bool {
+        let _lifecycle = lock(&self.lifecycle);
         {
-            let mut monitoring = lock(&self.monitoring);
-            if self.generation.load(Ordering::SeqCst) != generation || monitoring.session.is_none()
+            let observations = lock(&self.observations);
+            if !observations.enabled || observations.epoch != epoch {
+                return false;
+            }
+        }
+        let key = (pid, prepared.field.clone());
+        let pre = prepared.value.as_deref().unwrap_or_default();
+        let Some(selected) = utf16_range(pre, prepared.start, prepared.length) else {
+            self.observation_failure(
+                pid,
+                Some(key.1.clone()),
+                "ax_selection_not_on_text_boundaries",
+            );
+            return false;
+        };
+        let predicted = pre[..selected.start].to_string() + text + &pre[selected.end..];
+        let (expiry, change, recovered) = {
+            let mut observations = lock(&self.observations);
+            if observations
+                .fields
+                .get(&key)
+                .is_some_and(|field| field.health_only)
+            {
+                observations.fields.remove(&key);
+            }
+            let recovered = observations.failures.remove(&key)
+                | observations.failures.remove(&(pid, String::new()));
+            let field = observations
+                .fields
+                .entry(key.clone())
+                .or_insert_with(|| ObservedField {
+                    app: appkit::bundle_identifier(pid),
+                    session_id: uuid::Uuid::new_v4().to_string(),
+                    revision: 0,
+                    baseline: pre.into(),
+                    latest: pre.into(),
+                    reported: pre.into(),
+                    pasted_ranges: Vec::new(),
+                    composing: false,
+                    health_only: false,
+                    alignment_blocked: false,
+                    empty: false,
+                    unreadable: false,
+                    change: 0,
+                    last_change_at: self.timers.now_ms(),
+                    expiry: 0,
+                });
+            if field.alignment_blocked {
+                return false;
+            }
+            let selections = aligned_range(pre, &field.baseline, selected.clone())
+                .zip(aligned_range(pre, &field.reported, selected.clone()));
+            let Some((baseline_range, reported_range)) = selections else {
+                // Preserve the preceding scope instead of inventing a location
+                // for this delivered text. Further values cannot safely be
+                // attributed until the field lifecycle is reset.
+                field.alignment_blocked = true;
+                field.change += 1;
+                drop(observations);
+                self.observation_failure(
+                    pid,
+                    Some(key.1.clone()),
+                    "text_alignment_budget_or_ambiguity",
+                );
+                return false;
+            };
+            field.pasted_ranges =
+                replaced_regions(&field.pasted_ranges, baseline_range.clone(), text.len());
+            if !text.is_empty() {
+                field
+                    .pasted_ranges
+                    .push(baseline_range.start..baseline_range.start + text.len());
+            }
+            field.baseline.replace_range(baseline_range, text);
+            field.reported.replace_range(reported_range, text);
+            let recovered = recovered || field.unreadable;
+            field.unreadable = false;
+            field.latest = predicted;
+            field.empty = false;
+            field.change += 1;
+            field.last_change_at = self.timers.now_ms();
+            field.expiry = ticket;
+            (field.expiry, field.change, recovered)
+        };
+        let stable_key = key.clone();
+        let weak = self.this.clone();
+        self.timers.schedule(
+            Duration::from_secs(1),
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.complete_observation(&stable_key, Some(change));
+                }
+            }),
+        );
+        self.publish_observation(
+            self.field_report(
+                &key,
+                if recovered {
+                    ObservationOutcome::Recovered
+                } else {
+                    ObservationOutcome::Readable
+                },
+                None,
+                false,
+            )
+            .unwrap(),
+        );
+        let weak = self.this.clone();
+        self.timers.schedule(
+            MONITOR_TIMEOUT,
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    let mut observations = lock(&inner.observations);
+                    if observations
+                        .fields
+                        .get(&key)
+                        .is_some_and(|field| field.expiry == expiry)
+                    {
+                        observations.fields.remove(&key);
+                        drop(observations);
+                        inner.observation_command(
+                            pid,
+                            serde_json::json!({"command":"forget", "field":key.1}),
+                        );
+                    }
+                }
+            }),
+        );
+        true
+    }
+
+    fn field_report(
+        &self,
+        key: &(i32, String),
+        outcome: ObservationOutcome,
+        diagnostic: Option<String>,
+        edited: bool,
+    ) -> Option<SessionReport> {
+        let observations = lock(&self.observations);
+        let field = observations.fields.get(key)?;
+        Some(SessionReport {
+            app: field.app.clone(),
+            readable: !field.unreadable,
+            edit: edited.then(|| TextEdit {
+                baseline: field.baseline.clone(),
+                edited: field.latest.clone(),
+                pasted_ranges: field.pasted_ranges.clone(),
+            }),
+            outcome,
+            diagnostic,
+            field: Some(key.1.clone()),
+            session_id: field.session_id.clone(),
+            revision: field.revision,
+        })
+    }
+
+    fn complete_observation(&self, key: &(i32, String), expected_change: Option<u64>) {
+        let report = {
+            let mut observations = lock(&self.observations);
+            let Some(field) = observations.fields.get_mut(key) else {
+                return;
+            };
+            if field.health_only
+                || field.alignment_blocked
+                || field.composing
+                || (field.empty && expected_change.is_some())
+                || field.unreadable
+                || field.latest.trim().is_empty()
+                || expected_change.is_some_and(|change| field.change != change)
+                || field.reported == field.latest
             {
                 return;
             }
-            monitoring.run = Some(run.clone());
-        }
-        run.start();
-        // A stop between storing the run and starting it had nothing to end.
-        if !self.is_current(generation) {
-            run.stop();
-        }
-    }
-}
-
-enum WatchEvent {
-    Line(String),
-    /// The helper ended; `ax_unsupported` once the target app's AX tree
-    /// proved permanently unreadable.
-    Ended {
-        ax_unsupported: bool,
-    },
-}
-
-/// The text of a `<prefix>:` or, for multi-line text, `<prefix>_B64:` line.
-fn payload(line: &str, prefix: &str) -> Option<String> {
-    let rest = line.strip_prefix(prefix)?;
-    if let Some(encoded) = rest.strip_prefix("_B64:") {
-        return match base64::engine::general_purpose::STANDARD.decode(encoded.trim()) {
-            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
-            Err(error) => {
-                log::debug!("[text-monitor] bad base64 payload: {error}");
-                None
+            field.reported = field.latest.clone();
+            field.revision += 1;
+            // Capture exactly the completed revision under the same lock: a
+            // new composing value must never replace the text being reported.
+            SessionReport {
+                app: field.app.clone(),
+                readable: true,
+                outcome: ObservationOutcome::CompletedEdit,
+                diagnostic: None,
+                field: Some(key.1.clone()),
+                session_id: field.session_id.clone(),
+                revision: field.revision,
+                edit: Some(TextEdit {
+                    baseline: field.baseline.clone(),
+                    edited: field.latest.clone(),
+                    pasted_ranges: field.pasted_ranges.clone(),
+                }),
             }
         };
+        // An empty diff revokes the preceding contribution after a restoration.
+        self.publish_observation(report);
     }
-    rest.strip_prefix(':').map(str::to_string)
+
+    fn observe_native(&self, pid: i32, event: NativeObservation) {
+        if event.kind == "health_recovered" {
+            if lock(&self.observations)
+                .failures
+                .remove(&(pid, String::new()))
+            {
+                self.publish_observation(SessionReport {
+                    app: appkit::bundle_identifier(pid),
+                    readable: true,
+                    edit: None,
+                    outcome: ObservationOutcome::Recovered,
+                    diagnostic: None,
+                    field: None,
+                    session_id: String::new(),
+                    revision: 0,
+                });
+            }
+            return;
+        }
+        if event.kind == "helper_ended" {
+            lock(&self.observations).runs.remove(&pid);
+            let keys: Vec<_> = lock(&self.observations)
+                .fields
+                .keys()
+                .filter(|key| key.0 == pid)
+                .cloned()
+                .collect();
+            for key in keys {
+                self.observe_native(
+                    pid,
+                    NativeObservation {
+                        kind: "unreadable".into(),
+                        field: key.1,
+                        ..event.clone()
+                    },
+                );
+            }
+            return;
+        }
+        if event.kind == "synced" {
+            let stable: Vec<_> = lock(&self.observations)
+                .fields
+                .iter()
+                .filter(|(key, field)| {
+                    key.0 == pid
+                        && self.timers.now_ms().saturating_sub(field.last_change_at) >= 1_000
+                })
+                .map(|(key, field)| (key.clone(), field.change))
+                .collect();
+            for (key, change) in stable {
+                self.complete_observation(&key, Some(change));
+            }
+        }
+        if event.kind == "prepared" || event.kind == "synced" {
+            if let Some(sender) = lock(&self.observations).pending.remove(&event.ticket) {
+                let _ = sender.try_send(event);
+            }
+            return;
+        }
+        let key = (pid, event.field.clone());
+        if event.kind == "sent" {
+            self.complete_observation(&key, None);
+            lock(&self.observations).fields.remove(&key);
+            return;
+        }
+        if event.kind == "closed" {
+            lock(&self.observations).fields.remove(&key);
+            return;
+        }
+        if event.kind == "unreadable" {
+            let notify = {
+                let mut observations = lock(&self.observations);
+                if let Some(field) = observations.fields.get_mut(&key) {
+                    let notify = !field.unreadable;
+                    field.unreadable = true;
+                    notify
+                } else {
+                    false
+                }
+            };
+            if notify
+                && let Some(report) =
+                    self.field_report(&key, ObservationOutcome::Unreadable, event.reason, false)
+            {
+                self.publish_observation(report);
+            }
+            return;
+        }
+        let Some(value) = event.value else { return };
+        let (change, recovered) = {
+            let mut observations = lock(&self.observations);
+            let Some(field) = observations.fields.get_mut(&key) else {
+                return;
+            };
+            if field.alignment_blocked {
+                return;
+            }
+            let recovered = field.unreadable;
+            field.unreadable = false;
+            // Empty values are never evidence of submission. The helper sends
+            // a separate sent event after a key/mouse send gesture and clear.
+            if value.trim().is_empty() {
+                if !field.empty {
+                    field.change += 1;
+                    field.last_change_at = self.timers.now_ms();
+                }
+                field.empty = true;
+                (None, recovered)
+            } else {
+                let was_empty = field.empty;
+                field.empty = false;
+                if value == field.latest
+                    && event.composing == field.composing
+                    && !recovered
+                    && !was_empty
+                {
+                    return;
+                }
+                field.latest = value;
+                field.composing = event.composing;
+                field.change += 1;
+                field.last_change_at = self.timers.now_ms();
+                (Some(field.change), recovered)
+            }
+        };
+        if recovered {
+            lock(&self.observations).failures.remove(&key);
+        }
+        if recovered
+            && let Some(report) =
+                self.field_report(&key, ObservationOutcome::Recovered, None, false)
+        {
+            self.publish_observation(report);
+        }
+        let Some(change) = change else { return };
+        let weak = self.this.clone();
+        self.timers.schedule(
+            Duration::from_secs(1),
+            Box::new(move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.complete_observation(&key, Some(change));
+                }
+            }),
+        );
+    }
 }
 
-/// One `macos-text-monitor <pid>` run: forwards the helper's lines and
-/// judges its diagnostics when it ends.
-struct EditWatch {
+fn utf16_range(value: &str, start: usize, length: usize) -> Option<Range<usize>> {
+    fn offset(value: &str, requested: usize) -> Option<usize> {
+        let mut units = 0;
+        for (byte, character) in value.char_indices() {
+            if units == requested {
+                return Some(byte);
+            }
+            units += character.len_utf16();
+            if units > requested {
+                return None;
+            }
+        }
+        (units == requested).then_some(value.len())
+    }
+    Some(offset(value, start)?..offset(value, start.checked_add(length)?)?)
+}
+
+fn replaced_regions(
+    regions: &[Range<usize>],
+    replaced: Range<usize>,
+    inserted: usize,
+) -> Vec<Range<usize>> {
+    let mut updated = Vec::new();
+    for region in regions {
+        let left_end = region.end.min(replaced.start);
+        if region.start < left_end {
+            updated.push(region.start..left_end);
+        }
+        let right_start = region.start.max(replaced.end);
+        if right_start < region.end {
+            let start = replaced.start + inserted + right_start - replaced.end;
+            let end = replaced.start + inserted + region.end - replaced.end;
+            updated.push(start..end);
+        }
+    }
+    updated
+}
+
+/// Map boundaries through every optimal character edit alignment. A bounded
+/// band makes small corrections in long editors cheap without greedily
+/// anchoring repeated prefixes/suffixes to an arbitrary occurrence.
+fn aligned_range(from: &str, to: &str, selected: Range<usize>) -> Option<Range<usize>> {
+    const CELL_BUDGET: usize = 1_000_000;
+    const WORK_BUDGET: usize = 2 * CELL_BUDGET;
+    const UNREACHABLE: u32 = u32::MAX / 4;
+    struct Grid {
+        rows: usize,
+        columns: usize,
+        width: usize,
+        band: usize,
+        costs: Vec<u32>,
+    }
+    impl Grid {
+        fn index(&self, row: usize, column: usize) -> Option<usize> {
+            if row >= self.rows || column >= self.columns || row.abs_diff(column) > self.band {
+                return None;
+            }
+            let offset = if self.width == self.columns {
+                column
+            } else {
+                column + self.band - row
+            };
+            Some(row * self.width + offset)
+        }
+        fn cost(&self, row: usize, column: usize) -> u32 {
+            self.index(row, column)
+                .map_or(UNREACHABLE, |index| self.costs[index])
+        }
+    }
+    fn characters(value: &str) -> (Vec<char>, Vec<usize>) {
+        let (characters, mut offsets): (Vec<_>, Vec<_>) = value
+            .char_indices()
+            .map(|(offset, character)| (character, offset))
+            .unzip();
+        offsets.push(value.len());
+        (characters, offsets)
+    }
+    if selected.start > selected.end
+        || selected.end > from.len()
+        || !from.is_char_boundary(selected.start)
+        || !from.is_char_boundary(selected.end)
+    {
+        return None;
+    }
+    if from == to {
+        return Some(selected);
+    }
+    // An emptied field supplies no anchor for a position in its old text.
+    if from.is_empty() {
+        return None;
+    }
+    // Physical field edges do not depend on the alignment of interior edits.
+    // This also keeps appending to a long corrected field within paste latency.
+    let edge = |offset| {
+        if offset == 0 {
+            Some(0)
+        } else if offset == from.len() {
+            Some(to.len())
+        } else {
+            None
+        }
+    };
+    if let (Some(start), Some(end)) = (edge(selected.start), edge(selected.end)) {
+        return Some(start..end);
+    }
+    let (source, source_offsets) = characters(from);
+    let (target, target_offsets) = characters(to);
+    let boundaries = [
+        source_offsets.binary_search(&selected.start).ok()?,
+        source_offsets.binary_search(&selected.end).ok()?,
+    ];
+    let mut band = source.len().abs_diff(target.len()).max(1);
+    let mut work = WORK_BUDGET;
+    let grid = loop {
+        let rows = source.len().checked_add(1)?;
+        let columns = target.len().checked_add(1)?;
+        let width = band.checked_mul(2)?.checked_add(1)?.min(columns);
+        let cells = rows.checked_mul(width)?;
+        if cells > CELL_BUDGET {
+            return None;
+        }
+        work = work.checked_sub(cells)?;
+        let mut grid = Grid {
+            rows,
+            columns,
+            width,
+            band,
+            costs: vec![UNREACHABLE; cells],
+        };
+        for row in 0..rows {
+            let first = row.saturating_sub(band);
+            let last = row.saturating_add(band).min(target.len());
+            for column in first..=last {
+                let cost = if row == 0 {
+                    column as u32
+                } else if column == 0 {
+                    row as u32
+                } else {
+                    (grid.cost(row - 1, column) + 1)
+                        .min(grid.cost(row, column - 1) + 1)
+                        .min(
+                            grid.cost(row - 1, column - 1)
+                                + u32::from(source[row - 1] != target[column - 1]),
+                        )
+                };
+                let index = grid.index(row, column)?;
+                grid.costs[index] = cost;
+            }
+        }
+        // Every path of cost D stays within a band of width D. Once D fits,
+        // this matrix includes all globally optimal paths, including ties.
+        if grid.cost(source.len(), target.len()) as usize <= band {
+            break grid;
+        }
+        band = band.checked_mul(2)?.min(source.len().max(target.len()));
+    };
+    let mut mapped = [None, None];
+    for (index, &boundary) in boundaries.iter().enumerate() {
+        if boundary == 0 {
+            mapped[index] = Some(0);
+        } else if boundary == source.len() {
+            mapped[index] = Some(target.len());
+        }
+    }
+    let mut visited = vec![false; grid.costs.len()];
+    let mut pending = vec![(source.len(), target.len())];
+    visited[grid.index(source.len(), target.len())?] = true;
+    while let Some((row, column)) = pending.pop() {
+        for index in 0..2 {
+            if boundaries[index] > 0 && boundaries[index] < source.len() && row == boundaries[index]
+            {
+                if mapped[index].is_some_and(|previous| previous != column) {
+                    return None;
+                }
+                mapped[index] = Some(column);
+            }
+        }
+        let cost = grid.cost(row, column);
+        let mut visit = |row: usize, column: usize| {
+            if let Some(index) = grid.index(row, column)
+                && !visited[index]
+            {
+                visited[index] = true;
+                pending.push((row, column));
+            }
+        };
+        if row > 0 && cost == grid.cost(row - 1, column) + 1 {
+            visit(row - 1, column);
+        }
+        if column > 0 && cost == grid.cost(row, column - 1) + 1 {
+            visit(row, column - 1);
+        }
+        if row > 0
+            && column > 0
+            && cost
+                == grid.cost(row - 1, column - 1) + u32::from(source[row - 1] != target[column - 1])
+        {
+            visit(row - 1, column - 1);
+        }
+    }
+    let start = target_offsets[mapped[0]?];
+    let end = target_offsets[mapped[1]?];
+    (start <= end).then_some(start..end)
+}
+
+struct ObservationProtocol {
     args: Vec<String>,
-    stderr: String,
-    no_element: bool,
 }
-
-impl Protocol for EditWatch {
-    type Event = WatchEvent;
-
+impl Protocol for ObservationProtocol {
+    type Event = NativeObservation;
     fn args(&self) -> Vec<String> {
         self.args.clone()
     }
-
-    fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, WatchEvent>) {
-        if line == "NO_ELEMENT" {
-            self.no_element = true;
-        }
-        cx.emit(WatchEvent::Line(line.to_string()));
-    }
-
-    fn on_stderr(&mut self, text: &str, _cx: &mut Control<'_, WatchEvent>) {
-        if self.stderr.len() < MAX_STDERR_BYTES {
-            self.stderr.push_str(text);
+    fn on_stdout(&mut self, line: &str, cx: &mut Control<'_, NativeObservation>) {
+        if let Ok(event) = serde_json::from_str(line) {
+            cx.emit(event);
         }
     }
-
-    fn on_down(&mut self, down: &Down, _recovery: Recovery, cx: &mut Control<'_, WatchEvent>) {
-        match down {
-            Down::Stopped => {}
-            Down::Missing | Down::NotStarted(_) => {
-                log::debug!("[text-monitor] helper failed to start ({down:?})");
-                cx.emit(WatchEvent::Ended {
-                    ax_unsupported: false,
-                });
-            }
-            Down::Failed(_) | Down::Unavailable(_) | Down::Exited { .. } => {
-                cx.emit(WatchEvent::Ended {
-                    ax_unsupported: self.no_element
-                        && is_persistent_ax_no_value_failure(&self.stderr),
-                })
-            }
+    fn on_down(
+        &mut self,
+        down: &Down,
+        _recovery: Recovery,
+        cx: &mut Control<'_, NativeObservation>,
+    ) {
+        if !matches!(down, Down::Stopped) {
+            cx.emit(NativeObservation {
+                kind: "helper_ended".into(),
+                ticket: 0,
+                field: String::new(),
+                value: None,
+                start: 0,
+                length: 0,
+                composing: false,
+                reason: Some(format!("helper_ended: {down:?}")),
+            });
         }
     }
-}
-
-/// AXError -25212 (kAXErrorNoValue) on every attempt, and the element never
-/// resolved: a Chromium/Electron app whose AX tree stays dormant.
-fn is_persistent_ax_no_value_failure(stderr: &str) -> bool {
-    if stderr.contains("Got focused element") {
-        return false;
-    }
-    let mut codes = Vec::new();
-    let mut rest = stderr;
-    while let Some(start) = rest.find("(error: ") {
-        let after = &rest[start + 8..];
-        let Some(end) = after.find(')') else { break };
-        let code = &after[..end];
-        if code
-            .trim_start_matches('-')
-            .chars()
-            .all(|c| c.is_ascii_digit())
-            && !code.is_empty()
-        {
-            codes.push(code.to_string());
-        }
-        rest = &after[end..];
-    }
-    !codes.is_empty() && codes.iter().all(|code| code == "-25212")
 }
 
 /// In-process AppKit lookups.
@@ -748,7 +1331,7 @@ mod tests {
     use crate::native::supervised_child::ChildEvent;
     use crate::native::supervised_child::tests::FakeSpawner;
     use crate::native::timer::FakeTimers;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn sh(script: &str) -> HelperResolver {
         let script = script.to_string();
@@ -801,16 +1384,6 @@ mod tests {
         Arc::new(|| None)
     }
 
-    fn watch(
-        monitor: &TextEditMonitor,
-        text: &str,
-        pid: Option<i32>,
-    ) -> async_channel::Receiver<SessionReport> {
-        let (report, receiver) = async_channel::bounded(1);
-        monitor.start_monitoring(text, MONITOR_TIMEOUT, pid, report);
-        receiver
-    }
-
     fn counting(values: Vec<Option<i32>>, delay: Duration) -> (PidSource, Arc<AtomicUsize>) {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&calls);
@@ -822,82 +1395,568 @@ mod tests {
         (source, calls)
     }
 
-    fn assert_pending_start_cancelled(receiver: &async_channel::Receiver<SessionReport>) {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !receiver.is_closed() {
-            assert!(
-                Instant::now() < deadline,
-                "stale monitoring start was not cancelled"
-            );
-            std::thread::sleep(Duration::from_millis(10));
+    #[test]
+    fn prepared_observation_captures_a_correction_in_the_first_second() {
+        let spawner = Arc::new(FakeSpawner::default());
+        let timers = FakeTimers::new();
+        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
+        let reports = monitor.subscribe();
+        let other = monitor.clone();
+        let preparing = std::thread::spawn(move || other.prepare_paste("hello world", Some(42)));
+        wait_for_spawn(&spawner);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while lock(&spawner.child(0)).writes.is_empty() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
         }
+        spawner.emit(
+            0,
+            ChildEvent::Stdout(
+                r#"{"kind":"prepared","ticket":1,"field":"a","value":"","start":0,"length":0}"#
+                    .to_string()
+                    + "\n",
+            ),
+        );
+        let ticket = preparing.join().unwrap().expect("bound before paste");
+        ticket.commit(true);
+        spawner.emit(
+            0,
+            ChildEvent::Stdout(
+                r#"{"kind":"value","field":"a","value":"hello World","composing":false}"#
+                    .to_string()
+                    + "\n",
+            ),
+        );
+        timers.advance(1_000);
+        let report = std::iter::from_fn(|| reports.try_recv().ok())
+            .find(|report| report.edit.is_some())
+            .unwrap();
         assert_eq!(
-            receiver.try_recv(),
-            Err(async_channel::TryRecvError::Closed)
+            report.edit.unwrap(),
+            TextEdit {
+                baseline: "hello world".into(),
+                edited: "hello World".into(),
+                pasted_ranges: std::iter::once(0..11).collect(),
+            }
+        );
+        monitor.stop_monitoring();
+    }
+
+    struct ObservationFixture {
+        monitor: TextEditMonitor,
+        spawner: Arc<FakeSpawner>,
+        timers: Arc<FakeTimers>,
+        reports: async_channel::Receiver<SessionReport>,
+    }
+
+    impl ObservationFixture {
+        fn new() -> Self {
+            let spawner = Arc::new(FakeSpawner::default());
+            let timers = FakeTimers::new();
+            let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
+            let reports = monitor.subscribe();
+            Self {
+                monitor,
+                spawner,
+                timers,
+                reports,
+            }
+        }
+
+        fn paste(&self, field: &str, pre: &str, text: &str) {
+            self.prepare(field, Some(pre), text).unwrap().commit(true);
+        }
+
+        fn prepare(&self, field: &str, pre: Option<&str>, text: &str) -> Option<PreparedPaste> {
+            self.prepare_at(
+                field,
+                pre,
+                text,
+                pre.unwrap_or_default().encode_utf16().count(),
+                0,
+            )
+        }
+
+        fn prepare_at(
+            &self,
+            field: &str,
+            pre: Option<&str>,
+            text: &str,
+            start: usize,
+            length: usize,
+        ) -> Option<PreparedPaste> {
+            let previous_count = self.spawner.count();
+            let previous = if previous_count > 0 {
+                lock(&self.spawner.child(previous_count - 1)).writes.len()
+            } else {
+                0
+            };
+            let monitor = self.monitor.clone();
+            let text = text.to_string();
+            let preparing = std::thread::spawn(move || monitor.prepare_paste(&text, Some(42)));
+            wait_for_spawn(&self.spawner);
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let ticket = loop {
+                let count = self.spawner.count();
+                let offset = if count == previous_count { previous } else { 0 };
+                if let Some(command) = lock(&self.spawner.child(count - 1)).writes.get(offset) {
+                    let command: serde_json::Value = serde_json::from_str(command).unwrap();
+                    break command["ticket"].as_u64().unwrap();
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            self.emit(
+                serde_json::json!({"kind":"prepared", "ticket":ticket, "field":field,
+                "value":pre, "start":start, "length":length}),
+            );
+            preparing.join().unwrap()
+        }
+
+        fn emit(&self, event: serde_json::Value) {
+            self.spawner.emit(
+                self.spawner.count() - 1,
+                ChildEvent::Stdout(event.to_string() + "\n"),
+            );
+        }
+
+        fn edits(&self) -> Vec<SessionReport> {
+            std::iter::from_fn(|| self.reports.try_recv().ok())
+                .filter(|report| report.outcome == ObservationOutcome::CompletedEdit)
+                .collect()
+        }
+    }
+
+    impl Drop for ObservationFixture {
+        fn drop(&mut self) {
+            self.monitor.stop_monitoring();
+        }
+    }
+
+    #[test]
+    fn temporary_emptiness_interrupts_completion_until_replacement_is_stable() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello World"}));
+        fixture.timers.advance(500);
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":""}));
+        fixture.timers.advance(1_000);
+        assert!(
+            fixture.edits().is_empty(),
+            "select-delete must not finalize the previous candidate"
+        );
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello WORLD"}));
+        fixture.timers.advance(1_000);
+        assert_eq!(
+            fixture.edits()[0].edit.as_ref().unwrap().edited,
+            "hello WORLD"
         );
     }
 
     #[test]
-    fn stop_invalidates_a_delayed_start() {
-        let spawner = Arc::new(FakeSpawner::default());
-        let timers = FakeTimers::new();
-        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
-        let pending = monitor.start_monitoring_after_paste("old", Some(42));
-        monitor.stop_monitoring();
-        timers.advance(MONITOR_START_DELAY.as_millis() as u64);
-        assert_pending_start_cancelled(&pending);
-        assert!(!monitor.is_monitoring());
-        assert_eq!(spawner.count(), 0);
+    fn unreadable_observation_recovers_once_without_losing_its_field() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world");
+        fixture.edits();
+        for _ in 0..2 {
+            fixture.emit(serde_json::json!({"kind":"unreadable", "field":"a", "reason":"ax_cannot_complete"}));
+        }
+        let failure = fixture.reports.try_recv().unwrap();
+        assert_eq!(failure.outcome, ObservationOutcome::Unreadable);
+        assert!(fixture.reports.try_recv().is_err());
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":""}));
+        let recovered = fixture
+            .reports
+            .try_recv()
+            .expect("even an empty field is a successful read");
+        assert_eq!(recovered.outcome, ObservationOutcome::Recovered);
+        assert_eq!(recovered.session_id, failure.session_id);
     }
 
     #[test]
-    fn newer_delayed_start_invalidates_the_older_start() {
-        let spawner = Arc::new(FakeSpawner::default());
-        let timers = FakeTimers::new();
-        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
-        let old = monitor.start_monitoring_after_paste("old", Some(42));
-        timers.advance(500);
-        let new = monitor.start_monitoring_after_paste("new", Some(42));
-        timers.advance(500);
-        assert_pending_start_cancelled(&old);
-        assert!(!monitor.is_monitoring());
-        timers.advance(500);
-        wait_for_spawn(&spawner);
-        assert_eq!(spawner.count(), 1);
+    fn a_new_dictation_preserves_an_unfinished_correction_to_the_earlier_passage() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello World"}));
+        fixture.timers.advance(500);
+        fixture.paste("a", "hello World", " again");
+        fixture.timers.advance(1_000);
+        let edits = fixture.edits();
         assert_eq!(
-            lock(&monitor.inner.monitoring)
-                .session
-                .as_ref()
-                .unwrap()
-                .pasted,
-            ["new"]
+            edits.len(),
+            1,
+            "the second dictation must not erase the pending earlier correction"
         );
-        monitor.stop_monitoring();
-        assert!(new.recv_blocking().is_ok());
+        assert_eq!(
+            edits[0].edit.as_ref().unwrap(),
+            &TextEdit {
+                baseline: "hello world again".into(),
+                edited: "hello World again".into(),
+                pasted_ranges: vec![0..11, 11..17],
+            }
+        );
     }
 
     #[test]
-    fn a_delayed_start_cannot_replace_a_newer_immediate_session() {
+    fn synchronizing_flush_publishes_an_already_stable_edit_before_returning() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello World"}));
+        fixture.timers.advance_without_running(1_000);
+        let previous = lock(&fixture.spawner.child(0)).writes.len();
+        let monitor = fixture.monitor.clone();
+        let flushing = std::thread::spawn(move || monitor.flush_completed_edits());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let ticket = loop {
+            if let Some(command) = lock(&fixture.spawner.child(0)).writes.get(previous) {
+                let command: serde_json::Value = serde_json::from_str(command).unwrap();
+                break command["ticket"].as_u64().unwrap();
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        fixture.emit(serde_json::json!({"kind":"synced", "ticket":ticket}));
+        flushing.join().unwrap();
+        assert_eq!(
+            fixture.edits().len(),
+            1,
+            "a delayed timer must not hide a completed edit at capture"
+        );
+    }
+
+    #[test]
+    fn initially_unreadable_field_recovers_without_learning_unknown_old_content() {
+        let fixture = ObservationFixture::new();
+        assert!(fixture.prepare("a", None, "hello world").is_none());
+        assert_eq!(
+            fixture.reports.try_recv().unwrap().outcome,
+            ObservationOutcome::Unreadable
+        );
+        assert!(fixture.prepare("a", None, "hello world").is_none());
+        assert!(
+            fixture.reports.try_recv().is_err(),
+            "one unreadable hint per episode"
+        );
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"unrelated old draft hello World"}));
+        assert_eq!(
+            fixture.reports.try_recv().unwrap().outcome,
+            ObservationOutcome::Recovered
+        );
+        fixture.timers.advance(1_000);
+        assert!(
+            fixture.edits().is_empty(),
+            "unknown baseline cannot support attribution"
+        );
+        fixture.paste("a", "unrelated old draft hello World", " again");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"unrelated old draft hello World AGAIN"}));
+        fixture.timers.advance(1_000);
+        let edits = fixture.edits();
+        assert_eq!(
+            edits[0].edit.as_ref().unwrap().pasted_ranges,
+            std::iter::once(31..37).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn fields_keep_independent_completed_revisions_and_flush_an_immediate_send() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world");
+        fixture.paste("b", "", "second field");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello World", "composing":true}));
+        fixture.emit(serde_json::json!({"kind":"value", "field":"b", "value":"second Field"}));
+        fixture.timers.advance(1_000);
+        let first = fixture.edits();
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].field.as_deref(), Some("b"));
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello World", "composing":false}));
+        fixture.timers.advance(1_000);
+        let a = fixture.edits().remove(0);
+        assert_ne!(a.session_id, first[0].session_id);
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello world"}));
+        fixture.timers.advance(1_000);
+        let restored = fixture.edits().remove(0);
+        assert_eq!(restored.session_id, a.session_id);
+        assert_eq!(restored.revision, 2);
+        assert_eq!(
+            restored.edit.as_ref().unwrap().baseline,
+            restored.edit.as_ref().unwrap().edited
+        );
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"hello WORLD"}));
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"\n"}));
+        fixture.emit(serde_json::json!({"kind":"sent", "field":"a"}));
+        let sent = fixture.edits().remove(0);
+        assert_eq!(sent.revision, 3);
+        assert_eq!(sent.edit.unwrap().edited, "hello WORLD");
+        fixture.emit(
+            serde_json::json!({"kind":"value", "field":"a", "value":"unrelated next message"}),
+        );
+        fixture.timers.advance(1_000);
+        assert!(fixture.edits().is_empty());
+    }
+
+    #[test]
+    fn disabling_observation_invalidates_prepared_tickets_and_reenable_starts_fresh() {
+        let fixture = ObservationFixture::new();
+        let ticket = fixture.prepare("a", Some(""), "hello world").unwrap();
+        fixture.monitor.set_enabled(false);
+        ticket.commit(true);
+        assert!(fixture.monitor.prepare_paste("ignored", Some(42)).is_none());
+        fixture.timers.advance(1_000);
+        assert!(fixture.edits().is_empty());
+        fixture.monitor.set_enabled(true);
+        fixture.paste("a", "", "new passage");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"new Passage"}));
+        fixture.timers.advance(1_000);
+        let edits = fixture.edits();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            edits[0].edit.as_ref().unwrap().pasted_ranges,
+            std::iter::once(0..11).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn canceled_delivery_does_not_create_a_learning_scope() {
+        let fixture = ObservationFixture::new();
+        fixture
+            .prepare("a", Some("old draft"), "ignored")
+            .unwrap()
+            .commit(false);
+        fixture
+            .emit(serde_json::json!({"kind":"value", "field":"a", "value":"unrelated correction"}));
+        fixture.timers.advance(1_000);
+        assert!(fixture.edits().is_empty());
+    }
+
+    #[test]
+    fn missing_helper_retries_and_reports_recovery_without_another_paste() {
         let spawner = Arc::new(FakeSpawner::default());
         let timers = FakeTimers::new();
-        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
-        let old = monitor.start_monitoring_after_paste("old", Some(42));
-        let new = watch(&monitor, "new", Some(42));
-        wait_for_spawn(&spawner);
-        timers.advance(MONITOR_START_DELAY.as_millis() as u64);
-        assert_pending_start_cancelled(&old);
-        assert!(monitor.is_monitoring());
-        assert_eq!(spawner.count(), 1);
+        let available = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let readable = available.clone();
+        let mut hooks = fake_hooks(&spawner);
+        hooks.resolve_helper = Arc::new(move || {
+            readable.load(Ordering::SeqCst).then(|| HelperCommand {
+                program: PathBuf::from("/fake/observer"),
+                args: Vec::new(),
+            })
+        });
+        let monitor = TextEditMonitor::build(hooks, timers.clone());
+        let reports = monitor.subscribe();
+        assert!(monitor.prepare_paste("hello world", Some(42)).is_none());
         assert_eq!(
-            lock(&monitor.inner.monitoring)
-                .session
-                .as_ref()
-                .unwrap()
-                .pasted,
-            ["new"]
+            reports.try_recv().unwrap().diagnostic.as_deref(),
+            Some("helper_unavailable")
         );
+        assert!(monitor.prepare_paste("hello world", Some(42)).is_none());
+        assert!(reports.try_recv().is_err());
+        available.store(true, Ordering::SeqCst);
+        timers.advance(1_000);
+        spawner.emit(
+            0,
+            ChildEvent::Stdout("{\"kind\":\"health_recovered\"}\n".into()),
+        );
+        assert_eq!(
+            reports.try_recv().unwrap().outcome,
+            ObservationOutcome::Recovered
+        );
+        timers.advance(1_000);
+        assert!(reports.try_recv().is_err());
         monitor.stop_monitoring();
-        assert!(new.recv_blocking().is_ok());
+    }
+
+    #[test]
+    fn disabling_during_preparation_cancels_the_wait_without_a_stale_scope() {
+        let fixture = ObservationFixture::new();
+        let monitor = fixture.monitor.clone();
+        let preparing = std::thread::spawn(move || monitor.prepare_paste("hello world", Some(42)));
+        wait_for_spawn(&fixture.spawner);
+        fixture.monitor.set_enabled(false);
+        assert!(preparing.join().unwrap().is_none());
+        fixture.timers.advance(1_000);
+        assert!(fixture.edits().is_empty());
+    }
+
+    #[test]
+    fn a_correction_near_a_long_editor_tail_keeps_its_original_context() {
+        let fixture = ObservationFixture::new();
+        let context = "existing context 😀 ".repeat(1_024);
+        fixture.paste("a", &context, "hello world");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":format!("{context}hello World")}));
+        fixture.timers.advance(1_000);
+        let edits = fixture.edits();
+        let edit = edits[0].edit.as_ref().unwrap();
+        assert_eq!(edit.baseline, format!("{context}hello world"));
+        assert_eq!(edit.edited, format!("{context}hello World"));
+        assert_eq!(
+            edit.pasted_ranges,
+            std::iter::once(22_528..22_539).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn repeated_identical_dictation_retains_each_delivered_region() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world ");
+        fixture.paste("a", "hello world ", "hello world ");
+        fixture.emit(
+            serde_json::json!({"kind":"value", "field":"a", "value":"hello World hello world "}),
+        );
+        fixture.timers.advance(1_000);
+        let report = fixture.edits().remove(0);
+        let edit = report.edit.unwrap();
+        assert_eq!(edit.baseline, "hello world hello world ");
+        assert_eq!(edit.pasted_ranges, [0..12, 12..24]);
+    }
+
+    #[test]
+    fn dictation_before_identical_existing_content_tracks_only_the_delivered_occurrence() {
+        let fixture = ObservationFixture::new();
+        fixture
+            .prepare_at("a", Some("hello world"), "hello world ", 0, 0)
+            .unwrap()
+            .commit(true);
+        fixture.emit(
+            serde_json::json!({"kind":"value", "field":"a", "value":"hello World hello world"}),
+        );
+        fixture.timers.advance(1_000);
+        let edit = fixture.edits().remove(0).edit.unwrap();
+        assert_eq!(edit.baseline, "hello world hello world");
+        assert_eq!(
+            edit.pasted_ranges,
+            std::iter::once(0..12).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn dictation_between_multiple_corrections_preserves_original_baseline_and_regions() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "use cloud code with Shunade today");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"use Claude Code with Sinead today"}));
+        fixture
+            .prepare_at(
+                "a",
+                Some("use Claude Code with Sinead today"),
+                "new ",
+                21,
+                0,
+            )
+            .unwrap()
+            .commit(true);
+        fixture.timers.advance(1_000);
+        let edit = fixture.edits().remove(0).edit.unwrap();
+        assert_eq!(edit.baseline, "use cloud code with new Shunade today");
+        assert_eq!(edit.edited, "use Claude Code with new Sinead today");
+        assert_eq!(edit.pasted_ranges, [0..20, 24..37, 20..24]);
+    }
+
+    #[test]
+    fn replacement_dictation_splits_old_regions_and_keeps_unicode_byte_boundaries() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "hello world 😀 tail");
+        fixture
+            .prepare_at("a", Some("hello world 😀 tail"), "Claude Code", 6, 5)
+            .unwrap()
+            .commit(true);
+        fixture.emit(
+            serde_json::json!({"kind":"value", "field":"a", "value":"Hello Claude code 😀 tail"}),
+        );
+        fixture.timers.advance(1_000);
+        let edit = fixture.edits().remove(0).edit.unwrap();
+        assert_eq!(edit.baseline, "hello Claude Code 😀 tail");
+        assert_eq!(edit.pasted_ranges, [0..6, 17..27, 6..17]);
+    }
+
+    #[test]
+    fn alignment_budget_failure_preserves_prior_learning_without_claiming_the_new_paste() {
+        let fixture = ObservationFixture::new();
+        let original = format!(
+            "use cloud code {} middle {}",
+            "a".repeat(1_100),
+            "b".repeat(1_100)
+        );
+        let corrected = format!(
+            "use Claude Code {} middle {}",
+            "a".repeat(1_100),
+            "b".repeat(1_100)
+        );
+        fixture.paste("a", "", &original);
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":corrected}));
+        fixture.timers.advance(1_000);
+        let completed = fixture.edits().remove(0);
+        let replaced = format!(
+            "use Claude Code {} middle {}",
+            "c".repeat(1_100),
+            "d".repeat(1_100)
+        );
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":replaced}));
+        fixture
+            .prepare_at("a", Some(&replaced), "new ", 1_117, 0)
+            .unwrap()
+            .commit(true);
+        let unavailable = fixture.reports.try_recv().unwrap();
+        assert_eq!(unavailable.session_id, completed.session_id);
+        assert_eq!(
+            unavailable.diagnostic.as_deref(),
+            Some("text_alignment_budget_or_ambiguity")
+        );
+        fixture.emit(
+            serde_json::json!({"kind":"value", "field":"a", "value":"unrelated new content"}),
+        );
+        fixture.timers.advance(1_000);
+        assert!(
+            fixture.edits().is_empty(),
+            "uncertain insertion must not revoke or replace the prior completed correction"
+        );
+        fixture.emit(serde_json::json!({"kind":"sent", "field":"a"}));
+        fixture.paste("a", "", "fresh passage");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"fresh Passage"}));
+        fixture.timers.advance(1_000);
+        let fresh = fixture.edits().remove(0);
+        assert_ne!(fresh.session_id, completed.session_id);
+        assert_eq!(
+            fresh.edit.unwrap().pasted_ranges,
+            std::iter::once(0..13).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn repeated_character_alignment_does_not_guess_which_original_position_survived() {
+        let fixture = ObservationFixture::new();
+        fixture.paste("a", "", "aa");
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":"aaa"}));
+        fixture.edits();
+        fixture
+            .prepare_at("a", Some("aaa"), "B", 1, 0)
+            .unwrap()
+            .commit(true);
+        let report = fixture.reports.try_recv().unwrap();
+        assert_eq!(
+            report.outcome,
+            ObservationOutcome::Unreadable,
+            "three equally optimal insertion locations cannot establish provenance"
+        );
+        fixture.timers.advance(1_000);
+        assert!(fixture.edits().is_empty());
+    }
+
+    #[test]
+    fn appending_to_a_long_field_maps_the_physical_end_without_an_alignment_budget() {
+        let fixture = ObservationFixture::new();
+        let context = "context ".repeat(30_000);
+        let original = format!("start cloud {context} Shunade end");
+        let corrected = format!("start Claude {context} Sinead end");
+        fixture.paste("a", "", &original);
+        fixture.emit(serde_json::json!({"kind":"value", "field":"a", "value":corrected}));
+        fixture.paste("a", &corrected, " again");
+        fixture.timers.advance(1_000);
+        let edit = fixture.edits().remove(0).edit.unwrap();
+        assert_eq!(edit.baseline, original.clone() + " again");
+        assert_eq!(edit.edited, corrected + " again");
+        assert_eq!(
+            edit.pasted_ranges,
+            [0..original.len(), original.len()..original.len() + 6]
+        );
     }
 
     #[test]
@@ -1053,217 +2112,5 @@ mod tests {
             Arc::new(|| None),
         ));
         assert_eq!(monitor.can_paste_at_target(Some(42)), Some(false));
-    }
-
-    #[test]
-    fn monitoring_without_target_helper_or_for_cached_pid_stops_at_once() {
-        let monitor = TextEditMonitor::with_hooks(hooks(sh("echo"), Arc::new(|| None)));
-        let reports = watch(&monitor, "pasted text", None);
-        assert!(!monitor.is_monitoring());
-        assert!(!reports.try_recv().unwrap().readable);
-        lock(&monitor.inner.unsupported_pids).insert(42);
-        let reports = watch(&monitor, "pasted text", Some(42));
-        assert!(!monitor.is_monitoring());
-        assert!(!reports.try_recv().unwrap().readable);
-
-        let monitor = TextEditMonitor::with_hooks(hooks(no_helper(), Arc::new(|| None)));
-        let reports = watch(&monitor, "pasted text", Some(42));
-        assert!(!monitor.is_monitoring());
-        assert!(!reports.try_recv().unwrap().readable);
-    }
-
-    #[test]
-    fn no_element_with_uniform_no_value_teaches_the_cache() {
-        let spawner = Arc::new(FakeSpawner::default());
-        let monitor = TextEditMonitor::with_hooks(fake_hooks(&spawner));
-        let _reports = watch(&monitor, "pasted text", Some(4242));
-        wait_for_spawn(&spawner);
-        assert_eq!(spawner.args(0), ["4242", "90"]);
-        spawner.emit(
-            0,
-            ChildEvent::Stderr(
-                "Attempt 5/5: Cannot get focused element for PID 4242 (error: -25212)\n".into(),
-            ),
-        );
-        spawner.emit(0, ChildEvent::Stdout("NO_ELEMENT\n".into()));
-        assert!(monitor.is_monitoring(), "monitoring ends with the helper");
-        spawner.emit(
-            0,
-            ChildEvent::Exit {
-                code: Some(1),
-                signal: None,
-            },
-        );
-        assert!(!monitor.is_monitoring());
-        assert!(lock(&monitor.inner.unsupported_pids).contains(&4242));
-    }
-
-    #[test]
-    fn persistent_failure_detection() {
-        assert!(is_persistent_ax_no_value_failure(
-            "Attempt 1/5: x (error: -25212)\nAttempt 2/5: x (error: -25212)"
-        ));
-        assert!(!is_persistent_ax_no_value_failure(
-            "Attempt 1/5: x (error: -25212)\nGot focused element on attempt 2"
-        ));
-        assert!(!is_persistent_ax_no_value_failure(
-            "Attempt 1/5: x (error: -25204)"
-        ));
-        assert!(!is_persistent_ax_no_value_failure(""));
-    }
-
-    /// A session on a fake helper, with its first lines already delivered.
-    fn session(
-        lines: &str,
-    ) -> (
-        TextEditMonitor,
-        Arc<FakeSpawner>,
-        Arc<FakeTimers>,
-        async_channel::Receiver<SessionReport>,
-    ) {
-        let timers = FakeTimers::new();
-        let spawner = Arc::new(FakeSpawner::default());
-        let monitor = TextEditMonitor::build(fake_hooks(&spawner), timers.clone());
-        let reports = watch(&monitor, "hello world", Some(42));
-        wait_for_spawn(&spawner);
-        spawner.emit(0, ChildEvent::Stdout(lines.into()));
-        (monitor, spawner, timers, reports)
-    }
-
-    fn edit(baseline: &str, edited: &str) -> Option<TextEdit> {
-        Some(TextEdit {
-            baseline: baseline.into(),
-            edited: edited.into(),
-            pasted: vec!["hello world".into()],
-        })
-    }
-
-    #[test]
-    fn a_session_reports_the_last_text_once_it_ends() {
-        let (monitor, _spawner, _timers, reports) =
-            session("BASELINE:hello world\nCHANGED:hello wrld\nCHANGED_B64:aGVsbG8Kd29ybGQ=\n");
-        assert!(reports.try_recv().is_err(), "nothing before the end");
-        monitor.stop_monitoring();
-        assert_eq!(
-            reports.try_recv().unwrap(),
-            SessionReport {
-                app: None,
-                readable: true,
-                edit: edit("hello world", "hello\nworld"),
-            }
-        );
-    }
-
-    #[test]
-    fn a_session_with_no_edit_reports_none() {
-        let (monitor, _spawner, _timers, reports) = session("BASELINE:hello world\n");
-        monitor.stop_monitoring();
-        let report = reports.try_recv().unwrap();
-        assert!(report.readable);
-        assert_eq!(report.edit, None);
-    }
-
-    #[test]
-    fn typing_the_text_back_is_no_edit() {
-        let (monitor, _spawner, _timers, reports) =
-            session("BASELINE:hello world\nCHANGED:hello\nCHANGED:hello world\n");
-        monitor.stop_monitoring();
-        assert_eq!(reports.try_recv().unwrap().edit, None);
-    }
-
-    #[test]
-    fn the_timeout_ends_a_session() {
-        let (monitor, _spawner, timers, reports) =
-            session("BASELINE:hello world\nCHANGED:hello there\n");
-        timers.advance(90_000);
-        assert!(!monitor.is_monitoring());
-        assert_eq!(
-            reports.try_recv().unwrap().edit,
-            edit("hello world", "hello there")
-        );
-    }
-
-    #[test]
-    fn emptying_the_field_keeps_the_fix_made_just_before() {
-        let (monitor, _spawner, _timers, reports) =
-            session("BASELINE:hello world\nCHANGED:hello there\nCHANGED:\n");
-        assert!(!monitor.is_monitoring(), "sending ends the session");
-        assert_eq!(
-            reports.try_recv().unwrap().edit,
-            edit("hello world", "hello there")
-        );
-    }
-
-    #[test]
-    fn a_paste_landing_after_the_baseline_becomes_the_baseline() {
-        let (monitor, _spawner, _timers, reports) =
-            session("BASELINE:\nCHANGED:hello world\nCHANGED:hello there\n");
-        assert!(monitor.is_monitoring());
-        monitor.stop_monitoring();
-        assert_eq!(
-            reports.try_recv().unwrap().edit,
-            edit("hello world", "hello there")
-        );
-    }
-
-    #[test]
-    fn the_helper_ending_ends_the_session() {
-        let (monitor, spawner, _timers, reports) =
-            session("BASELINE:hello world\nCHANGED:hello there\n");
-        spawner.emit(
-            0,
-            ChildEvent::Exit {
-                code: Some(0),
-                signal: None,
-            },
-        );
-        assert!(!monitor.is_monitoring());
-        assert!(reports.try_recv().unwrap().edit.is_some());
-    }
-
-    #[test]
-    fn a_new_session_ends_the_last_and_remembers_its_paste() {
-        let (monitor, spawner, _timers, first) =
-            session("BASELINE:hello world\nCHANGED:hello there\n");
-        let second = watch(&monitor, "next part", Some(42));
-        assert!(first.try_recv().unwrap().edit.is_some());
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while spawner.count() < 2 {
-            assert!(Instant::now() < deadline, "monitor never spawned");
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        spawner.emit(
-            1,
-            ChildEvent::Stdout(
-                "BASELINE:hello there next part\nCHANGED:hello you next part\n".into(),
-            ),
-        );
-        monitor.stop_monitoring();
-        let report = second.try_recv().unwrap();
-        assert_eq!(report.edit.unwrap().pasted, ["hello world", "next part"]);
-    }
-
-    #[test]
-    fn recent_pastes_are_kept_per_app_and_capped() {
-        let mut monitoring = Monitoring::default();
-        for i in 0..7 {
-            monitoring.remember_paste(Some(1), &i.to_string());
-        }
-        assert_eq!(
-            monitoring.remember_paste(Some(1), "7"),
-            ["3", "4", "5", "6", "7"]
-        );
-        assert_eq!(monitoring.remember_paste(Some(2), "other"), ["other"]);
-    }
-
-    #[test]
-    fn payloads_decode_plain_and_base64_lines() {
-        assert_eq!(payload("CHANGED:a: b", "CHANGED").as_deref(), Some("a: b"));
-        assert_eq!(
-            payload("BASELINE_B64:aGVsbG8Kd29ybGQ=", "BASELINE").as_deref(),
-            Some("hello\nworld")
-        );
-        assert_eq!(payload("CHANGED_B64:not base64!", "CHANGED"), None);
-        assert_eq!(payload("OTHER:x", "CHANGED"), None);
     }
 }

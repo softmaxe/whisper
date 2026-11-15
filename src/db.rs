@@ -13,7 +13,7 @@ use chrono::{DateTime, Duration, Utc};
 use parking_lot::{Mutex, MutexGuard};
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
-pub use dictionary::{DictionaryEntry, DictionarySource};
+pub use dictionary::{CorrectionLearningOutcome, DictionaryEntry, DictionarySource};
 pub use snippets::{MAX_SNIPPET_TRIGGER_LENGTH, Snippet};
 
 /// Shared handle to the database; cheap to share behind an `Arc`.

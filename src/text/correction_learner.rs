@@ -60,8 +60,8 @@ const MAX_PINYIN_DISTANCE: f64 = 0.34;
 pub struct Correction {
     pub misheard: String,
     pub term: String,
-    /// Too weak on its own: wait for a second sighting before the Dictionary
-    /// takes the term.
+    /// Legacy uncertainty signal from extraction. Learning no longer requires
+    /// a deliberate repeat; application still checks the current context.
     pub needs_repeat: bool,
 }
 
@@ -77,7 +77,7 @@ pub struct KnownCorrection {
 impl KnownCorrection {
     /// Whether the delivered text is rewritten without asking the cleanup model.
     pub fn applies_automatically(&self) -> bool {
-        self.count >= 2 && is_context_free(&self.misheard, &self.term)
+        self.count >= 1 && is_context_free(&self.misheard, &self.term)
     }
 }
 
@@ -89,7 +89,10 @@ fn is_context_free(misheard: &str, term: &str) -> bool {
         return utf16_len(misheard) >= 4 && has_inner_capital(term);
     }
     if is_unspaced_script_only(misheard) {
-        return misheard.chars().filter(|c| !c.is_whitespace()).count() >= 2;
+        // Familiar Chinese/Japanese words can express different valid meanings
+        // with the same reading. Leave those choices to context as well.
+        return misheard.chars().filter(|c| !c.is_whitespace()).count() >= 2
+            && (!is_unspaced_script_only(term) || word_segments(term).len() > 1);
     }
     misheard.split_whitespace().count() >= 2 || misheard.chars().any(is_unspaced_script)
 }
@@ -245,6 +248,7 @@ fn tokenize(text: &str) -> Vec<Unit> {
 /// Where the pasted texts sit in the field. An app that reformats a paste
 /// (smart quotes, rich text) leaves no exact copy; a field about that long is
 /// then taken to be the paste.
+#[cfg(test)]
 fn pasted_regions<S: AsRef<str>>(baseline: &str, pasted: &[S]) -> Vec<Range<usize>> {
     let found: Vec<Range<usize>> = pasted
         .iter()
@@ -503,11 +507,32 @@ fn classify(misheard: &str, term: &str, term_units: &[Unit], sentence_start: boo
         return classify_case_fix(term, sentence_start);
     }
     if is_unspaced_script_only(term) {
-        // The segmenter's dictionary already knows a single-unit term (认为,
-        // 说得), so it is ordinary vocabulary or a grammar fix. Misheard names
-        // fall outside that dictionary and split into several units (章|珊).
-        if term_units.len() < 2 {
+        if utf16_len(term) < 2 {
             return None;
+        }
+        let from: Vec<char> = misheard.chars().collect();
+        let to: Vec<char> = term.chars().collect();
+        let prefix = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+        let suffix = from[prefix..]
+            .iter()
+            .rev()
+            .zip(to[prefix..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if from[prefix..from.len() - suffix]
+            .iter()
+            .chain(&to[prefix..to.len() - suffix])
+            .all(|c| FUNCTION_CHARS.contains(*c))
+        {
+            return None;
+        }
+        // Familiar vocabulary can be misheard too. Require matching sounds
+        // for these terms so ordinary word choices remain content edits.
+        if term_units.len() == 1 && is_unspaced_script_only(misheard) {
+            return fuzzy_pinyin(misheard)
+                .zip(fuzzy_pinyin(term))
+                .filter(|(a, b)| a == b)
+                .map(|_| false);
         }
         return if is_unspaced_script_only(misheard) {
             compare_sound(misheard, term)
@@ -534,10 +559,21 @@ fn classify(misheard: &str, term: &str, term_units: &[Unit], sentence_start: boo
 /// Corrections the user made to `pasted` text: the differences between the
 /// field right after the paste (`baseline`) and its last value (`edited`)
 /// that fall inside a pasted region.
+#[cfg(test)]
 pub fn extract_corrections<S: AsRef<str>>(
     baseline: &str,
     edited: &str,
     pasted: &[S],
+) -> Vec<Correction> {
+    extract_corrections_in_regions(baseline, edited, &pasted_regions(baseline, pasted))
+}
+
+/// Extracts corrections only from the byte ranges recorded at delivery, so
+/// identical dictated and pre-existing text cannot exchange ownership.
+pub fn extract_corrections_in_regions(
+    baseline: &str,
+    edited: &str,
+    regions: &[Range<usize>],
 ) -> Vec<Correction> {
     if baseline.is_empty() || edited.is_empty() || baseline == edited {
         return Vec::new();
@@ -548,9 +584,15 @@ pub fn extract_corrections<S: AsRef<str>>(
         return Vec::new();
     }
     let hunks = diff_units(&base_units, &edited_units);
-    let regions: Vec<Range<usize>> = pasted_regions(baseline, pasted)
-        .into_iter()
-        .filter(|region| !is_rewritten(region, &base_units, &hunks))
+    let regions: Vec<_> = regions
+        .iter()
+        .filter(|range| {
+            range.start < range.end
+                && range.end <= baseline.len()
+                && baseline.is_char_boundary(range.start)
+                && baseline.is_char_boundary(range.end)
+        })
+        .cloned()
         .collect();
 
     let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -584,6 +626,26 @@ pub fn extract_corrections<S: AsRef<str>>(
         ) else {
             continue;
         };
+        if is_rewritten(region, &base_units, &hunks) {
+            // Replacing a short dictated name or product can replace the whole
+            // passage. Keep the rewrite guard for clauses and multiple edits.
+            let short_term = hunks.len() == 1
+                && utf16_len(misheard) <= 24
+                && utf16_len(term) <= 32
+                && (fuzzy_pinyin(misheard)
+                    .zip(fuzzy_pinyin(term))
+                    .is_some_and(|(a, b)| a == b)
+                    || (!is_unspaced_script_only(misheard)
+                        && misheard.split_whitespace().count() == 1
+                        && term.split_whitespace().count() == 1)
+                    || term.split_whitespace().all(|word| {
+                        word.chars().next().is_some_and(char::is_uppercase)
+                            || has_inner_capital(word)
+                    }));
+            if !short_term {
+                continue;
+            }
+        }
         if seen.insert((misheard.to_lowercase(), term.to_lowercase())) {
             results.push(Correction {
                 misheard: misheard.to_string(),
@@ -599,6 +661,39 @@ pub fn extract_corrections<S: AsRef<str>>(
 mod tests {
     use super::*;
 
+    #[test]
+    fn explicit_delivery_regions_distinguish_identical_passages() {
+        let baseline = "Hey Shunade. Hey Shunade.";
+        let first = 0.."Hey Shunade.".len();
+        let learned = extract_corrections_in_regions(
+            baseline,
+            "Hey Sinead. Hey Shunade.",
+            std::slice::from_ref(&first),
+        );
+        assert_eq!(learned.len(), 1);
+        assert_eq!(
+            (&*learned[0].misheard, &*learned[0].term),
+            ("Shunade", "Sinead")
+        );
+        assert!(
+            extract_corrections_in_regions(baseline, "Hey Shunade. Hey Sinead.", &[first],)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn ordinary_chinese_homophones_require_context_even_after_repetition() {
+        let rules = [KnownCorrection {
+            misheard: "权利".into(),
+            term: "权力".into(),
+            count: 9,
+        }];
+        assert_eq!(
+            apply_known_corrections("我有这个权利。", &rules),
+            "我有这个权利。"
+        );
+    }
+
     fn corrections(original: &str, edited: &str) -> Vec<Correction> {
         extract_corrections(original, edited, &[original])
     }
@@ -610,7 +705,7 @@ mod tests {
             .collect()
     }
 
-    /// Terms the Dictionary takes at once.
+    /// Terms extraction recognizes without an uncertainty signal.
     fn sure(original: &str, edited: &str) -> Vec<String> {
         corrections(original, edited)
             .into_iter()
@@ -701,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn lowercase_terms_wait_for_a_second_sighting() {
+    fn lowercase_terms_are_marked_uncertain() {
         assert_eq!(
             corrections("this will affect it", "this will effect it"),
             [Correction {
@@ -756,7 +851,31 @@ mod tests {
     }
 
     #[test]
-    fn one_character_name_fix_widens_and_waits() {
+    fn learns_a_misheard_ordinary_chinese_term() {
+        assert_eq!(
+            corrections("我们需要检查帐户设置", "我们需要检查账户设置"),
+            [Correction {
+                misheard: "帐户".into(),
+                term: "账户".into(),
+                needs_repeat: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn learns_a_clear_term_replacing_a_short_utterance() {
+        assert_eq!(
+            corrections("克劳德扣的", "Claude Code"),
+            [Correction {
+                misheard: "克劳德扣的".into(),
+                term: "Claude Code".into(),
+                needs_repeat: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn one_character_name_fix_widens_the_learned_term() {
         assert_eq!(
             corrections("我今天和张山一起吃饭", "我今天和张珊一起吃饭"),
             [Correction {
@@ -797,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn a_capital_alone_needs_a_second_sighting_and_a_mid_sentence_word() {
+    fn a_capital_alone_is_uncertain_and_needs_a_mid_sentence_word() {
         assert_eq!(
             corrections("we use python here", "we use Python here"),
             [Correction {
@@ -943,11 +1062,11 @@ mod tests {
     }
 
     #[test]
-    fn phrases_and_chinese_apply_automatically_after_a_repeat() {
+    fn phrases_and_chinese_apply_automatically_after_one_correction() {
         assert!(known("cloud code", "Claude Code", 2).applies_automatically());
         assert!(known("克劳德", "Claude", 2).applies_automatically());
         assert!(known("github", "GitHub", 2).applies_automatically());
-        assert!(!known("cloud code", "Claude Code", 1).applies_automatically());
+        assert!(known("cloud code", "Claude Code", 1).applies_automatically());
     }
 
     #[test]
@@ -955,6 +1074,21 @@ mod tests {
         assert!(!known("cloud", "Claude", 9).applies_automatically());
         assert!(!known("us", "US", 9).applies_automatically());
         assert!(!known("python", "Python", 9).applies_automatically());
+    }
+
+    #[test]
+    fn one_clear_correction_is_used_in_the_next_dictation() {
+        assert_eq!(
+            apply_known_corrections(
+                "用 cloud code 和克劳德写，推到 github",
+                &[
+                    known("cloud code", "Claude Code", 1),
+                    known("克劳德", "Claude", 1),
+                    known("github", "GitHub", 1),
+                ],
+            ),
+            "用 Claude Code 和Claude写，推到 GitHub"
+        );
     }
 
     #[test]
@@ -1019,9 +1153,9 @@ mod tests {
                 "工具 和 工具",
             ),
             (
-                "甲乙",
-                vec![known("甲乙", "丙丁", 2), known("丙丁", "戊己", 2)],
-                "戊己",
+                "甲A",
+                vec![known("甲A", "乙B", 2), known("乙B", "丙C", 2)],
+                "丙C",
             ),
         ] {
             assert!(rules.iter().all(KnownCorrection::applies_automatically));
@@ -1145,11 +1279,11 @@ mod tests {
     }
 
     #[test]
-    fn unconfirmed_and_context_dependent_corrections_change_nothing() {
+    fn context_dependent_corrections_stay_with_the_model_after_repeats() {
         let corrections = [known("克劳德", "Claude", 1), known("cloud", "Claude", 5)];
         assert_eq!(
             apply_known_corrections("克劳德 cloud", &corrections),
-            "克劳德 cloud"
+            "Claude cloud"
         );
     }
 }

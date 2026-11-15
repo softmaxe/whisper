@@ -307,6 +307,9 @@ pub fn run() {
         AppState::init(settings, db, cx);
         ui::overlays::Overlays::init(cx);
         Dictation::init(cx);
+        crate::native::text_monitor::TextEditMonitor::shared()
+            .set_enabled(AppState::settings(cx).auto_learn_enabled());
+        backend::start_learning_listener(cx);
         cx.bind_keys([
             KeyBinding::new("cmd-k", OpenSearch, Some("ControlPanel")),
             KeyBinding::new("cmd-,", ShowSettings, None),
@@ -318,6 +321,7 @@ pub fn run() {
         ]);
         cx.on_app_quit(|cx| {
             AppState::global(cx).update(cx, |state, _| state.invalidate_learning());
+            crate::native::text_monitor::TextEditMonitor::shared().set_enabled(false);
             if let Some(manager) = backend::hotkeys() {
                 manager.shutdown();
             }

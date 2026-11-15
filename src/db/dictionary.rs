@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use unicode_normalization::UnicodeNormalization;
 
 use super::Database;
@@ -50,6 +50,15 @@ pub struct DictionaryEntry {
     pub source: DictionarySource,
     pub use_count: i64,
     pub last_used_at: Option<DateTime<Utc>>,
+}
+
+/// Newly remembered vocabulary and corrections that need the current context.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CorrectionLearningOutcome {
+    pub added_terms: Vec<String>,
+    pub context_dependent_terms: Vec<String>,
+    pub context_dependent_pairs: Vec<Correction>,
+    pub clear_correction_pairs: Vec<Correction>,
 }
 
 impl DictionaryEntry {
@@ -291,6 +300,8 @@ fn upsert_word(
         // SQLite NOCASE cannot follow a Unicode case-only respelling.
         tx.prepare_cached("UPDATE dictionary_corrections SET term = ? WHERE term = ?")?
             .execute(params![word, existing.word])?;
+        tx.prepare_cached("UPDATE dictionary_session_corrections SET term = ? WHERE term = ?")?
+            .execute(params![word, existing.word])?;
     }
     Ok(())
 }
@@ -300,6 +311,19 @@ fn rejected_words(conn: &Connection) -> Result<Vec<String>> {
         .prepare("SELECT word FROM dictionary_rejected_words")?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?)
+}
+
+fn respell_case_correction(
+    tx: &Transaction<'_>,
+    existing: &mut ExistingRow,
+    misheard: &str,
+    term: &str,
+) -> Result<()> {
+    if misheard.to_lowercase() == term.to_lowercase() {
+        upsert_word(tx, term, Some(existing), DictionarySource::Learned.as_str())?;
+        existing.word = term.to_string();
+    }
+    Ok(())
 }
 
 fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<()> {
@@ -315,29 +339,13 @@ fn delete_row(tx: &Transaction<'_>, existing: Option<&ExistingRow>) -> Result<()
     // What the user took out stays out, and its mishearings stop applying.
     tx.prepare_cached("DELETE FROM dictionary_corrections WHERE term = ?")?
         .execute([&existing.word])?;
+    tx.prepare_cached("DELETE FROM dictionary_session_corrections WHERE term = ?")?
+        .execute([&existing.word])?;
+    tx.prepare_cached("DELETE FROM dictionary_session_terms WHERE word_id = ?")?
+        .execute([existing.id])?;
     tx.prepare_cached("INSERT OR IGNORE INTO dictionary_rejected_words (word) VALUES (?)")?
         .execute([&existing.word])?;
     Ok(())
-}
-
-/// Counts one sighting of `correction` and returns the sightings of its term.
-/// A correction that reverses a stored one replaces it.
-fn record_correction(tx: &Transaction<'_>, correction: &Correction) -> Result<i64> {
-    let Correction { misheard, term, .. } = correction;
-    if misheard.to_lowercase() != term.to_lowercase() {
-        tx.prepare_cached("DELETE FROM dictionary_corrections WHERE misheard = ? AND term = ?")?
-            .execute(params![term, misheard])?;
-    }
-    tx.prepare_cached(
-        "INSERT INTO dictionary_corrections (misheard, term) VALUES (?, ?)
-         ON CONFLICT (misheard, term) DO UPDATE SET
-           count = count + 1, term = excluded.term, updated_at = excluded.updated_at",
-    )?
-    .execute(params![misheard, term])?;
-    let sightings = tx
-        .prepare_cached("SELECT SUM(count) FROM dictionary_corrections WHERE term = ?")?
-        .query_row([term], |row| row.get(0))?;
-    Ok(sightings)
 }
 
 impl Database {
@@ -499,72 +507,196 @@ impl Database {
         Ok(())
     }
 
-    /// Stores what the user corrected and adds the terms that earned a place
-    /// in the Dictionary: a strong one at once, a weak one on its second
-    /// sighting. Words the user removed are ignored. A term already in the
+    /// Stores the correction after its first completed edit. Context-dependent
+    /// pairs stay subject to the cleanup model. Words the user removed are
+    /// ignored. A term already in the
     /// Dictionary only takes the capitalization the user just gave it.
     /// Returns the words added.
     #[cfg(test)]
     pub fn record_corrections(&self, corrections: &[Correction]) -> Result<Vec<String>> {
+        Ok(self
+            .record_corrections_with_outcome(corrections)?
+            .added_terms)
+    }
+
+    #[cfg(test)]
+    pub fn record_corrections_with_outcome(
+        &self,
+        corrections: &[Correction],
+    ) -> Result<CorrectionLearningOutcome> {
         self.record_corrections_checked(corrections, None)
     }
 
     /// Stores a background learning result only while its dictionary generation
     /// is still current. Check under the connection lock so a pending result
     /// cannot undo a clear or another dictionary edit that invalidated it.
+    #[cfg(test)]
     pub fn record_corrections_if_current(
         &self,
         corrections: &[Correction],
         generation: &AtomicU64,
         expected: u64,
     ) -> Result<Vec<String>> {
-        self.record_corrections_checked(corrections, Some((generation, expected)))
+        Ok(self
+            .record_corrections_checked(corrections, Some((generation, expected)))?
+            .added_terms)
     }
 
-    fn record_corrections_checked(
+    /// Reconciles the latest completed edit of one observation session.
+    /// Repeated snapshots and stale revisions cannot add evidence or feedback.
+    pub fn record_session_corrections_if_current(
         &self,
+        session_id: &str,
+        revision: u64,
         corrections: &[Correction],
-        generation: Option<(&AtomicU64, u64)>,
-    ) -> Result<Vec<String>> {
-        if corrections.is_empty() {
-            return Ok(Vec::new());
-        }
+        generation: &AtomicU64,
+        expected: u64,
+    ) -> Result<CorrectionLearningOutcome> {
         let mut conn = self.lock();
-        if generation.is_some_and(|(current, expected)| current.load(Ordering::Acquire) != expected)
-        {
-            return Ok(Vec::new());
+        if generation.load(Ordering::Acquire) != expected {
+            return Ok(CorrectionLearningOutcome::default());
         }
-        let mut by_lower = dictionary_rows(&conn)?;
+        let revision = i64::try_from(revision)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let previous_revision: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM dictionary_learning_sessions WHERE session_id = ?",
+                [session_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if previous_revision.is_some_and(|previous| revision <= previous) {
+            return Ok(CorrectionLearningOutcome::default());
+        }
+        let previous: Vec<(String, String)> = tx
+            .prepare(
+                "SELECT misheard, term FROM dictionary_session_corrections WHERE session_id = ?",
+            )?
+            .query_map([session_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        let previous_keys: HashSet<_> = previous
+            .iter()
+            .map(|(misheard, term)| (misheard.to_lowercase(), term.to_lowercase()))
+            .collect();
         let rejected: HashSet<String> = rejected_words(&tx)?
             .into_iter()
             .map(|word| word.to_lowercase())
             .collect();
-        let mut added: Vec<String> = Vec::new();
+        let mut by_lower = dictionary_rows(&tx)?;
+        let mut outcome = CorrectionLearningOutcome::default();
+        let mut seen = HashSet::new();
         for correction in corrections {
             let term = trim_text(&correction.term);
             let lower = term.to_lowercase();
+            let key = (correction.misheard.to_lowercase(), lower.clone());
             if term.is_empty() || rejected.contains(&lower) {
                 continue;
             }
-            let sightings = record_correction(&tx, correction)?;
-            let source = DictionarySource::Learned.as_str();
-            if let Some(existing) = by_lower.get_mut(&lower) {
-                if correction.misheard.to_lowercase() == lower {
-                    upsert_word(&tx, term, Some(existing), source)?;
-                    existing.word = term.to_string();
+            if !seen.insert(key.clone()) || previous_keys.contains(&key) {
+                if let Some(existing) = by_lower.get_mut(&lower) {
+                    respell_case_correction(&tx, existing, &correction.misheard, term)?;
                 }
                 continue;
             }
-            let earned = !correction.needs_repeat || sightings >= 2;
-            let is_new = !added.iter().any(|word| word.to_lowercase() == lower);
-            if earned && is_new {
-                upsert_word(&tx, term, None, source)?;
-                added.push(term.to_string());
+            let known = tx
+                .query_row(
+                    "SELECT 1 FROM dictionary_corrections WHERE misheard = ? AND term = ?",
+                    params![correction.misheard, term],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            tx.execute(
+                "INSERT INTO dictionary_corrections (misheard, term) VALUES (?, ?)
+                 ON CONFLICT (misheard, term) DO UPDATE SET count = count + 1, updated_at = excluded.updated_at",
+                params![correction.misheard, term],
+            )?;
+            tx.execute(
+                "INSERT INTO dictionary_session_corrections (session_id, misheard, term) VALUES (?, ?, ?)",
+                params![session_id, correction.misheard, term],
+            )?;
+            let automatic = (KnownCorrection {
+                misheard: correction.misheard.clone(),
+                term: term.to_string(),
+                count: 1,
+            })
+            .applies_automatically();
+            if !known && automatic {
+                outcome.clear_correction_pairs.push(correction.clone());
+            }
+            if !known && !automatic {
+                if !outcome
+                    .context_dependent_terms
+                    .iter()
+                    .any(|word| word.to_lowercase() == lower)
+                {
+                    outcome.context_dependent_terms.push(term.to_string());
+                }
+                outcome.context_dependent_pairs.push(correction.clone());
+            }
+            if let Some(existing) = by_lower.get_mut(&lower) {
+                respell_case_correction(&tx, existing, &correction.misheard, term)?;
+            } else {
+                upsert_word(&tx, term, None, DictionarySource::Learned.as_str())?;
+                tx.execute(
+                    "INSERT INTO dictionary_session_terms (word_id) VALUES (?)",
+                    [tx.last_insert_rowid()],
+                )?;
+                outcome.added_terms.push(term.to_string());
+                by_lower = dictionary_rows(&tx)?;
             }
         }
+        for (misheard, term) in previous {
+            if seen.contains(&(misheard.to_lowercase(), term.to_lowercase())) {
+                continue;
+            }
+            tx.execute(
+                "UPDATE dictionary_corrections SET count = count - 1 WHERE misheard = ? AND term = ?",
+                params![misheard, term],
+            )?;
+            tx.execute(
+                "DELETE FROM dictionary_corrections WHERE misheard = ? AND term = ? AND count <= 0",
+                params![misheard, term],
+            )?;
+            tx.execute(
+                "DELETE FROM dictionary_session_corrections WHERE session_id = ? AND misheard = ? AND term = ?",
+                params![session_id, misheard, term],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM custom_dictionary WHERE source = 'learned'
+             AND id IN (SELECT word_id FROM dictionary_session_terms)
+             AND NOT EXISTS (SELECT 1 FROM dictionary_corrections c WHERE c.term = custom_dictionary.word)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM dictionary_session_terms WHERE word_id NOT IN (SELECT id FROM custom_dictionary)",
+            [],
+        )?;
+        tx.execute(
+            "INSERT INTO dictionary_learning_sessions (session_id, revision) VALUES (?, ?)
+             ON CONFLICT (session_id) DO UPDATE SET revision = excluded.revision",
+            params![session_id, revision],
+        )?;
         tx.commit()?;
-        Ok(added)
+        Ok(outcome)
+    }
+
+    #[cfg(test)]
+    fn record_corrections_checked(
+        &self,
+        corrections: &[Correction],
+        generation: Option<(&AtomicU64, u64)>,
+    ) -> Result<CorrectionLearningOutcome> {
+        let default_generation = AtomicU64::new(0);
+        let (generation, expected) = generation.unwrap_or((&default_generation, 0));
+        self.record_session_corrections_if_current(
+            &uuid::Uuid::new_v4().to_string(),
+            1,
+            corrections,
+            generation,
+            expected,
+        )
     }
 
     /// Corrections to terms in the Dictionary, most repeated first. A mishearing
@@ -601,16 +733,32 @@ impl Database {
         tx.execute("DELETE FROM custom_dictionary", [])?;
         tx.execute("DELETE FROM dictionary_corrections", [])?;
         tx.execute("DELETE FROM dictionary_rejected_words", [])?;
+        tx.execute("DELETE FROM dictionary_session_corrections", [])?;
+        tx.execute("DELETE FROM dictionary_session_terms", [])?;
+        tx.execute("DELETE FROM dictionary_learning_sessions", [])?;
         tx.commit()?;
         Ok(())
     }
 
     /// Forgets one mishearing of `term`.
     pub fn remove_correction(&self, misheard: &str, term: &str) -> Result<()> {
-        self.lock().execute(
+        let mut conn = self.lock();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
             "DELETE FROM dictionary_corrections WHERE misheard = ? AND term = ?",
             params![misheard, term],
         )?;
+        tx.execute(
+            "DELETE FROM dictionary_session_corrections WHERE misheard = ? AND term = ?",
+            params![misheard, term],
+        )?;
+        // Explicitly keeping the word while forgetting its correction makes it
+        // independent of any older observation session.
+        tx.execute(
+            "DELETE FROM dictionary_session_terms WHERE word_id IN (SELECT id FROM custom_dictionary WHERE word = ?)",
+            [term],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -1055,6 +1203,219 @@ mod tests {
     }
 
     #[test]
+    fn a_context_dependent_correction_is_remembered_on_the_first_edit() {
+        let db = db();
+        let outcome = db
+            .record_corrections_with_outcome(&[correction("cloud", "Claude", true)])
+            .unwrap();
+        assert_eq!(outcome.context_dependent_terms, ["Claude"]);
+        assert_eq!(db.get_known_corrections().unwrap()[0].count, 1);
+        assert!(!db.get_known_corrections().unwrap()[0].applies_automatically());
+    }
+
+    #[test]
+    fn repeated_snapshots_of_one_session_count_as_one_correction() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        let corrections = [correction("cloud", "Claude", true)];
+        db.record_session_corrections_if_current("field-session", 1, &corrections, &generation, 1)
+            .unwrap();
+        let repeated = db
+            .record_session_corrections_if_current("field-session", 2, &corrections, &generation, 1)
+            .unwrap();
+        assert_eq!(repeated, CorrectionLearningOutcome::default());
+        assert_eq!(db.get_known_corrections().unwrap()[0].count, 1);
+    }
+
+    #[test]
+    fn a_new_clear_correction_reports_success_without_readding_a_manual_word() {
+        let db = db();
+        db.apply_dictionary_changes(&["Claude Code"], NONE, manual())
+            .unwrap();
+        let generation = AtomicU64::new(1);
+        let corrections = [correction("cloud code", "Claude Code", false)];
+        let outcome = db
+            .record_session_corrections_if_current("session", 1, &corrections, &generation, 1)
+            .unwrap();
+        assert!(outcome.added_terms.is_empty());
+        assert_eq!(outcome.clear_correction_pairs, corrections);
+        assert_eq!(
+            db.dictionary_word_source("Claude Code").unwrap().as_deref(),
+            Some("manual")
+        );
+    }
+
+    #[test]
+    fn the_latest_session_spelling_wins_without_adding_a_sighting() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        db.record_session_corrections_if_current(
+            "session",
+            1,
+            &[correction("github", "GitHub", false)],
+            &generation,
+            1,
+        )
+        .unwrap();
+        db.record_session_corrections_if_current(
+            "session",
+            2,
+            &[correction("github", "GITHUB", false)],
+            &generation,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            db.get_known_corrections().unwrap(),
+            [KnownCorrection {
+                misheard: "github".into(),
+                term: "GITHUB".into(),
+                count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn the_latest_session_edit_replaces_only_its_own_learning() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        db.apply_dictionary_changes(&["Shared"], NONE, manual())
+            .unwrap();
+        db.record_corrections(&[correction("historic", "Historical", false)])
+            .unwrap();
+        db.record_session_corrections_if_current(
+            "first",
+            1,
+            &[
+                correction("cloud", "Claude", true),
+                correction("Shunade", "Sinead", false),
+                correction("shared", "Shared", true),
+                correction("historic", "Historical", false),
+            ],
+            &generation,
+            1,
+        )
+        .unwrap();
+        db.record_session_corrections_if_current(
+            "second",
+            1,
+            &[correction("cloud", "Claude", true)],
+            &generation,
+            1,
+        )
+        .unwrap();
+        db.record_session_corrections_if_current(
+            "first",
+            2,
+            &[correction("cloud", "Claudette", true)],
+            &generation,
+            1,
+        )
+        .unwrap();
+        let mut words = db.get_dictionary().unwrap();
+        words.sort();
+        assert_eq!(words, ["Claude", "Claudette", "Historical", "Shared"]);
+        let mut pairs: Vec<_> = db
+            .get_known_corrections()
+            .unwrap()
+            .into_iter()
+            .map(|c| (c.misheard, c.term, c.count))
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            [
+                ("cloud".into(), "Claude".into(), 1),
+                ("cloud".into(), "Claudette".into(), 1),
+                ("historic".into(), "Historical".into(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn clearing_learned_data_allows_a_current_session_to_start_fresh() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        let corrections = [correction("cloud code", "Claude Code", false)];
+        db.record_session_corrections_if_current("session", 1, &corrections, &generation, 1)
+            .unwrap();
+        generation.store(2, Ordering::Release);
+        db.clear_dictionary().unwrap();
+        assert!(
+            db.record_session_corrections_if_current("session", 2, &corrections, &generation, 1)
+                .unwrap()
+                .added_terms
+                .is_empty()
+        );
+        assert_eq!(
+            db.record_session_corrections_if_current("session", 3, &corrections, &generation, 2)
+                .unwrap()
+                .added_terms,
+            ["Claude Code"]
+        );
+    }
+
+    #[test]
+    fn revising_a_session_after_a_unicode_respelling_retracts_its_correction() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        db.record_session_corrections_if_current(
+            "session",
+            1,
+            &[correction("eclair", "Éclair", true)],
+            &generation,
+            1,
+        )
+        .unwrap();
+        db.apply_dictionary_changes(&["éclair"], &["Éclair"], manual())
+            .unwrap();
+        db.record_session_corrections_if_current("session", 2, &[], &generation, 1)
+            .unwrap();
+        assert!(db.get_known_corrections().unwrap().is_empty());
+        assert_eq!(db.get_dictionary().unwrap(), ["éclair"]);
+    }
+
+    #[test]
+    fn a_removed_word_does_not_let_an_old_session_erase_new_learning() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        let corrections = [correction("cloud", "Claude", true)];
+        db.record_session_corrections_if_current("old", 1, &corrections, &generation, 1)
+            .unwrap();
+        db.apply_dictionary_changes(NONE, &["Claude"], manual())
+            .unwrap();
+        db.apply_dictionary_changes(&["Claude"], NONE, manual())
+            .unwrap();
+        db.record_session_corrections_if_current("new", 1, &corrections, &generation, 1)
+            .unwrap();
+        db.record_session_corrections_if_current("old", 2, &[], &generation, 1)
+            .unwrap();
+        assert_eq!(
+            db.get_known_corrections().unwrap(),
+            [KnownCorrection {
+                misheard: "cloud".into(),
+                term: "Claude".into(),
+                count: 1,
+            }]
+        );
+    }
+
+    #[test]
+    fn forgetting_a_correction_detaches_its_old_session_contributions() {
+        let db = db();
+        let generation = AtomicU64::new(1);
+        let corrections = [correction("cloud", "Claude", true)];
+        db.record_session_corrections_if_current("old", 1, &corrections, &generation, 1)
+            .unwrap();
+        db.remove_correction("cloud", "Claude").unwrap();
+        db.record_session_corrections_if_current("new", 1, &corrections, &generation, 1)
+            .unwrap();
+        db.record_session_corrections_if_current("old", 2, &[], &generation, 1)
+            .unwrap();
+        assert_eq!(db.get_known_corrections().unwrap()[0].count, 1);
+    }
+
+    #[test]
     fn an_invalidated_learning_result_cannot_restore_a_cleared_dictionary() {
         let db = db();
         let generation = AtomicU64::new(7);
@@ -1082,29 +1443,32 @@ mod tests {
     }
 
     #[test]
-    fn a_weak_correction_needs_a_second_sighting_of_its_term() {
+    fn a_context_dependent_term_is_added_without_deliberate_repetition() {
         let db = db();
         let weak = correction("affect", "effect", true);
-        assert!(
-            db.record_corrections(std::slice::from_ref(&weak))
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            db.record_corrections(std::slice::from_ref(&weak)).unwrap(),
+            ["effect"]
         );
-        assert!(db.get_dictionary().unwrap().is_empty());
-        assert!(db.get_known_corrections().unwrap().is_empty());
-        assert_eq!(db.record_corrections(&[weak]).unwrap(), ["effect"]);
+        assert_eq!(db.get_dictionary().unwrap(), ["effect"]);
+        assert!(!db.get_known_corrections().unwrap()[0].applies_automatically());
+        assert!(db.record_corrections(&[weak]).unwrap().is_empty());
     }
 
     #[test]
     fn different_mishearings_of_a_term_add_up() {
         let db = db();
-        db.record_corrections(&[correction("克劳", "Claude", true)])
-            .unwrap();
         assert_eq!(
-            db.record_corrections(&[correction("cloud", "Claude", true)])
+            db.record_corrections(&[correction("克劳", "Claude", true)])
                 .unwrap(),
             ["Claude"]
         );
+        assert!(
+            db.record_corrections(&[correction("cloud", "Claude", true)])
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(db.get_known_corrections().unwrap().len(), 2);
     }
 
     #[test]
@@ -1255,21 +1619,46 @@ mod tests {
     }
 
     #[test]
-    fn a_reversed_correction_replaces_the_old_one() {
-        let db = db();
-        db.apply_dictionary_changes(&["Alpha", "Beta"], NONE, manual())
+    fn opposite_contexts_keep_independent_session_contributions() {
+        for removed in ["first", "second"] {
+            let db = db();
+            db.apply_dictionary_changes(&["Alpha", "Beta"], NONE, manual())
+                .unwrap();
+            let generation = AtomicU64::new(1);
+            db.record_session_corrections_if_current(
+                "first",
+                1,
+                &[correction("Alpha", "Beta", false)],
+                &generation,
+                1,
+            )
             .unwrap();
-        db.record_corrections(&[correction("Alpha", "Beta", false)])
+            db.record_session_corrections_if_current(
+                "second",
+                1,
+                &[correction("Beta", "Alpha", false)],
+                &generation,
+                1,
+            )
             .unwrap();
-        db.record_corrections(&[correction("Beta", "Alpha", false)])
-            .unwrap();
-        let rows: i64 = db
-            .lock()
-            .query_row("SELECT COUNT(*) FROM dictionary_corrections", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(rows, 1);
+            db.record_session_corrections_if_current(removed, 2, &[], &generation, 1)
+                .unwrap();
+            let (misheard, term) = if removed == "first" {
+                ("Beta", "Alpha")
+            } else {
+                ("Alpha", "Beta")
+            };
+            db.apply_dictionary_changes(NONE, &[misheard], manual())
+                .unwrap();
+            assert_eq!(
+                db.get_known_corrections().unwrap(),
+                [KnownCorrection {
+                    misheard: misheard.into(),
+                    term: term.into(),
+                    count: 1
+                }]
+            );
+        }
     }
 
     #[test]

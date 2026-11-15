@@ -343,13 +343,24 @@ impl Paster {
 
     /// Activates the Target app and pastes `text` (with smart spacing) into it.
     pub fn paste_text(&self, text: &str, options: PasteOptions) -> PasteOutcome {
+        self.paste_text_observed(text, options, |_, _| |_| {})
+    }
+
+    /// Binds edit observation after target validation, before Command-V, and
+    /// confirms whether delivery succeeded. Preparation stays inside the queue.
+    pub fn paste_text_observed<F: FnOnce(bool)>(
+        &self,
+        text: &str,
+        options: PasteOptions,
+        prepare: impl FnOnce(&str, Option<i32>) -> F,
+    ) -> PasteOutcome {
         // Activation stays outside the clipboard queue.
         if options.target_pid.is_some() {
             (self.hooks.activate_target)(options.target_pid);
         }
         let spaced = apply_smart_spacing(text);
         let ticket = self.queue.acquire();
-        let (outcome, restore) = self.paste_locked(&spaced, options);
+        let (outcome, restore) = self.paste_locked(&spaced, options, prepare);
         match restore {
             // The ticket is held until the restore settles.
             Some(restore) => {
@@ -377,10 +388,11 @@ impl Paster {
         operation()
     }
 
-    fn paste_locked(
+    fn paste_locked<F: FnOnce(bool)>(
         &self,
         text: &str,
         options: PasteOptions,
+        prepare: impl FnOnce(&str, Option<i32>) -> F,
     ) -> (PasteOutcome, Option<PastedRestore>) {
         let pasteboard = &self.hooks.pasteboard;
         let original = options
@@ -408,6 +420,7 @@ impl Paster {
             return (PasteOutcome::clipboard_only(), None);
         }
 
+        let complete = prepare(text, options.target_pid);
         let result = match self.paste_command() {
             Ok(()) => Ok(()),
             Err(PasteFailure::KeyboardLayoutUnresolved) => {
@@ -421,6 +434,7 @@ impl Paster {
                 self.paste_command()
             }
         };
+        complete(result.is_ok());
         match result {
             Ok(()) => (
                 PasteOutcome {
@@ -514,8 +528,7 @@ fn restore_after_delay(
     pasteboard.restore(original);
 }
 
-/// Pastes through the shared [`Paster`]. After `pasted`, start
-/// `TextEditMonitor::shared().start_monitoring_after_paste` for auto-learn.
+/// Pastes through the shared [`Paster`] without observing subsequent edits.
 pub fn paste_text(text: &str, options: PasteOptions) -> PasteOutcome {
     Paster::shared().paste_text(text, options)
 }
@@ -700,6 +713,30 @@ mod tests {
     fn settle(f: &Fixture) {
         // Waits for the queued restore to finish.
         f.paster.run_clipboard_operation(|| ());
+    }
+
+    #[test]
+    fn observation_binds_the_validated_field_before_paste_and_confirms_delivery() {
+        let f = fixture(true, true);
+        let prepared = Arc::new(Mutex::new(None));
+        let completed = Arc::new(Mutex::new(None));
+        let prepared_result = prepared.clone();
+        let completed_result = completed.clone();
+        let commands = f.runs.clone();
+        let outcome = f
+            .paster
+            .paste_text_observed("dictated", opts(Some(42)), move |text, pid| {
+                assert!(
+                    lock(&commands).is_empty(),
+                    "observation must precede Command-V"
+                );
+                *lock(&prepared_result) = Some((text.to_string(), pid));
+                move |pasted| *lock(&completed_result) = Some(pasted)
+            });
+        assert!(outcome.pasted);
+        assert_eq!(*lock(&prepared), Some(("dictated ".into(), Some(42))));
+        assert_eq!(*lock(&completed), Some(true));
+        settle(&f);
     }
 
     #[test]

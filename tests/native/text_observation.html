@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Whisper text observation fixture</title>
+<style>
+body{font:16px system-ui;max-width:720px;margin:40px auto;padding:0 20px}
+textarea,[contenteditable]{box-sizing:border-box;width:100%;min-height:110px;border:1px solid #888;border-radius:6px;padding:12px;font:inherit;white-space:pre-wrap}
+section{margin-bottom:30px}button{padding:7px 14px;margin-top:8px}
+</style>
+<h1>Whisper text observation fixture</h1>
+<p>Disposable local inputs for native observation checks. Sending only clears the local field.</p>
+<section><label for="plain">Plain text input</label><textarea id="plain" aria-label="Plain text input"></textarea><button id="sendPlain">Send plain text</button></section>
+<section><label id="richLabel">Rich text input</label><div id="rich" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="richLabel"></div><button id="sendRich">Send rich text</button></section>
+<button id="long">Fill a long draft</button>
+<script>
+document.getElementById('sendPlain').onclick=()=>{document.getElementById('plain').value='';};
+document.getElementById('sendRich').onclick=()=>{document.getElementById('rich').textContent='';};
+document.getElementById('plain').onkeydown=event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();event.currentTarget.value='';}};
+document.getElementById('long').onclick=()=>{const input=document.getElementById('plain');input.value='Existing draft. '.repeat(1100);input.focus();input.setSelectionRange(input.value.length,input.value.length);};
+</script>
+</html>

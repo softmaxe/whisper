@@ -143,6 +143,10 @@ pub enum DictationNotice {
         description: Option<String>,
     },
     LearnedWords(Vec<String>),
+    LearnedCorrection(Vec<(String, String)>),
+    ContextDependentCorrection(Vec<(String, String)>),
+    LearningUnreadable,
+    LearningRecovered,
     /// A clean press that did nothing; explains how the mode starts Dictation.
     HotkeyHint {
         hold: bool,
@@ -594,10 +598,15 @@ impl Dictation {
 
     fn pipeline_input(
         audio: bytes::Bytes,
-        cx: &App,
+        cx: &mut App,
     ) -> impl std::future::Future<Output = PipelineInput> + Send + 'static {
         let state = AppState::global(cx).read(cx);
-        capture_pipeline_input(audio, state.settings.clone(), state.db.clone())
+        let (settings, db) = (state.settings.clone(), state.db.clone());
+        let learning = backend::flush_learning(cx);
+        async move {
+            learning.await;
+            capture_pipeline_input(audio, settings, db).await
+        }
     }
 
     fn process(&mut self, audio: RecordedAudio, cx: &mut Context<Self>) {
@@ -905,8 +914,13 @@ impl Dictation {
                     return;
                 }
                 let paste_started = Instant::now();
-                let pasted =
-                    backend::paste_text(text.clone(), target_pid, settings.output_mode).await;
+                let pasted = backend::paste_text(
+                    text.clone(),
+                    target_pid,
+                    settings.output_mode,
+                    settings.auto_learn_enabled(),
+                )
+                .await;
                 log::info!(
                     "[perf] operation={generation} stage=paste_complete elapsed_ms={:.3}",
                     paste_started.elapsed().as_secs_f64() * 1000.0
@@ -932,20 +946,6 @@ impl Dictation {
                                 title,
                                 description: Some(t("app.toasts.cleanupFailed.description")),
                             });
-                        }
-                        let s = AppState::settings(cx);
-                        if s.auto_learn_corrections {
-                            let learned =
-                                backend::monitor_corrections(text.clone(), target_pid, cx);
-                            cx.spawn(async move |this, cx| {
-                                let words = learned.await;
-                                if !words.is_empty() {
-                                    let _ = this.update(cx, |_, cx| {
-                                        cx.emit(DictationNotice::LearnedWords(words))
-                                    });
-                                }
-                            })
-                            .detach();
                         }
                     } else {
                         let copied = backend::write_clipboard(&text);
@@ -1018,24 +1018,39 @@ fn capture_pipeline_input(
     settings: Settings,
     db: Arc<crate::db::Database>,
 ) -> impl std::future::Future<Output = PipelineInput> + Send + 'static {
-    crate::services::runtime::storage(move || PipelineInput {
-        audio,
-        dictionary: db
+    crate::services::runtime::storage(move || {
+        let auto_learn_enabled = settings.auto_learn_enabled();
+        let dictionary: Vec<String> = db
             .get_dictionary_entries()
             .unwrap_or_default()
             .into_iter()
+            .filter(|entry| {
+                auto_learn_enabled || entry.source == crate::db::DictionarySource::Manual
+            })
             .map(|entry| entry.word)
-            .collect(),
-        dictionary_priority: db.get_dictionary_by_priority().unwrap_or_default(),
-        known_corrections: if settings.auto_learn_corrections {
-            db.get_known_corrections().unwrap_or_default()
-        } else {
-            Vec::new()
-        },
-        snippets: db.get_snippets().unwrap_or_default(),
-        settings,
-        cleanup_api_key: None,
-        cleanup_stage: None,
+            .collect();
+        let allowed_words: std::collections::HashSet<&str> =
+            dictionary.iter().map(String::as_str).collect();
+        let dictionary_priority = db
+            .get_dictionary_by_priority()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|word| allowed_words.contains(word.as_str()))
+            .collect();
+        PipelineInput {
+            audio,
+            dictionary,
+            dictionary_priority,
+            known_corrections: if auto_learn_enabled {
+                db.get_known_corrections().unwrap_or_default()
+            } else {
+                Vec::new()
+            },
+            snippets: db.get_snippets().unwrap_or_default(),
+            settings,
+            cleanup_api_key: None,
+            cleanup_stage: None,
+        }
     })
 }
 
@@ -1540,6 +1555,57 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_suspends_learned_influence_until_cleanup_and_auto_learn_are_enabled() {
+        use crate::text::correction_learner::Correction;
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.apply_dictionary_changes(&["Whisper"], &[] as &[&str], DictionarySource::Manual)
+            .unwrap();
+        db.record_corrections(&[Correction {
+            misheard: "cloud code".into(),
+            term: "Claude Code".into(),
+            needs_repeat: false,
+        }])
+        .unwrap();
+        let configured = Settings {
+            cleanup_model: "cleanup".into(),
+            cleanup_remote_url: "http://localhost:8080/v1".into(),
+            ..Settings::default()
+        };
+        run(async {
+            for settings in [
+                Settings {
+                    use_cleanup_model: false,
+                    ..configured.clone()
+                },
+                Settings {
+                    cleanup_model: String::new(),
+                    ..configured.clone()
+                },
+                Settings {
+                    cleanup_remote_url: String::new(),
+                    ..configured.clone()
+                },
+                Settings {
+                    auto_learn_corrections: false,
+                    ..configured.clone()
+                },
+            ] {
+                let input =
+                    capture_pipeline_input(bytes::Bytes::new(), settings.clone(), db.clone()).await;
+                assert_eq!(input.dictionary, ["Whisper"]);
+                assert_eq!(input.dictionary_priority, ["Whisper"]);
+                assert!(input.known_corrections.is_empty());
+                assert_eq!(input.settings, settings);
+            }
+
+            let resumed = capture_pipeline_input(bytes::Bytes::new(), configured, db).await;
+            assert_eq!(resumed.dictionary, ["Whisper", "Claude Code"]);
+            assert_eq!(resumed.dictionary_priority, ["Whisper", "Claude Code"]);
+            assert_eq!(resumed.known_corrections.len(), 1);
+        });
+    }
+
+    #[test]
     fn pipeline_rules_capture_prior_writes_and_exclude_later_edits() {
         use crate::text::correction_learner::Correction;
         let db = Arc::new(Database::open_in_memory().unwrap());
@@ -1564,7 +1630,15 @@ mod tests {
                 db.record_corrections(&[correction]).unwrap();
             })
         };
-        let enabled = capture_pipeline_input(bytes::Bytes::new(), Settings::default(), db.clone());
+        let enabled = capture_pipeline_input(
+            bytes::Bytes::new(),
+            Settings {
+                cleanup_model: "cleanup".into(),
+                cleanup_remote_url: "http://localhost:8080/v1".into(),
+                ..Settings::default()
+            },
+            db.clone(),
+        );
         let disabled = capture_pipeline_input(
             bytes::Bytes::new(),
             Settings {

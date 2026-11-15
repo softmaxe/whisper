@@ -296,14 +296,28 @@ pub fn paste_text(
     text: String,
     target_pid: Option<i32>,
     output_mode: crate::settings::OutputMode,
+    learn: bool,
 ) -> impl std::future::Future<Output = bool> + 'static {
     let (tx, rx) = futures::channel::oneshot::channel();
     std::thread::spawn(move || {
-        crate::native::text_monitor::TextEditMonitor::shared().stop_monitoring();
-        let outcome = crate::native::paste::paste_text(
-            &text,
-            crate::native::paste::PasteOptions::new(target_pid, output_mode),
-        );
+        let options = crate::native::paste::PasteOptions::new(target_pid, output_mode);
+        let outcome = if learn {
+            crate::native::paste::Paster::shared().paste_text_observed(
+                &text,
+                options,
+                |text, pid| {
+                    let prepared = crate::native::text_monitor::TextEditMonitor::shared()
+                        .prepare_paste(text, pid);
+                    move |pasted| {
+                        if let Some(prepared) = prepared {
+                            prepared.commit(pasted);
+                        }
+                    }
+                },
+            )
+        } else {
+            crate::native::paste::paste_text(&text, options)
+        };
         if let Some(failure) = &outcome.failure {
             log::warn!("automatic paste failed: {failure:?}");
         }
@@ -312,26 +326,123 @@ pub fn paste_text(
     async move { rx.await.unwrap_or(false) }
 }
 
-/// Watches the target field after an automatic paste and adds learned
-/// corrections to the Dictionary (auto-learn). Resolves to the words added
-/// once the session ends.
-pub fn monitor_corrections(
-    text: String,
-    target_pid: Option<i32>,
-    cx: &mut gpui_kit::App,
-) -> gpui_kit::Task<Vec<String>> {
-    let reports = crate::native::text_monitor::TextEditMonitor::shared()
-        .start_monitoring_after_paste(&text, target_pid);
-    cx.spawn(async move |cx| {
-        let Ok(report) = reports.recv().await else {
-            return Vec::new();
-        };
-        cx.update(|cx| {
-            crate::app_state::AppState::global(cx)
-                .update(cx, |s, cx| s.learn_from_session(report, cx))
+/// Consumes completed edits and observation health independently of dictation
+/// generations, so later edits to earlier passages are not discarded.
+struct LearningBarriers(async_channel::Sender<futures::channel::oneshot::Sender<()>>);
+impl gpui_kit::Global for LearningBarriers {}
+
+/// Waits for completed native edits and their queued dictionary writes before
+/// taking the next pipeline snapshot. Unfinished composition remains pending.
+pub fn flush_learning(cx: &mut gpui_kit::App) -> gpui_kit::Task<()> {
+    let barriers = cx.global::<LearningBarriers>().0.clone();
+    cx.spawn(async move |_| {
+        let _ = crate::services::runtime::blocking(|| {
+            crate::native::text_monitor::TextEditMonitor::shared().flush_completed_edits();
         })
-        .await
+        .await;
+        let (done, completed) = futures::channel::oneshot::channel();
+        if barriers.send(done).await.is_ok() {
+            let _ = completed.await;
+        }
     })
+}
+
+pub fn start_learning_listener(cx: &mut gpui_kit::App) {
+    use crate::app_state::AppState;
+    use crate::dictation::{Dictation, DictationNotice};
+    use crate::native::text_monitor::{ObservationOutcome, TextEditMonitor};
+    use futures::FutureExt;
+
+    let reports = TextEditMonitor::shared().subscribe();
+    let (barrier_sender, barriers) = async_channel::unbounded();
+    cx.set_global(LearningBarriers(barrier_sender));
+    cx.spawn(async move |cx| {
+        loop {
+            let report = reports.recv().fuse();
+            let barrier = barriers.recv().fuse();
+            futures::pin_mut!(report, barrier);
+            let report = futures::select_biased! {
+                report = report => match report { Ok(report) => report, Err(_) => break },
+                barrier = barrier => {
+                    if let Ok(barrier) = barrier {
+                        let _ = barrier.send(());
+                    }
+                    continue;
+                }
+            };
+            if let Some(diagnostic) = &report.diagnostic {
+                log::debug!(
+                    "[auto-learn] outcome={:?} app={:?} field={:?} reason={diagnostic}",
+                    report.outcome,
+                    report.app,
+                    report.field
+                );
+            }
+            if !cx.update(|cx| AppState::settings(cx).auto_learn_enabled()) {
+                continue;
+            }
+            match report.outcome {
+                ObservationOutcome::Unreadable | ObservationOutcome::Recovered => {
+                    let notice = if report.outcome == ObservationOutcome::Unreadable {
+                        DictationNotice::LearningUnreadable
+                    } else {
+                        DictationNotice::LearningRecovered
+                    };
+                    cx.update(|cx| {
+                        Dictation::global(cx).update(cx, |_, cx| cx.emit(notice));
+                    });
+                }
+                ObservationOutcome::CompletedEdit => {
+                    let learning = cx.update(|cx| {
+                        AppState::global(cx)
+                            .update(cx, |state, cx| state.learn_from_session(report, cx))
+                    });
+                    let outcome = learning.await;
+                    cx.update(|cx| {
+                        if !AppState::settings(cx).auto_learn_enabled() {
+                            return;
+                        }
+                        let contextual: std::collections::HashSet<_> = outcome
+                            .context_dependent_terms
+                            .iter()
+                            .map(String::as_str)
+                            .collect();
+                        let clear: Vec<_> = outcome
+                            .added_terms
+                            .iter()
+                            .filter(|term| !contextual.contains(term.as_str()))
+                            .cloned()
+                            .collect();
+                        let existing_word_pairs: Vec<_> = outcome
+                            .clear_correction_pairs
+                            .into_iter()
+                            .filter(|pair| !outcome.added_terms.contains(&pair.term))
+                            .map(|pair| (pair.misheard, pair.term))
+                            .collect();
+                        Dictation::global(cx).update(cx, |_, cx| {
+                            if !clear.is_empty() {
+                                cx.emit(DictationNotice::LearnedWords(clear));
+                            }
+                            if !existing_word_pairs.is_empty() {
+                                cx.emit(DictationNotice::LearnedCorrection(existing_word_pairs));
+                            }
+                            if !outcome.context_dependent_pairs.is_empty() {
+                                cx.emit(DictationNotice::ContextDependentCorrection(
+                                    outcome
+                                        .context_dependent_pairs
+                                        .into_iter()
+                                        .map(|pair| (pair.misheard, pair.term))
+                                        .collect(),
+                                ));
+                            }
+                        });
+                    });
+                }
+                ObservationOutcome::Readable => {}
+            }
+        }
+    })
+    .detach();
 }
 
 /// Removes words auto-learn just added (the toast's Undo).

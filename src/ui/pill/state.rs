@@ -157,6 +157,8 @@ pub(super) enum ToastKind {
     Destructive,
     Success,
     Hint,
+    LearningContext,
+    LearningUnavailable,
 }
 
 pub(super) struct PillToast {

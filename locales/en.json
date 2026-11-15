@@ -43,6 +43,7 @@
     "dictionary": {
       "autoLearnTitle": "Auto-learn from corrections",
       "autoLearnDescription": "When you fix a transcript in another app, Whisper learns how the word was misheard and corrects it next time",
+      "autoLearnRequiresCleanup": "Enable and configure text cleanup to use auto-learn. Learned data is kept, and manually added dictionary words stay active.",
       "title": "Dictionary"
     },
     "general": {
@@ -727,6 +728,19 @@
         }
       },
       "addedToDict": "Added {{words}} to your dictionary",
+      "learningCorrection": "Learned correction {{corrections}}",
+      "learningContext": {
+        "title": "Remembered {{corrections}}",
+        "description": "This correction depends on context and will be judged in future dictations."
+      },
+      "learningUnreadable": {
+        "title": "Cannot read this input field right now",
+        "description": "Auto-learn is temporarily unavailable. You can still dictate."
+      },
+      "learningRecovered": {
+        "title": "Auto-learn is available again",
+        "description": "Corrections in this input field can now be learned."
+      },
       "undo": "Undo",
       "cleanupFailed": {
         "title": "Cleanup failed",
