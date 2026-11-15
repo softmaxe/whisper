@@ -43,6 +43,7 @@
     "dictionary": {
       "autoLearnTitle": "从纠正中自动学习",
       "autoLearnDescription": "你在其他应用里改正转录内容后，Whisper 会记住这个词被误听成什么，下次自动修正",
+      "autoLearnRequiresCleanup": "开启并配置文本润色后可用。已学内容会保留，手动添加的词典仍可使用。",
       "title": "词典"
     },
     "general": {
@@ -706,6 +707,19 @@
         }
       },
       "addedToDict": "已将 {{words}} 添加到你的词典",
+      "learningCorrection": "已记住纠正 {{corrections}}",
+      "learningContext": {
+        "title": "已记下 {{corrections}}",
+        "description": "这处纠正有歧义，后续结合语境使用。"
+      },
+      "learningUnreadable": {
+        "title": "暂时无法读取这个输入框",
+        "description": "自动学习暂时不可用，口述仍可使用。"
+      },
+      "learningRecovered": {
+        "title": "已恢复自动学习",
+        "description": "接下来对这个输入框的纠正会继续学习。"
+      },
       "undo": "撤消",
       "cleanupFailed": {
         "title": "清理失败",

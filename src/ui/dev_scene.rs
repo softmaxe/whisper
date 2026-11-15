@@ -5,6 +5,9 @@
 //! `settings[:general|language|hotkeys|speech|llms|privacy]`, and the pill states
 //! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
 //! `pill:cleanup`, `pill:cleanup-transition`, `pill:flow`, `pill:error`, `pill:fallback`.
+//! `pill:learning-context`, `pill:learning-unreadable`, `pill:learning-recovered`,
+//! `pill:learning-learned`, and `pill:learning-cycle` show auto-learn feedback.
+//! `WHISPER_DEV_LEARNING_WITH_PILL=1` keeps the existing recording pill visible.
 //! `WHISPER_DEV_SCROLL_FRACTION=0.5` or `1` captures the middle or bottom of Settings.
 
 use std::time::Duration;
@@ -53,6 +56,11 @@ pub fn scene() -> Option<Scene> {
             "error" => "error",
             "no-speech" => "no-speech",
             "fallback" => "fallback",
+            "learning-context" => "learning-context",
+            "learning-unreadable" => "learning-unreadable",
+            "learning-recovered" => "learning-recovered",
+            "learning-learned" => "learning-learned",
+            "learning-cycle" => "learning-cycle",
             _ => "recording",
         }),
         _ => return None,
@@ -64,6 +72,12 @@ pub fn scene() -> Option<Scene> {
 pub fn pill_head_start() -> Duration {
     match scene() {
         Some(Scene::Pill("recording")) => Duration::from_secs(14),
+        Some(Scene::Pill(state))
+            if state.starts_with("learning-")
+                && std::env::var("WHISPER_DEV_LEARNING_WITH_PILL").as_deref() == Ok("1") =>
+        {
+            Duration::from_secs(14)
+        }
         _ => Duration::ZERO,
     }
 }
@@ -73,7 +87,37 @@ pub fn apply_pill(cx: &mut App) {
     let Some(Scene::Pill(state)) = scene() else {
         return;
     };
+    if state.starts_with("learning-")
+        && std::env::var("WHISPER_DEV_LEARNING_WITH_PILL").as_deref() == Ok("1")
+    {
+        AppState::global(cx).update(cx, |state, cx| {
+            state.dictation.is_recording = true;
+            cx.notify();
+        });
+    }
     match state {
+        "learning-context" | "learning-unreadable" | "learning-recovered" | "learning-learned" => {
+            let notice = learning_notice(state);
+            Dictation::global(cx).update(cx, |_, cx| cx.emit(notice));
+        }
+        "learning-cycle" => {
+            cx.spawn(async move |cx| {
+                loop {
+                    for state in [
+                        "learning-context",
+                        "learning-unreadable",
+                        "learning-recovered",
+                    ] {
+                        cx.update(|cx| {
+                            Dictation::global(cx)
+                                .update(cx, |_, cx| cx.emit(learning_notice(state)));
+                        });
+                        cx.background_executor().timer(Duration::from_secs(7)).await;
+                    }
+                }
+            })
+            .detach();
+        }
         "flow" => {
             // One whole Dictation on a loop: record, transcribe, polish,
             // skip, deliver. For recording the pill's motion end to end.
@@ -208,5 +252,16 @@ pub fn apply_pill(cx: &mut App) {
                 copied: true,
             })
         }),
+    }
+}
+
+fn learning_notice(state: &str) -> DictationNotice {
+    match state {
+        "learning-context" => {
+            DictationNotice::ContextDependentCorrection(vec![("cloud".into(), "Claude".into())])
+        }
+        "learning-unreadable" => DictationNotice::LearningUnreadable,
+        "learning-recovered" => DictationNotice::LearningRecovered,
+        _ => DictationNotice::LearnedWords(vec!["Claude".into()]),
     }
 }

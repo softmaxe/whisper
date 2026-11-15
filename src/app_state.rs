@@ -15,7 +15,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use gpui_kit::*;
 
 use crate::audio_storage::{AudioStorage, RetentionCleanupReport};
-use crate::db::{Database, DictionaryEntry, DictionarySource, Snippet, TranscriptionItem};
+use crate::db::{
+    CorrectionLearningOutcome, Database, DictionaryEntry, DictionarySource, Snippet,
+    TranscriptionItem,
+};
 use crate::history::{HistoryStore, HistoryWrite};
 use crate::i18n::{self, Language};
 use crate::native::text_monitor::SessionReport;
@@ -167,8 +170,10 @@ impl AppState {
             }
         })
         .detach();
-        if before.auto_learn_corrections != self.settings.auto_learn_corrections {
+        if before.auto_learn_enabled() != self.settings.auto_learn_enabled() {
             self.dictionary_revision.fetch_add(1, Ordering::SeqCst);
+            crate::native::text_monitor::TextEditMonitor::shared()
+                .set_enabled(self.settings.auto_learn_enabled());
         }
         if before.theme != self.settings.theme {
             theme::apply(self.settings.theme, cx);
@@ -461,23 +466,27 @@ impl AppState {
         .detach();
     }
 
-    /// Learns from a finished post-paste session. Returns the words added to
-    /// the Dictionary.
+    /// Replaces a session's learning contribution with its latest completed edit.
     pub fn learn_from_session(
         &mut self,
         report: SessionReport,
         cx: &mut Context<Self>,
-    ) -> Task<Vec<String>> {
+    ) -> Task<CorrectionLearningOutcome> {
         let revision = self.dictionary_revision.load(Ordering::SeqCst);
         let token = self.dictionary_revision.clone();
         cx.spawn(async move |this, cx| {
-            let SessionReport { edit, .. } = report;
+            let SessionReport {
+                edit,
+                session_id,
+                revision: session_revision,
+                ..
+            } = report;
             let corrections = if let Some(edit) = edit {
                 crate::services::runtime::blocking(move || {
-                    crate::text::correction_learner::extract_corrections(
+                    crate::text::correction_learner::extract_corrections_in_regions(
                         &edit.baseline,
                         &edit.edited,
-                        &edit.pasted,
+                        &edit.pasted_ranges,
                     )
                 })
                 .await
@@ -487,27 +496,32 @@ impl AppState {
             };
             let Ok(Some(db)) = this.update(cx, |this, _| {
                 (this.dictionary_revision.load(Ordering::SeqCst) == revision
-                    && this.settings.auto_learn_corrections)
-                    .then(|| this.db.clone())
+                    && this.settings.auto_learn_enabled())
+                .then(|| this.db.clone())
             }) else {
-                return Vec::new();
+                return CorrectionLearningOutcome::default();
             };
             let (learned, dictionary) = crate::services::runtime::storage(move || {
                 let learned = db
-                    .record_corrections_if_current(&corrections, &token, revision)
+                    .record_session_corrections_if_current(
+                        &session_id,
+                        session_revision,
+                        &corrections,
+                        &token,
+                        revision,
+                    )
                     .inspect_err(|err| log::warn!("failed to save learned words: {err}"))
                     .unwrap_or_default();
-                let dictionary = (!corrections.is_empty()).then(|| DictionarySnapshot::read(&db));
+                // An empty replacement can revoke an earlier learned correction.
+                let dictionary = DictionarySnapshot::read(&db);
                 (learned, dictionary)
             })
             .await;
             this.update(cx, |this, cx| {
                 if this.dictionary_revision.load(Ordering::SeqCst) != revision {
-                    return Vec::new();
+                    return CorrectionLearningOutcome::default();
                 }
-                if let Some(dictionary) = dictionary {
-                    this.apply_dictionary_snapshot(dictionary, cx);
-                }
+                this.apply_dictionary_snapshot(dictionary, cx);
                 learned
             })
             .unwrap_or_default()

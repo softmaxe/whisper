@@ -1,12 +1,8 @@
 import Cocoa
 import Foundation
 import Darwin
+import Carbon
 
-let MAX_OUTPUT_BYTES = 10240
-let MAX_BASE64_SOURCE_CHARS = 7000
-
-var monitoredElement: AXUIElement?
-var observer: AXObserver?
 var monitoredPid: pid_t = 0
 
 func writeOutput(_ message: String) {
@@ -16,18 +12,6 @@ func writeOutput(_ message: String) {
 
 func writeError(_ message: String) {
     FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
-}
-
-func writeTextOutput(_ prefix: String, _ value: String) {
-    let truncated = String(value.prefix(MAX_OUTPUT_BYTES))
-    if truncated.contains("\n") || truncated.contains("\r") {
-        let capped = String(truncated.prefix(MAX_BASE64_SOURCE_CHARS))
-        let encoded = Data(capped.utf8).base64EncodedString()
-        writeOutput("\(prefix)_B64:\(encoded)")
-        return
-    }
-
-    writeOutput("\(prefix):\(truncated)")
 }
 
 func isEditableTextElement(_ element: AXUIElement) -> Bool {
@@ -283,14 +267,6 @@ func pasteTargetStatus(for targetPid: pid_t) -> PasteTargetStatus {
     return status
 }
 
-func readCurrentValue() -> String? {
-    guard let element = monitoredElement else { return nil }
-    var value: AnyObject?
-    let result = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value)
-    guard result == .success, let str = value as? String else { return nil }
-    return str
-}
-
 func resolveFocusedElement(_ appElement: AXUIElement, pid: pid_t, maxRetries: Int = 5) -> AXUIElement? {
     for attempt in 1...maxRetries {
         var elementValue: AnyObject?
@@ -326,32 +302,308 @@ func resolveFocusedElement(_ appElement: AXUIElement, pid: pid_t, maxRetries: In
     return nil
 }
 
-func observerCallback(
-    _ observer: AXObserver,
-    _ element: AXUIElement,
-    _ notification: CFString,
-    _ refcon: UnsafeMutableRawPointer?
-) {
-    if (notification as String) == kAXFocusedUIElementChangedNotification {
-        // The user moved on from the field; the session is over.
-        var focused: AnyObject?
-        if AXUIElementCopyAttributeValue(
-            AXUIElementCreateApplication(monitoredPid),
-            kAXFocusedUIElementAttribute as CFString,
-            &focused
-        ) == .success, let element = pasteTargetElement(focused),
-           let monitored = monitoredElement, !CFEqual(element, monitored) {
-            writeError("Focus left the monitored element")
-            CFRunLoopStop(CFRunLoopGetCurrent())
+// A read-only, multi-field AX server. Each identity is scoped to this helper
+// process and follows the same AX element across application/focus switches.
+final class ObservedInput {
+    let id: String
+    let element: AXUIElement
+    var active = false
+    var healthOnly = false
+    var hadContent = false
+    var lastValue: String?
+    var lastComposing = false
+    var compositionHint = false
+    var unreadable = false
+    var lastSendGesture: TimeInterval = 0
+    var lastFocusedAt: TimeInterval = 0
+    var expires = ProcessInfo.processInfo.systemUptime + 300
+    init(_ id: String, _ element: AXUIElement) { self.id = id; self.element = element }
+}
+
+var observedInputs: [String: ObservedInput] = [:]
+var preparedInputs: [Int: (String, Bool, TimeInterval)] = [:]
+var observationApp: AXUIElement?
+var observationAX: AXObserver?
+var unboundHealthUntil: TimeInterval = 0
+let maxObservedUTF16 = 256 * 1024
+
+func observationOutput(_ value: [String: Any]) {
+    guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+          let line = String(data: data, encoding: .utf8) else { return }
+    writeOutput(line)
+}
+
+func observationValue(_ element: AXUIElement) -> String? {
+    if let value = pasteTargetAttribute(element, kAXValueAttribute) as? String {
+        return value.utf16.count <= maxObservedUTF16 ? value : nil
+    }
+    // Web contenteditable can omit AXValue while providing the standard
+    // parameterized text interface. Read the whole bounded field, never a
+    // prefix that silently omits the dictated passage near the end.
+    if let count = pasteTargetAttribute(element, kAXNumberOfCharactersAttribute) as? Int,
+       count >= 0, count <= maxObservedUTF16 {
+        var range = CFRange(location: 0, length: count)
+        if let parameter = AXValueCreate(.cfRange, &range) {
+            var result: AnyObject?
+            if AXUIElementCopyParameterizedAttributeValue(
+                element, kAXStringForRangeParameterizedAttribute as CFString, parameter, &result
+            ) == .success, let value = result as? String { return value }
+        }
+    }
+    // Chromium contenteditable trees sometimes expose only static text
+    // descendants. Restrict this walk to the bound editor, with hard budgets.
+    var pending: [(AXUIElement, Int)] = [(element, 0)]
+    var chunks: [String] = []
+    var count = 0
+    var visited = 0
+    let deadline = ProcessInfo.processInfo.systemUptime + 0.05
+    while let (node, depth) = pending.popLast() {
+        visited += 1
+        guard visited <= 2000, ProcessInfo.processInfo.systemUptime < deadline else { return nil }
+        if pasteTargetAttribute(node, kAXRoleAttribute) as? String == "AXStaticText",
+           let value = pasteTargetAttribute(node, kAXValueAttribute) as? String {
+            count += value.utf16.count
+            guard count <= maxObservedUTF16 else { return nil }
+            chunks.append(value)
+            continue
+        }
+        if depth < 16, let children = pasteTargetAttribute(node, kAXChildrenAttribute) as? [AXUIElement] {
+            pending.append(contentsOf: children.reversed().map { ($0, depth + 1) })
+        }
+    }
+    // Missing data must not masquerade as an empty, readable field.
+    return chunks.isEmpty ? nil : chunks.joined(separator: "\n")
+}
+
+func observationSelection(_ element: AXUIElement) -> CFRange? {
+    guard let value = pasteTargetAttribute(element, kAXSelectedTextRangeAttribute),
+          CFGetTypeID(value) == AXValueGetTypeID() else { return nil }
+    var range = CFRange()
+    return AXValueGetValue(value as! AXValue, .cfRange, &range) ? range : nil
+}
+
+func observationComposing(_ element: AXUIElement) -> Bool {
+    // Native input methods expose a marked range. Chromium versions that
+    // expose AXMarkedText use that string instead. Neither attribute is set.
+    if let value = pasteTargetAttribute(element, "AXMarkedTextRange"),
+       CFGetTypeID(value) == AXValueGetTypeID() {
+        var range = CFRange()
+        if AXValueGetValue(value as! AXValue, .cfRange, &range), range.location >= 0, range.length > 0 { return true }
+    }
+    return !(pasteTargetAttribute(element, "AXMarkedText") as? String ?? "").isEmpty
+}
+
+func observationIsFocused(_ input: ObservedInput) -> Bool {
+    guard keyboardFocusPid() == monitoredPid, let app = observationApp,
+          let focused = pasteTargetElement(pasteTargetAttribute(app, kAXFocusedUIElementAttribute)) else { return false }
+    return CFEqual(focused, input.element)
+}
+
+func observationIsSendButton(_ element: AXUIElement) -> Bool {
+    guard pasteTargetAttribute(element, kAXRoleAttribute) as? String == "AXButton" else { return false }
+    let label = [kAXTitleAttribute, kAXDescriptionAttribute, kAXHelpAttribute]
+        .compactMap { pasteTargetAttribute(element, $0) as? String }.joined(separator: " ").lowercased()
+    return ["send", "submit", "发送", "提交"].contains(where: { label.contains($0) })
+}
+
+func observationSample(_ input: ObservedInput) {
+    guard input.active else { return }
+    let now = ProcessInfo.processInfo.systemUptime
+    let focused = observationIsFocused(input)
+    if focused { input.lastFocusedAt = now }
+    else {
+        // Accessibility activation of a Send button need not emit a mouse
+        // event. A just-focused Send button can confirm a subsequent clear.
+        if now - input.lastFocusedAt < 0.7, keyboardFocusPid() == monitoredPid,
+           let app = observationApp,
+           let button = pasteTargetElement(pasteTargetAttribute(app, kAXFocusedUIElementAttribute)),
+           observationIsSendButton(button) {
+            input.lastSendGesture = now
+        }
+        if now - input.lastSendGesture >= 0.7 { return }
+    }
+    guard let value = observationValue(input.element) else {
+        if !input.unreadable {
+            observationOutput(["kind": "unreadable", "field": input.id, "reason": "ax_text_unavailable_or_exceeds_256k_utf16"])
+        }
+        input.unreadable = true
+        return
+    }
+    let composing = observationComposing(input.element) || input.compositionHint
+    let empty = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    if empty, input.hadContent, !input.healthOnly,
+       ProcessInfo.processInfo.systemUptime - input.lastSendGesture < 0.7 {
+        observationOutput(["kind": "sent", "field": input.id])
+        input.active = false
+        input.hadContent = false
+        input.lastValue = nil
+        return
+    }
+    // A Send action may briefly move focus away. Only its clear is relevant;
+    // normal edits in an unfocused field remain paused.
+    guard focused else { return }
+    guard input.unreadable || value != input.lastValue || composing != input.lastComposing else { return }
+    input.unreadable = false
+    observationOutput(["kind": "value", "field": input.id, "value": value, "composing": composing])
+    input.lastValue = value
+    if !empty { input.hadContent = true }
+    input.lastComposing = composing
+}
+
+func observationCallback(_ observer: AXObserver, _ element: AXUIElement,
+                         _ notification: CFString, _ refcon: UnsafeMutableRawPointer?) {
+    if notification as String == kAXUIElementDestroyedNotification {
+        for input in Array(observedInputs.values) where CFEqual(input.element, element) {
+            observationOutput(["kind": "closed", "field": input.id])
+            observedInputs.removeValue(forKey: input.id)
         }
         return
     }
-    if let value = readCurrentValue() {
-        writeTextOutput("CHANGED", value)
+    for input in observedInputs.values where CFEqual(input.element, element) { observationSample(input) }
+}
+
+func observationCommand(_ command: [String: Any]) {
+    let name = command["command"] as? String ?? ""
+    let ticket = command["ticket"] as? Int ?? 0
+    switch name {
+    case "prepare":
+        guard let app = observationApp,
+              keyboardFocusPid() == monitoredPid,
+              let element = resolveFocusedElement(app, pid: monitoredPid, maxRetries: 1) else {
+            observationOutput(["kind": "prepared", "ticket": ticket, "reason": "ax_focused_element_unavailable"])
+            return
+        }
+        let input = observedInputs.values.first { CFEqual($0.element, element) } ??
+            ObservedInput(UUID().uuidString, element)
+        observedInputs[input.id] = input
+        preparedInputs[ticket] = (input.id, input.active, input.expires)
+        if let observer = observationAX {
+            // Polling remains active if a web editor rejects notifications.
+            _ = AXObserverAddNotification(observer, element, kAXValueChangedNotification as CFString, nil)
+            _ = AXObserverAddNotification(observer, element, kAXSelectedTextChangedNotification as CFString, nil)
+            _ = AXObserverAddNotification(observer, element, kAXUIElementDestroyedNotification as CFString, nil)
+        }
+        guard let value = observationValue(element),
+              let selection = observationSelection(element) ?? (value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? CFRange(location: 0, length: 0) : nil) else {
+            observationOutput(["kind": "prepared", "ticket": ticket, "field": input.id,
+                               "reason": "ax_value_or_selection_unavailable"])
+            return
+        }
+        observationSample(input)
+        // Pause this field until commit so Command-V cannot be mistaken for
+        // a correction to the preceding dictation while the ticket is open.
+        input.active = false
+        observationOutput(["kind": "prepared", "ticket": ticket, "field": input.id,
+                           "value": value, "start": selection.location, "length": selection.length])
+    case "commit", "cancel", "health":
+        if let (id, wasActive, oldExpiry) = preparedInputs.removeValue(forKey: ticket), let input = observedInputs[id] {
+            if name == "commit" {
+                input.active = true
+                input.healthOnly = false
+                input.expires = ProcessInfo.processInfo.systemUptime + 300
+            } else if name == "health" {
+                input.active = true
+                input.healthOnly = input.healthOnly || !wasActive
+                input.expires = wasActive ? oldExpiry : ProcessInfo.processInfo.systemUptime + 300
+            } else {
+                input.active = wasActive
+                input.expires = oldExpiry
+                if !wasActive { observedInputs.removeValue(forKey: id) }
+            }
+            observationSample(input)
+        } else if name == "health" {
+            unboundHealthUntil = ProcessInfo.processInfo.systemUptime + 300
+        }
+    case "snapshot":
+        for input in observedInputs.values { observationSample(input) }
+        observationOutput(["kind": "synced", "ticket": ticket])
+    case "forget":
+        if let id = command["field"] as? String { observedInputs.removeValue(forKey: id) }
+    default: break
     }
 }
 
-// Usage: macos-text-monitor <pid> <timeout seconds>
+func runObservationServer(_ pid: pid_t) -> Never {
+    monitoredPid = pid
+    observationApp = AXUIElementCreateApplication(pid)
+    var created: AXObserver?
+    if AXObserverCreate(pid, observationCallback, &created) == .success, let created = created {
+        observationAX = created
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), AXObserverGetRunLoopSource(created), .commonModes)
+    }
+    let events = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { event in
+        guard keyboardFocusPid() == pid else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let inputSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        let asciiProperty = TISGetInputSourceProperty(inputSource, kTISPropertyInputSourceIsASCIICapable)
+        let asciiCapable = asciiProperty.map { CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque($0).takeUnretainedValue()) } ?? true
+        var sendButtonClick = false
+        if event.type == .leftMouseDown {
+            var hit: AXUIElement?
+            let point = event.cgEvent?.location ?? .zero
+            if AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit) == .success,
+               let hit = hit {
+                sendButtonClick = observationIsSendButton(hit)
+            }
+        }
+        for input in observedInputs.values where input.active &&
+            (observationIsFocused(input) || (sendButtonClick && now - input.lastFocusedAt < 0.3)) {
+            let wasComposing = input.compositionHint || observationComposing(input.element)
+            // When an input method omits AX marked-text attributes, retain a
+            // conservative composing hint until its commit key or candidate
+            // click. This avoids learning a paused Chinese preedit.
+            if event.type == .leftMouseDown || [36, 76, 49, 53].contains(event.keyCode) {
+                input.compositionHint = false
+            } else if event.type == .keyDown && !asciiCapable &&
+                        event.modifierFlags.intersection([.command, .control]).isEmpty &&
+                        !(event.characters ?? "").isEmpty {
+                input.compositionHint = true
+            }
+            // Return used to commit an input-method candidate is not Send.
+            // A caret click is never a send hint, nor is Delete after a click.
+            if event.type == .keyDown && [51, 117].contains(event.keyCode) {
+                input.lastSendGesture = 0
+            } else if event.type == .keyDown && [36, 76].contains(event.keyCode) && !wasComposing {
+                input.lastSendGesture = now
+            } else if sendButtonClick {
+                input.lastSendGesture = now
+            }
+            observationSample(input)
+        }
+    }
+    let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+        let now = ProcessInfo.processInfo.systemUptime
+        if now < unboundHealthUntil, keyboardFocusPid() == pid, let app = observationApp,
+           let focused = pasteTargetElement(pasteTargetAttribute(app, kAXFocusedUIElementAttribute)),
+           isEditableTextElement(focused) || isEditableBrowserPasteTarget(focused),
+           let value = observationValue(focused), observationSelection(focused) != nil || value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            unboundHealthUntil = 0
+            observationOutput(["kind": "health_recovered"])
+        }
+        for input in Array(observedInputs.values) {
+            if now >= input.expires {
+                observationOutput(["kind": "closed", "field": input.id])
+                observedInputs.removeValue(forKey: input.id)
+            } else { observationSample(input) }
+        }
+    }
+    RunLoop.main.add(timer, forMode: .common)
+    // Read complete newline-delimited commands off the AX run loop.
+    DispatchQueue.global(qos: .utility).async {
+        while let line = readLine() {
+            guard let data = line.data(using: .utf8),
+                  let command = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            DispatchQueue.main.async { observationCommand(command) }
+        }
+        DispatchQueue.main.async { CFRunLoopStop(CFRunLoopGetCurrent()) }
+    }
+    CFRunLoopRun()
+    if let events = events { NSEvent.removeMonitor(events) }
+    exit(0)
+}
+
+
+// Usage: macos-text-monitor --observe <pid>
 //        macos-text-monitor --paste-target <pid>
 //        macos-text-monitor --focused-app
 let pasteTargetMode = CommandLine.arguments.count >= 2 &&
@@ -372,105 +624,16 @@ if CommandLine.arguments.count >= 2 && CommandLine.arguments[1] == "--focused-ap
     exit(0)
 }
 
-let pidArgumentIndex = pasteTargetMode ? 2 : 1
-
-guard CommandLine.arguments.count > pidArgumentIndex,
-      let targetPid = Int32(CommandLine.arguments[pidArgumentIndex]),
-      targetPid > 0 else {
-    writeError("Usage: macos-text-monitor [--paste-target] <pid> | --focused-app")
-    writeOutput(pasteTargetMode ? "UNKNOWN" : "NO_ELEMENT")
-    exit(1)
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--observe",
+   let pid = Int32(CommandLine.arguments[2]), pid > 0 {
+    runObservationServer(pid)
 }
 
-monitoredPid = targetPid
-
-// Dictation probing does not use the monitor's retry ladder.
-if pasteTargetMode {
-    writeOutput(pasteTargetStatus(for: targetPid).rawValue)
+if pasteTargetMode, CommandLine.arguments.count >= 3,
+   let pid = Int32(CommandLine.arguments[2]), pid > 0 {
+    writeOutput(pasteTargetStatus(for: pid).rawValue)
     exit(0)
 }
-
-// Target the specific application by PID (passed from the app, which captures
-// it BEFORE the overlay steals focus).
-guard CommandLine.arguments.count > 2,
-      let timeoutSeconds = Double(CommandLine.arguments[2]) else {
-    writeError("Usage: macos-text-monitor <pid> <timeout seconds>")
-    writeOutput("NO_ELEMENT")
-    exit(1)
-}
-
-let appElement = AXUIElementCreateApplication(monitoredPid)
-guard let resolvedElement = resolveFocusedElement(appElement, pid: monitoredPid) else {
-    writeOutput("NO_ELEMENT")
-    exit(1)
-}
-
-monitoredElement = resolvedElement
-writeError("Monitoring element in PID \(monitoredPid)")
-
-// Only a field with a text value can be monitored.
-guard readCurrentValue() != nil else {
-    writeError("Focused element has no text value")
-    writeOutput("NO_VALUE")
-    exit(0)
-}
-
-// Create AXObserver for the target application's PID
-var createdObserver: AXObserver?
-let observerResult = AXObserverCreate(monitoredPid, observerCallback, &createdObserver)
-
-guard observerResult == .success, let obs = createdObserver else {
-    writeError("Failed to create AXObserver (error: \(observerResult.rawValue))")
-    exit(1)
-}
-
-observer = obs
-
-// Watch for value changes
-let addResult = AXObserverAddNotification(
-    obs,
-    monitoredElement!,
-    kAXValueChangedNotification as CFString,
-    nil
-)
-
-if addResult != .success {
-    writeError("Failed to add notification (error: \(addResult.rawValue))")
-    exit(1)
-}
-
-// Best effort: without it the session just runs to its timeout.
-_ = AXObserverAddNotification(
-    obs,
-    appElement,
-    kAXFocusedUIElementChangedNotification as CFString,
-    nil
-)
-
-// Everything from here on arrives as CHANGED, so nothing falls between this
-// read and the first notification.
-if let value = readCurrentValue() {
-    writeTextOutput("BASELINE", value)
-}
-
-// Add observer to run loop
-CFRunLoopAddSource(
-    CFRunLoopGetCurrent(),
-    AXObserverGetRunLoopSource(obs),
-    .commonModes
-)
-
-// Schedule auto-exit after timeout
-DispatchQueue.main.asyncAfter(deadline: .now() + timeoutSeconds) {
-    CFRunLoopStop(CFRunLoopGetCurrent())
-}
-
-// Handle SIGTERM for clean exit
-let signalSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-signal(SIGTERM, SIG_IGN)
-signalSource.setEventHandler {
-    CFRunLoopStop(CFRunLoopGetCurrent())
-}
-signalSource.resume()
-
-CFRunLoopRun()
+writeError("Usage: macos-text-monitor --observe <pid> | --paste-target <pid> | --focused-app")
+writeOutput("UNKNOWN")
+exit(1)

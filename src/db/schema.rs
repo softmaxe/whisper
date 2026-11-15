@@ -5,7 +5,7 @@ use rusqlite::Connection;
 
 use super::timestamp::SQL_NOW;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub(super) fn init(conn: &Connection) -> Result<()> {
     // Wait briefly rather than fail when another connection holds the lock.
@@ -55,6 +55,22 @@ pub(super) fn init(conn: &Connection) -> Result<()> {
         -- Words the user removed; auto-learn must not bring them back.
         CREATE TABLE IF NOT EXISTS dictionary_rejected_words (
           word TEXT PRIMARY KEY COLLATE NOCASE
+        );
+
+        -- A stable editor observation contributes at most one sighting per pair.
+        CREATE TABLE IF NOT EXISTS dictionary_learning_sessions (
+          session_id TEXT PRIMARY KEY,
+          revision INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS dictionary_session_corrections (
+          session_id TEXT NOT NULL,
+          misheard TEXT NOT NULL COLLATE NOCASE,
+          term TEXT NOT NULL COLLATE NOCASE,
+          PRIMARY KEY (session_id, misheard, term)
+        );
+        -- Only words created by session learning may be retracted with its edits.
+        CREATE TABLE IF NOT EXISTS dictionary_session_terms (
+          word_id INTEGER PRIMARY KEY
         );
 
         -- Retained for compatibility; auto-learn no longer writes statistics.

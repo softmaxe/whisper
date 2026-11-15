@@ -204,6 +204,18 @@ impl Default for Settings {
 pub const DEFAULT_HOTKEY: &str = "GLOBE";
 
 impl Settings {
+    /// Whether cleanup is enabled and has a model and server configured.
+    pub fn cleanup_enabled(&self) -> bool {
+        self.use_cleanup_model
+            && !self.cleanup_model.trim().is_empty()
+            && !self.cleanup_remote_url.trim().is_empty()
+    }
+
+    /// Whether learning and learned influence are available for dictation.
+    pub fn auto_learn_enabled(&self) -> bool {
+        self.auto_learn_corrections && self.cleanup_enabled()
+    }
+
     pub fn load() -> Self {
         Self::load_from(&paths::settings_path())
     }
@@ -265,6 +277,35 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_learn_requires_configured_cleanup_and_resumes_without_losing_preference() {
+        let mut settings = Settings::default();
+        assert!(!settings.auto_learn_enabled());
+        settings.cleanup_model = "cleanup".into();
+        assert!(!settings.auto_learn_enabled());
+        settings.cleanup_remote_url = "http://localhost:8080/v1".into();
+        assert!(settings.auto_learn_enabled());
+
+        settings.use_cleanup_model = false;
+        assert!(!settings.auto_learn_enabled());
+        assert!(settings.auto_learn_corrections);
+        settings.use_cleanup_model = true;
+        assert!(settings.auto_learn_enabled());
+
+        settings.auto_learn_corrections = false;
+        assert!(!settings.auto_learn_enabled());
+        settings.use_cleanup_model = false;
+        settings.use_cleanup_model = true;
+        assert!(!settings.auto_learn_enabled());
+
+        settings.auto_learn_corrections = true;
+        settings.cleanup_model = "  ".into();
+        assert!(!settings.auto_learn_enabled());
+        settings.cleanup_model = "cleanup".into();
+        settings.cleanup_remote_url = "  ".into();
+        assert!(!settings.auto_learn_enabled());
+    }
 
     #[test]
     fn legacy_output_settings_migrate_on_load_and_save_only_one_key() {

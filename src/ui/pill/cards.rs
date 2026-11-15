@@ -519,6 +519,8 @@ impl PillView {
                 ToastKind::Destructive => ("alert-circle", p.destructive),
                 ToastKind::Success => ("check", p.success),
                 ToastKind::Hint => ("keyboard", p.muted_foreground),
+                ToastKind::LearningContext => ("clock", p.muted_foreground),
+                ToastKind::LearningUnavailable => ("alert-circle", p.muted_foreground),
             };
             let undo = toast.undo_words.clone();
             stack = stack.child(

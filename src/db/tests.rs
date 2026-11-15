@@ -294,7 +294,7 @@ fn schema_matches_the_expected_layout() {
             "spoken_duration_ms",
         ]
     );
-    assert_eq!(count(&db, "PRAGMA user_version"), 3);
+    assert_eq!(count(&db, "PRAGMA user_version"), 4);
 }
 
 fn legacy_connection(path: &Path) -> Connection {
@@ -375,7 +375,7 @@ fn upgrades_legacy_metadata_without_losing_history_or_counters() {
     assert_eq!(summary.total_dictations, 1);
     assert_eq!(summary.average_wpm, Some(120));
     assert_eq!(count(&upgraded, "SELECT id FROM analytics_events"), 17);
-    assert_eq!(count(&upgraded, "PRAGMA user_version"), 3);
+    assert_eq!(count(&upgraded, "PRAGMA user_version"), 4);
     assert_eq!(
         count(
             &upgraded,
@@ -437,12 +437,12 @@ fn failed_upgrade_rolls_back_schema_and_version() {
 fn refuses_a_newer_schema_without_downgrading_it() {
     let db = db();
     let conn = db.lock();
-    conn.pragma_update(None, "user_version", 4).unwrap();
+    conn.pragma_update(None, "user_version", 5).unwrap();
     assert!(schema::init(&conn).is_err());
     assert_eq!(
         conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        4
+        5
     );
 }
 

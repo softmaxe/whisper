@@ -111,12 +111,10 @@ pub fn build_whisper_prompt(input: &PipelineInput) -> (Option<String>, Option<St
 
 /// Whether cleanup is configured: enabled, with a model and a server.
 pub fn cleanup_enabled(settings: &Settings) -> bool {
-    settings.use_cleanup_model
-        && !settings.cleanup_model.trim().is_empty()
-        && !settings.cleanup_remote_url.trim().is_empty()
+    settings.cleanup_enabled()
 }
 
-pub fn cleanup_system_prompt(input: &PipelineInput) -> String {
+pub fn cleanup_system_prompt(input: &PipelineInput, text: &str) -> String {
     let s = &input.settings;
     let words = get_prioritized_dictionary_hint_words(
         &input.dictionary,
@@ -135,6 +133,12 @@ pub fn cleanup_system_prompt(input: &PipelineInput) -> String {
         .known_corrections
         .iter()
         .filter(|c| !c.applies_automatically())
+        // Reserve the bounded prompt for pairs relevant to this dictation;
+        // unrelated frequent corrections must not crowd out a newly learned one.
+        .filter(|c| {
+            !crate::text::term_match::find_term(text, &c.misheard).is_empty()
+                || !crate::text::term_match::find_term(text, &c.term).is_empty()
+        })
         .collect();
     crate::text::prompts::append_corrections_suffix(&prompt, &judged, &s.ui_language)
 }
@@ -158,7 +162,7 @@ pub async fn clean_up(
             .as_deref()
             .filter(|k| !k.trim().is_empty()),
         s.cleanup_model.trim(),
-        &cleanup_system_prompt(input),
+        &cleanup_system_prompt(input, normalized),
         s.cleanup_disable_thinking,
     );
     match cleanup::process_text(normalized, &config, cancel).await {
@@ -480,7 +484,7 @@ mod tests {
     fn the_cleanup_prompt_lists_only_corrections_that_need_context() {
         let mut i = input(&["Claude"]);
         i.known_corrections = corrections();
-        let prompt = cleanup_system_prompt(&i);
+        let prompt = cleanup_system_prompt(&i, "ask cloud");
         assert!(prompt.contains("cloud → Claude"));
         assert!(!prompt.contains("克劳德 →"));
     }
@@ -490,10 +494,30 @@ mod tests {
         let mut i = input(&[]);
         i.dictionary = (0..1000).map(|n| format!("filler-term-{n}")).collect();
         i.dictionary_priority = i.dictionary.iter().rev().cloned().collect();
-        let prompt = cleanup_system_prompt(&i);
+        let prompt = cleanup_system_prompt(&i, "");
         assert!(prompt.contains("filler-term-999"));
         assert!(!prompt.contains("filler-term-500"));
         assert!(prompt.len() < 12_000);
+    }
+
+    #[test]
+    fn relevant_new_corrections_are_not_crowded_out_by_frequent_unrelated_pairs() {
+        let mut i = input(&[]);
+        i.known_corrections = (0..30)
+            .map(|n| KnownCorrection {
+                misheard: format!("word{n}"),
+                term: format!("Term{n}"),
+                count: 100,
+            })
+            .collect();
+        i.known_corrections.push(KnownCorrection {
+            misheard: "cloud".into(),
+            term: "Claude".into(),
+            count: 1,
+        });
+        let prompt = cleanup_system_prompt(&i, "Ask cloud to review this code.");
+        assert!(prompt.contains("cloud → Claude"));
+        assert!(!prompt.contains("word0 → Term0"));
     }
 
     #[test]

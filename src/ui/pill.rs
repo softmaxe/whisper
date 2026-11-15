@@ -515,6 +515,15 @@ impl PillView {
         });
     }
 
+    fn correction_pairs_text(pairs: &[(String, String)]) -> String {
+        pairs
+            .iter()
+            .take(3)
+            .map(|(misheard, term)| format!("“{misheard} → {term}”"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// Closes the error card by the user's hand or its timer. A recording
     /// kept for it goes with it, so the words never outlive the offer.
     fn close_error(&mut self, cx: &mut App) {
@@ -625,6 +634,50 @@ impl PillView {
                     ToastKind::Success,
                     Duration::from_millis(6000),
                     Some(words),
+                );
+            }
+            DictationNotice::ContextDependentCorrection(pairs) => {
+                let corrections = Self::correction_pairs_text(&pairs);
+                self.push_toast(
+                    crate::i18n::t_with(
+                        "app.toasts.learningContext.title",
+                        &[("corrections", &corrections)],
+                    ),
+                    Some(t("app.toasts.learningContext.description")),
+                    ToastKind::LearningContext,
+                    Duration::from_millis(6000),
+                    None,
+                );
+            }
+            DictationNotice::LearnedCorrection(pairs) => {
+                let corrections = Self::correction_pairs_text(&pairs);
+                self.push_toast(
+                    crate::i18n::t_with(
+                        "app.toasts.learningCorrection",
+                        &[("corrections", &corrections)],
+                    ),
+                    None,
+                    ToastKind::Success,
+                    Duration::from_millis(6000),
+                    None,
+                );
+            }
+            DictationNotice::LearningUnreadable => self.push_toast(
+                t("app.toasts.learningUnreadable.title"),
+                Some(t("app.toasts.learningUnreadable.description")),
+                ToastKind::LearningUnavailable,
+                Duration::from_millis(6000),
+                None,
+            ),
+            DictationNotice::LearningRecovered => {
+                self.toasts
+                    .retain(|toast| toast.kind != ToastKind::LearningUnavailable);
+                self.push_toast(
+                    t("app.toasts.learningRecovered.title"),
+                    Some(t("app.toasts.learningRecovered.description")),
+                    ToastKind::Success,
+                    Duration::from_millis(6000),
+                    None,
                 );
             }
             DictationNotice::Delivered => {

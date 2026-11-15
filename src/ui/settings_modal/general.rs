@@ -214,12 +214,18 @@ impl SettingsModal {
             ))
             .child(settings_section(
                 t("settings.dictionary.title"),
-                vec![toggle(
+                vec![toggle_row(
                     "auto-learn",
-                    "settings.dictionary.autoLearnTitle",
-                    "settings.dictionary.autoLearnDescription",
-                    s.auto_learn_corrections,
-                    |s, v| s.auto_learn_corrections = v,
+                    t("settings.dictionary.autoLearnTitle"),
+                    Some(t(if s.cleanup_enabled() {
+                        "settings.dictionary.autoLearnDescription"
+                    } else {
+                        "settings.dictionary.autoLearnRequiresCleanup"
+                    })),
+                    s.auto_learn_enabled(),
+                    !s.cleanup_enabled(),
+                    |value, _, cx| update_settings(cx, |s| s.auto_learn_corrections = value),
+                    &p,
                 )],
                 &p,
             ))
