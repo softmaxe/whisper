@@ -1563,7 +1563,6 @@ mod tests {
         db.record_corrections(&[Correction {
             misheard: "cloud code".into(),
             term: "Claude Code".into(),
-            needs_repeat: false,
         }])
         .unwrap();
         let configured = Settings {
@@ -1623,7 +1622,6 @@ mod tests {
                 let correction = Correction {
                     misheard: "cloud code".into(),
                     term: "Claude Code".into(),
-                    needs_repeat: false,
                 };
                 db.record_corrections(std::slice::from_ref(&correction))
                     .unwrap();

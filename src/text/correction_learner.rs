@@ -60,9 +60,6 @@ const MAX_PINYIN_DISTANCE: f64 = 0.34;
 pub struct Correction {
     pub misheard: String,
     pub term: String,
-    /// Legacy uncertainty signal from extraction. Learning no longer requires
-    /// a deliberate repeat; application still checks the current context.
-    pub needs_repeat: bool,
 }
 
 /// A stored correction whose term is in the Dictionary.
@@ -207,15 +204,13 @@ fn fuzzy_pinyin(text: &str) -> Option<String> {
     Some(reading)
 }
 
-/// `None` when the spellings sound different: a mishearing keeps the sound, so
-/// that is a content edit. `Some(needs_repeat)` otherwise, with a reading
-/// missing (kana) leaving the sound unknown.
-fn compare_sound(misheard: &str, term: &str) -> Option<bool> {
+/// Unknown readings (for example, kana) cannot rule out a mishearing.
+fn sounds_compatible(misheard: &str, term: &str) -> bool {
     let (Some(a), Some(b)) = (fuzzy_pinyin(misheard), fuzzy_pinyin(term)) else {
-        return Some(true);
+        return true;
     };
     let longest = utf16_len(&a).max(utf16_len(&b)).max(1);
-    (edit_distance(&a, &b) as f64 / longest as f64 <= MAX_PINYIN_DISTANCE).then_some(false)
+    edit_distance(&a, &b) as f64 / longest as f64 <= MAX_PINYIN_DISTANCE
 }
 
 #[derive(Debug, Clone)]
@@ -243,32 +238,6 @@ fn tokenize(text: &str) -> Vec<Unit> {
             }
         })
         .collect()
-}
-
-/// Where the pasted texts sit in the field. An app that reformats a paste
-/// (smart quotes, rich text) leaves no exact copy; a field about that long is
-/// then taken to be the paste.
-#[cfg(test)]
-fn pasted_regions<S: AsRef<str>>(baseline: &str, pasted: &[S]) -> Vec<Range<usize>> {
-    let found: Vec<Range<usize>> = pasted
-        .iter()
-        .map(AsRef::as_ref)
-        .filter(|text| !text.is_empty())
-        .filter_map(|text| baseline.rfind(text).map(|start| start..start + text.len()))
-        .collect();
-    if !found.is_empty() {
-        return found;
-    }
-    let longest = pasted
-        .iter()
-        .map(|text| utf16_len(text.as_ref()))
-        .max()
-        .unwrap_or(0);
-    if longest > 0 && utf16_len(baseline) as f64 <= longest as f64 * 1.5 {
-        std::iter::once(0..baseline.len()).collect()
-    } else {
-        Vec::new()
-    }
 }
 
 /// A changed run, as index ranges into the baseline and edited units.
@@ -418,7 +387,12 @@ fn name_char(unit: &Unit) -> Option<char> {
 /// A one-character fix to a name ("张山" -> "张珊") leaves one unit of each
 /// side, which says nothing. Takes in the unchanged character next to it when
 /// the two characters sound the same.
-fn widen_name_fix(hunk: &Hunk, baseline: &[Unit], edited: &[Unit]) -> Option<Hunk> {
+fn widen_name_fix(
+    hunk: &Hunk,
+    baseline: &[Unit],
+    edited: &[Unit],
+    region: &Range<usize>,
+) -> Option<Hunk> {
     let ([from], [to]) = (&baseline[hunk.removed.clone()], &edited[hunk.added.clone()]) else {
         return None;
     };
@@ -427,6 +401,7 @@ fn widen_name_fix(hunk: &Hunk, baseline: &[Unit], edited: &[Unit]) -> Option<Hun
         return None;
     }
     if let Some(left) = baseline[..hunk.removed.start].last()
+        && left.start >= region.start
         && left.end == from.start
         && name_char(left).is_some()
     {
@@ -436,9 +411,11 @@ fn widen_name_fix(hunk: &Hunk, baseline: &[Unit], edited: &[Unit]) -> Option<Hun
         });
     }
     let right = baseline.get(hunk.removed.end)?;
-    (right.start == from.end && name_char(right).is_some()).then(|| Hunk {
-        removed: hunk.removed.start..hunk.removed.end + 1,
-        added: hunk.added.start..hunk.added.end + 1,
+    (right.end <= region.end && right.start == from.end && name_char(right).is_some()).then(|| {
+        Hunk {
+            removed: hunk.removed.start..hunk.removed.end + 1,
+            added: hunk.added.start..hunk.added.end + 1,
+        }
     })
 }
 
@@ -459,20 +436,10 @@ fn at_sentence_start(text: &str, start: usize, region: &Range<usize>) -> bool {
             .is_none_or(|c| ".!?。！？\n".contains(c))
 }
 
-/// A capitalization fix: `Some(needs_repeat)` when it names a term.
-fn classify_case_fix(term: &str, sentence_start: bool) -> Option<bool> {
-    if !term.chars().any(char::is_uppercase) {
-        return None;
-    }
-    if has_inner_capital(term) {
-        // Short ones collide with everyday words ("us" -> "US").
-        return Some(utf16_len(term) < 3);
-    }
-    let words = term.split_whitespace().count();
-    if words >= 2 {
-        return Some(false);
-    }
-    (!sentence_start).then_some(true)
+/// A leading capital alone only identifies a term inside a sentence.
+fn is_case_correction(term: &str, sentence_start: bool) -> bool {
+    term.chars().any(char::is_uppercase)
+        && (!sentence_start || has_inner_capital(term) || term.split_whitespace().count() >= 2)
 }
 
 fn stem(word: &str) -> &str {
@@ -490,25 +457,29 @@ fn is_inflection(a: &str, b: &str) -> bool {
     long.starts_with(short) && long.len() - short.len() <= 1
 }
 
-/// `Some(needs_repeat)` when a replaced run looks like a misheard term rather
-/// than a content edit.
-fn classify(misheard: &str, term: &str, term_units: &[Unit], sentence_start: bool) -> Option<bool> {
+/// Whether a replaced run looks like a misheard term.
+fn is_term_correction(
+    misheard: &str,
+    term: &str,
+    term_units: &[Unit],
+    sentence_start: bool,
+) -> bool {
     if !HAS_LETTER_RE.is_match(term) {
-        return None;
+        return false;
     }
     if term_units
         .iter()
         .all(|u| COMMON_WORDS.contains(u.key.as_str()))
     {
-        return None;
+        return false;
     }
     let (a, b) = (misheard.to_lowercase(), term.to_lowercase());
     if a == b {
-        return classify_case_fix(term, sentence_start);
+        return is_case_correction(term, sentence_start);
     }
     if is_unspaced_script_only(term) {
         if utf16_len(term) < 2 {
-            return None;
+            return false;
         }
         let from: Vec<char> = misheard.chars().collect();
         let to: Vec<char> = term.chars().collect();
@@ -524,48 +495,30 @@ fn classify(misheard: &str, term: &str, term_units: &[Unit], sentence_start: boo
             .chain(&to[prefix..to.len() - suffix])
             .all(|c| FUNCTION_CHARS.contains(*c))
         {
-            return None;
+            return false;
         }
         // Familiar vocabulary can be misheard too. Require matching sounds
         // for these terms so ordinary word choices remain content edits.
         if term_units.len() == 1 && is_unspaced_script_only(misheard) {
             return fuzzy_pinyin(misheard)
                 .zip(fuzzy_pinyin(term))
-                .filter(|(a, b)| a == b)
-                .map(|_| false);
+                .is_some_and(|(a, b)| a == b);
         }
-        return if is_unspaced_script_only(misheard) {
-            compare_sound(misheard, term)
-        } else {
-            Some(false)
-        };
+        return !is_unspaced_script_only(misheard) || sounds_compatible(misheard, term);
     }
-    // Names and products are capitalized or carry digits; a lowercase word
-    // may just be a better word choice ("affect" -> "effect").
-    let weak = !term.chars().any(|c| c.is_uppercase() || c.is_ascii_digit());
     if misheard.chars().any(is_unspaced_script) {
         // A Latin term replacing an unspaced-script mishearing ("爱爱" -> "AI").
-        return (utf16_len(term) >= 2).then_some(weak);
+        return utf16_len(term) >= 2;
     }
-    if utf16_len(term) < 3 || (weak && is_inflection(&a, &b)) {
-        return None;
+    // Capitalized names and product codes can resemble ordinary inflections.
+    let lowercase_word = !term.chars().any(|c| c.is_uppercase() || c.is_ascii_digit());
+    if utf16_len(term) < 3 || (lowercase_word && is_inflection(&a, &b)) {
+        return false;
     }
     // 0.65 allows phonetic corrections like "Shunade" -> "Sinead" (4/7) while
     // filtering out unrelated word replacements.
     let longest = utf16_len(&a).max(utf16_len(&b)).max(1);
-    (edit_distance(&a, &b) as f64 / longest as f64 <= 0.65).then_some(weak)
-}
-
-/// Corrections the user made to `pasted` text: the differences between the
-/// field right after the paste (`baseline`) and its last value (`edited`)
-/// that fall inside a pasted region.
-#[cfg(test)]
-pub fn extract_corrections<S: AsRef<str>>(
-    baseline: &str,
-    edited: &str,
-    pasted: &[S],
-) -> Vec<Correction> {
-    extract_corrections_in_regions(baseline, edited, &pasted_regions(baseline, pasted))
+    edit_distance(&a, &b) as f64 / longest as f64 <= 0.65
 }
 
 /// Extracts corrections only from the byte ranges recorded at delivery, so
@@ -613,19 +566,19 @@ pub fn extract_corrections_in_regions(
         let Some(region) = regions.iter().find(|r| r.start <= start && end <= r.end) else {
             continue;
         };
-        let widened = widen_name_fix(hunk, &base_units, &edited_units);
+        let widened = widen_name_fix(hunk, &base_units, &edited_units, region);
         let hunk = widened.as_ref().unwrap_or(hunk);
         let misheard = slice_units(baseline, &base_units[hunk.removed.clone()]);
         let term = slice_units(edited, &edited_units[hunk.added.clone()]);
         let sentence_start = at_sentence_start(baseline, start, region);
-        let Some(needs_repeat) = classify(
+        if !is_term_correction(
             misheard,
             term,
             &edited_units[hunk.added.clone()],
             sentence_start,
-        ) else {
+        ) {
             continue;
-        };
+        }
         if is_rewritten(region, &base_units, &hunks) {
             // Replacing a short dictated name or product can replace the whole
             // passage. Keep the rewrite guard for clauses and multiple edits.
@@ -650,7 +603,6 @@ pub fn extract_corrections_in_regions(
             results.push(Correction {
                 misheard: misheard.to_string(),
                 term: term.to_string(),
-                needs_repeat: needs_repeat || widened.is_some(),
             });
         }
     }
@@ -695,21 +647,12 @@ mod tests {
     }
 
     fn corrections(original: &str, edited: &str) -> Vec<Correction> {
-        extract_corrections(original, edited, &[original])
+        extract_corrections_in_regions(original, edited, std::slice::from_ref(&(0..original.len())))
     }
 
     fn ex(original: &str, edited: &str) -> Vec<String> {
         corrections(original, edited)
             .into_iter()
-            .map(|c| c.term)
-            .collect()
-    }
-
-    /// Terms extraction recognizes without an uncertainty signal.
-    fn sure(original: &str, edited: &str) -> Vec<String> {
-        corrections(original, edited)
-            .into_iter()
-            .filter(|c| !c.needs_repeat)
             .map(|c| c.term)
             .collect()
     }
@@ -736,10 +679,9 @@ mod tests {
             [Correction {
                 misheard: "Shunade".into(),
                 term: "Sinead".into(),
-                needs_repeat: false,
             }]
         );
-        assert_eq!(sure("Hey Shunade", "Hey Sinead"), ["Sinead"]);
+        assert_eq!(ex("Hey Shunade", "Hey Sinead"), ["Sinead"]);
     }
 
     #[test]
@@ -758,10 +700,10 @@ mod tests {
         // Unchanged text around the paste does not dilute the rewrite.
         let prefix = "lots of unchanged words stay in this field ".repeat(5);
         assert!(
-            extract_corrections(
+            extract_corrections_in_regions(
                 &format!("{prefix}{pasted}"),
                 &format!("{prefix}{edited}"),
-                &[pasted],
+                std::slice::from_ref(&(prefix.len()..prefix.len() + pasted.len())),
             )
             .is_empty()
         );
@@ -790,19 +732,18 @@ mod tests {
     #[test]
     fn capitalized_look_alikes_are_not_inflections() {
         assert_eq!(
-            sure("we run postgre here", "we run Postgres here"),
+            ex("we run postgre here", "we run Postgres here"),
             ["Postgres"]
         );
     }
 
     #[test]
-    fn lowercase_terms_are_marked_uncertain() {
+    fn learns_lowercase_spelling_changes() {
         assert_eq!(
             corrections("this will affect it", "this will effect it"),
             [Correction {
                 misheard: "affect".into(),
                 term: "effect".into(),
-                needs_repeat: true,
             }]
         );
     }
@@ -818,27 +759,24 @@ mod tests {
     #[test]
     fn latin_term_replacing_chinese_transliteration() {
         assert_eq!(
-            sure(
+            ex(
                 "我们今天用克劳德扣的写代码。",
                 "我们今天用Claude Code写代码。"
             ),
             ["Claude Code"]
         );
-        assert_eq!(
-            sure("克劳德扣的写代码", "Claude Code写代码"),
-            ["Claude Code"]
-        );
-        assert_eq!(sure("用爱爱写代码", "用AI写代码"), ["AI"]);
+        assert_eq!(ex("克劳德扣的写代码", "Claude Code写代码"), ["Claude Code"]);
+        assert_eq!(ex("用爱爱写代码", "用AI写代码"), ["AI"]);
     }
 
     #[test]
     fn unspaced_english_inside_chinese() {
         assert_eq!(
-            sure("我在用wis per做听写", "我在用Whisper做听写"),
+            ex("我在用wis per做听写", "我在用Whisper做听写"),
             ["Whisper"]
         );
         assert_eq!(
-            sure("我们用 cloud code 写代码", "我们用 Claude code 写代码"),
+            ex("我们用 cloud code 写代码", "我们用 Claude code 写代码"),
             ["Claude"]
         );
     }
@@ -857,7 +795,6 @@ mod tests {
             [Correction {
                 misheard: "帐户".into(),
                 term: "账户".into(),
-                needs_repeat: false,
             }]
         );
     }
@@ -869,7 +806,6 @@ mod tests {
             [Correction {
                 misheard: "克劳德扣的".into(),
                 term: "Claude Code".into(),
-                needs_repeat: false,
             }]
         );
     }
@@ -881,9 +817,21 @@ mod tests {
             [Correction {
                 misheard: "张山".into(),
                 term: "张珊".into(),
-                needs_repeat: true,
             }]
         );
+    }
+
+    #[test]
+    fn a_name_fix_cannot_claim_adjacent_text_outside_the_delivery() {
+        let baseline = "我今天和张山一起吃饭";
+        let start = baseline.find('山').unwrap();
+        let delivered = start..start + '山'.len_utf8();
+        let found = extract_corrections_in_regions(
+            baseline,
+            "我今天和张珊一起吃饭",
+            std::slice::from_ref(&delivered),
+        );
+        assert!(found.is_empty());
     }
 
     #[test]
@@ -905,24 +853,23 @@ mod tests {
     #[test]
     fn capitalization_fixes_name_terms() {
         assert_eq!(
-            sure("push it to github today", "push it to GitHub today"),
+            ex("push it to github today", "push it to GitHub today"),
             ["GitHub"]
         );
-        assert_eq!(sure("the ios app", "the iOS app"), ["iOS"]);
+        assert_eq!(ex("the ios app", "the iOS app"), ["iOS"]);
         assert_eq!(
-            sure("use claude code here", "use Claude Code here"),
+            ex("use claude code here", "use Claude Code here"),
             ["Claude Code"]
         );
     }
 
     #[test]
-    fn a_capital_alone_is_uncertain_and_needs_a_mid_sentence_word() {
+    fn a_capital_alone_needs_a_mid_sentence_word() {
         assert_eq!(
             corrections("we use python here", "we use Python here"),
             [Correction {
                 misheard: "python".into(),
                 term: "Python".into(),
-                needs_repeat: true,
             }]
         );
         assert!(ex("hello there. python rules", "hello there. Python rules").is_empty());
@@ -934,7 +881,7 @@ mod tests {
     #[test]
     fn learns_both_fixes_from_one_session() {
         assert_eq!(
-            sure(
+            ex(
                 "明天和张三开会，用 cloud code 写代码",
                 "明天和章珊开会，用 Claude Code 写代码"
             ),
@@ -943,52 +890,36 @@ mod tests {
     }
 
     #[test]
-    fn learns_only_inside_the_pasted_region() {
-        let prefix = "Earlier chat content that was already in the field before dictation. ";
-        let pasted = "部署到乌班图服务器上";
-        let found = extract_corrections(
-            &format!("{prefix}{pasted}"),
-            &format!("{prefix}部署到Ubuntu服务器上"),
-            &[pasted],
+    fn learns_from_multiple_delivery_regions_and_excludes_surrounding_text() {
+        let prefix = "Hey Shunade. ";
+        let first = "部署到乌班图服务器上";
+        let separator = "。";
+        let second = "然后用 cloud code 写代码";
+        let baseline = format!("{prefix}{first}{separator}{second}");
+        let first_end = prefix.len() + first.len();
+        let regions = [
+            prefix.len()..first_end,
+            first_end + separator.len()..baseline.len(),
+        ];
+        let found = extract_corrections_in_regions(
+            &baseline,
+            "Hey Sinead. 部署到Ubuntu服务器上。然后用 Claude Code 写代码",
+            &regions,
         );
-        assert_eq!(found[0].term, "Ubuntu");
-        assert!(
-            extract_corrections(
-                "Shunade wrote this. pasted words here",
-                "Sinead wrote this. pasted words here",
-                &["pasted words here"],
-            )
-            .is_empty()
-        );
+        let terms: Vec<_> = found
+            .iter()
+            .map(|correction| correction.term.as_str())
+            .collect();
+        assert_eq!(terms, ["Ubuntu", "Claude Code"]);
     }
 
     #[test]
-    fn learns_from_any_recent_paste() {
-        let (first, second) = ("部署到乌班图服务器上", "然后重启服务");
-        let found = extract_corrections(
-            &format!("{first}。{second}"),
-            &format!("部署到Ubuntu服务器上。{second}"),
-            &[first, second],
-        );
-        assert_eq!(found[0].term, "Ubuntu");
-    }
-
-    #[test]
-    fn a_reformatted_paste_counts_when_the_field_is_about_its_size() {
-        let found = extract_corrections(
-            "Hey \u{201c}Shunade\u{201d} there",
-            "Hey \u{201c}Sinead\u{201d} there",
-            &["Hey \"Shunade\" there"],
-        );
-        assert_eq!(found[0].term, "Sinead");
-    }
-
-    #[test]
-    fn a_field_with_no_trace_of_the_paste_teaches_nothing() {
-        let field = "something else entirely that was never pasted here at all";
-        assert!(
-            extract_corrections(field, &field.replace("never", "nearly"), &["short"]).is_empty()
-        );
+    fn absent_or_invalid_delivery_regions_teach_nothing() {
+        let baseline = "用 cloud code 写代码";
+        let edited = "用 Claude Code 写代码";
+        assert!(extract_corrections_in_regions(baseline, edited, &[]).is_empty());
+        let invalid = [0..0, 1..baseline.len(), 0..baseline.len() + 1];
+        assert!(extract_corrections_in_regions(baseline, edited, &invalid).is_empty());
     }
 
     #[test]
