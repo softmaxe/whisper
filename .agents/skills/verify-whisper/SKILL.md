@@ -101,7 +101,7 @@ The helper checks ownership, terminates only its recorded process group (includi
 
 [`scripts/control.py`](scripts/control.py) is executable. The commands above show all four actions: `launch`, read-only `doctor`, read-only `state`, and `cleanup`; every action requires `--run-dir`. Do not reuse a cleaned run for another launch. Rebuild and launch a new run after changing the executable.
 
-Keep journeys and preconditions current in the feature map. Use `/maintain-verification-skill` as the app evolves.
+When an entry point, accessible name, or stored result changes, update the corresponding recipe in the [feature map](features/README.md).
 
 ## Validated baseline
 

@@ -1,7 +1,7 @@
 //! Microphone capture, speech gate, WAV encoding and dictation cues.
 //!
 //! cpal streams live on dedicated threads (they are `!Send` on macOS); the
-//! UI talks to them through [`Recorder`].
+//! UI talks to them through [`capture::Recorder`].
 
 pub mod capture;
 pub mod cues;

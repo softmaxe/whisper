@@ -2,9 +2,12 @@
 //! screenshots of every view need no pointer input.
 //!
 //! Values: `home`, `insights`, `upload`, `dictionary`, `search`,
-//! `settings[:general|language|hotkeys|speech|llms|privacy]`, and the pill states
-//! `pill:recording`, `pill:processing`, `pill:preparing`, `pill:transition`,
-//! `pill:cleanup`, `pill:cleanup-transition`, `pill:flow`, `pill:error`, `pill:fallback`.
+//! and `settings[:general|language|hotkeys|speech|llms|privacy]`.
+//! Microphone test scenes use `settings:mic-recording`, `settings:mic-ready`,
+//! `settings:mic-error`, and `settings:mic-transition`.
+//! Pill states include `pill:recording`, `pill:processing`, `pill:preparing`,
+//! `pill:transition`, `pill:cleanup`, `pill:cleanup-transition`, `pill:flow`,
+//! `pill:error`, `pill:no-speech`, and `pill:fallback`.
 //! `pill:learning-context`, `pill:learning-unreadable`, `pill:learning-recovered`,
 //! `pill:learning-learned`, and `pill:learning-cycle` show auto-learn feedback.
 //! `WHISPER_DEV_LEARNING_WITH_PILL=1` keeps the existing recording pill visible.

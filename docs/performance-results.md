@@ -156,11 +156,12 @@ job, and bounded CPU concurrency. Automated checks do not replace native UI
 interaction checks in `docs/testing.md`.
 
 Reproduce audio measurements with `scripts/bench-audio.sh 811ecca`. The opt-in
-`src/services/performance_tests.rs` probes accept `WHISPER_PERF_AUDIO`,
-`WHISPER_PERF_SETTINGS_PATH`, `WHISPER_PERF_OUTPUT`, `WHISPER_PERF_LABEL`, and
-optionally `WHISPER_PERF_REPETITIONS`. Use a synthetic fixture and a private local
-settings path; do not commit server credentials. See each probe for its required
-environment and fixture behavior.
+probes in [performance_tests.rs](../src/services/performance_tests.rs) write JSON
+to `WHISPER_PERF_OUTPUT` and accept an optional `WHISPER_PERF_LABEL`. The live
+pipeline probe also requires `WHISPER_PERF_SETTINGS_PATH` and a
+`WHISPER_PERF_AUDIO` WAV whose spoken text contains both “report” and “Friday”.
+It takes five measured samples per mode unless `WHISPER_PERF_REPETITIONS` is set.
+The upload and state-hydration probes create their own local fixtures.
 
 Local workspace evidence is retained under ignored `.e2e/performance-review/`:
 `audio-interleaved.csv`, `audio-benchmark-metadata.json`, `live-summary.json`,

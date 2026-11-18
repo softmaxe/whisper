@@ -185,7 +185,7 @@ impl Palette {
     }
 
     /// Tokyo Night adapted to Whisper's reading surfaces and voice controls.
-    /// Reference: https://github.com/folke/tokyonight.nvim
+    /// Reference: <https://github.com/folke/tokyonight.nvim>
     /// Quiet neutral surfaces follow the T3 Code reference. Accent is reserved
     /// for actions and focus; reading text remains legible without bright outlines.
     pub fn tokyo_night() -> Self {
