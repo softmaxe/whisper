@@ -41,6 +41,10 @@ impl DictationSnapshot {
     }
 }
 
+#[expect(
+    clippy::enum_variant_names,
+    reason = "AppEvent names identify change notifications"
+)]
 #[derive(Debug, Clone)]
 pub enum AppEvent {
     SettingsChanged,

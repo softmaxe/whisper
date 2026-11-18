@@ -9133,7 +9133,6 @@ version = "0.0.32"
 dependencies = [
  "anyhow",
  "async-channel",
- "base64 0.22.1",
  "block2 0.6.2",
  "bytes",
  "chrono",
