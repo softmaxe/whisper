@@ -48,7 +48,7 @@ pub struct MediaHooks {
 impl Default for MediaHooks {
     fn default() -> Self {
         Self {
-            run: Arc::new(|program, args| run_with_timeout(program, args, None, HELPER_TIMEOUT)),
+            run: Arc::new(|program, args| run_with_timeout(program, args, HELPER_TIMEOUT)),
             adapter: Arc::new(resolve_adapter),
             media_key_binary: Arc::new(|| resolve_helper(MEDIA_KEY_BINARY)),
         }
@@ -83,36 +83,48 @@ pub fn resolve_adapter() -> Option<AdapterPaths> {
     })
 }
 
-#[derive(Default)]
-struct State {
-    did_pause: bool,
-    paused_via_adapter: bool,
+enum PauseMethod {
+    Adapter,
+    MediaKey,
 }
 
 pub struct MediaPlayer {
     hooks: MediaHooks,
     // Held for a whole operation, serializing pause and resume.
-    state: Mutex<State>,
+    paused_with: Mutex<Option<PauseMethod>>,
 }
 
 impl MediaPlayer {
     pub fn new(hooks: MediaHooks) -> Self {
         Self {
             hooks,
-            state: Mutex::new(State::default()),
+            paused_with: Mutex::new(None),
         }
     }
 
     /// Pauses playing media. True if a pause was sent.
     pub fn pause_media(&self) -> bool {
-        let mut state = lock(&self.state);
-        self.pause_locked(&mut state)
+        let mut paused_with = lock(&self.paused_with);
+        *paused_with = self.pause_playing_media();
+        paused_with.is_some()
     }
 
     /// Resumes what [`MediaPlayer::pause_media`] paused. True if resumed.
     pub fn resume_media(&self) -> bool {
-        let mut state = lock(&self.state);
-        self.resume_locked(&mut state)
+        let mut paused_with = lock(&self.paused_with);
+        match paused_with.take() {
+            None => false,
+            Some(PauseMethod::MediaKey) => self.send_media_key(),
+            Some(PauseMethod::Adapter) => {
+                let play = self.run_adapter(&["send", SEND_PLAY]);
+                if play.as_ref().is_some_and(RunOutput::success) {
+                    log::debug!("[media] resumed via adapter");
+                    return true;
+                }
+                log::debug!("[media] adapter play failed, falling back to media key");
+                self.send_media_key()
+            }
+        }
     }
 
     fn run_adapter(&self, args: &[&str]) -> Option<RunOutput> {
@@ -124,38 +136,22 @@ impl MediaPlayer {
         Some((self.hooks.run)(&paths.perl, &full))
     }
 
-    fn pause_locked(&self, state: &mut State) -> bool {
-        state.did_pause = false;
-        state.paused_via_adapter = false;
-
+    fn pause_playing_media(&self) -> Option<PauseMethod> {
         if let Some(probe) = self.run_adapter(&["get", "--no-artwork"]) {
             if probe.success() {
-                let output = probe.stdout.trim();
-                let playing = if output == "null" {
-                    Some(false)
-                } else if output.is_empty() {
-                    None
-                } else {
-                    serde_json::from_str::<serde_json::Value>(output)
-                        .ok()
-                        .map(|value| {
-                            value
-                                .get("playing")
-                                .is_some_and(|p| p.as_bool() == Some(true))
-                        })
-                };
+                let playing = serde_json::from_str::<serde_json::Value>(probe.stdout.trim())
+                    .ok()
+                    .map(|value| value["playing"].as_bool() == Some(true));
                 match playing {
                     Some(false) => {
                         log::debug!("[media] adapter reports nothing playing");
-                        return false;
+                        return None;
                     }
                     Some(true) => {
                         let pause = self.run_adapter(&["send", SEND_PAUSE]);
                         if pause.as_ref().is_some_and(RunOutput::success) {
                             log::debug!("[media] paused via adapter");
-                            state.paused_via_adapter = true;
-                            state.did_pause = true;
-                            return true;
+                            return Some(PauseMethod::Adapter);
                         }
                         log::debug!("[media] adapter pause failed: {pause:?}");
                     }
@@ -170,29 +166,7 @@ impl MediaPlayer {
         }
 
         // Fallback: a media key toggle; it cannot know whether anything plays.
-        if self.send_media_key() {
-            state.did_pause = true;
-            return true;
-        }
-        false
-    }
-
-    fn resume_locked(&self, state: &mut State) -> bool {
-        if !state.did_pause {
-            return false;
-        }
-        let used_adapter = state.paused_via_adapter;
-        state.did_pause = false;
-        state.paused_via_adapter = false;
-        if used_adapter {
-            let play = self.run_adapter(&["send", SEND_PLAY]);
-            if play.as_ref().is_some_and(RunOutput::success) {
-                log::debug!("[media] resumed via adapter");
-                return true;
-            }
-            log::debug!("[media] adapter play failed, falling back to media key");
-        }
-        self.send_media_key()
+        self.send_media_key().then_some(PauseMethod::MediaKey)
     }
 
     fn send_media_key(&self) -> bool {
@@ -289,7 +263,9 @@ mod tests {
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_default();
                 lock(&recorded).push((name, args.iter().map(|a| a.to_string()).collect()));
-                lock(&rx).recv().unwrap_or_default()
+                lock(&rx)
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("missing result for a media helper call")
             }),
             adapter: Arc::new(move || {
                 adapter.then(|| AdapterPaths {
@@ -346,7 +322,7 @@ mod tests {
         assert_eq!(tail(&play), ["send", "0"]);
         f.results.send(output(0, "")).unwrap();
         assert!(resuming.join().unwrap());
-        assert!(!lock(&f.player.state).did_pause);
+        assert!(!f.player.resume_media());
     }
 
     #[test]
@@ -408,7 +384,6 @@ mod tests {
                 "get",
                 "--no-artwork",
             ],
-            None,
             HELPER_TIMEOUT,
         );
         assert!(output.success(), "{output:?}");

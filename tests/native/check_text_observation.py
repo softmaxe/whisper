@@ -37,16 +37,21 @@ def write(process: subprocess.Popen[str], value: str) -> None:
 
 def event(output: queue.Queue[str], kind: str, text: str | None = None) -> dict[str, Any]:
     deadline = time.monotonic() + 4
-    while time.monotonic() < deadline:
-        value = json.loads(output.get(timeout=4))
+    while (remaining := deadline - time.monotonic()) > 0:
+        try:
+            value = json.loads(output.get(timeout=remaining))
+        except queue.Empty:
+            break
         summary = dict(value)
         if len(summary.get("value", "")) > 160:
             summary["value_length"] = len(summary["value"])
             summary["value_tail"] = summary.pop("value")[-80:]
         print(json.dumps(summary, ensure_ascii=False), flush=True)
+        if value["kind"] == "sent" and kind != "sent":
+            raise AssertionError(f"Unexpected send while waiting for {kind}")
         if value["kind"] == kind and (text is None or value.get("value") == text):
             return value
-    raise AssertionError(kind)
+    raise AssertionError(f"Timed out waiting for {kind}")
 
 
 def main() -> None:
@@ -72,6 +77,7 @@ def check(fixture_binary: Path, helper_binary: Path) -> None:
         write(helper, json.dumps({"command": "prepare", "ticket": 1}))
         prepared = event(output, "prepared")
         assert prepared.get("value") == "", prepared
+        assert prepared["ticket"] == 1
         assert prepared["start"] == 0
         write(fixture, "paste")
         assert fixture_output.get(timeout=4) == "DONE:paste"
@@ -84,9 +90,10 @@ def check(fixture_binary: Path, helper_binary: Path) -> None:
         write(fixture, "clear")
         assert fixture_output.get(timeout=4) == "DONE:clear"
         empty = event(output, "value", "")
-        assert empty["kind"] != "sent", "deletion without send must remain a replacement"
-        write(helper, json.dumps({"command":"snapshot", "ticket":2}))
-        event(output, "synced")
+        assert empty["field"] == prepared["field"]
+        write(helper, json.dumps({"command": "snapshot", "ticket": 2}))
+        synced = event(output, "synced")
+        assert synced["ticket"] == 2
         write(fixture, "paste")
         assert fixture_output.get(timeout=4) == "DONE:paste"
         event(output, "value", "hello world")
@@ -101,6 +108,7 @@ def check(fixture_binary: Path, helper_binary: Path) -> None:
         assert fixture_output.get(timeout=4) == "DONE:long"
         write(helper, json.dumps({"command": "prepare", "ticket": 3}))
         long = event(output, "prepared")
+        assert long["ticket"] == 3
         assert long["value"] == "existing " * 2000 + "克劳德"
         assert long["start"] == len(long["value"])
         write(helper, json.dumps({"command": "commit", "ticket": 3}))

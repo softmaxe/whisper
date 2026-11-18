@@ -229,30 +229,30 @@ impl Timers for FakeTimers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
 
     #[test]
     fn real_timers_fire_and_cancel() {
         let timers = RealTimers::shared();
-        let fired = Arc::new(AtomicUsize::new(0));
-        let (tx, rx) = std::sync::mpsc::channel();
-        let f = Arc::clone(&fired);
+        let (tx, rx) = mpsc::channel();
         timers.schedule(
             Duration::from_millis(10),
             Box::new(move || {
-                f.fetch_add(1, Ordering::SeqCst);
                 let _ = tx.send(());
             }),
         );
-        let f2 = Arc::clone(&fired);
+        let (cancelled_tx, cancelled_rx) = mpsc::channel();
         let cancelled = timers.schedule(
-            Duration::from_millis(5),
+            Duration::from_secs(60),
             Box::new(move || {
-                f2.fetch_add(10, Ordering::SeqCst);
+                let _ = cancelled_tx.send(());
             }),
         );
         timers.cancel(cancelled);
+        assert_eq!(
+            cancelled_rx.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        );
         rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        assert_eq!(fired.load(Ordering::SeqCst), 1);
     }
 }
