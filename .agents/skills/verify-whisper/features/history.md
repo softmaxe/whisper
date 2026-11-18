@@ -21,7 +21,7 @@ Users inspect saved dictations/uploads, compare raw and cleaned text, copy or re
 
 Preconditions:
 
-- Produce a known transcript through [Upload](upload.md) or [dictation](dictation.md), with History saving enabled. Retry also needs retained audio and reachable ASR. Insights activity needs real dictation; an upload alone does not establish dictation analytics.
+- With Save history on, create a known transcript through [Upload](upload.md) or [dictation](dictation.md) for copy, search, and deletion. For Retry and Reveal in Finder, dictate with audio retention enabled. Retry also needs reachable ASR. Use a delivered dictation for Insights and one whose final text differs from its raw transcript for the raw-text toggle.
 
 - **Inspect/copy.** Click `History`, inspect AX, select the known transcript. Click `Copy text` or focus its row and `await app.pressKey("Return")`. Paste into a disposable editor to observe the clipboard result; preserve/restore the user's clipboard if the tooling permits. Capture action and result, plus the read-only History count.
 - **Raw text.** Click `Show raw transcript`, inspect AX and require the actual raw text, then `Hide raw transcript`. When raw and final text are identical the control is absent and this sub-feature lacks its required fixture.

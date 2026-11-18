@@ -40,18 +40,18 @@ typing in.
   retain the original recording; Send anyway can bypass a no-speech result once.
 - **Fewer hesitation sounds.** Optional local filler-word removal works even
   with text cleanup off, while preserving the raw transcript in History.
-- **Gets better with use.** A dictionary supplies spelling hints, corrections
-  you make right after a paste are learned, and Snippets expand short phrases
-  into longer text. Removing a word or snippet can be undone.
+- **Dictionary and Snippets.** Add spelling hints or expand short phrases into
+  longer text. When a configured cleanup model and auto-learn are both enabled,
+  Whisper can learn corrections you make after a paste. Removing a word or
+  snippet can be undone.
 - **History.** Search with Cmd+K, open raw transcripts, re-transcribe from
   saved audio, undo a delete, and set how long audio and transcripts are kept.
-- **File transcription.** Drop in one audio or video file, or a batch; each
-  transcript is saved to History.
-- **Insights.** Words, dictations and words per minute for the last 7 or 30
-  days or all time, each compared with the previous period; a trend chart that
-  sets the period beside the one before it; highlights such as active days,
-  busiest day and time spoken; and a Habits section with your streak calendar
-  and weekly rhythm. Everything is computed on device.
+- **File transcription.** Drop in one audio or video file, or a batch. Copy the
+  results directly or find them in History when Save history is on.
+- **Insights.** See words, dictations and words per minute for the last 7 or
+  30 days alongside the previous period, or view all-time totals. Explore the
+  trend chart, active days, busiest day, time spoken, streak calendar and
+  weekly rhythm. Everything is computed on device.
 - **Test your microphone.** Record up to ten seconds and play it back from
   Settings > Dictation. The clip stays in memory and is never saved or sent.
 - **Fits into macOS.** Menu bar icon, standard app menu, start at login

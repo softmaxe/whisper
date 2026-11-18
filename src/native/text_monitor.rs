@@ -245,13 +245,6 @@ impl TextEditMonitor {
         }
     }
 
-    /// Discards all observation state and stops helpers when learning is disabled.
-    #[cfg(test)]
-    pub fn stop_monitoring(&self) {
-        let _lifecycle = lock(&self.inner.lifecycle);
-        self.stop_observers();
-    }
-
     /// Gates all future preparations and invalidates tickets already in flight.
     pub fn set_enabled(&self, enabled: bool) {
         let _lifecycle = lock(&self.inner.lifecycle);
@@ -1439,7 +1432,7 @@ mod tests {
                 pasted_ranges: std::iter::once(0..11).collect(),
             }
         );
-        monitor.stop_monitoring();
+        monitor.set_enabled(false);
     }
 
     struct ObservationFixture {
@@ -1529,7 +1522,7 @@ mod tests {
 
     impl Drop for ObservationFixture {
         fn drop(&mut self) {
-            self.monitor.stop_monitoring();
+            self.monitor.set_enabled(false);
         }
     }
 
@@ -1762,7 +1755,7 @@ mod tests {
         );
         timers.advance(1_000);
         assert!(reports.try_recv().is_err());
-        monitor.stop_monitoring();
+        monitor.set_enabled(false);
     }
 
     #[test]

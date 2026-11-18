@@ -1,8 +1,5 @@
-//! Opt-in, synthetic-input measurements against the configured live servers.
-//!
-//! Run with `WHISPER_PERF_AUDIO`, `WHISPER_PERF_SETTINGS_PATH`,
-//! `WHISPER_PERF_OUTPUT`, and `WHISPER_PERF_LABEL` set. This probe never opens
-//! the application database, accesses the microphone, or pastes text.
+//! Opt-in pipeline, upload, and storage measurements. See `docs/performance-results.md`
+//! for the fixtures and environment variables each probe uses.
 
 use std::path::PathBuf;
 use std::time::Instant;
@@ -36,7 +33,7 @@ fn performance_live_pipeline() {
     // Warm both services before collecting samples; server loading is a
     // separate workload from repeated dictation latency.
     for cleanup in [false, true] {
-        if cleanup && !pipeline::cleanup_enabled(&settings) {
+        if cleanup && !settings.cleanup_enabled() {
             continue;
         }
         for iteration in 0..=repetitions {

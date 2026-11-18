@@ -335,7 +335,7 @@ impl UploadStore {
     fn browse(&mut self, cx: &mut Context<Self>) {
         // An async panel keeps GPUI's run loop free while the dialog is open.
         cx.spawn(async move |this, cx| {
-            if let Some(paths) = crate::services::upload::select_audio_files(true).await {
+            if let Some(paths) = crate::services::upload::select_audio_files().await {
                 let _ = this.update(cx, |this, cx| this.accept_paths(paths, false, cx));
             }
         })
@@ -343,12 +343,13 @@ impl UploadStore {
     }
 
     fn transcribe(&mut self, cx: &mut Context<Self>) {
-        let Some(file) = self.file.clone() else {
+        let Some(file) = &self.file else {
             return;
         };
         if self.batch_processing || self.single_running() {
             return;
         }
+        let request = build_request(file.path.clone(), cx);
         self.run_id += 1;
         let run = self.run_id;
         let cancel = CancellationToken::new();
@@ -357,7 +358,6 @@ impl UploadStore {
         self.started = Some(Instant::now());
         self.start_ticker(cx);
         cx.notify();
-        let request = build_request(file.path.clone(), cx);
         let task = run_transcription(request, cancel);
         cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -383,8 +383,9 @@ impl UploadStore {
                 None => None,
             };
             let _ = this.update(cx, |this, cx| {
-                this.finish_single(run, result, saved);
-                cx.notify();
+                if this.finish_single(run, result, saved) {
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -443,16 +444,13 @@ impl UploadStore {
         self.start_queue(None, cx);
     }
 
-    fn next_queued(
-        &mut self,
-        only: Option<&HashSet<String>>,
-        processed: &HashSet<String>,
-    ) -> Option<&mut QueueItem> {
-        self.queue.iter_mut().find(|item| {
-            item.status == ItemStatus::Queued
-                && !processed.contains(&item.id)
-                && only.is_none_or(|ids| ids.contains(&item.id))
-        })
+    fn begin_next_queued(&mut self, only: Option<&HashSet<String>>) -> Option<&mut QueueItem> {
+        let item = self.queue.iter_mut().find(|item| {
+            item.status == ItemStatus::Queued && only.is_none_or(|ids| ids.contains(&item.id))
+        })?;
+        item.status = ItemStatus::Transcribing;
+        item.started = Some(Instant::now());
+        Some(item)
     }
 
     fn start_queue(&mut self, only: Option<HashSet<String>>, cx: &mut Context<Self>) {
@@ -474,16 +472,13 @@ impl UploadStore {
         let run = self.batch_run;
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let mut processed = HashSet::new();
             loop {
                 let next = this
                     .update(cx, |this, cx| {
                         if run != this.batch_run {
                             return None;
                         }
-                        let item = this.next_queued(only.as_ref(), &processed)?;
-                        item.status = ItemStatus::Transcribing;
-                        item.started = Some(Instant::now());
+                        let item = this.begin_next_queued(only.as_ref())?;
                         let request = build_request(item.path.clone(), cx);
                         let id = item.id.clone();
                         let text = item.text.clone();
@@ -498,7 +493,6 @@ impl UploadStore {
                 let Some((id, text, request, cancel)) = next else {
                     break;
                 };
-                processed.insert(id.clone());
                 let result = match text {
                     Some(text) => Ok(text),
                     None => run_transcription(request, cancel).await,
@@ -602,8 +596,9 @@ impl UploadStore {
         cx.spawn(async move |this, cx| {
             let saved = save.await;
             let _ = this.update(cx, |this, cx| {
-                this.finish_single(run, Ok(text), Some(saved));
-                cx.notify();
+                if this.finish_single(run, Ok(text), Some(saved)) {
+                    cx.notify();
+                }
             });
         })
         .detach();
@@ -630,7 +625,7 @@ impl UploadStore {
     }
 
     fn clear_queue(&mut self, cx: &mut Context<Self>) {
-        self.cancel_batch(cx);
+        self.stop_batch();
         self.queue.clear();
         self.skipped_notice = None;
         cx.notify();
@@ -1675,7 +1670,9 @@ fn stage_key(stage: &Stage) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{CancellationToken, HashSet, ItemStatus, QueueItem, Stage, UploadStore};
+    use super::{
+        CancellationToken, HashSet, ItemStatus, QueueItem, Stage, UploadError, UploadStore,
+    };
 
     fn queue_item() -> QueueItem {
         QueueItem {
@@ -1710,10 +1707,19 @@ mod tests {
 
     #[test]
     fn failed_transcription_retries_without_a_cached_transcript() {
-        let mut item = queue_item();
-        item.finish(Ok(String::new()), None);
-        assert!(item.retry());
-        assert!(item.text.is_none());
+        let error = UploadError {
+            message: "Request failed".into(),
+            code: None,
+            message_key: None,
+        };
+        for result in [Ok(String::new()), Err(error)] {
+            let mut item = queue_item();
+            item.finish(result, None);
+            assert_eq!(item.status, ItemStatus::Error);
+            assert!(item.error.is_some());
+            assert!(item.retry());
+            assert!(item.text.is_none());
+        }
     }
 
     #[test]
@@ -1729,14 +1735,9 @@ mod tests {
             ..Default::default()
         };
         let selected = HashSet::from(["job".to_string()]);
-        assert_eq!(
-            store
-                .next_queued(Some(&selected), &HashSet::new())
-                .unwrap()
-                .id,
-            "job"
-        );
-        assert!(store.next_queued(Some(&selected), &selected).is_none());
+        assert_eq!(store.begin_next_queued(Some(&selected)).unwrap().id, "job");
+        assert!(store.begin_next_queued(Some(&selected)).is_none());
+        assert_eq!(store.queue[1].status, ItemStatus::Transcribing);
         assert_eq!(store.queue[0].status, ItemStatus::Queued);
     }
 

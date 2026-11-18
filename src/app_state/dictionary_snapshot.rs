@@ -67,7 +67,6 @@ mod tests {
         db.record_corrections(&[crate::text::correction_learner::Correction {
             misheard: "whispr".into(),
             term: "Whisper".into(),
-            needs_repeat: false,
         }])
         .unwrap();
         let newer = DictionarySnapshot::read(&db);

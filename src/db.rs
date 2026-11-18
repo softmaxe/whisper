@@ -11,7 +11,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::{Mutex, MutexGuard};
-use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
+use rusqlite::{Connection, Row, TransactionBehavior, params};
 
 pub use dictionary::{CorrectionLearningOutcome, DictionaryEntry, DictionarySource};
 pub use snippets::{MAX_SNIPPET_TRIGGER_LENGTH, Snippet};
@@ -134,7 +134,9 @@ impl Database {
         Ok(rows)
     }
 
+    #[cfg(test)]
     pub fn get_transcription_by_id(&self, id: i64) -> Result<Option<TranscriptionItem>> {
+        use rusqlite::OptionalExtension;
         let conn = self.lock();
         Ok(conn
             .query_row(
@@ -217,12 +219,12 @@ impl Database {
         id: i64,
         text: &str,
         raw_text: Option<&str>,
-    ) -> Result<()> {
-        self.lock().execute(
+    ) -> Result<bool> {
+        let changed = self.lock().execute(
             "UPDATE transcriptions SET text = ?, raw_text = ? WHERE id = ?",
             params![text, raw_text, id],
         )?;
-        Ok(())
+        Ok(changed > 0)
     }
 
     pub fn clear_audio_flags(&self, ids: &[i64]) -> Result<()> {

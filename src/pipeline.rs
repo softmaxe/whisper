@@ -58,7 +58,6 @@ pub struct Transcript {
     /// The server's transcript before cleanup.
     pub raw_text: String,
     pub cleanup_failure: Option<CleanupFailure>,
-    pub cleanup_skipped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,7 +90,7 @@ impl PipelineOutcome {
 
 /// The STT prompt: the most important hint words that fit the request
 /// budget, behind the Chinese script bias. Returns `(dictionary, full)`.
-pub fn build_whisper_prompt(input: &PipelineInput) -> (Option<String>, Option<String>) {
+fn build_whisper_prompt(input: &PipelineInput) -> (Option<String>, Option<String>) {
     let s = &input.settings;
     // No transcript exists yet, so only an explicit zh-CN/zh-TW biases the prompt.
     let target =
@@ -109,12 +108,7 @@ pub fn build_whisper_prompt(input: &PipelineInput) -> (Option<String>, Option<St
     (fitted, full)
 }
 
-/// Whether cleanup is configured: enabled, with a model and a server.
-pub fn cleanup_enabled(settings: &Settings) -> bool {
-    settings.cleanup_enabled()
-}
-
-pub fn cleanup_system_prompt(input: &PipelineInput, text: &str) -> String {
+fn cleanup_system_prompt(input: &PipelineInput, text: &str) -> String {
     let s = &input.settings;
     let words = get_prioritized_dictionary_hint_words(
         &input.dictionary,
@@ -145,15 +139,12 @@ pub fn cleanup_system_prompt(input: &PipelineInput, text: &str) -> String {
 
 /// Cleans a transcript. A failure or blank reply keeps the transcript and
 /// reports why.
-pub async fn clean_up(
+async fn clean_up(
     text: &str,
     input: &PipelineInput,
     cancel: &CancellationToken,
 ) -> (String, Option<CleanupFailure>) {
     let normalized = text.trim();
-    if normalized.is_empty() || !cleanup_enabled(&input.settings) {
-        return (normalized.to_string(), None);
-    }
     let s = &input.settings;
     let config = CleanupRequestConfig::dictation(
         s.cleanup_remote_url.trim(),
@@ -188,7 +179,7 @@ fn filter_fillers(text: &str, settings: &Settings) -> String {
 }
 
 /// The deterministic Chinese script pass, run on the cleaned text.
-pub fn finalize_script(text: &str, settings: &Settings) -> String {
+fn finalize_script(text: &str, settings: &Settings) -> String {
     let target = resolve_chinese_script_target(
         &settings.preferred_language,
         settings.chinese_script_preference,
@@ -237,7 +228,6 @@ pub async fn run(
             spoken_text: raw.trim().to_string(),
             raw_text: raw,
             cleanup_failure: None,
-            cleanup_skipped: false,
         });
     }
     let filtered = filter_fillers(&raw, &input.settings);
@@ -247,13 +237,12 @@ pub async fn run(
     {
         return PipelineOutcome::NoAudio;
     }
-    if let Some(text) = whole_snippet_replacement(&filtered, &input.snippets) {
+    if fillers_removed && let Some(text) = whole_snippet_replacement(&filtered, &input.snippets) {
         return PipelineOutcome::Transcribed(Transcript {
             text,
             spoken_text: filtered.trim().to_string(),
             raw_text: raw,
             cleanup_failure: None,
-            cleanup_skipped: false,
         });
     }
     // Check the dictionary alone as well as the full prompt: a script bias
@@ -270,8 +259,7 @@ pub async fn run(
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let mut cleanup_skipped = false;
-    let (cleaned, cleanup_failure) = if cleanup_enabled(&input.settings) {
+    let (cleaned, cleanup_failure) = if input.settings.cleanup_enabled() {
         // A skip issued during ASR cannot arm a future cleanup stage.
         let can_skip = !skip_cleanup.is_cancelled();
         let stage = CleanupStage::new(input.cleanup_stage.as_ref());
@@ -279,7 +267,6 @@ pub async fn run(
             biased;
             _ = cancel.cancelled() => return PipelineOutcome::Cancelled,
             _ = skip_cleanup.cancelled(), if can_skip => {
-                cleanup_skipped = true;
                 (filtered.clone(), None)
             }
             result = clean_up(&filtered, &input, &cancel) => result,
@@ -311,7 +298,6 @@ pub async fn run(
         spoken_text,
         raw_text: raw,
         cleanup_failure,
-        cleanup_skipped,
     })
 }
 
@@ -387,12 +373,12 @@ mod tests {
     #[test]
     fn cleanup_requires_model_and_server() {
         let mut s = Settings::default();
-        assert!(!cleanup_enabled(&s));
+        assert!(!s.cleanup_enabled());
         s.cleanup_model = "m".into();
         s.cleanup_remote_url = "http://localhost:1/v1".into();
-        assert!(cleanup_enabled(&s));
+        assert!(s.cleanup_enabled());
         s.use_cleanup_model = false;
-        assert!(!cleanup_enabled(&s));
+        assert!(!s.cleanup_enabled());
     }
 
     #[test]
@@ -777,7 +763,6 @@ mod tests {
         assert!(t.text.contains("电脑"), "{}", t.text);
         assert!(t.text.contains("Claude"), "{}", t.text);
         assert!(t.text.ends_with("uh saved text"), "{}", t.text);
-        assert!(t.cleanup_skipped);
         assert_eq!(t.cleanup_failure, None);
         assert_eq!(rx.try_recv(), Ok(false));
         assert!(rx.try_recv().is_err());
@@ -803,7 +788,6 @@ mod tests {
             )));
             skip.cancel();
             assert_eq!(t.text, "Hello there.");
-            assert!(!t.cleanup_skipped);
             assert_eq!(rx.try_recv(), Ok(true));
             assert_eq!(rx.try_recv(), Ok(false));
         }

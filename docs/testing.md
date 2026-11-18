@@ -10,7 +10,24 @@ scripts/check.sh
 
 The script runs `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, and `cargo test --locked`. It is the same command the CI workflow runs. Use the Rust version pinned in [`rust-toolchain.toml`](../rust-toolchain.toml); rustup selects it automatically.
 
-Unit tests live next to the code in `src/`. Tests marked `#[ignore]` need hardware or a live server; run them by name with `cargo test -- --ignored <name>`.
+Rust tests live next to the code in `src/`. CI installs the pinned FFmpeg with
+`scripts/download-ffmpeg.sh` and runs `WHISPER_REQUIRE_FFMPEG=1 scripts/check.sh`
+so the conversion tests exercise the binary. Local runs skip those tests when
+FFmpeg is unavailable.
+
+The ignored Rust tests cover hardware, live servers, and performance measurements.
+List them with `cargo test --locked --lib -- --ignored --list` and run a single
+probe with `cargo test --locked --lib <name> -- --ignored --nocapture`. The
+[performance results](performance-results.md) describe the benchmark fixtures.
+
+To exercise the native text observer against a disposable AppKit editor, run
+`uv run --no-project tests/native/check_text_observation.py` in a macOS GUI
+session with Accessibility access. This separate smoke test compiles the Swift
+fixture and helper and checks the events produced by pasting, correcting,
+clearing, and sending text. For manual browser checks, open the
+[text observation fixture](../tests/native/text_observation.html) in the target
+browser. It provides plain and rich text fields, a long draft, and Send buttons
+that clear only the local field.
 
 ## Workflows
 

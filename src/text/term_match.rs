@@ -1,4 +1,4 @@
-//! Finds dictionary terms in text, for usage counts and known corrections.
+//! Finds dictionary terms in the original text for applying known corrections.
 
 use std::ops::Range;
 
@@ -23,7 +23,7 @@ fn match_len(text: &str, needle: &[char]) -> Option<usize> {
 
 /// A word in a script written without spaces is not part of a Latin word next
 /// to it ("用Claude写").
-fn continues_word(c: char) -> bool {
+pub(crate) fn continues_word(c: char) -> bool {
     (c.is_alphanumeric() || c == '_') && !is_unspaced_script(c)
 }
 

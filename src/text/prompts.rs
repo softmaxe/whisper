@@ -155,7 +155,7 @@ pub fn resolve_cleanup_prompt<S: AsRef<str>>(
 }
 
 /// The user message: the cleanup prompt says input arrives between
-/// <transcript> tags, and the trailing line re-anchors the output contract.
+/// `<transcript>` tags, and the trailing line re-anchors the output contract.
 pub fn wrap_cleanup_transcript(text: &str) -> String {
     format!("<transcript>\n{text}\n</transcript>\n\nOutput only the cleaned transcript.")
 }

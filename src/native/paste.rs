@@ -80,20 +80,7 @@ pub struct ClipboardSnapshot {
     pub items: Vec<Vec<(String, Vec<u8>)>>,
 }
 
-impl ClipboardSnapshot {
-    #[cfg(test)]
-    pub fn text(&self) -> Option<String> {
-        self.items
-            .iter()
-            .flatten()
-            .find(|(kind, _)| kind == "public.utf8-plain-text")
-            .map(|(_, data)| String::from_utf8_lossy(data).into_owned())
-    }
-}
-
 pub trait Pasteboard: Send + Sync {
-    #[cfg(test)]
-    fn read_text(&self) -> Option<String>;
     fn change_count(&self) -> isize;
     fn write_text(&self, text: &str) -> bool;
     fn snapshot(&self) -> Option<ClipboardSnapshot>;
@@ -117,13 +104,6 @@ fn reserve_snapshot_bytes(remaining: &mut usize, size: usize) -> Option<()> {
 }
 
 impl Pasteboard for SystemPasteboard {
-    #[cfg(test)]
-    fn read_text(&self) -> Option<String> {
-        // SAFETY: AppKit pasteboard type constants are immutable NSStrings.
-        let kind = unsafe { NSPasteboardTypeString };
-        general().stringForType(kind).map(|s| s.to_string())
-    }
-
     fn write_text(&self, text: &str) -> bool {
         let pasteboard = general();
         pasteboard.clearContents();
@@ -266,7 +246,7 @@ impl Default for PasteHooks {
     fn default() -> Self {
         Self {
             pasteboard: Arc::new(SystemPasteboard),
-            run: Arc::new(|program, args, timeout| run_with_timeout(program, args, None, timeout)),
+            run: Arc::new(run_with_timeout),
             resolve_fast_paste: Arc::new(|| resolve_helper(FAST_PASTE_BINARY)),
             accessibility_trusted: Arc::new(|| is_accessibility_trusted(false)),
             show_accessibility_dialog: Arc::new(show_accessibility_dialog),
@@ -609,10 +589,18 @@ mod tests {
         }
     }
 
-    impl Pasteboard for FakePasteboard {
+    impl FakePasteboard {
         fn read_text(&self) -> Option<String> {
-            lock(&self.current).text()
+            lock(&self.current)
+                .items
+                .iter()
+                .flatten()
+                .find(|(kind, _)| kind == "public.utf8-plain-text")
+                .map(|(_, data)| String::from_utf8_lossy(data).into_owned())
         }
+    }
+
+    impl Pasteboard for FakePasteboard {
         fn write_text(&self, text: &str) -> bool {
             self.count.fetch_add(1, Ordering::SeqCst);
             *lock(&self.current) = text_snapshot(text);

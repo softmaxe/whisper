@@ -16,6 +16,7 @@ use super::timestamp::{now_db_timestamp, parse_db_timestamp};
 use crate::analytics::trim_text;
 use crate::text::correction_learner::{Correction, KnownCorrection};
 use crate::text::script::is_unspaced_script;
+use crate::text::term_match::continues_word;
 
 /// Who added a dictionary word. Manual words outrank learned ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -126,7 +127,6 @@ const FRESHNESS_TIER_LIMITS_MS: [i64; 2] = [DAY_MS, 14 * DAY_MS];
 /// later overlapping match can still be accepted.
 fn count_normalized_term(text: &str, term: &str) -> usize {
     let whole_word = !term.chars().any(is_unspaced_script);
-    let continues_word = |c: char| (c.is_alphanumeric() || c == '_') && !is_unspaced_script(c);
     let (mut cursor, mut count) = (0, 0);
     while let Some(offset) = text[cursor..].find(term) {
         let start = cursor + offset;
@@ -147,45 +147,15 @@ fn count_normalized_term(text: &str, term: &str) -> usize {
     count
 }
 
-/// Case-insensitive occurrences of each dictionary word in `text`, keyed by
-/// the word as given and in input order; words that do not occur are omitted.
-pub fn count_dictionary_word_uses<S: AsRef<str>>(words: &[S], text: &str) -> Vec<(String, usize)> {
-    let mut counts: Vec<(String, usize)> = Vec::new();
-    let mut positions: HashMap<&str, usize> = HashMap::new();
-    if text.is_empty() {
-        return counts;
-    }
-    let haystack = text.nfc().collect::<String>().to_lowercase();
-    for word in words {
-        let word = word.as_ref();
-        let needle = trim_text(word).nfc().collect::<String>().to_lowercase();
-        if needle.is_empty() {
-            continue;
-        }
-        let count = count_normalized_term(&haystack, &needle);
-        if count == 0 {
-            continue;
-        }
-        match positions.get(word) {
-            Some(&index) => counts[index].1 = count,
-            None => {
-                positions.insert(word, counts.len());
-                counts.push((word.to_string(), count));
-            }
-        }
-    }
-    counts
-}
-
 /// A dictionary row as the priority ranking sees it.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct DictionaryRankRow {
-    pub id: i64,
-    pub word: String,
-    pub source: String,
-    pub use_count: i64,
-    pub last_used_at: Option<String>,
-    pub updated_at: String,
+struct DictionaryRankRow {
+    id: i64,
+    word: String,
+    source: String,
+    use_count: i64,
+    last_used_at: Option<String>,
+    updated_at: String,
 }
 
 fn freshness_tier(row: &DictionaryRankRow, now_ms: i64) -> usize {
@@ -204,22 +174,16 @@ fn freshness_tier(row: &DictionaryRankRow, now_ms: i64) -> usize {
 
 /// Words highest priority first: manual before learned, then by freshness of
 /// last use (falling back to the last edit), then use count, then newest.
-pub(crate) fn rank_dictionary_rows(rows: Vec<DictionaryRankRow>, now_ms: i64) -> Vec<String> {
-    let mut keyed: Vec<(u8, usize, i64, DictionaryRankRow)> = rows
-        .into_iter()
-        .map(|row| {
-            let learned = u8::from(row.source == "learned");
-            let tier = freshness_tier(&row, now_ms);
-            (learned, tier, row.use_count, row)
-        })
-        .collect();
-    keyed.sort_by(|a, b| {
-        a.0.cmp(&b.0)
-            .then(a.1.cmp(&b.1))
-            .then(b.2.cmp(&a.2))
-            .then(b.3.id.cmp(&a.3.id))
+fn rank_dictionary_rows(mut rows: Vec<DictionaryRankRow>, now_ms: i64) -> Vec<String> {
+    rows.sort_by_cached_key(|row| {
+        (
+            row.source == DictionarySource::Learned.as_str(),
+            freshness_tier(row, now_ms),
+            std::cmp::Reverse(row.use_count),
+            std::cmp::Reverse(row.id),
+        )
     });
-    keyed.into_iter().map(|(_, _, _, row)| row.word).collect()
+    rows.into_iter().map(|row| row.word).collect()
 }
 
 /// Trimmed, deduplicated by lowercase (first spelling wins), in input order.
@@ -272,8 +236,7 @@ fn dictionary_rows(conn: &Connection) -> Result<HashMap<String, ExistingRow>> {
     Ok(rows)
 }
 
-/// Returns true when the word became present, so callers report how many
-/// words they actually added.
+/// Inserts a word or updates its spelling and manual source when needed.
 fn upsert_word(
     tx: &Transaction<'_>,
     word: &str,
@@ -410,7 +373,7 @@ impl Database {
         if text.is_empty() {
             return Ok(0);
         }
-        let rows: Vec<DictionaryUsage> = {
+        let mut usage: Vec<DictionaryUsage> = {
             let conn = self.lock();
             conn.prepare("SELECT id, word, updated_at FROM custom_dictionary")?
                 .query_map([], |row| {
@@ -425,17 +388,18 @@ impl Database {
         };
         // Matching can scan a long transcript once per dictionary word. Keep
         // it outside the connection mutex so reads and edits can proceed.
-        let words: Vec<&str> = rows.iter().map(|row| row.word.as_str()).collect();
-        let counts: HashMap<String, usize> = count_dictionary_word_uses(&words, text)
-            .into_iter()
-            .collect();
-        let usage: Vec<DictionaryUsage> = rows
-            .into_iter()
-            .filter_map(|mut row| {
-                row.count = *counts.get(&row.word)?;
-                Some(row)
-            })
-            .collect();
+        let transcript = text.nfc().collect::<String>().to_lowercase();
+        usage.retain_mut(|row| {
+            let word = trim_text(&row.word)
+                .nfc()
+                .collect::<String>()
+                .to_lowercase();
+            if word.is_empty() {
+                return false;
+            }
+            row.count = count_normalized_term(&transcript, &word);
+            row.count > 0
+        });
         self.apply_dictionary_usage(&usage)
     }
 
@@ -487,8 +451,8 @@ impl Database {
         }
 
         let mut conn = self.lock();
-        let by_lower = dictionary_rows(&conn)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let by_lower = dictionary_rows(&tx)?;
         if source == DictionarySource::Manual {
             for rejected in rejected_words(&tx)? {
                 if addition_keys.contains(rejected.to_lowercase().as_str()) {
@@ -507,38 +471,17 @@ impl Database {
         Ok(())
     }
 
-    /// Stores the correction after its first completed edit. Context-dependent
-    /// pairs stay subject to the cleanup model. Words the user removed are
-    /// ignored. A term already in the
-    /// Dictionary only takes the capitalization the user just gave it.
-    /// Returns the words added.
+    /// Records the first edit of a fresh session for test fixtures.
     #[cfg(test)]
     pub fn record_corrections(&self, corrections: &[Correction]) -> Result<Vec<String>> {
         Ok(self
-            .record_corrections_with_outcome(corrections)?
-            .added_terms)
-    }
-
-    #[cfg(test)]
-    pub fn record_corrections_with_outcome(
-        &self,
-        corrections: &[Correction],
-    ) -> Result<CorrectionLearningOutcome> {
-        self.record_corrections_checked(corrections, None)
-    }
-
-    /// Stores a background learning result only while its dictionary generation
-    /// is still current. Check under the connection lock so a pending result
-    /// cannot undo a clear or another dictionary edit that invalidated it.
-    #[cfg(test)]
-    pub fn record_corrections_if_current(
-        &self,
-        corrections: &[Correction],
-        generation: &AtomicU64,
-        expected: u64,
-    ) -> Result<Vec<String>> {
-        Ok(self
-            .record_corrections_checked(corrections, Some((generation, expected)))?
+            .record_session_corrections_if_current(
+                &uuid::Uuid::new_v4().to_string(),
+                1,
+                corrections,
+                &AtomicU64::new(0),
+                0,
+            )?
             .added_terms)
     }
 
@@ -680,23 +623,6 @@ impl Database {
         )?;
         tx.commit()?;
         Ok(outcome)
-    }
-
-    #[cfg(test)]
-    fn record_corrections_checked(
-        &self,
-        corrections: &[Correction],
-        generation: Option<(&AtomicU64, u64)>,
-    ) -> Result<CorrectionLearningOutcome> {
-        let default_generation = AtomicU64::new(0);
-        let (generation, expected) = generation.unwrap_or((&default_generation, 0));
-        self.record_session_corrections_if_current(
-            &uuid::Uuid::new_v4().to_string(),
-            1,
-            corrections,
-            generation,
-            expected,
-        )
     }
 
     /// Corrections to terms in the Dictionary, most repeated first. A mishearing
@@ -1121,30 +1047,35 @@ mod tests {
     }
 
     #[test]
-    fn usage_counts_keep_input_order_and_exact_duplicate_semantics() {
-        assert_eq!(
-            count_dictionary_word_uses(
-                &["Alice", "Bob", "Alice", "alice"],
-                "alice met Bob and Alice"
-            ),
-            [("Alice".into(), 2), ("Bob".into(), 1), ("alice".into(), 2)]
-        );
-    }
-
-    #[test]
     fn usage_matching_preserves_unicode_boundaries_and_rejected_overlaps() {
+        let db = db();
+        db.apply_dictionary_changes(
+            &["a-a", "Café", "张珊", "Claude Code", "rust", "i", "missing"],
+            NONE,
+            manual(),
+        )
+        .unwrap();
+        let updated = db
+            .record_dictionary_usage(
+                "xa-a-a CAFE\u{301} 张珊张珊 用Claude Code写 trusted RUST rust_x İ",
+            )
+            .unwrap();
+        assert_eq!(updated, 6);
+        let entries = db.get_dictionary_entries().unwrap();
+        let counts: Vec<_> = entries
+            .iter()
+            .map(|entry| (entry.word.as_str(), entry.use_count))
+            .collect();
         assert_eq!(
-            count_dictionary_word_uses(
-                &["a-a", "Café", "张珊", "Claude", "rust", "i"],
-                "xa-a-a CAFE\u{301} 张珊张珊 用Claude写 trusted RUST rust_x İ"
-            ),
+            counts,
             [
-                ("a-a".into(), 1),
-                ("Café".into(), 1),
-                ("张珊".into(), 2),
-                ("Claude".into(), 1),
-                ("rust".into(), 1),
-                ("i".into(), 1),
+                ("a-a", 1),
+                ("Café", 1),
+                ("张珊", 2),
+                ("Claude Code", 1),
+                ("rust", 1),
+                ("i", 1),
+                ("missing", 0)
             ]
         );
     }
@@ -1173,11 +1104,10 @@ mod tests {
         );
     }
 
-    fn correction(misheard: &str, term: &str, needs_repeat: bool) -> Correction {
+    fn correction(misheard: &str, term: &str) -> Correction {
         Correction {
             misheard: misheard.into(),
             term: term.into(),
-            needs_repeat,
         }
     }
 
@@ -1185,7 +1115,7 @@ mod tests {
     fn a_strong_correction_adds_its_term_at_once() {
         let db = db();
         let added = db
-            .record_corrections(&[correction("Shunade", "Sinead", false)])
+            .record_corrections(&[correction("Shunade", "Sinead")])
             .unwrap();
         assert_eq!(added, ["Sinead"]);
         assert_eq!(
@@ -1206,7 +1136,13 @@ mod tests {
     fn a_context_dependent_correction_is_remembered_on_the_first_edit() {
         let db = db();
         let outcome = db
-            .record_corrections_with_outcome(&[correction("cloud", "Claude", true)])
+            .record_session_corrections_if_current(
+                "edit",
+                1,
+                &[correction("cloud", "Claude")],
+                &AtomicU64::new(0),
+                0,
+            )
             .unwrap();
         assert_eq!(outcome.context_dependent_terms, ["Claude"]);
         assert_eq!(db.get_known_corrections().unwrap()[0].count, 1);
@@ -1217,7 +1153,7 @@ mod tests {
     fn repeated_snapshots_of_one_session_count_as_one_correction() {
         let db = db();
         let generation = AtomicU64::new(1);
-        let corrections = [correction("cloud", "Claude", true)];
+        let corrections = [correction("cloud", "Claude")];
         db.record_session_corrections_if_current("field-session", 1, &corrections, &generation, 1)
             .unwrap();
         let repeated = db
@@ -1233,7 +1169,7 @@ mod tests {
         db.apply_dictionary_changes(&["Claude Code"], NONE, manual())
             .unwrap();
         let generation = AtomicU64::new(1);
-        let corrections = [correction("cloud code", "Claude Code", false)];
+        let corrections = [correction("cloud code", "Claude Code")];
         let outcome = db
             .record_session_corrections_if_current("session", 1, &corrections, &generation, 1)
             .unwrap();
@@ -1252,7 +1188,7 @@ mod tests {
         db.record_session_corrections_if_current(
             "session",
             1,
-            &[correction("github", "GitHub", false)],
+            &[correction("github", "GitHub")],
             &generation,
             1,
         )
@@ -1260,7 +1196,7 @@ mod tests {
         db.record_session_corrections_if_current(
             "session",
             2,
-            &[correction("github", "GITHUB", false)],
+            &[correction("github", "GITHUB")],
             &generation,
             1,
         )
@@ -1281,16 +1217,16 @@ mod tests {
         let generation = AtomicU64::new(1);
         db.apply_dictionary_changes(&["Shared"], NONE, manual())
             .unwrap();
-        db.record_corrections(&[correction("historic", "Historical", false)])
+        db.record_corrections(&[correction("historic", "Historical")])
             .unwrap();
         db.record_session_corrections_if_current(
             "first",
             1,
             &[
-                correction("cloud", "Claude", true),
-                correction("Shunade", "Sinead", false),
-                correction("shared", "Shared", true),
-                correction("historic", "Historical", false),
+                correction("cloud", "Claude"),
+                correction("Shunade", "Sinead"),
+                correction("shared", "Shared"),
+                correction("historic", "Historical"),
             ],
             &generation,
             1,
@@ -1299,7 +1235,7 @@ mod tests {
         db.record_session_corrections_if_current(
             "second",
             1,
-            &[correction("cloud", "Claude", true)],
+            &[correction("cloud", "Claude")],
             &generation,
             1,
         )
@@ -1307,7 +1243,7 @@ mod tests {
         db.record_session_corrections_if_current(
             "first",
             2,
-            &[correction("cloud", "Claudette", true)],
+            &[correction("cloud", "Claudette")],
             &generation,
             1,
         )
@@ -1336,7 +1272,7 @@ mod tests {
     fn clearing_learned_data_allows_a_current_session_to_start_fresh() {
         let db = db();
         let generation = AtomicU64::new(1);
-        let corrections = [correction("cloud code", "Claude Code", false)];
+        let corrections = [correction("cloud code", "Claude Code")];
         db.record_session_corrections_if_current("session", 1, &corrections, &generation, 1)
             .unwrap();
         generation.store(2, Ordering::Release);
@@ -1362,7 +1298,7 @@ mod tests {
         db.record_session_corrections_if_current(
             "session",
             1,
-            &[correction("eclair", "Éclair", true)],
+            &[correction("eclair", "Éclair")],
             &generation,
             1,
         )
@@ -1379,7 +1315,7 @@ mod tests {
     fn a_removed_word_does_not_let_an_old_session_erase_new_learning() {
         let db = db();
         let generation = AtomicU64::new(1);
-        let corrections = [correction("cloud", "Claude", true)];
+        let corrections = [correction("cloud", "Claude")];
         db.record_session_corrections_if_current("old", 1, &corrections, &generation, 1)
             .unwrap();
         db.apply_dictionary_changes(NONE, &["Claude"], manual())
@@ -1404,7 +1340,7 @@ mod tests {
     fn forgetting_a_correction_detaches_its_old_session_contributions() {
         let db = db();
         let generation = AtomicU64::new(1);
-        let corrections = [correction("cloud", "Claude", true)];
+        let corrections = [correction("cloud", "Claude")];
         db.record_session_corrections_if_current("old", 1, &corrections, &generation, 1)
             .unwrap();
         db.remove_correction("cloud", "Claude").unwrap();
@@ -1419,17 +1355,25 @@ mod tests {
     fn an_invalidated_learning_result_cannot_restore_a_cleared_dictionary() {
         let db = db();
         let generation = AtomicU64::new(7);
-        let learn = correction("Shunade", "Sinead", false);
+        let learn = correction("Shunade", "Sinead");
         assert_eq!(
-            db.record_corrections_if_current(std::slice::from_ref(&learn), &generation, 7)
-                .unwrap(),
+            db.record_session_corrections_if_current(
+                "edit",
+                1,
+                std::slice::from_ref(&learn),
+                &generation,
+                7
+            )
+            .unwrap()
+            .added_terms,
             ["Sinead"]
         );
         generation.fetch_add(1, Ordering::AcqRel);
         db.clear_dictionary().unwrap();
         assert!(
-            db.record_corrections_if_current(&[learn], &generation, 7)
+            db.record_session_corrections_if_current("edit", 2, &[learn], &generation, 7)
                 .unwrap()
+                .added_terms
                 .is_empty()
         );
         assert!(db.get_dictionary().unwrap().is_empty());
@@ -1445,7 +1389,7 @@ mod tests {
     #[test]
     fn a_context_dependent_term_is_added_without_deliberate_repetition() {
         let db = db();
-        let weak = correction("affect", "effect", true);
+        let weak = correction("affect", "effect");
         assert_eq!(
             db.record_corrections(std::slice::from_ref(&weak)).unwrap(),
             ["effect"]
@@ -1459,12 +1403,12 @@ mod tests {
     fn different_mishearings_of_a_term_add_up() {
         let db = db();
         assert_eq!(
-            db.record_corrections(&[correction("克劳", "Claude", true)])
+            db.record_corrections(&[correction("克劳", "Claude")])
                 .unwrap(),
             ["Claude"]
         );
         assert!(
-            db.record_corrections(&[correction("cloud", "Claude", true)])
+            db.record_corrections(&[correction("cloud", "Claude")])
                 .unwrap()
                 .is_empty()
         );
@@ -1478,7 +1422,7 @@ mod tests {
             .unwrap();
         for _ in 0..2 {
             assert!(
-                db.record_corrections(&[correction("cloud", "Claude", false)])
+                db.record_corrections(&[correction("cloud", "Claude")])
                     .unwrap()
                     .is_empty()
             );
@@ -1495,8 +1439,8 @@ mod tests {
         let db = db();
         let added = db
             .record_corrections(&[
-                correction("cloud", "Claude", false),
-                correction("克劳德", "Claude", false),
+                correction("cloud", "Claude"),
+                correction("克劳德", "Claude"),
             ])
             .unwrap();
         assert_eq!(added, ["Claude"]);
@@ -1508,11 +1452,11 @@ mod tests {
         let db = db();
         db.apply_dictionary_changes(&["github"], NONE, manual())
             .unwrap();
-        db.record_corrections(&[correction("github", "GitHub", false)])
+        db.record_corrections(&[correction("github", "GitHub")])
             .unwrap();
         assert_eq!(db.get_dictionary().unwrap(), ["GitHub"]);
 
-        db.record_corrections(&[correction("gethub", "github", false)])
+        db.record_corrections(&[correction("gethub", "github")])
             .unwrap();
         assert_eq!(
             db.get_dictionary().unwrap(),
@@ -1524,7 +1468,7 @@ mod tests {
     #[test]
     fn unicode_case_rename_keeps_corrections_joined_with_their_counts() {
         let db = db();
-        let correction = correction("eclair", "Éclair", true);
+        let correction = correction("eclair", "Éclair");
         db.record_corrections(std::slice::from_ref(&correction))
             .unwrap();
         db.record_corrections(&[correction]).unwrap();
@@ -1541,11 +1485,11 @@ mod tests {
     #[test]
     fn successive_unicode_case_corrections_follow_the_latest_spelling() {
         let db = db();
-        db.record_corrections(&[correction("eclair", "Éclair", false)])
+        db.record_corrections(&[correction("eclair", "Éclair")])
             .unwrap();
         db.record_corrections(&[
-            correction("Éclair", "éclair", false),
-            correction("éclair", "ÉCLAIR", false),
+            correction("Éclair", "éclair"),
+            correction("éclair", "ÉCLAIR"),
         ])
         .unwrap();
         assert_eq!(db.get_dictionary().unwrap(), ["ÉCLAIR"]);
@@ -1561,7 +1505,7 @@ mod tests {
     #[test]
     fn unicode_case_rename_rolls_back_if_a_reference_conflicts() {
         let db = db();
-        db.record_corrections(&[correction("eclair", "Éclair", false)])
+        db.record_corrections(&[correction("eclair", "Éclair")])
             .unwrap();
         // Older data can contain both spellings under SQLite's ASCII collation.
         db.lock()
@@ -1592,13 +1536,13 @@ mod tests {
     #[test]
     fn unicode_rejected_terms_stay_removed_until_manually_added() {
         let db = db();
-        db.record_corrections(&[correction("eclair", "Éclair", false)])
+        db.record_corrections(&[correction("eclair", "Éclair")])
             .unwrap();
         db.apply_dictionary_changes(NONE, &["Éclair"], manual())
             .unwrap();
         for _ in 0..2 {
             assert!(
-                db.record_corrections(&[correction("eclair", "éclair", true)])
+                db.record_corrections(&[correction("eclair", "éclair")])
                     .unwrap()
                     .is_empty()
             );
@@ -1613,7 +1557,7 @@ mod tests {
         assert_eq!(count, 0);
         db.apply_dictionary_changes(&["éclair"], NONE, manual())
             .unwrap();
-        db.record_corrections(&[correction("eclair", "éclair", true)])
+        db.record_corrections(&[correction("eclair", "éclair")])
             .unwrap();
         assert_eq!(db.get_known_corrections().unwrap().len(), 1);
     }
@@ -1628,7 +1572,7 @@ mod tests {
             db.record_session_corrections_if_current(
                 "first",
                 1,
-                &[correction("Alpha", "Beta", false)],
+                &[correction("Alpha", "Beta")],
                 &generation,
                 1,
             )
@@ -1636,7 +1580,7 @@ mod tests {
             db.record_session_corrections_if_current(
                 "second",
                 1,
-                &[correction("Beta", "Alpha", false)],
+                &[correction("Beta", "Alpha")],
                 &generation,
                 1,
             )
@@ -1664,7 +1608,7 @@ mod tests {
     #[test]
     fn a_removed_word_is_not_learned_again_until_added_by_hand() {
         let db = db();
-        let learn = correction("Shunade", "Sinead", false);
+        let learn = correction("Shunade", "Sinead");
         db.record_corrections(std::slice::from_ref(&learn)).unwrap();
         db.apply_dictionary_changes(NONE, &["sinead"], manual())
             .unwrap();
@@ -1686,7 +1630,7 @@ mod tests {
     #[test]
     fn clearing_the_dictionary_is_a_fresh_start() {
         let db = db();
-        let learn = correction("Shunade", "Sinead", false);
+        let learn = correction("Shunade", "Sinead");
         db.record_corrections(std::slice::from_ref(&learn)).unwrap();
         db.apply_dictionary_changes(NONE, &["Sinead"], manual())
             .unwrap();
@@ -1697,7 +1641,7 @@ mod tests {
     #[test]
     fn a_removed_mishearing_is_forgotten_and_its_word_stays() {
         let db = db();
-        db.record_corrections(&[correction("Shunade", "Sinead", false)])
+        db.record_corrections(&[correction("Shunade", "Sinead")])
             .unwrap();
         db.remove_correction("shunade", "SINEAD").unwrap();
         assert!(db.get_known_corrections().unwrap().is_empty());
@@ -1707,7 +1651,7 @@ mod tests {
     #[test]
     fn a_mishearing_that_is_a_dictionary_word_is_not_applied() {
         let db = db();
-        db.record_corrections(&[correction("cloud", "Claude", false)])
+        db.record_corrections(&[correction("cloud", "Claude")])
             .unwrap();
         db.apply_dictionary_changes(&["Cloud"], NONE, manual())
             .unwrap();
@@ -1737,18 +1681,6 @@ mod tests {
             use_count: uses,
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn counts_whole_word_uses_case_insensitively() {
-        let counts = count_dictionary_word_uses(
-            &["Kubernetes", "Claude Code", "Rust"],
-            "kubernetes runs Claude Code. Did KUBERNETES restart? Trusted code.",
-        );
-        assert_eq!(
-            counts,
-            [("Kubernetes".into(), 2), ("Claude Code".into(), 1)]
-        );
     }
 
     #[test]

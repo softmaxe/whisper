@@ -519,6 +519,7 @@
     "since": "Since {{date}}",
     "lastDays_one": "Last {{count}} day",
     "lastDays_other": "Last {{count}} days",
+    "lastWeeks_one": "Last {{count}} week",
     "lastWeeks_other": "Last {{count}} weeks",
     "previousDays_one": "Previous {{count}} day",
     "previousDays_other": "Previous {{count}} days",

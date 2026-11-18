@@ -1,7 +1,7 @@
 //! Shared plumbing for the bundled helper processes: locating binaries,
 //! verifying their architecture, and running them with deadlines.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -121,9 +121,8 @@ fn spawn_collector<R: Read + Send + 'static>(
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
                     let mut buffer = lock(&sink);
-                    if buffer.len() < MAX_OUTPUT_BYTES {
-                        buffer.extend_from_slice(&chunk[..n]);
-                    }
+                    let remaining = MAX_OUTPUT_BYTES - buffer.len();
+                    buffer.extend_from_slice(&chunk[..n.min(remaining)]);
                 }
             }
         }
@@ -135,23 +134,14 @@ fn spawn_collector<R: Read + Send + 'static>(
 /// A helper can exit while a descendant keeps its pipes open, so an exit code
 /// already reported when the deadline passes is honoured instead of being
 /// treated as a timeout.
-pub fn run_with_timeout(
-    program: &Path,
-    args: &[&str],
-    stdin: Option<&str>,
-    timeout: Duration,
-) -> RunOutput {
-    let mut command = Command::new(program);
-    command
+pub fn run_with_timeout(program: &Path, args: &[&str], timeout: Duration) -> RunOutput {
+    let spawned = Command::new(program)
         .args(args)
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = match command.spawn() {
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match spawned {
         Ok(child) => child,
         Err(error) => {
             return RunOutput {
@@ -162,11 +152,6 @@ pub fn run_with_timeout(
             };
         }
     };
-    if let (Some(input), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        let _ = pipe.write_all(input.as_bytes());
-        drop(pipe);
-    }
-
     let stdout = Arc::new(Mutex::new(Vec::new()));
     let stderr = Arc::new(Mutex::new(Vec::new()));
     let readers: Vec<_> = [
@@ -195,6 +180,7 @@ pub fn run_with_timeout(
             }
         }
         if exit.is_some() && readers.iter().all(|reader| reader.is_finished()) {
+            let _ = child.wait();
             break;
         }
         if Instant::now() >= deadline {
@@ -203,26 +189,16 @@ pub fn run_with_timeout(
                 let _ = child.kill();
             }
             reap_in_background(child);
-            return RunOutput {
-                status: exit.flatten(),
-                stdout: String::from_utf8_lossy(&lock(&stdout)).into_owned(),
-                stderr: String::from_utf8_lossy(&lock(&stderr)).into_owned(),
-                timed_out,
-            };
+            break;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    for reader in readers {
-        let _ = reader.join();
-    }
-    let output = RunOutput {
+    RunOutput {
         status: exit.flatten(),
         stdout: String::from_utf8_lossy(&lock(&stdout)).into_owned(),
         stderr: String::from_utf8_lossy(&lock(&stderr)).into_owned(),
-        timed_out: false,
-    };
-    let _ = child.wait();
-    output
+        timed_out,
+    }
 }
 
 fn reap_in_background(mut child: Child) {
@@ -240,38 +216,21 @@ fn reap_in_background(mut child: Child) {
 pub fn probe_first_line(program: &Path, args: &[&str], timeout: Duration) -> Option<String> {
     let mut child = Command::new(program)
         .args(args)
-        .stdin(Stdio::piped())
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    drop(child.stdin.take());
-    let mut stdout = child.stdout.take()?;
-    let (tx, rx) = mpsc::channel::<Option<String>>();
+    let stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let mut buffered = Vec::new();
-        let mut chunk = [0u8; 4096];
-        loop {
-            match stdout.read(&mut chunk) {
-                Ok(0) | Err(_) => {
-                    let text = String::from_utf8_lossy(&buffered).trim().to_string();
-                    let _ = tx.send(Some(text));
-                    return;
-                }
-                Ok(n) => {
-                    buffered.extend_from_slice(&chunk[..n]);
-                    if let Some(newline) = buffered.iter().position(|b| *b == b'\n') {
-                        let line = String::from_utf8_lossy(&buffered[..newline])
-                            .trim()
-                            .to_string();
-                        let _ = tx.send(Some(line));
-                        return;
-                    }
-                }
-            }
+        let mut line = Vec::new();
+        let mut reader = BufReader::new(stdout.take(MAX_OUTPUT_BYTES as u64 + 1));
+        if let Ok(1..=MAX_OUTPUT_BYTES) = reader.read_until(b'\n', &mut line) {
+            let _ = tx.send(String::from_utf8_lossy(&line).trim().to_owned());
         }
     });
-    let verdict = rx.recv_timeout(timeout).ok().flatten();
+    let verdict = rx.recv_timeout(timeout).ok();
     let _ = child.kill();
     reap_in_background(child);
     verdict
@@ -290,7 +249,6 @@ mod tests {
         let out = run_with_timeout(
             &sh(),
             &["-c", "echo hi; echo err >&2; exit 3"],
-            None,
             Duration::from_secs(5),
         );
         assert_eq!(out.status, Some(3));
@@ -300,14 +258,21 @@ mod tests {
     }
 
     #[test]
+    fn collector_caps_output_when_a_chunk_crosses_the_limit() {
+        let reader = b"x"
+            .as_slice()
+            .chain(std::io::repeat(b'y').take(MAX_OUTPUT_BYTES as u64));
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        spawn_collector(reader, Arc::clone(&sink)).join().unwrap();
+        let output = lock(&sink);
+        assert_eq!(output.len(), MAX_OUTPUT_BYTES);
+        assert_eq!(output[0], b'x');
+    }
+
+    #[test]
     fn run_times_out_a_hung_process() {
         let started = Instant::now();
-        let out = run_with_timeout(
-            &sh(),
-            &["-c", "exec sleep 5"],
-            None,
-            Duration::from_millis(100),
-        );
+        let out = run_with_timeout(&sh(), &["-c", "exec sleep 5"], Duration::from_millis(100));
         assert!(out.timed_out);
         assert_eq!(out.status, None);
         assert!(started.elapsed() < Duration::from_secs(2));
@@ -318,7 +283,6 @@ mod tests {
         let out = run_with_timeout(
             &sh(),
             &["-c", "sleep 3 & echo done; exit 0"],
-            None,
             Duration::from_millis(300),
         );
         assert_eq!(out.status, Some(0));
@@ -331,7 +295,6 @@ mod tests {
         let out = run_with_timeout(
             Path::new("/nonexistent/helper"),
             &[],
-            None,
             Duration::from_secs(1),
         );
         assert_eq!(out.status, None);
@@ -343,12 +306,16 @@ mod tests {
     fn probe_takes_only_the_first_line() {
         let line = probe_first_line(
             &sh(),
-            &["-c", "printf 'NOT_PASTEABLE\\nPASTEABLE\\n'"],
+            &["-c", "printf 'NOT_PASTEABLE\\nPASTEABLE\\n'; exec sleep 5"],
             Duration::from_secs(2),
         );
         assert_eq!(line.as_deref(), Some("NOT_PASTEABLE"));
         let none = probe_first_line(&sh(), &["-c", "exec sleep 2"], Duration::from_millis(50));
         assert_eq!(none, None);
+        assert_eq!(
+            probe_first_line(&sh(), &["-c", "exit 0"], Duration::from_secs(2)),
+            None
+        );
     }
 
     #[test]
