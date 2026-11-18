@@ -164,14 +164,16 @@ impl StatusMirror {
     fn set(&self, phase: Phase) {
         self.0.store(phase as u8, Ordering::SeqCst);
     }
+}
 
-    /// Requested, opening the microphone, or recording.
-    pub fn is_active(&self) -> bool {
-        matches!(self.0.load(Ordering::SeqCst), 1 | 2)
+impl crate::native::hotkeys::DictationStatus for StatusMirror {
+    fn is_active(&self) -> bool {
+        let phase = self.0.load(Ordering::SeqCst);
+        phase == Phase::Preparing as u8 || phase == Phase::Recording as u8
     }
 
-    pub fn is_processing(&self) -> bool {
-        self.0.load(Ordering::SeqCst) == 3
+    fn is_processing(&self) -> bool {
+        self.0.load(Ordering::SeqCst) == Phase::Processing as u8
     }
 }
 
@@ -725,11 +727,7 @@ impl Dictation {
             run_prepared_pipeline_controlled(input, cancel, skip, mode).await
         });
         cx.spawn(async move |this, cx| {
-            let outcome = handle.await.unwrap_or(PipelineOutcome::Failed {
-                message: "pipeline task failed".into(),
-                code: None,
-                message_key: None,
-            });
+            let outcome = handle.await.unwrap_or_else(|_| pipeline_task_failed());
             let _ = this.update(cx, |this, cx| {
                 if generation != this.generation {
                     return;
@@ -848,13 +846,12 @@ impl Dictation {
     ) {
         let generation = self.generation;
         let saved_transcript = transcript.clone();
-        let saved_wav = wav;
         let save = AppState::global(cx).update(cx, |state, cx| {
             state.record_history(cx, move |history, settings| {
                 history.record_delivered(
                     &saved_transcript,
                     &Recording {
-                        wav: &saved_wav,
+                        wav: &wav,
                         duration,
                         occurred_at,
                     },
@@ -1113,17 +1110,13 @@ async fn run_pipeline_with_key(
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
-    let needs_key = pipeline::cleanup_enabled(&input.settings);
-    // Keychain access stays off the storage worker.
-    let key = crate::services::runtime::blocking(move || {
-        needs_key
-            .then(backend::cleanup_api_key)
-            .filter(|k| !k.is_empty())
-    });
-    let Ok(key) = key.await else {
-        return pipeline_task_failed();
-    };
-    input.cleanup_api_key = key;
+    if input.settings.cleanup_enabled() {
+        // Keychain access stays off the storage worker.
+        let Ok(key) = crate::services::runtime::blocking(backend::cleanup_api_key).await else {
+            return pipeline_task_failed();
+        };
+        input.cleanup_api_key = (!key.is_empty()).then_some(key);
+    }
     if cancel.is_cancelled() {
         return PipelineOutcome::Cancelled;
     }
@@ -1350,7 +1343,7 @@ mod tests {
         };
         assert_eq!(text, "Supabase");
         assert_eq!(kept, Some(duration));
-        let retry = dictation.failed.take().unwrap();
+        let retry = dictation.failed.as_ref().unwrap();
         assert_eq!(retry.wav, wav);
         assert_eq!(retry.duration, duration);
         assert_eq!(retry.occurred_at, occurred_at);
@@ -1379,7 +1372,6 @@ mod tests {
             spoken_text: "words worth keeping".into(),
             raw_text: "um words worth keeping".into(),
             cleanup_failure: None,
-            cleanup_skipped: false,
         };
         for retention_enabled in [false, true] {
             let saved = history
@@ -1438,27 +1430,10 @@ mod tests {
 
     #[test]
     fn recording_cancel_does_not_invalidate_processing_or_idle() {
-        use super::{Dictation, Phase, Recorder, StatusMirror};
-        for phase in [Phase::Idle, Phase::Processing] {
+        for phase in [super::Phase::Idle, super::Phase::Processing] {
             let cancel = CancellationToken::new();
-            let mut dictation = Dictation {
-                phase,
-                recorder: Recorder::new(None),
-                generation: 7,
-                start_lock: false,
-                cancel: Some(cancel.clone()),
-                mic_test: Default::default(),
-                skip_cleanup: None,
-                is_cleaning: false,
-                target_pid: None,
-                started_at: None,
-                effects_held: false,
-                media_paused: false,
-                push_force_stopped: false,
-                failed: None,
-                status: StatusMirror::default(),
-                _device_events: gpui_kit::Task::ready(()),
-            };
+            let mut dictation = dictation(phase);
+            dictation.cancel = Some(cancel.clone());
             assert!(!dictation.cancel_capture());
             assert_eq!(dictation.generation, 7);
             assert_eq!(dictation.phase, phase);
@@ -1706,9 +1681,8 @@ mod tests {
             spoken_text: "previous transcript".into(),
             raw_text: "previous transcript".into(),
             cleanup_failure: None,
-            cleanup_skipped: false,
         };
-        let row = history
+        let id = history
             .record_delivered(
                 &transcript,
                 &crate::history::Recording {
@@ -1720,29 +1694,22 @@ mod tests {
             )
             .result
             .unwrap()
-            .unwrap()
-            .item;
+            .unwrap();
         let server = MockServer::start(|_| Reply::json(200, r#"{"text":"retried words"}"#));
         let input = vad_input(&server, bytes::Bytes::new());
-        let outcome = run(super::transcribe_history_audio(
-            history.clone(),
-            row.id,
-            input,
-        ))
-        .unwrap();
+        let outcome = run(super::transcribe_history_audio(history.clone(), id, input)).unwrap();
         let PipelineOutcome::Transcribed(transcript) = outcome else {
             panic!("History retry must reach the server: {outcome:?}");
         };
         assert_eq!(uploaded_wav(&server), expected_upload);
-        let retried = history
-            .apply_retry(row.id, &transcript)
-            .result
-            .unwrap()
-            .unwrap()
-            .item;
+        assert_eq!(
+            history.apply_retry(id, &transcript).result.unwrap(),
+            Some(id)
+        );
+        let retried = db.get_transcription_by_id(id).unwrap().unwrap();
         assert_eq!(retried.text, "retried words");
-        assert_eq!(retried.audio_duration_ms, row.audio_duration_ms);
-        assert_eq!(history.retry_audio(row.id).unwrap(), original);
+        assert_eq!(retried.audio_duration_ms, Some(duration.as_millis() as i64));
+        assert_eq!(history.retry_audio(id).unwrap(), original);
     }
 
     #[test]

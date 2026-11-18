@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use gpui_kit::*;
 
-use crate::native::hotkeys::{DictationStatus, HotkeyCommand, HotkeyManager};
+use crate::native::hotkeys::{HotkeyCommand, HotkeyManager};
 use crate::settings::{ActivationMode, Settings};
 
 use crate::app_state::{AppEvent, AppState};
-use crate::dictation::{Dictation, DictationNotice, StatusMirror};
+use crate::dictation::{Dictation, DictationNotice};
 use crate::ui::components::{DismissMenu, MENU_CONTEXT};
 use crate::ui::control_panel::{CloseOverlay, ControlPanel, OpenSearch, OpenSettings};
 use crate::ui::overlays::{Overlays, Toast, ToastVariant, show_toast};
@@ -17,18 +17,6 @@ use crate::ui::settings_modal::SettingsSection;
 use crate::{backend, macos, menu, tray, ui};
 
 actions!(whisper_app, [Quit, ShowSettings]);
-
-struct StatusAdapter(StatusMirror);
-
-impl DictationStatus for StatusAdapter {
-    fn is_active(&self) -> bool {
-        self.0.is_active()
-    }
-
-    fn is_processing(&self) -> bool {
-        self.0.is_processing()
-    }
-}
 
 /// The control panel window, kept so the tray and Dock can bring it back,
 /// and its view, so other windows can open a Settings section in it.
@@ -223,7 +211,7 @@ fn handle_hotkey(command: HotkeyCommand, cx: &mut App) {
 fn start_hotkeys(cx: &mut App) {
     let status = Dictation::global(cx).read(cx).status();
     let (tx, rx) = async_channel::unbounded();
-    let manager = HotkeyManager::new(Arc::new(StatusAdapter(status)), tx);
+    let manager = HotkeyManager::new(Arc::new(status), tx);
     manager.start_native_listener();
     let settings = AppState::settings(cx);
     let registration = manager.register_saved(

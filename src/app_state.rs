@@ -255,15 +255,10 @@ impl AppState {
             let dictionary = written
                 .dictionary_changed
                 .then(|| DictionarySnapshot::read(&db));
-            (written.result, rows, dictionary)
+            (written, rows, dictionary)
         });
         cx.spawn(async move |this, cx| {
             let (written, rows, dictionary) = job.await;
-            let id = written
-                .as_ref()
-                .ok()
-                .and_then(|r| r.as_ref())
-                .map(|r| r.item.id);
             this.update(cx, |this, cx| {
                 this.apply_history_read(revision, rows, cx);
                 if this.dictionary_revision.load(Ordering::SeqCst) == dictionary_revision
@@ -271,17 +266,11 @@ impl AppState {
                 {
                     this.apply_dictionary_snapshot(dictionary, cx);
                 }
-                if written
-                    .as_ref()
-                    .ok()
-                    .and_then(|r| r.as_ref())
-                    .is_some_and(|r| r.insights_changed)
-                {
+                if written.insights_changed {
                     cx.emit(AppEvent::AnalyticsChanged);
                 }
             })?;
-            written?;
-            Ok(id)
+            written.result
         })
     }
 
