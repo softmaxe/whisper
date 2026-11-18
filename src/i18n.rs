@@ -57,24 +57,27 @@ fn lookup<'a>(bundle: &'a Value, key: &str) -> Option<&'a str> {
     node.as_str()
 }
 
-fn resolve(language: Language, key: &str, count: Option<i64>) -> Option<&'static str> {
-    let bundles = [language.bundle(), Language::En.bundle()];
-    for bundle in bundles {
-        if let Some(count) = count {
-            let suffix = if count == 1 { "_one" } else { "_other" };
-            if let Some(value) = lookup(bundle, &format!("{key}{suffix}")) {
-                return Some(value);
-            }
-            // Chinese has a single plural form.
-            if let Some(value) = lookup(bundle, &format!("{key}_other")) {
-                return Some(value);
-            }
-        }
-        if let Some(value) = lookup(bundle, key) {
-            return Some(value);
-        }
+fn lookup_form<'a>(bundle: &'a Value, key: &str, count: Option<i64>) -> Option<&'a str> {
+    if count == Some(1)
+        && let Some(value) = lookup(bundle, &format!("{key}_one"))
+    {
+        return Some(value);
     }
-    None
+    if count.is_some()
+        && let Some(value) = lookup(bundle, &format!("{key}_other"))
+    {
+        return Some(value);
+    }
+    lookup(bundle, key)
+}
+
+fn resolve(language: Language, key: &str, count: Option<i64>) -> Option<&'static str> {
+    if language != Language::En
+        && let Some(value) = lookup_form(language.bundle(), key, count)
+    {
+        return Some(value);
+    }
+    lookup_form(Language::En.bundle(), key, count)
 }
 
 fn interpolate(template: &str, params: &[(&str, &str)]) -> String {
@@ -134,14 +137,83 @@ mod tests {
     #[test]
     fn looks_up_nested_keys_in_both_languages() {
         assert_eq!(t_in(Language::En, "sidebar.home", &[]), "History");
-        assert_ne!(t_in(Language::ZhCn, "sidebar.home", &[]), "sidebar.home");
+        assert_eq!(t_in(Language::ZhCn, "sidebar.home", &[]), "历史记录");
     }
 
-    /// Every literal key passed to `t`/`t_with`/`try_t` in the sources must
-    /// resolve in both languages; a missing one renders as the raw key.
+    #[test]
+    fn catalogs_have_matching_keys_and_interpolation_parameters() {
+        use std::collections::BTreeSet;
+
+        let mut keys = BTreeSet::new();
+        for bundle in [Language::En.bundle(), Language::ZhCn.bundle()] {
+            let mut stack = vec![(String::new(), bundle)];
+            while let Some((path, node)) = stack.pop() {
+                if let Some(children) = node.as_object() {
+                    for (name, child) in children {
+                        let key = if path.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{path}.{name}")
+                        };
+                        stack.push((key, child));
+                    }
+                } else {
+                    let template = node.as_str().expect("expected a translation string");
+                    assert!(!template.trim().is_empty(), "empty translation for {path}");
+                    let key = path
+                        .strip_suffix("_one")
+                        .or_else(|| path.strip_suffix("_other"))
+                        .unwrap_or(&path);
+                    keys.insert(key.to_owned());
+                }
+            }
+        }
+
+        let parameter = regex::Regex::new(r"\{\{\s*([^,}\s]+)\s*(?:,[^}]*)?\}\}").unwrap();
+        let parameters = |template: &str| {
+            parameter
+                .captures_iter(template)
+                .map(|capture| capture[1].to_owned())
+                .collect::<BTreeSet<_>>()
+        };
+        let en = Language::En.bundle();
+        let zh = Language::ZhCn.bundle();
+        for key in keys {
+            let base = lookup(en, &key);
+            let one = lookup(en, &format!("{key}_one"));
+            let other = lookup(en, &format!("{key}_other"));
+            assert!(
+                base.is_some() || one.is_some() || other.is_some(),
+                "missing English key {key}"
+            );
+            assert_eq!(
+                one.is_some(),
+                other.is_some(),
+                "incomplete English plural forms for {key}"
+            );
+            for (count, english) in [
+                (None, base),
+                (Some(1), one.or(base)),
+                (Some(2), other.or(base)),
+            ] {
+                if let Some(english) = english {
+                    let chinese = lookup_form(zh, &key, count)
+                        .unwrap_or_else(|| panic!("missing Chinese key {key} for count {count:?}"));
+                    assert_eq!(
+                        parameters(english),
+                        parameters(chinese),
+                        "parameters for {key} with count {count:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Verify literal keys exist locally. For `t_with`, allow a plural form
+    /// because this scan does not inspect the interpolation arguments.
     #[test]
     fn every_literal_key_resolves() {
-        let pattern = regex::Regex::new(r#"\b(?:t|t_with|try_t)\(\s*"([A-Za-z][\w.]*)""#).unwrap();
+        let pattern = regex::Regex::new(r#"\b(t|t_with|try_t)\(\s*"([A-Za-z][\w.]*)""#).unwrap();
         let mut missing = Vec::new();
         let mut stack = vec![std::path::PathBuf::from(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -159,14 +231,13 @@ mod tests {
                 }
                 let source = std::fs::read_to_string(&path).unwrap();
                 for capture in pattern.captures_iter(&source) {
-                    let key = &capture[1];
-                    // Keys with a dot only; single words are other functions' args.
-                    if !key.contains('.') || key == "no.such.key" {
+                    let key = &capture[2];
+                    if !key.contains('.') {
                         continue;
                     }
                     for language in [Language::En, Language::ZhCn] {
-                        let found = resolve(language, key, None).is_some()
-                            || resolve(language, key, Some(2)).is_some();
+                        let count = (&capture[1] == "t_with").then_some(2);
+                        let found = lookup_form(language.bundle(), key, count).is_some();
                         if !found {
                             missing.push(format!("{language:?} {key} ({})", path.display()));
                         }
@@ -193,18 +264,20 @@ mod tests {
             "Hello Ada!"
         );
         assert_eq!(interpolate("{{missing}}", &[]), "{{missing}}");
-        let one = t_in(
-            Language::En,
-            "settings.privacy.retentionDays",
-            &[("count", "1")],
-        );
-        let many = t_in(
-            Language::En,
-            "settings.privacy.retentionDays",
-            &[("count", "30")],
-        );
-        assert!(one.contains('1'), "{one}");
-        assert!(many.contains("30"), "{many}");
-        assert_ne!(one.replace('1', ""), many.replace("30", ""));
+        for (language, count, expected) in [
+            (Language::En, "1", "1 day"),
+            (Language::En, "30", "30 days"),
+            (Language::ZhCn, "1", "1 天"),
+            (Language::ZhCn, "30", "30 天"),
+        ] {
+            assert_eq!(
+                t_in(
+                    language,
+                    "settings.privacy.retentionDays",
+                    &[("count", count)]
+                ),
+                expected
+            );
+        }
     }
 }
