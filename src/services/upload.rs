@@ -252,19 +252,12 @@ async fn transcribe_file_inner(
 
 /// Opens the system file picker filtered to upload formats. `None` when the
 /// user cancels. Call from the UI thread's async context.
-pub async fn select_audio_files(multiple: bool) -> Option<Vec<PathBuf>> {
-    let dialog =
-        rfd::AsyncFileDialog::new().add_filter("Audio and Video Files", UPLOAD_AUDIO_EXTENSIONS);
-    let paths: Vec<PathBuf> = if multiple {
-        dialog
-            .pick_files()
-            .await?
-            .iter()
-            .map(|f| f.path().to_path_buf())
-            .collect()
-    } else {
-        vec![dialog.pick_file().await?.path().to_path_buf()]
-    };
+pub async fn select_audio_files() -> Option<Vec<PathBuf>> {
+    let files = rfd::AsyncFileDialog::new()
+        .add_filter("Audio and Video Files", UPLOAD_AUDIO_EXTENSIONS)
+        .pick_files()
+        .await?;
+    let paths: Vec<_> = files.iter().map(|file| file.path().to_path_buf()).collect();
     (!paths.is_empty()).then_some(paths)
 }
 
