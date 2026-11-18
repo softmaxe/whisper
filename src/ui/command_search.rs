@@ -95,15 +95,26 @@ const RESULT_LIMIT: usize = 30;
 /// Characters of a result shown before its first match.
 const MATCH_LEAD: usize = 30;
 
+/// Match offsets can index the original text only when each character keeps
+/// its byte width. Changes in opposite directions can cancel in the total.
+fn lowercase_for_highlights(text: &str, query: &str) -> Option<String> {
+    if query.is_empty() {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    let same_offsets = text.is_ascii()
+        || text
+            .chars()
+            .map(char::len_utf8)
+            .eq(lower.chars().map(char::len_utf8));
+    same_offsets.then_some(lower)
+}
+
 /// The part of `text` a result row shows: all of it when the first match is
 /// near the start, otherwise "…" and the text from just before the match,
 /// so a one-line row always shows why it matched.
 fn match_window(text: &str, query: &str) -> String {
-    let lower = text.to_lowercase();
-    let at = match (query.is_empty(), lower.len() == text.len()) {
-        (false, true) => lower.find(query),
-        _ => None,
-    };
+    let at = lowercase_for_highlights(text, query).and_then(|lower| lower.find(query));
     let Some(at) = at else {
         return text.to_string();
     };
@@ -121,18 +132,14 @@ fn match_window(text: &str, query: &str) -> String {
 }
 
 /// `text` with every case-insensitive occurrence of `query` emphasized. Text
-/// whose lowercase form changes byte length (some non-ASCII) is left plain,
+/// whose lowercase form changes byte offsets (some non-ASCII) is left plain,
 /// since match offsets would not map back onto it.
 fn highlighted(text: &str, query: &str, color: Hsla, mark: Hsla) -> StyledText {
-    let lower = text.to_lowercase();
     let mut highlights = Vec::new();
-    if !query.is_empty() && lower.len() == text.len() {
-        let mut from = 0;
-        while let Some(at) = lower[from..].find(query) {
-            let start = from + at;
-            let end = start + query.len();
+    if let Some(lower) = lowercase_for_highlights(text, query) {
+        for (start, matched) in lower.match_indices(query) {
             highlights.push((
-                start..end,
+                start..start + matched.len(),
                 // A tinted mark, not only weight, so matches stand out on dark.
                 HighlightStyle {
                     color: Some(color),
@@ -141,7 +148,6 @@ fn highlighted(text: &str, query: &str, color: Hsla, mark: Hsla) -> StyledText {
                     ..Default::default()
                 },
             ));
-            from = end;
         }
     }
     StyledText::new(SharedString::from(text.to_string())).with_highlights(highlights)
@@ -487,7 +493,10 @@ impl Render for CommandSearch {
 
 #[cfg(test)]
 mod tests {
-    use super::{RECENT_LIMIT, RESULT_LIMIT, SearchResults, TranscriptionItem, match_window};
+    use super::{
+        RECENT_LIMIT, RESULT_LIMIT, SearchResults, TranscriptionItem, lowercase_for_highlights,
+        match_window,
+    };
     use std::collections::HashSet;
     use std::sync::Arc;
 
@@ -574,5 +583,18 @@ mod tests {
         assert!(shown.contains("target directory"));
         assert!(!shown[3..].starts_with(' '));
         assert_eq!(match_window(long, ""), long);
+    }
+
+    #[test]
+    fn lowercase_matches_use_only_offsets_valid_in_the_original_text() {
+        // The lowercase form has the same total size, but its "k" starts
+        // inside the original Kelvin sign.
+        let text = "İȺK";
+        assert_eq!(match_window(text, "k"), text);
+        assert!(lowercase_for_highlights(text, "k").is_none());
+        assert_eq!(
+            lowercase_for_highlights("大写 CAFÉ", "café").as_deref(),
+            Some("大写 café")
+        );
     }
 }
